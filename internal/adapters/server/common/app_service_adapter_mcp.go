@@ -669,6 +669,7 @@ func (a *AppServiceAdapter) CreateActionItem(ctx context.Context, in CreateActio
 		Kind:           domain.Kind(strings.TrimSpace(in.Kind)),
 		Scope:          domain.KindAppliesTo(strings.TrimSpace(in.Scope)),
 		Role:           domain.Role(strings.TrimSpace(in.Role)),
+		StructuralType: domain.StructuralType(strings.TrimSpace(in.StructuralType)),
 		ColumnID:       strings.TrimSpace(in.ColumnID),
 		Title:          strings.TrimSpace(in.Title),
 		Description:    strings.TrimSpace(in.Description),
@@ -706,17 +707,18 @@ func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActio
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	actionItem, err := a.service.UpdateActionItem(ctx, app.UpdateActionItemInput{
-		ActionItemID:  strings.TrimSpace(in.ActionItemID),
-		Title:         strings.TrimSpace(in.Title),
-		Description:   strings.TrimSpace(in.Description),
-		Priority:      domain.Priority(strings.TrimSpace(strings.ToLower(in.Priority))),
-		DueAt:         dueAt,
-		Labels:        append([]string(nil), in.Labels...),
-		Role:          domain.Role(strings.TrimSpace(in.Role)),
-		Metadata:      in.Metadata,
-		UpdatedBy:     actorID,
-		UpdatedByName: actorName,
-		UpdatedType:   actorType,
+		ActionItemID:   strings.TrimSpace(in.ActionItemID),
+		Title:          strings.TrimSpace(in.Title),
+		Description:    strings.TrimSpace(in.Description),
+		Priority:       domain.Priority(strings.TrimSpace(strings.ToLower(in.Priority))),
+		DueAt:          dueAt,
+		Labels:         append([]string(nil), in.Labels...),
+		Role:           domain.Role(strings.TrimSpace(in.Role)),
+		StructuralType: domain.StructuralType(strings.TrimSpace(in.StructuralType)),
+		Metadata:       in.Metadata,
+		UpdatedBy:      actorID,
+		UpdatedByName:  actorName,
+		UpdatedType:    actorType,
 	})
 	if err != nil {
 		return domain.ActionItem{}, mapAppError("update actionItem", err)

@@ -1061,12 +1061,13 @@ func TestCreateActionItemMoveSearchAndDeleteModes(t *testing.T) {
 	}
 
 	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID:   project.ID,
-		ColumnID:    col1.ID,
-		Title:       "Fix parser",
-		Description: "Add tests for parser",
-		Priority:    domain.PriorityHigh,
-		Labels:      []string{"parser"},
+		ProjectID:      project.ID,
+		ColumnID:       col1.ID,
+		Title:          "Fix parser",
+		Description:    "Add tests for parser",
+		Priority:       domain.PriorityHigh,
+		Labels:         []string{"parser"},
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -1144,11 +1145,12 @@ func TestRestoreActionItemUsesRequestActorContext(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID:     project.ID,
-		ColumnID:      column.ID,
-		Title:         "archived actionItem",
-		Priority:      domain.PriorityMedium,
-		UpdatedByType: domain.ActorTypeUser,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "archived actionItem",
+		Priority:       domain.PriorityMedium,
+		UpdatedByType:  domain.ActorTypeUser,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -1208,10 +1210,11 @@ func TestRestoreActionItemRequiresLeaseForNonUserCaller(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Title:     "archived actionItem",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "archived actionItem",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -1365,6 +1368,7 @@ func TestCreateActionItemCarriesHumanActorName(t *testing.T) {
 		CreatedByActor: "user-1",
 		CreatedByName:  "Evan Schultz",
 		UpdatedByType:  domain.ActorTypeUser,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -2140,13 +2144,14 @@ func TestServiceCreateAndUpdateActionItemEnqueueEmbeddingLifecycle(t *testing.T)
 	})
 
 	created, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID:     project.ID,
-		ColumnID:      column.ID,
-		Title:         "Ship search",
-		Description:   "Finalize ranking",
-		Priority:      domain.PriorityMedium,
-		Labels:        []string{"search", "vector"},
-		UpdatedByType: domain.ActorTypeUser,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Ship search",
+		Description:    "Finalize ranking",
+		Priority:       domain.PriorityMedium,
+		Labels:         []string{"search", "vector"},
+		UpdatedByType:  domain.ActorTypeUser,
+		StructuralType: domain.StructuralTypeDroplet,
 		Metadata: domain.ActionItemMetadata{
 			Objective:          "Stabilize search quality",
 			AcceptanceCriteria: "Rank semantic matches first",
@@ -4113,12 +4118,13 @@ func TestIssueCapabilityLeaseDistinctIdentitiesBranchScope(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindPlan,
-		Scope:     domain.KindAppliesToPlan,
-		Title:     "Branch A",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
+		Title:          "Branch A",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(branch) error = %v", err)
@@ -4192,6 +4198,7 @@ func TestCreateActionItemMutationGuardRequiredForAgent(t *testing.T) {
 		CreatedByActor: "agent-1",
 		UpdatedByActor: "agent-1",
 		UpdatedByType:  domain.ActorTypeAgent,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != domain.ErrMutationLeaseRequired {
 		t.Fatalf("expected ErrMutationLeaseRequired, got %v", err)
@@ -4221,6 +4228,7 @@ func TestCreateActionItemMutationGuardRequiredForAgent(t *testing.T) {
 		CreatedByActor: "agent-1",
 		UpdatedByActor: "agent-1",
 		UpdatedByType:  domain.ActorTypeAgent,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(guarded) error = %v", err)
@@ -4263,36 +4271,39 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindPlan,
-		Scope:     domain.KindAppliesToPlan,
-		Title:     "Branch A",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
+		Title:          "Branch A",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 	phase, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ParentID:  branch.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindDiscussion,
-		Scope:     domain.KindAppliesToDiscussion,
-		Title:     "Phase A",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ParentID:       branch.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindDiscussion,
+		Scope:          domain.KindAppliesToDiscussion,
+		Title:          "Phase A",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(phase) error = %v", err)
 	}
 	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ParentID:  phase.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindPlan,
-		Scope:     domain.KindAppliesToPlan,
-		Title:     "ActionItem A1",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ParentID:       phase.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
+		Title:          "ActionItem A1",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(actionItem) error = %v", err)
@@ -4355,6 +4366,7 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 		CreatedByActor: "phase-agent",
 		UpdatedByActor: "phase-agent",
 		UpdatedByType:  domain.ActorTypeAgent,
+		StructuralType: domain.StructuralTypeDroplet,
 	}); err != nil {
 		t.Fatalf("CreateActionItem(phase scoped) error = %v", err)
 	}
@@ -4415,48 +4427,52 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	branch, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindPlan,
-		Scope:     domain.KindAppliesToPlan,
-		Title:     "Branch",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
+		Title:          "Branch",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(branch) error = %v", err)
 	}
 	phaseA, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ParentID:  branch.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindDiscussion,
-		Scope:     domain.KindAppliesToDiscussion,
-		Title:     "Phase A",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ParentID:       branch.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindDiscussion,
+		Scope:          domain.KindAppliesToDiscussion,
+		Title:          "Phase A",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(phaseA) error = %v", err)
 	}
 	phaseB, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ParentID:  branch.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindDiscussion,
-		Scope:     domain.KindAppliesToDiscussion,
-		Title:     "Phase B",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ParentID:       branch.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindDiscussion,
+		Scope:          domain.KindAppliesToDiscussion,
+		Title:          "Phase B",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(phaseB) error = %v", err)
 	}
 	actionItemB, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ParentID:  phaseB.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindPlan,
-		Scope:     domain.KindAppliesToPlan,
-		Title:     "ActionItem B1",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ParentID:       phaseB.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
+		Title:          "ActionItem B1",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(actionItemB) error = %v", err)
@@ -4504,6 +4520,7 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 		CreatedByActor: "phase-a-agent",
 		UpdatedByActor: "phase-a-agent",
 		UpdatedByType:  domain.ActorTypeAgent,
+		StructuralType: domain.StructuralTypeDroplet,
 	}); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
 		t.Fatalf("CreateActionItem(out of scope) error = %v, want ErrMutationLeaseInvalid", err)
 	}
@@ -4550,24 +4567,26 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	}
 
 	_, err = svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindRefinement,
-		Title:     "invalid payload",
-		Priority:  domain.PriorityMedium,
-		Metadata:  domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"missing":"value"}`)},
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindRefinement,
+		Title:          "invalid payload",
+		Priority:       domain.PriorityMedium,
+		Metadata:       domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"missing":"value"}`)},
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if !errors.Is(err, domain.ErrInvalidKindPayload) {
 		t.Fatalf("expected ErrInvalidKindPayload, got %v", err)
 	}
 
 	created, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindRefinement,
-		Title:     "valid payload",
-		Priority:  domain.PriorityMedium,
-		Metadata:  domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"package":"internal/app"}`)},
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindRefinement,
+		Title:          "valid payload",
+		Priority:       domain.PriorityMedium,
+		Metadata:       domain.ActionItemMetadata{KindPayload: json.RawMessage(`{"package":"internal/app"}`)},
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(valid payload) error = %v", err)
@@ -4599,21 +4618,23 @@ func TestReparentActionItemRejectsCycle(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	parent, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Title:     "parent",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "parent",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(parent) error = %v", err)
 	}
 	child, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ParentID:  parent.ID,
-		Kind:      domain.KindBuild,
-		ColumnID:  column.ID,
-		Title:     "child",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ParentID:       parent.ID,
+		Kind:           domain.KindBuild,
+		ColumnID:       column.ID,
+		Title:          "child",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(child) error = %v", err)

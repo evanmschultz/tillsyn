@@ -61,6 +61,7 @@ func newActorAttributionAdapterFixture(t *testing.T) (*AppServiceAdapter, *app.S
 		CreatedByActor: "seed-user",
 		UpdatedByActor: "seed-user",
 		UpdatedByType:  domain.ActorTypeUser,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)

@@ -410,7 +410,13 @@ type CreateActionItemInput struct {
 	// builder, qa-proof, planner). Empty string is permitted; non-empty
 	// values must match the closed Role enum or domain.NewActionItem returns
 	// ErrInvalidRole.
-	Role           domain.Role
+	Role domain.Role
+	// StructuralType places the action item on the cascade tree's shape
+	// axis (drop|segment|confluence|droplet). Empty is REJECTED on create —
+	// domain.NewActionItem returns ErrInvalidStructuralType. This diverges
+	// from Role's permissive empty: the cascade-methodology shape axis is
+	// mandatory at creation time.
+	StructuralType domain.StructuralType
 	ColumnID       string
 	Title          string
 	Description    string
@@ -436,11 +442,17 @@ type UpdateActionItemInput struct {
 	// Role optionally updates the action item's closed-enum role. Empty
 	// string preserves the existing value (no-op). A non-empty value must
 	// match the closed Role enum or the service returns ErrInvalidRole.
-	Role          domain.Role
-	Metadata      *domain.ActionItemMetadata
-	UpdatedBy     string
-	UpdatedByName string
-	UpdatedType   domain.ActorType
+	Role domain.Role
+	// StructuralType optionally updates the action item's closed-enum
+	// structural type. Empty preserves the existing value (no-op) — mirrors
+	// Role's required-on-create / optional-on-update split. A non-empty
+	// value must match the closed StructuralType enum or the service
+	// returns ErrInvalidStructuralType.
+	StructuralType domain.StructuralType
+	Metadata       *domain.ActionItemMetadata
+	UpdatedBy      string
+	UpdatedByName  string
+	UpdatedType    domain.ActorType
 }
 
 // CreateCommentInput holds input values for create comment operations.
@@ -572,18 +584,13 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 	}
 
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
-		ID:        s.idGen(),
-		ProjectID: in.ProjectID,
-		ParentID:  in.ParentID,
-		Kind:      domain.Kind(kindDef.ID),
-		Scope:     scope,
-		Role:      in.Role,
-		// StructuralType defaults to droplet — the dominant cascade-leaf
-		// shape — until CreateActionItemInput grows a StructuralType field
-		// in a follow-up droplet that threads it through the CLI / MCP
-		// surfaces. NewActionItem rejects empty StructuralType with
-		// ErrInvalidStructuralType, so the default must be supplied here.
-		StructuralType: domain.StructuralTypeDroplet,
+		ID:             s.idGen(),
+		ProjectID:      in.ProjectID,
+		ParentID:       in.ParentID,
+		Kind:           domain.Kind(kindDef.ID),
+		Scope:          scope,
+		Role:           in.Role,
+		StructuralType: in.StructuralType,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,
@@ -796,6 +803,18 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 			return domain.ActionItem{}, domain.ErrInvalidRole
 		}
 		actionItem.Role = normalized
+		actionItem.UpdatedAt = s.clock().UTC()
+	}
+	// StructuralType update: empty input preserves the existing value
+	// (no-op) — mirrors Role's required-on-create / optional-on-update
+	// split. A non-empty input is normalized + validated against the
+	// closed StructuralType enum; mismatches surface as
+	// ErrInvalidStructuralType.
+	if normalized := domain.NormalizeStructuralType(in.StructuralType); normalized != "" {
+		if !domain.IsValidStructuralType(normalized) {
+			return domain.ActionItem{}, domain.ErrInvalidStructuralType
+		}
+		actionItem.StructuralType = normalized
 		actionItem.UpdatedAt = s.clock().UTC()
 	}
 	if in.Metadata != nil {

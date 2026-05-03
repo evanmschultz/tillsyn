@@ -136,11 +136,12 @@ func TestUpdateActionItemRejectsInvalidOutcome(t *testing.T) {
 	}
 
 	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
-		ProjectID: project.ID,
-		ColumnID:  todo.ID,
-		Title:     "ActionItem for outcome test",
-		Priority:  "medium",
-		Actor:     actor,
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		Title:          "ActionItem for outcome test",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -217,12 +218,13 @@ func TestCreateActionItemRejectsInvalidOutcome(t *testing.T) {
 
 	// Creating a actionItem with an invalid outcome should fail.
 	_, err = fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
-		ProjectID: project.ID,
-		ColumnID:  todo.ID,
-		Title:     "ActionItem with invalid outcome",
-		Priority:  "medium",
-		Metadata:  domain.ActionItemMetadata{Outcome: "banana"},
-		Actor:     actor,
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		Title:          "ActionItem with invalid outcome",
+		Priority:       "medium",
+		Metadata:       domain.ActionItemMetadata{Outcome: "banana"},
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
 	})
 	if err == nil {
 		t.Fatal("CreateActionItem() expected error for invalid outcome 'banana', got nil")
@@ -233,12 +235,13 @@ func TestCreateActionItemRejectsInvalidOutcome(t *testing.T) {
 
 	// Creating a actionItem with a valid outcome should succeed.
 	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
-		ProjectID: project.ID,
-		ColumnID:  todo.ID,
-		Title:     "ActionItem with valid outcome",
-		Priority:  "medium",
-		Metadata:  domain.ActionItemMetadata{Outcome: "success"},
-		Actor:     actor,
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		Title:          "ActionItem with valid outcome",
+		Priority:       "medium",
+		Metadata:       domain.ActionItemMetadata{Outcome: "success"},
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() unexpected error = %v", err)
@@ -249,11 +252,12 @@ func TestCreateActionItemRejectsInvalidOutcome(t *testing.T) {
 
 	// Creating a actionItem with empty outcome (default) should succeed.
 	_, err = fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
-		ProjectID: project.ID,
-		ColumnID:  todo.ID,
-		Title:     "ActionItem with empty outcome",
-		Priority:  "medium",
-		Actor:     actor,
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		Title:          "ActionItem with empty outcome",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() with empty outcome unexpected error = %v", err)

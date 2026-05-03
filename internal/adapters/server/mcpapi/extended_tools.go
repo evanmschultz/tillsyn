@@ -864,6 +864,7 @@ func registerActionItemTools(
 				Kind            string                     `json:"kind"`
 				Scope           string                     `json:"scope"`
 				Role            string                     `json:"role"`
+				StructuralType  string                     `json:"structural_type"`
 				ColumnID        string                     `json:"column_id"`
 				Title           string                     `json:"title"`
 				Description     string                     `json:"description"`
@@ -1031,19 +1032,20 @@ func registerActionItemTools(
 					metadata = *args.Metadata
 				}
 				actionItem, err := tasks.CreateActionItem(ctx, common.CreateActionItemRequest{
-					ProjectID:   args.ProjectID,
-					ParentID:    args.ParentID,
-					Kind:        args.Kind,
-					Scope:       args.Scope,
-					Role:        args.Role,
-					ColumnID:    args.ColumnID,
-					Title:       args.Title,
-					Description: args.Description,
-					Priority:    args.Priority,
-					DueAt:       args.DueAt,
-					Labels:      append([]string(nil), args.Labels...),
-					Metadata:    metadata,
-					Actor:       actor,
+					ProjectID:      args.ProjectID,
+					ParentID:       args.ParentID,
+					Kind:           args.Kind,
+					Scope:          args.Scope,
+					Role:           args.Role,
+					StructuralType: args.StructuralType,
+					ColumnID:       args.ColumnID,
+					Title:          args.Title,
+					Description:    args.Description,
+					Priority:       args.Priority,
+					DueAt:          args.DueAt,
+					Labels:         append([]string(nil), args.Labels...),
+					Metadata:       metadata,
+					Actor:          actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1090,15 +1092,16 @@ func registerActionItemTools(
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 				actionItem, err := tasks.UpdateActionItem(ctx, common.UpdateActionItemRequest{
-					ActionItemID: args.ActionItemID,
-					Title:        args.Title,
-					Description:  args.Description,
-					Priority:     args.Priority,
-					DueAt:        args.DueAt,
-					Labels:       append([]string(nil), args.Labels...),
-					Role:         args.Role,
-					Metadata:     args.Metadata,
-					Actor:        actor,
+					ActionItemID:   args.ActionItemID,
+					Title:          args.Title,
+					Description:    args.Description,
+					Priority:       args.Priority,
+					DueAt:          args.DueAt,
+					Labels:         append([]string(nil), args.Labels...),
+					Role:           args.Role,
+					StructuralType: args.StructuralType,
+					Metadata:       args.Metadata,
+					Actor:          actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1368,6 +1371,7 @@ func registerActionItemTools(
 				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),
 				mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 				mcp.WithString("role", mcp.Description("Optional role tag for operation=create|update — see allowed values (closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research). Empty string preserves the existing value on update.")),
+				mcp.WithString("structural_type", mcp.Description("Required for operation=create — closed enum: drop|segment|confluence|droplet (waterfall metaphor — see WIKI.md §Cascade Vocabulary). Empty rejects on create. Empty preserves prior value on update."), mcp.Enum("drop", "segment", "confluence", "droplet")),
 				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
@@ -1422,6 +1426,7 @@ func registerActionItemTools(
 					mcp.WithString("kind", mcp.Description("Kind identifier")),
 					mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
 					mcp.WithString("role", mcp.Description("Optional role tag — closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research")),
+					mcp.WithString("structural_type", mcp.Description("Required for operation=create — closed enum: drop|segment|confluence|droplet (waterfall metaphor — see WIKI.md §Cascade Vocabulary). Empty rejects on create. Empty preserves prior value on update."), mcp.Enum("drop", "segment", "confluence", "droplet")),
 					mcp.WithString("description", mcp.Description("ActionItem details in markdown-rich text")),
 					mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
@@ -1449,6 +1454,7 @@ func registerActionItemTools(
 					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 					mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
 					mcp.WithString("role", mcp.Description("Optional role tag — closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research. Empty preserves prior value.")),
+					mcp.WithString("structural_type", mcp.Description("Optional structural-type update — closed enum: drop|segment|confluence|droplet (waterfall metaphor — see WIKI.md §Cascade Vocabulary). Empty preserves prior value."), mcp.Enum("drop", "segment", "confluence", "droplet")),
 					mcp.WithObject("metadata", mcp.Description("Optional actionItem metadata object")),
 					mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
 					mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),

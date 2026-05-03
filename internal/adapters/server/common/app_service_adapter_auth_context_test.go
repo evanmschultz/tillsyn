@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
@@ -227,9 +228,16 @@ func newAuthScopeFixtureForTest(t *testing.T) authScopeFixture {
 }
 
 // mustCreateActionItemForTest creates one fixture work item or fails the test.
+// Empty StructuralType is defaulted to domain.StructuralTypeDroplet so legacy
+// fixture rows (which predate droplet 3.4's required-on-create rule) keep
+// round-tripping through the adapter chain. Tests that need a specific
+// structural type still set it explicitly.
 func mustCreateActionItemForTest(t *testing.T, svc *app.Service, in app.CreateActionItemInput) domain.ActionItem {
 	t.Helper()
 
+	if strings.TrimSpace(string(in.StructuralType)) == "" {
+		in.StructuralType = domain.StructuralTypeDroplet
+	}
 	actionItem, err := svc.CreateActionItem(context.Background(), in)
 	if err != nil {
 		t.Fatalf("CreateActionItem(%q) error = %v", in.Title, err)

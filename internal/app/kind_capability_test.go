@@ -358,12 +358,13 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 	// lease-guard paths using a plan-kind action item against an
 	// action-item-scoped lease.
 	planItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindPlan,
-		Scope:     domain.KindAppliesToPlan,
-		Title:     "Plan A",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
+		Title:          "Plan A",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(plan) error = %v", err)
@@ -442,12 +443,13 @@ func TestCreateActionItemKindMergesCompletionChecklist(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	parent, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID:   project.ID,
-		ColumnID:    column.ID,
-		Title:       "Parent ActionItem",
-		Description: "Template parent",
-		Kind:        domain.KindPlan,
-		Scope:       domain.KindAppliesToPlan,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Parent ActionItem",
+		Description:    "Template parent",
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(plan) error = %v", err)
@@ -491,10 +493,11 @@ func TestCreateActionItemRejectsExternalSystemBypass(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	if _, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID:     project.ID,
-		ColumnID:      column.ID,
-		Title:         "Illicit system create",
-		UpdatedByType: domain.ActorTypeSystem,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Illicit system create",
+		UpdatedByType:  domain.ActorTypeSystem,
+		StructuralType: domain.StructuralTypeDroplet,
 	}); !errors.Is(err, domain.ErrMutationLeaseRequired) {
 		t.Fatalf("CreateActionItem(system without internal marker) error = %v, want ErrMutationLeaseRequired", err)
 	}
@@ -519,24 +522,26 @@ func TestIssueCapabilityLeaseParentDelegationPolicy(t *testing.T) {
 	// project-scoped orchestrator parent delegating to an action-item-scoped
 	// child, reflecting the only non-equal-scope path still reachable.
 	planItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindPlan,
-		Scope:     domain.KindAppliesToPlan,
-		Title:     "Plan A",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
+		Title:          "Plan A",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(plan) error = %v", err)
 	}
 	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ParentID:  planItem.ID,
-		ColumnID:  column.ID,
-		Kind:      domain.KindBuild,
-		Scope:     domain.KindAppliesToBuild,
-		Title:     "Build A",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ParentID:       planItem.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindBuild,
+		Scope:          domain.KindAppliesToBuild,
+		Title:          "Build A",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(build) error = %v", err)
@@ -683,10 +688,11 @@ func TestQALeaseActionPolicy(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Title:     "ActionItem A",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "ActionItem A",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)

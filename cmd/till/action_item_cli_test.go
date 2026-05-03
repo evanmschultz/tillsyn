@@ -205,22 +205,24 @@ func newActionItemCLIServiceForTest(t *testing.T) (*app.Service, string, string,
 	svc := app.NewService(repo, idGen, clk, app.ServiceConfig{})
 
 	root, err := svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Title:     "Root action item",
-		Kind:      domain.KindPlan,
-		Scope:     domain.KindAppliesToPlan,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Root action item",
+		Kind:           domain.KindPlan,
+		Scope:          domain.KindAppliesToPlan,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(root) error = %v", err)
 	}
 	child, err := svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		ParentID:  root.ID,
-		Title:     "Child action item",
-		Kind:      domain.KindBuild,
-		Scope:     domain.KindAppliesToBuild,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		ParentID:       root.ID,
+		Title:          "Child action item",
+		Kind:           domain.KindBuild,
+		Scope:          domain.KindAppliesToBuild,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem(child) error = %v", err)

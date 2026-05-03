@@ -686,10 +686,11 @@ func TestRepository_ServiceCreateCommentPersistsContextActorName(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := svc.CreateActionItem(baseCtx, app.CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Title:     "ActionItem",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "ActionItem",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -1518,6 +1519,7 @@ func TestRepository_ServiceCreateActionItemPersistsHumanActorName(t *testing.T) 
 		CreatedByActor: "user-1",
 		CreatedByName:  "Evan Schultz",
 		UpdatedByType:  domain.ActorTypeUser,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)

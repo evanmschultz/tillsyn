@@ -40,6 +40,7 @@ func TestServiceRaiseListResolveAttentionItem(t *testing.T) {
 		UpdatedByType:  domain.ActorTypeUser,
 		UpdatedByActor: "user-1",
 		CreatedByActor: "user-1",
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -187,6 +188,7 @@ func TestRaiseAttentionItemValidatesScopeEntityConsistency(t *testing.T) {
 		UpdatedByType:  domain.ActorTypeUser,
 		UpdatedByActor: "user-1",
 		CreatedByActor: "user-1",
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
@@ -319,10 +321,11 @@ func TestCaptureStateSummary(t *testing.T) {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
 	actionItem, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
-		ProjectID: project.ID,
-		ColumnID:  column.ID,
-		Title:     "Focus actionItem",
-		Priority:  domain.PriorityMedium,
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Focus actionItem",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)

@@ -11584,10 +11584,12 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.actionItemFormResourceEditIndex = -1
 		m.traceFormControlCharacterGuard("actionItem", "create", "title", title)
 		m.traceFormControlCharacterGuard("actionItem", "create", "description", vals["description"])
+		// Drop 3 placeholder default — TUI picker is Drop 4.5.
 		return m.createActionItem(app.CreateActionItemInput{
 			ParentID:       parentID,
 			Kind:           kind,
 			Scope:          scope,
+			StructuralType: domain.StructuralTypeDroplet,
 			Title:          title,
 			Description:    vals["description"],
 			Priority:       priority,
