@@ -736,7 +736,6 @@ func TestRunSubcommandHelp(t *testing.T) {
 	forms := []string{"--help", "-h", "help", "h"}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			baseArgs := tc.args[:len(tc.args)-1]
 			var reference string
@@ -2067,7 +2066,6 @@ func TestRunHelpPathsDoNotSeedMissingConfig(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			var out strings.Builder
 			if err := run(context.Background(), tc.args, &out, io.Discard); err != nil {
@@ -2174,7 +2172,6 @@ func TestResolveRuntimePathsCommandsShareDefaultNonDevRuntime(t *testing.T) {
 	}
 	commands := []string{"", "mcp", "serve"}
 	for _, command := range commands {
-		command := command
 		t.Run(firstNonEmpty(command, "root"), func(t *testing.T) {
 			got, err := resolveRuntimePaths(command, rootCommandOptions{
 				appName: "tillsyn",
@@ -3188,7 +3185,6 @@ func TestEnsureLoggingSectionDebug(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			got := ensureLoggingSectionDebug(tc.in)
 			if strings.Count(got, "[logging]") != 1 {
