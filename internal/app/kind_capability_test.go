@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
 // boolPtr returns a pointer to one bool value.
@@ -115,6 +117,246 @@ func TestServiceListKindDefinitionsAndUpsert(t *testing.T) {
 		if prev.DisplayName > next.DisplayName {
 			t.Fatalf("kinds not sorted at index %d: %q > %q", idx, prev.DisplayName, next.DisplayName)
 		}
+	}
+}
+
+// templateRejectionTestCase parameterizes one reverse-hierarchy prohibition
+// covered by Drop 3 droplet 3.16's e2e contract. Each row spells out the
+// parent kind, the child kind, and the catalog rule fragment that produces
+// the rejection (mirroring the four prohibitions PLAN.md § 19.3 line 1638
+// enumerates: closeout-no-closeout-parent, commit-no-plan-child,
+// human-verify-no-build-child, build-qa-*-no-plan-child).
+type templateRejectionTestCase struct {
+	name        string
+	parentKind  domain.Kind
+	childKind   domain.Kind
+	wantReason  string // substring assertion; AllowsNesting prepends `kind %q ...`
+	commentBody string // substring assertion; recordTemplateRejectionAudit body
+}
+
+// templateRejectionDefaultCatalog bakes the four reverse-hierarchy
+// prohibitions onto a project so droplet 3.16 e2e tests can exercise the
+// rejection path without depending on the embedded default.toml file load
+// order. The Kinds map mirrors the prohibitions encoded in
+// internal/templates/builtin/default.toml — every kind enumerated in the
+// closeout / commit / human-verify / build-qa-* allowed_child_kinds rows
+// EXCEPT the prohibited child.
+func templateRejectionDefaultCatalog() templates.KindCatalog {
+	allKindsExcept := func(excluded domain.Kind) []domain.Kind {
+		all := []domain.Kind{
+			domain.KindPlan,
+			domain.KindResearch,
+			domain.KindBuild,
+			domain.KindPlanQAProof,
+			domain.KindPlanQAFalsification,
+			domain.KindBuildQAProof,
+			domain.KindBuildQAFalsification,
+			domain.KindCloseout,
+			domain.KindCommit,
+			domain.KindRefinement,
+			domain.KindDiscussion,
+			domain.KindHumanVerify,
+		}
+		out := make([]domain.Kind, 0, len(all)-1)
+		for _, k := range all {
+			if k != excluded {
+				out = append(out, k)
+			}
+		}
+		return out
+	}
+
+	tpl := templates.Template{
+		SchemaVersion: templates.SchemaVersionV1,
+		Kinds: map[domain.Kind]templates.KindRule{
+			domain.KindPlan: {
+				StructuralType: domain.StructuralTypeDroplet,
+			},
+			domain.KindBuild: {
+				StructuralType: domain.StructuralTypeDroplet,
+			},
+			domain.KindCloseout: {
+				Owner:             "STEWARD",
+				AllowedChildKinds: allKindsExcept(domain.KindCloseout),
+				StructuralType:    domain.StructuralTypeDroplet,
+			},
+			domain.KindCommit: {
+				AllowedChildKinds: allKindsExcept(domain.KindPlan),
+				StructuralType:    domain.StructuralTypeDroplet,
+			},
+			domain.KindHumanVerify: {
+				AllowedChildKinds: allKindsExcept(domain.KindBuild),
+				StructuralType:    domain.StructuralTypeDroplet,
+			},
+			domain.KindBuildQAProof: {
+				AllowedChildKinds: allKindsExcept(domain.KindPlan),
+				StructuralType:    domain.StructuralTypeDroplet,
+			},
+			domain.KindBuildQAFalsification: {
+				AllowedChildKinds: allKindsExcept(domain.KindPlan),
+				StructuralType:    domain.StructuralTypeDroplet,
+			},
+		},
+	}
+	return templates.Bake(tpl)
+}
+
+// TestCreateActionItemTemplateRejectionAuditTrail covers droplet 3.16's
+// acceptance contract: every Template.AllowsNesting → false rejection at
+// the auth-gated CreateActionItem boundary writes a till.comment on the
+// parent + an attention_item with kind = template_rejection. Coverage
+// hits all four reverse-hierarchy prohibitions PLAN.md § 19.3 line 1638
+// names: closeout-no-closeout-parent, commit-no-plan-child,
+// human-verify-no-build-child, build-qa-*-no-plan-child.
+func TestCreateActionItemTemplateRejectionAuditTrail(t *testing.T) {
+	cases := []templateRejectionTestCase{
+		{
+			name:        "closeout cannot parent another closeout",
+			parentKind:  domain.KindCloseout,
+			childKind:   domain.KindCloseout,
+			wantReason:  "not in allowed_child_kinds",
+			commentBody: "Parent kind: `closeout`",
+		},
+		{
+			name:        "commit cannot parent a plan",
+			parentKind:  domain.KindCommit,
+			childKind:   domain.KindPlan,
+			wantReason:  "not in allowed_child_kinds",
+			commentBody: "Parent kind: `commit`",
+		},
+		{
+			name:        "human-verify cannot parent a build",
+			parentKind:  domain.KindHumanVerify,
+			childKind:   domain.KindBuild,
+			wantReason:  "not in allowed_child_kinds",
+			commentBody: "Parent kind: `human-verify`",
+		},
+		{
+			name:        "build-qa-falsification cannot parent a plan",
+			parentKind:  domain.KindBuildQAFalsification,
+			childKind:   domain.KindPlan,
+			wantReason:  "not in allowed_child_kinds",
+			commentBody: "Parent kind: `build-qa-falsification`",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+			svc := newDeterministicService(repo, now, ServiceConfig{})
+
+			project, err := svc.CreateProject(context.Background(), "Template Rejection", "")
+			if err != nil {
+				t.Fatalf("CreateProject() error = %v", err)
+			}
+
+			// Bake the four-prohibition catalog onto the project so the
+			// nesting check observes the same rules as
+			// internal/templates/builtin/default.toml.
+			catalog := templateRejectionDefaultCatalog()
+			encoded, err := json.Marshal(catalog)
+			if err != nil {
+				t.Fatalf("json.Marshal(catalog) error = %v", err)
+			}
+			project.KindCatalogJSON = encoded
+			if err := repo.UpdateProject(context.Background(), project); err != nil {
+				t.Fatalf("UpdateProject() error = %v", err)
+			}
+
+			column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+			if err != nil {
+				t.Fatalf("CreateColumn() error = %v", err)
+			}
+
+			// Create the parent at top level (no grandparent so the parent
+			// itself bypasses the nesting check). The catalog still has a
+			// matching kind for the parent so the resolver's project-
+			// allowlist + AppliesToScope gates pass.
+			parent, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+				ProjectID:      project.ID,
+				ColumnID:       column.ID,
+				Kind:           tc.parentKind,
+				Title:          "PARENT-" + string(tc.parentKind),
+				Priority:       domain.PriorityMedium,
+				StructuralType: domain.StructuralTypeDroplet,
+				CreatedByActor: "user-1",
+				UpdatedByActor: "user-1",
+				UpdatedByType:  domain.ActorTypeUser,
+			})
+			if err != nil {
+				t.Fatalf("CreateActionItem(parent %q) error = %v", tc.parentKind, err)
+			}
+
+			// Now create the prohibited child — must fail with
+			// ErrKindNotAllowed wrapping the catalog's rejection reason.
+			_, err = svc.CreateActionItem(context.Background(), CreateActionItemInput{
+				ProjectID:      project.ID,
+				ParentID:       parent.ID,
+				ColumnID:       column.ID,
+				Kind:           tc.childKind,
+				Title:          "CHILD-" + string(tc.childKind),
+				Priority:       domain.PriorityMedium,
+				StructuralType: domain.StructuralTypeDroplet,
+				CreatedByActor: "user-1",
+				UpdatedByActor: "user-1",
+				UpdatedByType:  domain.ActorTypeUser,
+			})
+			if !errors.Is(err, domain.ErrKindNotAllowed) {
+				t.Fatalf("CreateActionItem(child %q under %q) error = %v, want ErrKindNotAllowed", tc.childKind, tc.parentKind, err)
+			}
+			if !strings.Contains(err.Error(), tc.wantReason) {
+				t.Fatalf("CreateActionItem error = %q, want substring %q", err.Error(), tc.wantReason)
+			}
+
+			// Assert audit-trail comment was written on the parent.
+			comments, err := repo.ListCommentsByTarget(context.Background(), domain.CommentTarget{
+				ProjectID:  project.ID,
+				TargetType: domain.CommentTargetTypeActionItem,
+				TargetID:   parent.ID,
+			})
+			if err != nil {
+				t.Fatalf("ListCommentsByTarget() error = %v", err)
+			}
+			if len(comments) != 1 {
+				t.Fatalf("ListCommentsByTarget() count = %d, want 1", len(comments))
+			}
+			comment := comments[0]
+			if !strings.Contains(comment.BodyMarkdown, tc.commentBody) {
+				t.Fatalf("comment body = %q, want substring %q", comment.BodyMarkdown, tc.commentBody)
+			}
+			if !strings.Contains(comment.BodyMarkdown, tc.wantReason) {
+				t.Fatalf("comment body = %q, want rejection reason substring %q", comment.BodyMarkdown, tc.wantReason)
+			}
+			if comment.ActorType != domain.ActorTypeUser {
+				t.Fatalf("comment ActorType = %q, want %q", comment.ActorType, domain.ActorTypeUser)
+			}
+
+			// Assert attention item with kind = template_rejection was
+			// written scoped to the parent action item.
+			items, err := repo.ListAttentionItems(context.Background(), domain.AttentionListFilter{
+				ProjectID: project.ID,
+				ScopeType: domain.ScopeLevelActionItem,
+				ScopeID:   parent.ID,
+				Kinds:     []domain.AttentionKind{domain.AttentionKindTemplateRejection},
+			})
+			if err != nil {
+				t.Fatalf("ListAttentionItems() error = %v", err)
+			}
+			if len(items) != 1 {
+				t.Fatalf("ListAttentionItems(template_rejection) count = %d, want 1", len(items))
+			}
+			item := items[0]
+			if item.Kind != domain.AttentionKindTemplateRejection {
+				t.Fatalf("attention Kind = %q, want %q", item.Kind, domain.AttentionKindTemplateRejection)
+			}
+			if !strings.Contains(item.BodyMarkdown, tc.wantReason) {
+				t.Fatalf("attention body = %q, want rejection reason substring %q", item.BodyMarkdown, tc.wantReason)
+			}
+			if !item.RequiresUserAction {
+				t.Fatal("attention RequiresUserAction = false, want true")
+			}
+		})
 	}
 }
 

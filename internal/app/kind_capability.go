@@ -663,6 +663,139 @@ func (s *Service) lookupKindDefinitionFromCatalog(ctx context.Context, projectID
 	return synthesizeKindDefinitionFromCatalog(kindID), catalog, true, nil
 }
 
+// recordTemplateRejectionAudit writes the audit-trail comment + attention
+// item that Drop 3 droplet 3.16 requires on every Template.AllowsNesting →
+// false rejection at the auth-gated CreateActionItem boundary. The
+// comment carries the rejection reason verbatim; the attention item
+// surfaces the same reason to the dev with kind = template_rejection.
+//
+// Both writes use the existing actor_type=user/actor_type=agent attribution
+// model — no new principal type is introduced (per droplet 3.16 acceptance
+// criterion + Unit B's architectural note that audit-trail is independent
+// of Unit C STEWARD work).
+//
+// Errors persisting either row bubble up so the create path returns an
+// audit-failed error rather than a silent half-write.
+func (s *Service) recordTemplateRejectionAudit(ctx context.Context, parent domain.ActionItem, childKind domain.Kind, reason string, actor MutationActor) error {
+	now := s.clock()
+	parentKind := domain.Kind(parent.Kind)
+	body := templateRejectionCommentBody(parentKind, childKind, reason)
+	summary := templateRejectionSummary(parentKind, childKind)
+
+	commentID := strings.TrimSpace(s.idGen())
+	if commentID == "" {
+		commentID = fmt.Sprintf("template-rejection-comment-%d", now.UTC().UnixNano())
+	}
+	comment, err := domain.NewComment(domain.CommentInput{
+		ID:           commentID,
+		ProjectID:    parent.ProjectID,
+		TargetType:   domain.CommentTargetTypeActionItem,
+		TargetID:     parent.ID,
+		Summary:      summary,
+		BodyMarkdown: body,
+		ActorID:      actor.ActorID,
+		ActorName:    actor.ActorName,
+		ActorType:    actor.ActorType,
+	}, now)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.CreateComment(ctx, comment); err != nil {
+		return err
+	}
+
+	attentionID := strings.TrimSpace(s.idGen())
+	if attentionID == "" {
+		attentionID = fmt.Sprintf("template-rejection-attention-%d", now.UTC().UnixNano())
+	}
+	item, err := domain.NewAttentionItem(domain.AttentionItemInput{
+		ID:                 attentionID,
+		ProjectID:          parent.ProjectID,
+		ScopeType:          domain.ScopeLevelActionItem,
+		ScopeID:            parent.ID,
+		Kind:               domain.AttentionKindTemplateRejection,
+		Summary:            summary,
+		BodyMarkdown:       body,
+		RequiresUserAction: true,
+		CreatedByActor:     actor.ActorID,
+		CreatedByType:      actor.ActorType,
+	}, now)
+	if err != nil {
+		return err
+	}
+	return s.repo.CreateAttentionItem(ctx, item)
+}
+
+// templateRejectionSummary renders the short subject for the audit pair.
+// Format names parent and child kind so the dev can identify the rejection
+// at a glance.
+func templateRejectionSummary(parentKind, childKind domain.Kind) string {
+	return fmt.Sprintf("template rejection: %q cannot nest under %q", childKind, parentKind)
+}
+
+// templateRejectionCommentBody renders the markdown body for the rejection
+// comment + attention item. Includes the rejection reason from
+// AllowsNesting verbatim per droplet 3.16 acceptance criterion.
+func templateRejectionCommentBody(parentKind, childKind domain.Kind, reason string) string {
+	lines := []string{
+		fmt.Sprintf("Parent kind: `%s`", parentKind),
+		fmt.Sprintf("Child kind:  `%s`", childKind),
+		"",
+		"Rejection reason:",
+		"",
+		strings.TrimSpace(reason),
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// templateNestingDecision runs the project's KindCatalog.AllowsNesting gate
+// for one (parent, child) pair. It returns (true, "", nil) when no catalog
+// rule applies — the project has no baked KindCatalogJSON, the envelope is
+// malformed (soft fallback per droplet 3.12), or the catalog's Kinds map
+// does not record the parent kind. Otherwise it returns the catalog's
+// decision verbatim from KindCatalog.AllowsNesting (per droplet 3.10).
+//
+// Per Drop 3 droplet 3.16 the create boundary calls this BEFORE
+// resolveActionItemKindDefinition so the audit-trail comment + attention
+// item can fire with the rejection reason captured. Update + Reparent paths
+// do NOT call this helper — finding 5.B.15 narrows the audit trail to the
+// auth-gated create boundary; reverse-hierarchy rejections on those paths
+// still bubble through resolveActionItemKindDefinition's own check.
+//
+// The helper returns a non-nil err only on hard repo failure fetching the
+// project. ErrNotFound is normalized to (true, "", nil) — the caller can
+// surface a project-not-found error from a later step rather than couple
+// audit-trail logic to project-existence semantics.
+func (s *Service) templateNestingDecision(ctx context.Context, projectID string, parentKind, childKind domain.Kind) (bool, string, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return true, "", nil
+	}
+	project, err := s.repo.GetProject(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return true, "", nil
+		}
+		return false, "", err
+	}
+	if len(project.KindCatalogJSON) == 0 {
+		return true, "", nil
+	}
+	var catalog templates.KindCatalog
+	if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
+		// Soft fallback per droplet 3.12: a malformed envelope must NOT
+		// brick the create path; the legacy resolver path runs the only
+		// remaining gate.
+		return true, "", nil
+	}
+	if _, ok := catalog.Lookup(parentKind); !ok {
+		// No rule for the parent kind — no constraint to violate.
+		return true, "", nil
+	}
+	allowed, reason := catalog.AllowsNesting(parentKind, childKind)
+	return allowed, reason, nil
+}
+
 // synthesizeKindDefinitionFromCatalog builds a domain.KindDefinition from a
 // catalog hit so callers downstream of resolveActionItemKindDefinition
 // (AppliesToScope + project-allowlist gates) keep a stable, unchanged
