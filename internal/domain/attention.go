@@ -34,6 +34,13 @@ const (
 	AttentionKindMention           AttentionKind = "mention"
 	AttentionKindHandoff           AttentionKind = "handoff"
 	AttentionKindRiskNote          AttentionKind = "risk_note"
+	// AttentionKindTemplateRejection flags an attention row materialized when
+	// a template's AllowsNesting check rejects an auth-gated CreateActionItem
+	// request. Per Drop 3 droplet 3.16 + finding 5.B.15 (N2 scope-narrow):
+	// rejection-comments + attention items fire ONLY on auth-gated creates
+	// (human/agent driven); dispatcher-internal auto-create rejections route
+	// differently in Drop 4 (failed state on parent, no comment).
+	AttentionKindTemplateRejection AttentionKind = "template_rejection"
 )
 
 // validAttentionKinds stores supported attention-kind values.
@@ -44,6 +51,7 @@ var validAttentionKinds = []AttentionKind{
 	AttentionKindMention,
 	AttentionKindHandoff,
 	AttentionKindRiskNote,
+	AttentionKindTemplateRejection,
 }
 
 // AttentionItem stores one scoped attention record with lifecycle/audit data.

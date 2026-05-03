@@ -615,6 +615,36 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 		return domain.ActionItem{}, err
 	}
 
+	// Per Drop 3 droplet 3.16 + finding 5.B.15: every Template.AllowsNesting
+	// rejection at the auth-gated CreateActionItem boundary writes a
+	// till.comment on the parent + an attention_item with kind =
+	// template_rejection. The check runs BEFORE
+	// resolveActionItemKindDefinition so we can surface the catalog's
+	// reason verbatim (the resolver wraps the same decision but flattens
+	// the reason into a generic ErrKindNotAllowed). Update + Reparent
+	// paths do NOT emit audit rows — finding 5.B.15 narrows the audit
+	// trail to the create boundary; their resolver-level rejection still
+	// fires with the same wrapped error.
+	if parent != nil {
+		parentKind := domain.Kind(parent.Kind)
+		childKind := domain.Kind(domain.NormalizeKindID(domain.KindID(in.Kind)))
+		allowed, reason, decisionErr := s.templateNestingDecision(ctx, in.ProjectID, parentKind, childKind)
+		if decisionErr != nil {
+			return domain.ActionItem{}, decisionErr
+		}
+		if !allowed {
+			auditActor := MutationActor{
+				ActorID:   firstNonEmptyTrimmed(resolvedActor.ActorID, in.UpdatedByActor, in.CreatedByActor),
+				ActorName: firstNonEmptyTrimmed(resolvedActor.ActorName, in.UpdatedByName, in.CreatedByName),
+				ActorType: actorType,
+			}
+			if auditErr := s.recordTemplateRejectionAudit(ctx, *parent, childKind, reason, auditActor); auditErr != nil {
+				return domain.ActionItem{}, auditErr
+			}
+			return domain.ActionItem{}, fmt.Errorf("%w: %s", domain.ErrKindNotAllowed, reason)
+		}
+	}
+
 	scope := normalizeActionItemScopeForKind(domain.KindID(in.Kind), in.Scope, parent)
 	kindDef, err := s.resolveActionItemKindDefinition(ctx, in.ProjectID, domain.KindID(in.Kind), scope, parent)
 	if err != nil {
