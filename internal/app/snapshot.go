@@ -61,6 +61,8 @@ type SnapshotActionItem struct {
 	Kind           domain.Kind               `json:"kind"`
 	Scope          domain.KindAppliesTo      `json:"scope,omitempty"`
 	Role           domain.Role               `json:"role,omitempty"`
+	StructuralType domain.StructuralType     `json:"structural_type,omitempty"`
+	Irreducible    bool                      `json:"irreducible,omitempty"`
 	LifecycleState domain.LifecycleState     `json:"lifecycle_state"`
 	ColumnID       string                    `json:"column_id"`
 	Position       int                       `json:"position"`
@@ -1065,6 +1067,8 @@ func snapshotActionItemFromDomain(t domain.ActionItem) SnapshotActionItem {
 		Kind:           t.Kind,
 		Scope:          t.Scope,
 		Role:           t.Role,
+		StructuralType: t.StructuralType,
+		Irreducible:    t.Irreducible,
 		LifecycleState: t.LifecycleState,
 		ColumnID:       t.ColumnID,
 		Position:       t.Position,
@@ -1306,12 +1310,19 @@ func (t SnapshotActionItem) toDomain() domain.ActionItem {
 		}
 	}
 	return domain.ActionItem{
-		ID:             strings.TrimSpace(t.ID),
-		ProjectID:      strings.TrimSpace(t.ProjectID),
-		ParentID:       strings.TrimSpace(t.ParentID),
-		Kind:           kind,
-		Scope:          scope,
-		Role:           t.Role,
+		ID:        strings.TrimSpace(t.ID),
+		ProjectID: strings.TrimSpace(t.ProjectID),
+		ParentID:  strings.TrimSpace(t.ParentID),
+		Kind:      kind,
+		Scope:     scope,
+		Role:      t.Role,
+		// StructuralType intentionally has no empty-string fallback (unlike
+		// Kind above): legacy snapshots without a structural_type field
+		// surface as "" so the next mutation through NewActionItem catches it
+		// with ErrInvalidStructuralType per droplet 3.2's required-field
+		// contract. Inventing a default here would mask schema drift.
+		StructuralType: t.StructuralType,
+		Irreducible:    t.Irreducible,
 		LifecycleState: state,
 		ColumnID:       strings.TrimSpace(t.ColumnID),
 		Position:       t.Position,

@@ -570,3 +570,89 @@ func TestSnapshotActionItemRoleJSONShape(t *testing.T) {
 		t.Fatalf("expected empty role after unmarshal of role-less JSON, got %q", decodedWithout.Role)
 	}
 }
+
+// TestSnapshotActionItemStructuralTypeRoundTripPreservesAllValues verifies
+// that every member of the closed StructuralType enum survives the
+// domain → snapshot → domain round-trip exactly. Mirrors the Drop 2.2
+// Role round-trip precedent line-for-line so the structural-type axis
+// gets the same regression coverage as the role axis.
+func TestSnapshotActionItemStructuralTypeRoundTripPreservesAllValues(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name           string
+		structuralType domain.StructuralType
+	}{
+		{name: "drop", structuralType: domain.StructuralTypeDrop},
+		{name: "segment", structuralType: domain.StructuralTypeSegment},
+		{name: "confluence", structuralType: domain.StructuralTypeConfluence},
+		{name: "droplet", structuralType: domain.StructuralTypeDroplet},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			original, err := domain.NewActionItemForTest(domain.ActionItemInput{
+				ID:             "t-structural-type",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "StructuralType round-trip",
+				Priority:       domain.PriorityMedium,
+				Kind:           domain.KindBuild,
+				StructuralType: tc.structuralType,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			snap := snapshotActionItemFromDomain(original)
+			if snap.StructuralType != tc.structuralType {
+				t.Fatalf("snapshotActionItemFromDomain dropped structural_type: got %q, want %q", snap.StructuralType, tc.structuralType)
+			}
+			hydrated := snap.toDomain()
+			if hydrated.StructuralType != tc.structuralType {
+				t.Fatalf("toDomain dropped structural_type: got %q, want %q", hydrated.StructuralType, tc.structuralType)
+			}
+		})
+	}
+}
+
+// TestSnapshotActionItemIrreducibleRoundTripPreservesBothStates verifies
+// that the Irreducible bool survives the domain → snapshot → domain
+// round-trip in both true and false states. The false case guards against
+// `omitempty` silently corrupting the value: a missing JSON field
+// deserializes to false, which happens to match the false input — but the
+// in-memory domain → snapshot → domain path tested here does not pass
+// through JSON, so a copy bug in either direction would still surface.
+func TestSnapshotActionItemIrreducibleRoundTripPreservesBothStates(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name        string
+		irreducible bool
+	}{
+		{name: "irreducible-true", irreducible: true},
+		{name: "irreducible-false", irreducible: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			original, err := domain.NewActionItemForTest(domain.ActionItemInput{
+				ID:          "t-irreducible",
+				ProjectID:   "p1",
+				ColumnID:    "c1",
+				Position:    0,
+				Title:       "Irreducible round-trip",
+				Priority:    domain.PriorityMedium,
+				Kind:        domain.KindBuild,
+				Irreducible: tc.irreducible,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			snap := snapshotActionItemFromDomain(original)
+			if snap.Irreducible != tc.irreducible {
+				t.Fatalf("snapshotActionItemFromDomain dropped irreducible: got %v, want %v", snap.Irreducible, tc.irreducible)
+			}
+			hydrated := snap.toDomain()
+			if hydrated.Irreducible != tc.irreducible {
+				t.Fatalf("toDomain dropped irreducible: got %v, want %v", hydrated.Irreducible, tc.irreducible)
+			}
+		})
+	}
+}
