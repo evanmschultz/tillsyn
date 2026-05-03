@@ -2304,6 +2304,136 @@ func TestRepository_PersistsActionItemRole(t *testing.T) {
 	}
 }
 
+// TestRepository_PersistsActionItemStructuralTypeAndIrreducible verifies the
+// structural_type and irreducible columns round-trip across create + get +
+// list + update on an action item. All four StructuralType enum values are
+// covered and the Irreducible flag is exercised in both true and false
+// states. The test mirrors the TestRepository_PersistsActionItemRole shape so
+// the SELECT/INSERT/UPDATE column-ordinal alignment for the two new columns
+// is asserted on the same paths.
+func TestRepository_PersistsActionItemStructuralTypeAndIrreducible(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-st", "StructuralType", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c-st", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	// Round-trip every member of the closed StructuralType enum, paired with
+	// distinct Irreducible flags so true and false both exercise the SQLite
+	// INTEGER 0/1 conversion path.
+	cases := []struct {
+		id             string
+		structuralType domain.StructuralType
+		irreducible    bool
+	}{
+		{id: "t-st-drop", structuralType: domain.StructuralTypeDrop, irreducible: false},
+		{id: "t-st-segment", structuralType: domain.StructuralTypeSegment, irreducible: false},
+		{id: "t-st-confluence", structuralType: domain.StructuralTypeConfluence, irreducible: false},
+		{id: "t-st-droplet", structuralType: domain.StructuralTypeDroplet, irreducible: true},
+	}
+
+	for i, tc := range cases {
+		item, err := domain.NewActionItem(domain.ActionItemInput{
+			ID:             tc.id,
+			ProjectID:      project.ID,
+			ColumnID:       column.ID,
+			Kind:           domain.KindBuild,
+			StructuralType: tc.structuralType,
+			Irreducible:    tc.irreducible,
+			Position:       i,
+			Title:          "structural type " + string(tc.structuralType),
+			Priority:       domain.PriorityMedium,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewActionItem(%s) error = %v", tc.structuralType, err)
+		}
+		if err := repo.CreateActionItem(ctx, item); err != nil {
+			t.Fatalf("CreateActionItem(%s) error = %v", tc.structuralType, err)
+		}
+		loaded, err := repo.GetActionItem(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%s) error = %v", tc.structuralType, err)
+		}
+		if loaded.StructuralType != tc.structuralType {
+			t.Fatalf("expected persisted structural_type %q, got %q", tc.structuralType, loaded.StructuralType)
+		}
+		if loaded.Irreducible != tc.irreducible {
+			t.Fatalf("expected persisted irreducible %v, got %v", tc.irreducible, loaded.Irreducible)
+		}
+	}
+
+	// ListActionItems must surface both new columns (separate SELECT path).
+	listed, err := repo.ListActionItems(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	if len(listed) != len(cases) {
+		t.Fatalf("ListActionItems() length = %d, want %d", len(listed), len(cases))
+	}
+	byID := map[string]domain.ActionItem{}
+	for _, item := range listed {
+		byID[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItems() missing %q", tc.id)
+		}
+		if got.StructuralType != tc.structuralType {
+			t.Fatalf("ListActionItems()[%q].StructuralType = %q, want %q", tc.id, got.StructuralType, tc.structuralType)
+		}
+		if got.Irreducible != tc.irreducible {
+			t.Fatalf("ListActionItems()[%q].Irreducible = %v, want %v", tc.id, got.Irreducible, tc.irreducible)
+		}
+	}
+
+	// ListActionItemsByParent exercises the third SELECT path.
+	parentListed, err := repo.ListActionItemsByParent(ctx, project.ID, "")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent() error = %v", err)
+	}
+	if len(parentListed) != len(cases) {
+		t.Fatalf("ListActionItemsByParent() length = %d, want %d", len(parentListed), len(cases))
+	}
+
+	// Reassign on update: flip Irreducible and reassign StructuralType to a
+	// different closed-enum value to confirm the UPDATE SET clause writes
+	// both new columns through.
+	target, err := repo.GetActionItem(ctx, "t-st-drop")
+	if err != nil {
+		t.Fatalf("GetActionItem(reassign source) error = %v", err)
+	}
+	target.StructuralType = domain.StructuralTypeConfluence
+	target.Irreducible = true
+	target.UpdatedAt = now.Add(time.Hour)
+	if err := repo.UpdateActionItem(ctx, target); err != nil {
+		t.Fatalf("UpdateActionItem(structural_type+irreducible) error = %v", err)
+	}
+	reloaded, err := repo.GetActionItem(ctx, target.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after update) error = %v", err)
+	}
+	if reloaded.StructuralType != domain.StructuralTypeConfluence {
+		t.Fatalf("expected reassigned structural_type %q, got %q", domain.StructuralTypeConfluence, reloaded.StructuralType)
+	}
+	if !reloaded.Irreducible {
+		t.Fatalf("expected reassigned irreducible true, got false")
+	}
+}
+
 // TestRepositoryAuthRequestCRUD verifies auth-request persistence, listing, and update behavior.
 func TestRepositoryAuthRequestCRUD(t *testing.T) {
 	ctx := context.Background()
