@@ -30,7 +30,19 @@ type ActionItem struct {
 	// Role optionally tags an action item with a closed-enum role (e.g.
 	// builder, qa-proof, planner). Empty string is the zero value and is
 	// permitted — callers that require a role should validate downstream.
-	Role           Role
+	Role Role
+	// StructuralType places the action item on the cascade tree's shape
+	// axis — drop / segment / confluence / droplet — independent of Kind
+	// (which describes the work-type axis). MUST be a member of the closed
+	// StructuralType enum; empty is rejected by NewActionItem with
+	// ErrInvalidStructuralType. Semantics per `ta-docs/cascade-methodology.md`
+	// §11.3.
+	StructuralType StructuralType
+	// Irreducible marks droplets that cannot decompose further — single
+	// function-signature changes, single SQL migrations, single template
+	// edits. Default false. Semantics per `ta-docs/cascade-methodology.md`
+	// §2.3 and §11.3.
+	Irreducible    bool
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -64,7 +76,18 @@ type ActionItemInput struct {
 	// string is permitted and round-trips as the zero-value Role; non-empty
 	// values must match the closed Role enum or NewActionItem returns
 	// ErrInvalidRole.
-	Role           Role
+	Role Role
+	// StructuralType MUST be a member of the closed StructuralType enum.
+	// Empty is rejected — NewActionItem returns ErrInvalidStructuralType.
+	// This diverges from Role's permissive empty because the cascade tree's
+	// shape axis is mandatory: every node must place itself as drop /
+	// segment / confluence / droplet.
+	StructuralType StructuralType
+	// Irreducible marks single-function-signature changes / single SQL
+	// migrations / single template edits — droplets that cannot decompose
+	// further. Default false. Semantics per
+	// `ta-docs/cascade-methodology.md` §2.3 and §11.3.
+	Irreducible    bool
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -156,6 +179,18 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 	if in.Role != "" && !IsValidRole(in.Role) {
 		return ActionItem{}, ErrInvalidRole
 	}
+	// StructuralType is mandatory per the cascade-methodology shape axis.
+	// Normalize first so whitespace-only collapses to empty and the empty
+	// check fires uniformly. Empty AND non-enum values both reject with
+	// ErrInvalidStructuralType. This diverges from Role's permissive empty
+	// — the cascade tree's shape axis must be supplied at creation.
+	in.StructuralType = NormalizeStructuralType(in.StructuralType)
+	if in.StructuralType == "" {
+		return ActionItem{}, ErrInvalidStructuralType
+	}
+	if !IsValidStructuralType(in.StructuralType) {
+		return ActionItem{}, ErrInvalidStructuralType
+	}
 	if in.LifecycleState == "" {
 		in.LifecycleState = StateTodo
 	}
@@ -199,6 +234,8 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		Kind:           in.Kind,
 		Scope:          in.Scope,
 		Role:           in.Role,
+		StructuralType: in.StructuralType,
+		Irreducible:    in.Irreducible,
 		LifecycleState: in.LifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       in.Position,

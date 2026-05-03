@@ -684,7 +684,7 @@ func mustSeedEmbeddingScope(t *testing.T, repo *Repository, now time.Time, proje
 func mustSeedEmbeddingActionItem(t *testing.T, repo *Repository, projectID, columnID, actionItemID string, position int, now time.Time, meta domain.ActionItemMetadata, labels []string) domain.ActionItem {
 	t.Helper()
 
-	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          actionItemID,
 		ProjectID:   projectID,

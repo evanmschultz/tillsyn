@@ -112,7 +112,7 @@ func TestRunEmbeddingsStatusRendersSummaryAndRows(t *testing.T) {
 func TestRunEmbeddingsReindexRendersQueuedWork(t *testing.T) {
 	svc, projectID, repo, _ := newEmbeddingsCLIServiceForTest(t)
 	now := time.Date(2026, 3, 29, 18, 30, 0, 0, time.UTC)
-	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:             "actionItem-reindex",
 		ProjectID:      projectID,
 		Kind:           domain.KindPlan,
