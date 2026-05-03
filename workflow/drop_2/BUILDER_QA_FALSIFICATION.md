@@ -2413,3 +2413,147 @@ None. Every attack vector ran to a concrete REFUTED conclusion. The pre-existing
 None — Hylla answered everything needed. Zero misses for this round.
 
 The reviewed scope was three Go files (`dotted_address.go`, `dotted_address_test.go`, plus the diffs in `ports.go`, `repo.go`, `repo_test.go`, `service_test.go`) all uncommitted at HEAD. Hylla is by definition stale for uncommitted code, so `git diff` + `git grep` + `Read` + `LSP` were the correct primary tools. Implementer enumeration (`failingSnapshotRepo`, alternative repos in adapter test files) used `git grep` with surgical scoping (`-- 'internal/...'` path globs) — a Hylla `hylla_refs_find` on the new `Repository` symbol would not have surfaced struct embeddings or the absence of additional implementers any more efficiently. The slug regex shape verification cross-referenced `domain/project.go:normalizeSlug` via a single `Read` after `git grep` located it. Zero ergonomic gripes for this round.
+
+## Droplet 2.11 — Round 1
+
+**Verdict:** PASS — no unmitigated counterexample constructed across the 17 attack vectors. Three nits + one routed-judgment item recorded; none rise to a counterexample under the spec's literal acceptance criteria.
+
+### Attack Vectors Run
+
+**AV-1. Hidden Repository implementer compile-failure on new `GetProjectBySlug`.** REFUTED.
+
+- `git grep "Repository interface\b"` enumerates two `Repository` interfaces in scope: `internal/app.Repository` (`internal/app/ports.go:11`) — extended this droplet — and `internal/adapters/storage/sqlite.Repository` (struct, `repo.go:61`) — the canonical concrete impl. `git grep "type.*[Rr]epo.*struct"` returns no other repository-shape structs in `internal/`.
+- The two app-layer test fakes that satisfy `app.Repository` are `internal/app/service_test.go:18 fakeRepo` (which gets `GetProjectBySlug` at `:495-502` — verified by `git diff`) and there is no second test fake in `internal/app/`. `internal/app/embedding_runtime_test.go` and `kind_capability_test.go` both pass `*fakeRepo` rather than alternative implementers.
+- `failingSnapshotRepo` (mentioned in the spawn prompt) does not exist in this tree: `git grep "failingSnapshot"` returns zero hits across `internal/**/*.go`. `git grep "stubRepo"` likewise empty. No additional silent implementers.
+- Compile-time proof: `mage ci` returned 1490/1490 green at HEAD. If any implementer had been missed, the build would have failed at the missing-method site.
+
+**AV-2. UUID-vs-dotted dispatch correctness.** REFUTED across 6 input shapes.
+
+- Valid UUID `11111111-1111-1111-1111-111111111111` — routes to direct GetActionItem. Verified at `cmd/till/action_item_cli.go:30` (`uuid.Parse` shape gate) and `internal/adapters/server/mcpapi/extended_tools.go:2231` (via `IsLikelyDottedAddress(idOrDotted)` returning false → falls through to `tasks.ResolveActionItemID` which uuid-parses and short-circuits at `dotted_address.go:173`).
+- Bare dotted `2.1` — routes to ResolveDottedAddress. `IsLikelyDottedAddress("2.1")` returns true (no colon, body regex matches); CLI code at `:42-50` resolves project context then calls `svc.ResolveActionItemID`. MCP `resolveActionItemIDForRead` at `extended_tools.go:2233` extracts empty slug-prefix → requires `project_id` arg.
+- Slug-prefix `tillsyn:2.1` — routes correctly. CLI at `action_item_cli.go:80-90` extracts slug via `app.SplitDottedSlugPrefix`, calls `svc.GetProjectBySlug`, forwards. MCP at `extended_tools.go:2233-2238` does the same.
+- Empty string — caller-side rejection. CLI: `runActionItemGet` at `:25-27` (`action_item get: action_item_id is required`). MCP: `case "get"` at `extended_tools.go:907-910` (`required argument "action_item_id" not found`).
+- UUID-shaped but malformed (e.g. `00000000-0000-0000-0000`) — `uuid.Parse` errors, falls through to ResolveDottedAddress, body regex fails (hyphens), returns `ErrDottedAddressInvalidSyntax`. Verified by re-reading `dotted_address.go:33` regex (`^\d+(\.\d+)*$`).
+- Garbage `abc` — `uuid.Parse` errors, body regex fails, `IsLikelyDottedAddress` returns false. CLI's `:38-40` rejects with explicit "neither a UUID nor a dotted address" hint. MCP's `resolveActionItemIDForRead` at `:2229` → `ResolveActionItemID` → `ResolveDottedAddress` → InvalidSyntax. The dotted-test fixture explicitly covers `"abc"` at `dotted_address_test.go:197`.
+
+**AV-3. MCP mutation-rejection completeness across 7 mutations.** REFUTED, with PLAN-spec match.
+
+- PLAN spec lists 7 mutations: `create|update|move|move_state|delete|restore|reparent`. Builder claims 6 have the gate.
+- `create` (rendered at `extended_tools.go:1000-1056` from per-tool offset) does NOT take an `action_item_id` argument — it generates one. The PLAN.md at `:307` explicitly cites `update` as the rejection example, not `create`. The `till.action_item` tool description at `:1358` lists `update|move|move_state|delete|restore|reparent` as the 6 mutations rejecting dotted form, omitting `create` deliberately. Spec-and-impl match: 6 mutations get the gate because only those 6 receive an `action_item_id` argument.
+- All 6 mutations have the gate via `git grep -n "rejectMutationDottedActionItemID" -- 'internal/adapters/server/mcpapi/*.go'` returning hits at `:1061` (update), `:1116` (move), `:1169` (move_state), `:1218` (delete), `:1266` (restore), `:1310` (reparent). Read each in turn — gate is the first action after the empty-string guard, before any auth or service work.
+- Test `TestHandlerActionItemMutationsRejectDottedAddress` at `extended_tools_test.go:2019-2066` table-drives all 6 mutation operations + asserts both `invalid_request` and `mutations require UUID` text. PASS contributes to `mage ci`'s 1490 green.
+
+**AV-4. CLI mutation gate completeness.** REFUTED.
+
+- All 6 mutation cobra subcommands at `cmd/till/main.go:746-784` route through `actionItemMutationRunE` closure, which sets `actionItemID` and dispatches `action_item.<op>` to `executeCommandFlow`.
+- `executeCommandFlow` at `:2473-2477` matches `action_item.update | action_item.move | action_item.move_state | action_item.delete | action_item.restore | action_item.reparent` and dispatches to `runActionItemMutationGate(strings.TrimPrefix(command, "action_item."), actionItemOpts)`.
+- `runActionItemMutationGate` at `action_item_cli.go:65-70` calls `app.ValidateActionItemIDForMutation`. Test `TestRunActionItemMutationGate` at `action_item_cli_test.go:19-71` covers dotted (`1.5.2`), slug-prefix dotted (`tillsyn:1.5.2`), valid UUID, and empty input.
+- The CLI's `create` analog is intentionally absent — there's no `till action_item create` cobra subcommand in this droplet. Same rationale as MCP: no `action_item_id` to gate.
+
+**AV-5. Mutation-error transport class.** REFUTED — lands as `invalid_request` 400-class.
+
+- `mapAppError` at `internal/adapters/server/common/app_service_adapter.go:613-615` handles `app.ErrDottedAddressInvalidSyntax` AND `app.ErrMutationsRequireUUID` together, joining with `ErrInvalidCaptureStateRequest` (400-class).
+- `app.ErrDottedAddressNotFound` at `:610-612` joins with `ErrNotFound` (404-class) — separate sentinel.
+- The MCP gate's wrapping at `extended_tools.go:2258-2259` (`fmt.Errorf("%w: %w", common.ErrInvalidCaptureStateRequest, err)`) sends `toolResultFromError` straight to `invalid_request:`. Test verifies `invalid_request` in error text at `extended_tools_test.go:2057-2063`.
+
+**AV-6. MCP project_id requirement enforcement.** REFUTED.
+
+- `resolveActionItemIDForRead` at `extended_tools.go:2240-2242` returns `invalid_request: project_id is required when action_item_id is a dotted address without a slug prefix` when both projectID arg is empty AND no slug-prefix is detected. Test sub-case `bare dotted address without project_id returns invalid_request` at `extended_tools_test.go:1988-2012` verifies the error text contains "project_id is required".
+- Slug-prefix bypasses the requirement: `if slug := app.SplitDottedSlugPrefix(idOrDotted); slug != ""` triggers the GetProjectBySlug lookup at `:2233-2238`, populating projectID from the slug-resolved project.
+
+**AV-7. Slug-lookup security: hidden global-auth project excluded.** REFUTED at the SQLite layer; nit at the fakeRepo layer.
+
+- SQLite `GetProjectBySlug` at `repo.go:911-918` query: `WHERE slug = ? AND id != ?` with `domain.AuthRequestGlobalProjectID` as the second param. The hidden `globalAuthProjectSlug` row is unreachable.
+- Test `TestRepository_GetProjectBySlug` at `repo_test.go:2819-2820` passes `globalAuthProjectSlug` verbatim; expects error. Round-trip green.
+- **Nit (not a counterexample):** `fakeRepo.GetProjectBySlug` at `service_test.go:495-502` does NOT replicate the global-auth exclusion. It iterates `f.projects` and returns the first slug match. In production this is unreachable (only SQLite is used); but if a future test seeds a global-auth-slug row into fakeRepo, the fake would return it while production would not. The fixture suite today never seeds `globalAuthProjectSlug` into fakeRepo, so the divergence is latent. Recommend adding the exclusion to fakeRepo for parity, or asserting the fixture-side absence with a comment.
+
+**AV-8. `testActionItemUUID` constant replaces `"t1"` in mutation test paths.** REFUTED.
+
+- `git grep "\"t1\"" -- internal/adapters/server/mcpapi/` returns hits at `extended_tools_test.go:347, 436, 462, 481, 524, 542, 589, 636, 678, 1218, 1224, 2873, 3215`. Inspection of each:
+  - `:347, 436, 462, 481, 524, 542, 589` — stub *response* IDs (`return []domain.ActionItem{{ID: "t1", ...}}` etc.) — these are what the stub returns, not what tests pass IN. Unaffected by the new validator gate.
+  - `:636, 678` — `SubjectID: "t1"` and `ActionItemID: "t1"` on `domain.AttentionItem` constructions — separate domain object, not under the action-item mutation gate.
+  - `:1218, 1224, 2873, 3215` — `target_id: "t1"` for `till.comment` operations — different tool, different validator path. Comment targets accept opaque strings.
+- Mutation-input-side `action_item_id` literals are uniformly `testActionItemUUID` per `git grep -n "testActionItemUUID" -- internal/adapters/server/mcpapi/extended_tools_test.go` returning 33 hits across all the mutation paths the gate guards. Spec satisfied.
+
+**AV-9. CLI `--project` flag conflict with slug-prefix.** REFUTED with explicit handling.
+
+- `resolveActionItemProjectContext` at `action_item_cli.go:82-90` precedence: slug-prefix wins; if `--project` is also supplied AND differs from the prefix slug, returns `--project %q does not match dotted slug-prefix %q; pick one source of project context`.
+- Test sub-case `slug-prefix conflicting with --project errors out` at `action_item_cli_test.go:136-149` verifies this branch.
+- Same-slug supplied via both is silently accepted (slug-prefix wins, no error). Documented at `:87-89`.
+- **Nit:** MCP's `resolveActionItemIDForRead` at `extended_tools.go:2237-2238` does NOT mirror this conflict check. When slug-prefix is present and `project_id` arg is also present, `projectID = project.ID` silently overwrites the caller's `project_id`. The slug→project resolution always wins; the caller's `project_id` is ignored without warning. The CLI guards against this explicitly; MCP does not. The dotted-resolver itself re-validates the slug against the resolved projectID's slug at `dotted_address.go:124-126` so the input is still consistent — this is purely a UX consistency gap. Routed as a downgrade-acceptable nit, not a counterexample.
+
+**AV-10. CLI mutation validator-only stubs (the routed judgment item).** REFUTED — acceptable.
+
+- PLAN.md `:308-310` literal text: "CLI `till action_item update 2.1 ...` rejects with the same mutations-require-UUID error class." Acceptance criterion is the *rejection*, not the full mutation flow.
+- Builder explicitly surfaced this as scope-expansion concern #3 in `BUILDER_WORKLOG.md`. QA proof accepted the validator-only stub. Falsification concurs:
+  - The literal acceptance is met (`TestRunActionItemMutationGate` at `action_item_cli_test.go:22-45` confirms dotted input is rejected with `ErrMutationsRequireUUID` from both bare dotted and slug-prefix dotted forms).
+  - Test `:47-59` confirms valid UUIDs hit the "not yet implemented" hint without spurious `ErrMutationsRequireUUID` — the gate is correctly tight (rejects ONLY dotted, accepts UUIDs).
+  - Wiring full mutation pipelines in `cmd/till` would expand scope by an order of magnitude relative to the resolver-wiring droplet's intent. Routed as future work.
+
+**AV-11. `mage ci` re-run.** REFUTED.
+
+- Ran from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. Result: 1490/1490 tests across 19 packages, 0 failures, 0 skipped. Coverage threshold met (lowest `internal/tui` 70.0% above the 70% gate). Build of `./cmd/till` succeeded. Drop 2 boundary verified.
+
+**AV-12. `mage testPkg` per package counts.** REFUTED — counts match builder claim.
+
+- `mage testPkg ./internal/app` — 279 tests passed (matches builder's 279 claim).
+- `mage testPkg ./internal/adapters/server/mcpapi` — 105 tests passed (matches builder's 105 claim).
+- `mage testPkg ./cmd/till` — 220 tests passed (matches builder's 220 claim).
+- All re-run independently — no test-cache poisoning.
+
+**AV-13. No `tc := tc` in new test loops.** REFUTED.
+
+- `git grep "tc := tc\|case := case" -- 'cmd/till/action_item_cli_test.go' 'internal/app/dotted_address_test.go' 'internal/adapters/server/mcpapi/extended_tools_test.go' 'internal/adapters/storage/sqlite/repo_test.go'` returns zero hits.
+- Go 1.26 (`go.mod:3`) handles loop variable scoping per-iteration automatically (Go 1.22+ behavior); the legacy shadow is no longer needed and correctly absent.
+
+**AV-14. Drop 2 boundary readiness — all 11 droplets `done`.** REFUTED — every droplet at `done`.
+
+- `git grep "^- \*\*State:\*\*" -- workflow/drop_2/PLAN.md` returns 11 hits, all reading `**State:** done`: lines `:48, :71, :87, :102, :117, :132, :156, :242, :257, :281, :301`.
+- Mapping verified: 2.1 (`:48`), 2.2 (`:71`), 2.3 (`:87`), 2.4 (`:102`), 2.5 (`:117`), 2.6 (`:132`), 2.7 (`:156`), 2.8 (`:242`), 2.9 (`:257`), 2.10 (`:281`), 2.11 (`:301`). All 11 done. Drop 2 ready for closeout.
+
+**AV-15. Hidden caller of `GetProject` that should switch to `GetProjectBySlug`.** REFUTED.
+
+- `git grep "GetProject(ctx" -- 'internal/**/*.go'` enumerates every caller. Each passes a projectID (UUID-shaped), not a slug:
+  - `internal/app/attention_capture.go:238` — `level.ProjectID` (struct field, UUID).
+  - `internal/app/capability_inventory.go:24` — `projectID` parameter (UUID).
+  - `internal/app/dotted_address.go:120` — slug-mismatch check, supplied projectID is UUID.
+  - `internal/app/embedding_runtime.go:535, 589, 838, 912, 996` — all from `target.ProjectID` / `claim.SubjectID` / `projectID` parameter (UUID).
+  - `internal/app/kind_capability.go:147, 185, 372` — `projectID` parameter (UUID).
+  - `internal/app/service.go:304, 341, 361` — `in.ProjectID` (UUID).
+- No caller is passing a slug to `GetProject`. The new method is for the slug-prefix CLI shorthand and the MCP slug-prefix shorthand — both new code paths, no migration target.
+
+**AV-16. `fakeRepo.GetProjectBySlug` correctness — tie-break / multiple-matches.** REFUTED with one nit.
+
+- Implementation at `service_test.go:495-502`: linear scan over `f.projects` map, returns first match by slug.
+- Go map iteration is non-deterministic. If two projects share a slug (which they shouldn't — `idx_projects_slug` is unique in SQLite), the fake would return either non-deterministically. **Nit:** the fake doesn't enforce the slug-uniqueness invariant. In practice, no test fixture seeds duplicate slugs, so the divergence is latent.
+- Empty-slug input handled at the caller-side: the resolver path always extracts slug via `SplitDottedSlugPrefix` which returns `""` for non-prefixed input, and the empty branch is bypassed. No empty slug ever reaches the fake's match loop in production paths.
+
+**AV-17. Forwarding error wrapping names level + index that failed.** REFUTED.
+
+- `dotted_address.go:151`: `fmt.Errorf("%w: level %d index %d out of range (have %d children of parent %q)", ErrDottedAddressNotFound, level, idx, len(children), parentID)` — names level, index, child count, and parent UUID. PLAN acceptance #7 satisfied.
+- Other error wrappings: `:103` (project id required), `:106` (empty dotted), `:115` (malformed slug-prefix), `:118` (invalid slug), `:125` (slug mismatch with named slug + projectID + project's actual slug), `:130` (invalid body), `:138` (segment N is not non-negative). Each names the specific input that failed. Concrete operator-actionable error messages.
+
+### Counterexamples / Nits
+
+- **N1 (nit, downgrade-acceptable).** `fakeRepo.GetProjectBySlug` at `internal/app/service_test.go:495-502` does not replicate the SQLite `GetProjectBySlug`'s `id != domain.AuthRequestGlobalProjectID` exclusion. In production this is unreachable (only SQLite is used). Latent test-fixture divergence; recommend adding a parity comment or the exclusion. Not a counterexample.
+- **N2 (nit, downgrade-acceptable).** MCP `resolveActionItemIDForRead` silently overrides the caller's `project_id` arg when slug-prefix is present (`extended_tools.go:2237-2238`). CLI explicitly errors on the same conflict (`action_item_cli.go:87-89`). The dotted resolver re-validates the slug at `dotted_address.go:124-126` so input consistency is preserved, but the UX divergence between CLI strictness and MCP silence is a latent operator-confusion surface.
+- **N3 (nit, downgrade-acceptable).** `reparent` mutation accepts `parent_id` from the caller without dotted-form validation (`extended_tools.go:1339`). The MCP gate enforces UUID for `action_item_id` but not for `parent_id`. PLAN.md spec (`:308-310`) only mentions `action_item_id`, so this is technically out of scope. The threat model in the resolver doc-comment (positional addresses shift under sibling reordering) applies equally to `parent_id`. Production effect today: a dotted `parent_id` like `"2.5"` flows to `GetActionItem(ctx, "2.5")` which errors with not-found rather than mutating the wrong parent. So *correctness is preserved*; only the error surface (not-found vs invalid_request) differs. Routed as a future-drop hardening item.
+
+### Most Damaging Counterexample
+
+None constructed. All 17 attack vectors REFUTED with concrete evidence. The three nits (N1, N2, N3) are downgrade-acceptable per the spec's literal scope.
+
+### `mage ci` Result
+
+Green. 1490 tests / 19 packages / 0 failures / 0 skipped. Coverage threshold met. `./cmd/till` build succeeded. Exit code 0. Per-package: `mage testPkg ./internal/app` (279), `./internal/adapters/server/mcpapi` (105), `./cmd/till` (220). Drop 2 boundary verified.
+
+### Unknowns
+
+- **Validator-only stub question (routed).** Builder asked whether CLI mutation commands should grow full mutation pipelines or stay validator-only stubs. QA proof accepted the validator-only stub. Falsification concurs: the PLAN.md `:308-310` literal acceptance is met; growing mutation pipelines is a future-drop scope. Routed to orchestrator with explicit recommendation: keep as validator-only stubs; track CLI-mutation-pipelines as a future `cmd/till` enhancement.
+- N1, N2, N3 nits routed as future-drop hardening items.
+
+### `## Hylla Feedback`
+
+None — Hylla answered everything needed for the Go portions reviewed. Zero misses for this round.
+
+The investigation surface was multi-package (cmd/till, internal/app, internal/adapters/server/{common, mcpapi}, internal/adapters/storage/sqlite) with extensive surgical-symbol navigation. Used: `git diff HEAD` for the uncommitted droplet's full delta; `git grep` with explicit `--` path scoping for symbol enumeration (`Repository interface`, `fakeRepo`, `GetProjectBySlug`, `rejectMutationDottedActionItemID`, `testActionItemUUID`, `tc := tc`); `LSP` (`documentSymbol`, `findReferences`) for cross-file symbol cross-checks (`internal/app.Repository.GetProjectBySlug` reference list, `ResolveDottedAddress` callers); `Read` for surgical line-range examination of the new helpers, mutation gate, MCP dispatch. `mage ci` and `mage testPkg ./<package>` for ground-truth verification. No `hylla_*` queries were issued — the droplet is uncommitted at HEAD and Hylla is by definition stale for uncommitted code; per CLAUDE.md "non-Go fallback" + "stale-since-ingest" rules, `git diff` + `git grep` + `LSP` were the correct primary tools. Zero ergonomic gripes.
