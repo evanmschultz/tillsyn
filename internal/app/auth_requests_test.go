@@ -662,3 +662,68 @@ func TestServiceGetAuthRequestMaterializesTimeoutAndResolvesAttention(t *testing
 		t.Fatalf("attention state = %q, want resolved after timeout materialization", got)
 	}
 }
+
+// TestServiceCreateAuthRequestStewardOrchestratorAccepted verifies the Drop 3
+// droplet 3.22 + 3.19 boundary rule: an auth request with
+// principal_type="steward" + principal_role="orchestrator" lands as
+// pending without a role-validation rejection, because STEWARD is itself a
+// persistent orchestrator (per fix L7 / domain auth_request normalization).
+func TestServiceCreateAuthRequestStewardOrchestratorAccepted(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                "project/" + fixture.project.ID,
+		PrincipalID:         "STEWARD",
+		PrincipalType:       "steward",
+		PrincipalRole:       "orchestrator",
+		PrincipalName:       "STEWARD orch",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "STEWARD post-merge MD collation",
+		RequestedBy:         "lane-user",
+		RequestedType:       domain.ActorTypeUser,
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(steward + orchestrator) error = %v, want nil (pending)", err)
+	}
+	if got := request.State; got != domain.AuthRequestStatePending {
+		t.Fatalf("CreateAuthRequest() state = %q, want pending", got)
+	}
+	if got := request.PrincipalType; got != "steward" {
+		t.Fatalf("CreateAuthRequest() principal_type = %q, want steward", got)
+	}
+	if got := request.PrincipalRole; got != string(domain.AuthRequestRoleOrchestrator) {
+		t.Fatalf("CreateAuthRequest() principal_role = %q, want orchestrator", got)
+	}
+}
+
+// TestServiceCreateAuthRequestStewardBuilderRejected verifies the Drop 3
+// droplet 3.22 + 3.19 boundary rule: an auth request with
+// principal_type="steward" + principal_role="builder" REJECTS at the
+// domain validation layer with ErrInvalidAuthRequestRole, because STEWARD
+// is only ever an orchestrator (no other role makes sense for a persistent
+// MD-collation principal).
+func TestServiceCreateAuthRequestStewardBuilderRejected(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	if _, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                "project/" + fixture.project.ID,
+		PrincipalID:         "STEWARD",
+		PrincipalType:       "steward",
+		PrincipalRole:       "builder",
+		PrincipalName:       "STEWARD orch",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Till MCP STDIO",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "invalid steward+builder combination",
+		RequestedBy:         "lane-user",
+		RequestedType:       domain.ActorTypeUser,
+		Timeout:             10 * time.Minute,
+	}); !errors.Is(err, domain.ErrInvalidAuthRequestRole) {
+		t.Fatalf("CreateAuthRequest(steward + builder) error = %v, want ErrInvalidAuthRequestRole", err)
+	}
+}
