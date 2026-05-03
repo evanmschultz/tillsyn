@@ -15,6 +15,13 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
+// testActionItemUUID is a deterministic UUID used wherever expanded MCP tool tests
+// pass an action_item_id through a mutation surface. Mutations now reject dotted
+// addresses via app.ValidateActionItemIDForMutation, so legacy short-string IDs
+// like "t1" no longer round-trip through the boundary; tests use this constant
+// instead. The value has no semantic meaning — it just needs to parse as UUID.
+const testActionItemUUID = "11111111-1111-1111-1111-111111111111"
+
 // stubExpandedService provides deterministic responses for expanded MCP tool coverage tests.
 type stubExpandedService struct {
 	stubCaptureStateReader
@@ -54,6 +61,13 @@ type stubExpandedService struct {
 	lastValidateAuthSessionReq   common.ValidateAuthSessionRequest
 	lastCheckAuthSessionReq      common.CheckAuthSessionGovernanceRequest
 	lastRevokeAuthSessionReq     common.RevokeAuthSessionRequest
+	lastResolveActionItemProject string
+	lastResolveActionItemID      string
+	resolveActionItemIDMap       map[string]string
+	resolveActionItemIDErr       error
+	lastGetProjectBySlug         string
+	getProjectBySlugMap          map[string]domain.Project
+	getProjectBySlugErr          error
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -343,6 +357,36 @@ func (s *stubExpandedService) ListActionItems(_ context.Context, projectID strin
 			UpdatedAt:      now,
 		},
 	}, nil
+}
+
+// ResolveActionItemID maps a UUID-or-dotted action_item_id to a canonical UUID.
+// The fake honors resolveActionItemIDErr first, then resolveActionItemIDMap
+// (key = trimmed input), then echoes the input back as a UUID-shaped value so
+// downstream GetActionItem still observes the same string.
+func (s *stubExpandedService) ResolveActionItemID(_ context.Context, projectID, idOrDotted string) (string, error) {
+	s.lastResolveActionItemProject = strings.TrimSpace(projectID)
+	s.lastResolveActionItemID = strings.TrimSpace(idOrDotted)
+	if s.resolveActionItemIDErr != nil {
+		return "", s.resolveActionItemIDErr
+	}
+	if mapped, ok := s.resolveActionItemIDMap[strings.TrimSpace(idOrDotted)]; ok {
+		return mapped, nil
+	}
+	return strings.TrimSpace(idOrDotted), nil
+}
+
+// GetProjectBySlug returns a deterministic project for the supplied slug. The
+// fake honors getProjectBySlugErr first, then the configured map; missing-slug
+// lookups return an error so handler tests can exercise the not-found path.
+func (s *stubExpandedService) GetProjectBySlug(_ context.Context, slug string) (domain.Project, error) {
+	s.lastGetProjectBySlug = strings.TrimSpace(slug)
+	if s.getProjectBySlugErr != nil {
+		return domain.Project{}, s.getProjectBySlugErr
+	}
+	if project, ok := s.getProjectBySlugMap[strings.TrimSpace(slug)]; ok {
+		return project, nil
+	}
+	return domain.Project{}, errors.New("not found: project slug " + slug)
 }
 
 // GetActionItem returns one deterministic actionItem row by id.
@@ -1101,7 +1145,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 			"acting_session_secret": "secret-1",
 		}},
 		{name: "till.action_item", args: map[string]any{"operation": "list", "project_id": "p1"}},
-		{name: "till.action_item", args: map[string]any{"operation": "get", "action_item_id": "t1"}},
+		{name: "till.action_item", args: map[string]any{"operation": "get", "action_item_id": testActionItemUUID}},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"project_id":        "p1",
@@ -1112,14 +1156,14 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "update",
-			"action_item_id":    "t1",
+			"action_item_id":    testActionItemUUID,
 			"title":             "ActionItem One Updated",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "move",
-			"action_item_id":    "t1",
+			"action_item_id":    testActionItemUUID,
 			"to_column_id":      "c2",
 			"position":          1,
 			"agent_instance_id": "inst-1",
@@ -1127,26 +1171,26 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "move_state",
-			"action_item_id":    "t1",
+			"action_item_id":    testActionItemUUID,
 			"state":             "complete",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "delete",
-			"action_item_id":    "t1",
+			"action_item_id":    testActionItemUUID,
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "restore",
-			"action_item_id":    "t1",
+			"action_item_id":    testActionItemUUID,
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
 		{name: "till.action_item", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "reparent",
-			"action_item_id":    "t1",
+			"action_item_id":    testActionItemUUID,
 			"parent_id":         "parent-1",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
@@ -1589,7 +1633,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "update_task",
 			tool: "till.update_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"action_item_id":    "t1",
+				"action_item_id":    testActionItemUUID,
 				"title":             "ActionItem One Updated",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
@@ -1599,7 +1643,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "move_task",
 			tool: "till.move_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"action_item_id":    "t1",
+				"action_item_id":    testActionItemUUID,
 				"to_column_id":      "c2",
 				"position":          1,
 				"agent_instance_id": "inst-1",
@@ -1610,7 +1654,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "delete_task",
 			tool: "till.delete_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"action_item_id":    "t1",
+				"action_item_id":    testActionItemUUID,
 				"mode":              "archive",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
@@ -1620,7 +1664,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "restore_task",
 			tool: "till.restore_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"action_item_id":    "t1",
+				"action_item_id":    testActionItemUUID,
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
 			}),
@@ -1629,7 +1673,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 			name: "reparent_task",
 			tool: "till.reparent_task",
 			args: mergeArgs(validSessionArgs(), map[string]any{
-				"action_item_id":    "t1",
+				"action_item_id":    testActionItemUUID,
 				"parent_id":         "parent-1",
 				"agent_instance_id": "inst-1",
 				"lease_token":       "tok-1",
@@ -1802,13 +1846,13 @@ func TestHandlerExpandedActionItemReadOperations(t *testing.T) {
 
 	_, getResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4800, "till.action_item", map[string]any{
 		"operation":      "get",
-		"action_item_id": "t1",
+		"action_item_id": testActionItemUUID,
 	}))
 	if isError, _ := getResp.Result["isError"].(bool); isError {
 		t.Fatalf("action_item get returned isError=true: %#v", getResp.Result)
 	}
-	if got := service.lastGetActionItemID; got != "t1" {
-		t.Fatalf("action_item get action_item_id = %q, want t1", got)
+	if got := service.lastGetActionItemID; got != testActionItemUUID {
+		t.Fatalf("action_item get action_item_id = %q, want %q", got, testActionItemUUID)
 	}
 
 	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4801, "till.action_item", map[string]any{
@@ -1840,6 +1884,210 @@ func TestHandlerExpandedActionItemReadOperations(t *testing.T) {
 	if got := service.lastListChildParentID; got != "parent-1" {
 		t.Fatalf("action_item child list parent_id = %q, want parent-1", got)
 	}
+}
+
+// TestHandlerActionItemGetAcceptsDottedAddress verifies till.action_item(operation=get)
+// routes a dotted address through ResolveActionItemID + GetProjectBySlug paths
+// while still passing UUIDs through unchanged. Mutation operations are covered
+// by TestHandlerActionItemMutationsRejectDottedAddress below.
+func TestHandlerActionItemGetAcceptsDottedAddress(t *testing.T) {
+	t.Parallel()
+
+	const resolvedUUID = "22222222-2222-2222-2222-222222222222"
+
+	t.Run("UUID input bypasses resolver and hits GetActionItem directly", func(t *testing.T) {
+		t.Parallel()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		server := httptest.NewServer(mustNewHandler(t, service))
+		defer server.Close()
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+		_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7100, "till.action_item", map[string]any{
+			"operation":      "get",
+			"action_item_id": testActionItemUUID,
+		}))
+		if isError, _ := resp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item get returned isError=true: %#v", resp.Result)
+		}
+		if got := service.lastResolveActionItemID; got != testActionItemUUID {
+			t.Fatalf("ResolveActionItemID called with %q, want %q", got, testActionItemUUID)
+		}
+		if got := service.lastGetActionItemID; got != testActionItemUUID {
+			t.Fatalf("GetActionItem called with %q, want %q", got, testActionItemUUID)
+		}
+	})
+
+	t.Run("bare dotted address with project_id resolves and reads", func(t *testing.T) {
+		t.Parallel()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+			resolveActionItemIDMap: map[string]string{"2.1": resolvedUUID},
+		}
+		server := httptest.NewServer(mustNewHandler(t, service))
+		defer server.Close()
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+		_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7101, "till.action_item", map[string]any{
+			"operation":      "get",
+			"project_id":     "p1",
+			"action_item_id": "2.1",
+		}))
+		if isError, _ := resp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item get returned isError=true: %#v", resp.Result)
+		}
+		if got := service.lastResolveActionItemProject; got != "p1" {
+			t.Fatalf("ResolveActionItemID projectID = %q, want p1", got)
+		}
+		if got := service.lastResolveActionItemID; got != "2.1" {
+			t.Fatalf("ResolveActionItemID id = %q, want 2.1", got)
+		}
+		if got := service.lastGetActionItemID; got != resolvedUUID {
+			t.Fatalf("GetActionItem id = %q, want %q (resolver output)", got, resolvedUUID)
+		}
+	})
+
+	t.Run("slug-prefix dotted address resolves slug then walks tree", func(t *testing.T) {
+		t.Parallel()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+			resolveActionItemIDMap: map[string]string{"tillsyn:1.5.2": resolvedUUID},
+			getProjectBySlugMap: map[string]domain.Project{
+				"tillsyn": {ID: "p1", Slug: "tillsyn", Name: "Tillsyn"},
+			},
+		}
+		server := httptest.NewServer(mustNewHandler(t, service))
+		defer server.Close()
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+		_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7102, "till.action_item", map[string]any{
+			"operation":      "get",
+			"action_item_id": "tillsyn:1.5.2",
+		}))
+		if isError, _ := resp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item get returned isError=true: %#v", resp.Result)
+		}
+		if got := service.lastGetProjectBySlug; got != "tillsyn" {
+			t.Fatalf("GetProjectBySlug slug = %q, want tillsyn", got)
+		}
+		if got := service.lastResolveActionItemProject; got != "p1" {
+			t.Fatalf("ResolveActionItemID projectID = %q, want p1 (from slug)", got)
+		}
+		if got := service.lastResolveActionItemID; got != "tillsyn:1.5.2" {
+			t.Fatalf("ResolveActionItemID id = %q, want tillsyn:1.5.2", got)
+		}
+	})
+
+	t.Run("bare dotted address without project_id returns invalid_request", func(t *testing.T) {
+		t.Parallel()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		server := httptest.NewServer(mustNewHandler(t, service))
+		defer server.Close()
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+		_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7103, "till.action_item", map[string]any{
+			"operation":      "get",
+			"action_item_id": "2.1",
+		}))
+		isError, _ := resp.Result["isError"].(bool)
+		if !isError {
+			t.Fatalf("action_item get should error without project_id, got %#v", resp.Result)
+		}
+		text := errorTextFromResult(t, resp.Result)
+		if !strings.Contains(text, "project_id is required") {
+			t.Fatalf("error text %q missing project_id-required hint", text)
+		}
+	})
+}
+
+// TestHandlerActionItemMutationsRejectDottedAddress verifies the 6 mutation
+// operations on till.action_item refuse dotted-address input with an
+// invalid_request error before any service call. The shared rejection helper
+// rejectMutationDottedActionItemID also feeds the legacy aliases (till.update_task
+// etc.), so verifying the canonical till.action_item path is sufficient.
+func TestHandlerActionItemMutationsRejectDottedAddress(t *testing.T) {
+	t.Parallel()
+
+	mutationCases := []struct {
+		operation string
+		extraArgs map[string]any
+	}{
+		{operation: "update", extraArgs: map[string]any{"title": "ActionItem One Updated"}},
+		{operation: "move", extraArgs: map[string]any{"to_column_id": "c2", "position": 1}},
+		{operation: "move_state", extraArgs: map[string]any{"state": "complete"}},
+		{operation: "delete", extraArgs: map[string]any{}},
+		{operation: "restore", extraArgs: map[string]any{}},
+		{operation: "reparent", extraArgs: map[string]any{"parent_id": "parent-1"}},
+	}
+
+	for _, tc := range mutationCases {
+		t.Run(tc.operation+" rejects dotted form", func(t *testing.T) {
+			t.Parallel()
+			service := &stubExpandedService{
+				stubCaptureStateReader: stubCaptureStateReader{
+					captureState: common.CaptureState{StateHash: "abc123"},
+				},
+			}
+			server := httptest.NewServer(mustNewHandler(t, service))
+			defer server.Close()
+			_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+			args := mergeArgs(validSessionArgs(), map[string]any{
+				"operation":         tc.operation,
+				"action_item_id":    "2.1",
+				"agent_instance_id": "inst-1",
+				"lease_token":       "tok-1",
+			}, tc.extraArgs)
+			_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7200, "till.action_item", args))
+			isError, _ := resp.Result["isError"].(bool)
+			if !isError {
+				t.Fatalf("operation=%s with dotted action_item_id should error, got %#v", tc.operation, resp.Result)
+			}
+			text := errorTextFromResult(t, resp.Result)
+			if !strings.Contains(text, "invalid_request") {
+				t.Fatalf("operation=%s error text %q missing invalid_request class", tc.operation, text)
+			}
+			if !strings.Contains(text, "mutations require UUID") {
+				t.Fatalf("operation=%s error text %q missing mutations-require-UUID hint", tc.operation, text)
+			}
+		})
+	}
+}
+
+// mustNewHandler builds one handler under expanded-service stubs or fails the test.
+func mustNewHandler(t *testing.T, service *stubExpandedService) http.Handler {
+	t.Helper()
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	return handler
+}
+
+// errorTextFromResult extracts the first text payload from one MCP CallToolResult JSON map.
+func errorTextFromResult(t *testing.T, result map[string]any) string {
+	t.Helper()
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("result has no content array: %#v", result)
+	}
+	first, ok := content[0].(map[string]any)
+	if !ok {
+		t.Fatalf("first content entry is not an object: %#v", content[0])
+	}
+	text, _ := first["text"].(string)
+	return text
 }
 
 // TestHandlerInstructionsToolReturnsEmbeddedDocs verifies till.get_instructions returns embedded markdown inventory and guidance.
@@ -2577,7 +2825,7 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 
 	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "update",
-		"action_item_id":    "t1",
+		"action_item_id":    testActionItemUUID,
 		"title":             "ActionItem One Updated",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
@@ -2600,7 +2848,7 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 
 	_, moveStateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3010, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "move_state",
-		"action_item_id":    "t1",
+		"action_item_id":    testActionItemUUID,
 		"state":             "complete",
 		"agent_instance_id": "inst-1",
 		"lease_token":       "lease-1",
@@ -2703,7 +2951,7 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 
 	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "restore",
-		"action_item_id":    "t1",
+		"action_item_id":    testActionItemUUID,
 		"agent_instance_id": "agent-1",
 		"lease_token":       "lease-1",
 		"override_token":    "override-1",
@@ -3223,7 +3471,7 @@ func TestHandlerExpandedActionItemRoleRoundTrip(t *testing.T) {
 		service, server := newServer(t)
 		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7002, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "update",
-			"action_item_id":    "t1",
+			"action_item_id":    testActionItemUUID,
 			"title":             "ActionItem One Updated",
 			"role":              string(domain.RoleQAProof),
 			"agent_instance_id": "inst-1",
@@ -3242,7 +3490,7 @@ func TestHandlerExpandedActionItemRoleRoundTrip(t *testing.T) {
 		service, server := newServer(t)
 		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7003, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "update",
-			"action_item_id":    "t1",
+			"action_item_id":    testActionItemUUID,
 			"title":             "ActionItem One Updated",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",

@@ -607,8 +607,12 @@ func mapAppError(operation string, err error) error {
 	switch {
 	case errors.Is(err, ErrBootstrapRequired):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrBootstrapRequired, err))
-	case errors.Is(err, app.ErrNotFound):
+	case errors.Is(err, app.ErrNotFound),
+		errors.Is(err, app.ErrDottedAddressNotFound):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrNotFound, err))
+	case errors.Is(err, app.ErrDottedAddressInvalidSyntax),
+		errors.Is(err, app.ErrMutationsRequireUUID):
+		return fmt.Errorf("%s: %w", operation, errors.Join(ErrInvalidCaptureStateRequest, err))
 	case errors.Is(err, domain.ErrMutationLeaseRequired),
 		errors.Is(err, domain.ErrMutationLeaseInvalid),
 		errors.Is(err, domain.ErrMutationLeaseExpired),

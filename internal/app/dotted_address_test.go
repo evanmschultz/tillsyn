@@ -230,3 +230,145 @@ func TestResolveDottedAddress_EmptyProjectID(t *testing.T) {
 		t.Fatalf("ResolveDottedAddress empty projectID error = %v, want ErrDottedAddressInvalidSyntax", err)
 	}
 }
+
+// TestIsLikelyDottedAddress covers the shape gate the MCP/CLI dispatch uses to
+// pick between UUID lookup and the dotted-resolver path. The gate is intentionally
+// permissive about slug shape — slug-prefix matches normalizeSlug's regex; bodies
+// match dottedBodyRegex. Anything else (UUIDs, free strings, malformed dots) is
+// false so the caller falls through to UUID parsing.
+func TestIsLikelyDottedAddress(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "single digit body", in: "0", want: true},
+		{name: "multi-segment body", in: "1.5.2", want: true},
+		{name: "slug-prefix bare body", in: "tillsyn:1.5.2", want: true},
+		{name: "slug-prefix single digit", in: "tillsyn:0", want: true},
+		{name: "leading-zero segment", in: "007.0", want: true},
+		{name: "empty string", in: "", want: false},
+		{name: "whitespace only", in: "   ", want: false},
+		{name: "leading dot", in: ".1", want: false},
+		{name: "trailing dot", in: "1.", want: false},
+		{name: "double dot", in: "1..2", want: false},
+		{name: "non-digit body", in: "abc", want: false},
+		{name: "uuid", in: "11111111-1111-1111-1111-111111111111", want: false},
+		{name: "slug-prefix empty body", in: "tillsyn:", want: false},
+		{name: "slug-prefix invalid slug uppercase", in: "Tillsyn:1.5", want: false},
+		{name: "slug-prefix invalid slug leading dash", in: "-tillsyn:1.5", want: false},
+		{name: "slug-prefix invalid body", in: "tillsyn:1.", want: false},
+		{name: "double colon", in: "tillsyn::1.5", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsLikelyDottedAddress(tc.in); got != tc.want {
+				t.Fatalf("IsLikelyDottedAddress(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSplitDottedSlugPrefix covers slug-prefix extraction. The helper is
+// intentionally lenient — it returns whatever precedes the first colon as-is,
+// leaving deeper validation to the resolver itself.
+func TestSplitDottedSlugPrefix(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "no colon", in: "1.5.2", want: ""},
+		{name: "uuid passes through", in: "11111111-1111-1111-1111-111111111111", want: ""},
+		{name: "slug-prefix", in: "tillsyn:1.5.2", want: "tillsyn"},
+		{name: "empty slug-prefix is empty", in: ":1.5.2", want: ""},
+		{name: "trimmed leading whitespace", in: "  tillsyn:1.5", want: "tillsyn"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SplitDottedSlugPrefix(tc.in); got != tc.want {
+				t.Fatalf("SplitDottedSlugPrefix(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestValidateActionItemIDForMutation enforces mutations-require-UUID for the
+// MCP and CLI mutation gates. UUID input passes; dotted (with or without slug)
+// returns ErrMutationsRequireUUID; empty input returns ErrDottedAddressInvalidSyntax
+// so callers can distinguish missing input from wrong-shape input.
+func TestValidateActionItemIDForMutation(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		wantErr error
+	}{
+		{name: "valid UUID accepted", in: "11111111-1111-1111-1111-111111111111", wantErr: nil},
+		{name: "dotted body rejected", in: "1.5.2", wantErr: ErrMutationsRequireUUID},
+		{name: "slug-prefix dotted rejected", in: "tillsyn:1.5.2", wantErr: ErrMutationsRequireUUID},
+		{name: "free-form string rejected", in: "abc", wantErr: ErrMutationsRequireUUID},
+		{name: "empty input invalid-syntax", in: "", wantErr: ErrDottedAddressInvalidSyntax},
+		{name: "whitespace-only invalid-syntax", in: "   ", wantErr: ErrDottedAddressInvalidSyntax},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateActionItemIDForMutation(tc.in)
+			switch {
+			case tc.wantErr == nil && err != nil:
+				t.Fatalf("ValidateActionItemIDForMutation(%q) error = %v, want nil", tc.in, err)
+			case tc.wantErr != nil && !errors.Is(err, tc.wantErr):
+				t.Fatalf("ValidateActionItemIDForMutation(%q) error = %v, want %v", tc.in, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestResolveActionItemID_UUIDPassesThrough verifies UUID input bypasses the
+// dotted resolver entirely — repo is never queried because no dotted walk
+// happens.
+func TestResolveActionItemID_UUIDPassesThrough(t *testing.T) {
+	repo, projectID := dottedFixture(t)
+	ctx := context.Background()
+	uuid := "11111111-1111-1111-1111-111111111111"
+
+	got, err := ResolveActionItemID(ctx, repo, projectID, uuid)
+	if err != nil {
+		t.Fatalf("ResolveActionItemID(uuid) error = %v, want nil", err)
+	}
+	if got != uuid {
+		t.Fatalf("ResolveActionItemID(uuid) = %q, want %q", got, uuid)
+	}
+}
+
+// TestResolveActionItemID_DottedDelegates verifies dotted input flows through
+// to ResolveDottedAddress and returns the same UUID a direct ResolveDottedAddress
+// call would have returned.
+func TestResolveActionItemID_DottedDelegates(t *testing.T) {
+	repo, projectID := dottedFixture(t)
+	ctx := context.Background()
+
+	want, err := ResolveDottedAddress(ctx, repo, projectID, "0")
+	if err != nil {
+		t.Fatalf("ResolveDottedAddress baseline error = %v", err)
+	}
+	got, err := ResolveActionItemID(ctx, repo, projectID, "0")
+	if err != nil {
+		t.Fatalf("ResolveActionItemID(dotted) error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("ResolveActionItemID(dotted) = %q, want %q", got, want)
+	}
+}
+
+// TestResolveActionItemID_EmptyInputRejected covers caller-side empty input —
+// distinct error class from "shape mismatch" so callers can route the two
+// failure modes differently.
+func TestResolveActionItemID_EmptyInputRejected(t *testing.T) {
+	repo, projectID := dottedFixture(t)
+	ctx := context.Background()
+
+	_, err := ResolveActionItemID(ctx, repo, projectID, "   ")
+	if !errors.Is(err, ErrDottedAddressInvalidSyntax) {
+		t.Fatalf("ResolveActionItemID empty error = %v, want ErrDottedAddressInvalidSyntax", err)
+	}
+}

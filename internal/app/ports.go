@@ -13,6 +13,7 @@ type Repository interface {
 	UpdateProject(context.Context, domain.Project) error
 	DeleteProject(context.Context, string) error
 	GetProject(context.Context, string) (domain.Project, error)
+	GetProjectBySlug(context.Context, string) (domain.Project, error)
 	ListProjects(context.Context, bool) ([]domain.Project, error)
 	SetProjectAllowedKinds(context.Context, string, []domain.KindID) error
 	ListProjectAllowedKinds(context.Context, string) ([]domain.KindID, error)

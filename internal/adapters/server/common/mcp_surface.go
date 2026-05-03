@@ -563,6 +563,8 @@ type ActionItemService interface {
 	RestoreActionItem(context.Context, RestoreActionItemRequest) (domain.ActionItem, error)
 	ReparentActionItem(context.Context, ReparentActionItemRequest) (domain.ActionItem, error)
 	ListChildActionItems(context.Context, string, string, bool) ([]domain.ActionItem, error)
+	ResolveActionItemID(ctx context.Context, projectID, idOrDotted string) (string, error)
+	GetProjectBySlug(ctx context.Context, slug string) (domain.Project, error)
 }
 
 // SearchService exposes cross-project and project-scoped actionItem search.
