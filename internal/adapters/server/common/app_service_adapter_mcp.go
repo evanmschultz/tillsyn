@@ -674,6 +674,17 @@ func (a *AppServiceAdapter) CreateActionItem(ctx context.Context, in CreateActio
 }
 
 // UpdateActionItem updates one actionItem/work-item row.
+//
+// Drop 3 droplet 3.19 (L1 field-level write guard): when the target item is
+// STEWARD-owned and the calling session is not steward-principal, the
+// adapter REJECTS any update that mutates Owner or DropNumber away from
+// existing values. Description/title/priority/due_at/labels/role/
+// structural_type/metadata updates are explicitly permitted on
+// STEWARD-owned items by drop-orchs (PLAN.md § 19.3 bullet 7) — only the
+// Owner/DropNumber columns are gated. The pointer-sentinel shape on
+// UpdateActionItemRequest.Owner / DropNumber distinguishes "absent" from
+// "set to empty" so a description-only update by an agent doesn't trigger a
+// false rejection.
 func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
 		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
@@ -688,6 +699,15 @@ func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActio
 	}
 	if err := validateMetadataOutcome(in.Metadata); err != nil {
 		return domain.ActionItem{}, err
+	}
+	if in.Owner != nil || in.DropNumber != nil {
+		existing, fetchErr := a.service.GetActionItem(ctx, strings.TrimSpace(in.ActionItemID))
+		if fetchErr != nil {
+			return domain.ActionItem{}, mapAppError("update actionItem", fetchErr)
+		}
+		if err := assertOwnerStateGateUpdateFields(ctx, existing, in.Owner, in.DropNumber); err != nil {
+			return domain.ActionItem{}, err
+		}
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	actionItem, err := a.service.UpdateActionItem(ctx, app.UpdateActionItemInput{
@@ -711,6 +731,14 @@ func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActio
 }
 
 // MoveActionItem moves one actionItem to a target column/position.
+//
+// Drop 3 droplet 3.19 (finding 5.C.1): the column-only move path historically
+// did not pre-fetch the action item (the underlying app.Service.MoveActionItem
+// performs its own fetch). The STEWARD owner-state-lock requires inspecting
+// the existing item's Owner field BEFORE the move executes, so this wrapper
+// now adds an explicit GetActionItem call ahead of the gate. The double fetch
+// is intentional — skipping the gate just because the column-only path lacks
+// a pre-fetch would leave a silent gap in the lock (the cited finding).
 func (a *AppServiceAdapter) MoveActionItem(ctx context.Context, in MoveActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
 		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
@@ -719,7 +747,15 @@ func (a *AppServiceAdapter) MoveActionItem(ctx context.Context, in MoveActionIte
 	if err != nil {
 		return domain.ActionItem{}, err
 	}
-	actionItem, err := a.service.MoveActionItem(ctx, strings.TrimSpace(in.ActionItemID), strings.TrimSpace(in.ToColumnID), in.Position)
+	actionItemID := strings.TrimSpace(in.ActionItemID)
+	existing, err := a.service.GetActionItem(ctx, actionItemID)
+	if err != nil {
+		return domain.ActionItem{}, mapAppError("move actionItem", err)
+	}
+	if err := assertOwnerStateGate(ctx, existing); err != nil {
+		return domain.ActionItem{}, err
+	}
+	actionItem, err := a.service.MoveActionItem(ctx, actionItemID, strings.TrimSpace(in.ToColumnID), in.Position)
 	if err != nil {
 		return domain.ActionItem{}, mapAppError("move actionItem", err)
 	}
@@ -746,6 +782,9 @@ func (a *AppServiceAdapter) MoveActionItemState(ctx context.Context, in MoveActi
 	actionItem, err := a.service.GetActionItem(ctx, actionItemID)
 	if err != nil {
 		return domain.ActionItem{}, mapAppError("move actionItem state", err)
+	}
+	if err := assertOwnerStateGate(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
 	}
 	targetColumnID, err := a.resolveActionItemColumnIDForState(ctx, actionItem.ProjectID, state)
 	if err != nil {
@@ -793,6 +832,12 @@ func (a *AppServiceAdapter) RestoreActionItem(ctx context.Context, in RestoreAct
 }
 
 // ReparentActionItem changes the parent relationship for one actionItem.
+//
+// Drop 3 droplet 3.19 (L8): reparenting is treated as a state-affecting
+// mutation under the STEWARD owner-state-lock. Drop-orchs cannot move
+// STEWARD-owned items into different parent subtrees regardless of state
+// delta. Cascade-methodology §6.3 confirms reparenting alters the cascade
+// shape and is therefore inside the lock's surface area.
 func (a *AppServiceAdapter) ReparentActionItem(ctx context.Context, in ReparentActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
 		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
@@ -801,7 +846,15 @@ func (a *AppServiceAdapter) ReparentActionItem(ctx context.Context, in ReparentA
 	if err != nil {
 		return domain.ActionItem{}, err
 	}
-	actionItem, err := a.service.ReparentActionItem(ctx, strings.TrimSpace(in.ActionItemID), strings.TrimSpace(in.ParentID))
+	actionItemID := strings.TrimSpace(in.ActionItemID)
+	existing, err := a.service.GetActionItem(ctx, actionItemID)
+	if err != nil {
+		return domain.ActionItem{}, mapAppError("reparent actionItem", err)
+	}
+	if err := assertOwnerStateGate(ctx, existing); err != nil {
+		return domain.ActionItem{}, err
+	}
+	actionItem, err := a.service.ReparentActionItem(ctx, actionItemID, strings.TrimSpace(in.ParentID))
 	if err != nil {
 		return domain.ActionItem{}, mapAppError("reparent actionItem", err)
 	}
@@ -831,6 +884,76 @@ func (a *AppServiceAdapter) resolveActionItemColumnIDForState(ctx context.Contex
 		}
 	}
 	return "", fmt.Errorf("state %q has no mapped column in project %q: %w", state, strings.TrimSpace(projectID), ErrInvalidCaptureStateRequest)
+}
+
+// stewardPrincipalType is the auth-request principal-type sentinel that
+// authorizes state-affecting mutations on STEWARD-owned action items.
+const stewardPrincipalType = "steward"
+
+// stewardOwner is the action-item Owner value the gate keys on.
+const stewardOwner = "STEWARD"
+
+// assertOwnerStateGate enforces the Drop 3 droplet 3.19 STEWARD
+// owner-state-lock against one already-fetched action item. When the item is
+// STEWARD-owned (Owner == "STEWARD") and the calling session's
+// AuthRequestPrincipalType is anything other than "steward", the gate
+// returns ErrAuthorizationDenied. Drop-orchs operate as agent-principal
+// sessions and are blocked from moving STEWARD items through state, column
+// position, parent linkage, or supersede regardless of state delta (per
+// finding 5.C.14 N1 — state-neutral semantic lock).
+//
+// Non-STEWARD-owned items (the dominant case) bypass the gate entirely.
+//
+// The caller is responsible for the action-item fetch — for column-level
+// MoveActionItem (which previously skipped pre-fetch for performance) the
+// MCP wrapper now fetches the item before invoking this helper, per finding
+// 5.C.1.
+func assertOwnerStateGate(ctx context.Context, item domain.ActionItem) error {
+	if strings.TrimSpace(item.Owner) != stewardOwner {
+		return nil
+	}
+	caller, ok := app.AuthenticatedCallerFromContext(ctx)
+	if !ok {
+		// No authenticated caller in context (e.g. unguarded user tuple) —
+		// treat as non-steward. The dominant non-MCP test path won't have
+		// a caller installed; that path is also outside the gate's scope.
+		return fmt.Errorf("action item %q is owned by STEWARD; only steward-principal sessions can move state: %w", item.ID, ErrAuthorizationDenied)
+	}
+	if strings.EqualFold(strings.TrimSpace(caller.AuthRequestPrincipalType), stewardPrincipalType) {
+		return nil
+	}
+	return fmt.Errorf("action item %q is owned by STEWARD; only steward-principal sessions can move state: %w", item.ID, ErrAuthorizationDenied)
+}
+
+// assertOwnerStateGateUpdateFields enforces the Drop 3 droplet 3.19 L1
+// field-level write guard: when the existing item is STEWARD-owned and the
+// caller is non-steward, REJECT any update that mutates the Owner or
+// DropNumber field away from existing values. The field-level path is
+// distinct from the state-neutral path (assertOwnerStateGate) because
+// description/title/metadata-only updates by drop-orchs on STEWARD-owned
+// items are explicitly permitted by PLAN.md § 19.3 bullet 7 ("Drop-orchs
+// keep create + update(description/details/metadata) perms but cannot move
+// STEWARD items through state").
+//
+// `wantOwner` and `wantDropNumber` are pointer-sentinels: nil = "no field
+// supplied, preserve existing" (allowed); non-nil = "caller intends to set
+// this value" — checked against existing.
+func assertOwnerStateGateUpdateFields(ctx context.Context, existing domain.ActionItem, wantOwner *string, wantDropNumber *int) error {
+	if strings.TrimSpace(existing.Owner) != stewardOwner {
+		return nil
+	}
+	caller, ok := app.AuthenticatedCallerFromContext(ctx)
+	stewardPrincipal := ok && strings.EqualFold(strings.TrimSpace(caller.AuthRequestPrincipalType), stewardPrincipalType)
+	if stewardPrincipal {
+		return nil
+	}
+	if wantOwner != nil && strings.TrimSpace(*wantOwner) != strings.TrimSpace(existing.Owner) {
+		return fmt.Errorf("action item %q is owned by STEWARD; only steward-principal sessions can change Owner: %w", existing.ID, ErrAuthorizationDenied)
+	}
+	if wantDropNumber != nil && *wantDropNumber != existing.DropNumber {
+		return fmt.Errorf("action item %q is owned by STEWARD; only steward-principal sessions can change DropNumber: %w", existing.ID, ErrAuthorizationDenied)
+	}
+	return nil
 }
 
 func normalizeActionItemStateInput(raw string) (domain.LifecycleState, error) {
@@ -1834,9 +1957,10 @@ attachIdentity:
 	if hasIdentityInput {
 		actorID, actorName := deriveMutationActorIdentity(actor)
 		ctx = app.WithAuthenticatedCaller(ctx, domain.AuthenticatedCaller{
-			PrincipalID:   actorID,
-			PrincipalName: actorName,
-			PrincipalType: actorType,
+			PrincipalID:              actorID,
+			PrincipalName:            actorName,
+			PrincipalType:            actorType,
+			AuthRequestPrincipalType: strings.TrimSpace(actor.AuthRequestPrincipalType),
 		})
 	}
 	return ctx, actorType, nil

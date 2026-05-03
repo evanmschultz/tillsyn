@@ -8,8 +8,20 @@ import "strings"
 type AuthenticatedCaller struct {
 	PrincipalID   string
 	PrincipalName string
+	// PrincipalType carries the actor-class axis (user|agent|system) used by
+	// the existing mutation guard layer. autent's closed principal-type enum
+	// {user, agent, service} maps onto this via principalTypeToActorType in
+	// the autentauth adapter.
 	PrincipalType ActorType
-	SessionID     string
+	// AuthRequestPrincipalType carries the auth-request principal-class axis
+	// (user|agent|service|steward) sourced from the originating auth_request
+	// row + persisted on the issued AuthSession. Distinct from PrincipalType
+	// (the actor-class axis) so the STEWARD owner-state-lock can key on the
+	// "steward" value without collapsing it into "agent". Drop 3 droplet 3.19
+	// added this field to enforce the gate that drop-orchs cannot move
+	// STEWARD-owned action items through state.
+	AuthRequestPrincipalType string
+	SessionID                string
 }
 
 // NormalizeAuthenticatedCaller trims and canonicalizes one authenticated caller value.
@@ -17,6 +29,7 @@ func NormalizeAuthenticatedCaller(caller AuthenticatedCaller) AuthenticatedCalle
 	caller.PrincipalID = strings.TrimSpace(caller.PrincipalID)
 	caller.PrincipalName = strings.TrimSpace(caller.PrincipalName)
 	caller.SessionID = strings.TrimSpace(caller.SessionID)
+	caller.AuthRequestPrincipalType = strings.TrimSpace(strings.ToLower(caller.AuthRequestPrincipalType))
 	caller.PrincipalType = normalizeActorTypeValue(caller.PrincipalType)
 	switch caller.PrincipalType {
 	case ActorTypeUser, ActorTypeAgent, ActorTypeSystem:

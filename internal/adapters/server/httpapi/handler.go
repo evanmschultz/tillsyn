@@ -326,10 +326,15 @@ func buildAuthenticatedHTTPActor(caller domain.AuthenticatedCaller, guard httpMu
 	if caller.IsZero() {
 		return common.ActorLeaseTuple{}, fmt.Errorf("authenticated caller is required: %w", common.ErrInvalidCaptureStateRequest)
 	}
+	// Drop 3 droplet 3.19: thread AuthRequestPrincipalType through the
+	// transport-layer actor tuple so the STEWARD owner-state-lock survives
+	// the trip into withMutationGuardContext (which rebuilds the
+	// AuthenticatedCaller from the actor tuple).
 	actor := common.ActorLeaseTuple{
-		ActorID:   caller.PrincipalID,
-		ActorName: caller.PrincipalName,
-		ActorType: string(caller.PrincipalType),
+		ActorID:                  caller.PrincipalID,
+		ActorName:                caller.PrincipalName,
+		ActorType:                string(caller.PrincipalType),
+		AuthRequestPrincipalType: caller.AuthRequestPrincipalType,
 	}
 	guard.AgentInstanceID = strings.TrimSpace(guard.AgentInstanceID)
 	guard.LeaseToken = strings.TrimSpace(guard.LeaseToken)

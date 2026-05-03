@@ -390,7 +390,8 @@ func NewAuthRequest(in AuthRequestInput, now time.Time) (AuthRequest, error) {
 		return AuthRequest{}, err
 	}
 	principalRole := strings.TrimSpace(string(NormalizeAuthRequestRole(AuthRequestRole(in.PrincipalRole))))
-	if principalType == "agent" {
+	switch principalType {
+	case "agent":
 		if principalRole == "" {
 			principalRole = string(AuthRequestRoleBuilder)
 		}
@@ -400,8 +401,22 @@ func NewAuthRequest(in AuthRequestInput, now time.Time) (AuthRequest, error) {
 		if path.Kind != AuthRequestPathKindProject && principalRole != string(AuthRequestRoleOrchestrator) {
 			return AuthRequest{}, ErrInvalidAuthRequestRole
 		}
-	} else if principalRole != "" {
-		return AuthRequest{}, ErrInvalidAuthRequestRole
+	case "steward":
+		// Drop 3 droplet 3.19: steward principal-type only ever pairs with the
+		// orchestrator role. STEWARD itself is a persistent orchestrator that
+		// owns post-merge MD collation + worktree cleanup; no other role makes
+		// sense for it. Reject every non-orchestrator role with the same
+		// sentinel agent role mismatches use.
+		if principalRole == "" {
+			principalRole = string(AuthRequestRoleOrchestrator)
+		}
+		if principalRole != string(AuthRequestRoleOrchestrator) {
+			return AuthRequest{}, ErrInvalidAuthRequestRole
+		}
+	default:
+		if principalRole != "" {
+			return AuthRequest{}, ErrInvalidAuthRequestRole
+		}
 	}
 	scopeType := path.ScopeType
 	scopeID := path.ScopeID
@@ -594,6 +609,14 @@ func (r *AuthRequest) ensurePending(now time.Time) error {
 }
 
 // normalizeAuthRequestPrincipalType canonicalizes caller principal types for auth requests.
+//
+// Accepted values (closed set, post-Drop-3 droplet 3.19): user, agent, service, steward.
+// "steward" is a tillsyn-internal axis distinct from autent's closed
+// {user, agent, service} principal-type enum. The autentauth adapter
+// boundary-maps steward → autentdomain.PrincipalTypeAgent (per Drop 3 L2);
+// tillsyn preserves the steward value in its own auth_requests table and on
+// AuthenticatedCaller.AuthRequestPrincipalType for the STEWARD owner-state
+// gate.
 func normalizeAuthRequestPrincipalType(raw string) (string, error) {
 	switch strings.TrimSpace(strings.ToLower(raw)) {
 	case "", "user":
@@ -602,6 +625,8 @@ func normalizeAuthRequestPrincipalType(raw string) (string, error) {
 		return "agent", nil
 	case "service", "system":
 		return "service", nil
+	case "steward":
+		return "steward", nil
 	default:
 		return "", fmt.Errorf("%w: unsupported principal type %q", ErrInvalidActorType, raw)
 	}
