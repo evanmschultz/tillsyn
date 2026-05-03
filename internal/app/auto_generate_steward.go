@@ -323,6 +323,112 @@ func (s *Service) assembleRefinementsGateBlockedBy(ctx context.Context, drop dom
 	return out, nil
 }
 
+// isRefinementsGate reports whether one already-fetched action item is the
+// auto-generated DROP_<N>_REFINEMENTS_GATE_BEFORE_DROP_<N+1> confluence.
+// The gate is identified by Owner=STEWARD + StructuralType=Confluence +
+// DropNumber>0; the title shape is asserted by the auto-generator's create
+// path so it does not need to be re-checked here.
+func isRefinementsGate(item domain.ActionItem) bool {
+	if strings.TrimSpace(item.Owner) != stewardOwner {
+		return false
+	}
+	if item.StructuralType != domain.StructuralTypeConfluence {
+		return false
+	}
+	if item.DropNumber <= 0 {
+		return false
+	}
+	return true
+}
+
+// raiseRefinementsGateForgottenAttention is the safety-net the gate-close
+// path runs whenever a DROP_<N> refinements-gate transitions to complete.
+// It scans every drop_number=N action item; if any are still non-terminal
+// (todo / in_progress / blocked) at gate-close time, it materializes one
+// attention_item warning the dev that the gate closed without those items
+// reaching a terminal state. Per finding 5.C.11 ACCEPT-with-warning: the
+// attention_item documents the failure mode without papering over the
+// underlying parent-blocks-on-incomplete-child invariant — the level_1
+// drop's own close attempt still rejects independently when its direct
+// children are non-terminal.
+//
+// The helper is idempotent on attention_item id: re-running gate-close
+// against an already-warned drop yields the same id and the storage layer
+// rejects the duplicate insert. Callers ignore that case.
+//
+// Failure to enqueue the attention_item is non-fatal — we log nothing here
+// (caller chooses) and return the error so the move path can decide. Today
+// MoveActionItem treats any non-nil return as a hard failure; if the safety
+// net itself becomes flaky, the move will fail-closed which is the safer
+// default for a regression net.
+func (s *Service) raiseRefinementsGateForgottenAttention(ctx context.Context, gate domain.ActionItem) error {
+	if !isRefinementsGate(gate) {
+		return nil
+	}
+	dropItems, err := s.repo.ListActionItemsByDropNumber(ctx, gate.ProjectID, gate.DropNumber)
+	if err != nil {
+		return fmt.Errorf("safety-net list drop items: %w", err)
+	}
+	stragglers := make([]domain.ActionItem, 0, len(dropItems))
+	for _, item := range dropItems {
+		if item.ID == gate.ID {
+			continue
+		}
+		if item.ArchivedAt != nil {
+			continue
+		}
+		if domain.IsTerminalState(item.LifecycleState) {
+			continue
+		}
+		// Exclude the level_1 numbered drop itself (parent_id == "" +
+		// drop_number > 0). The drop closes via its own
+		// MoveActionItem path and its non-terminal state is meaningful only
+		// for the parent-blocks-on-incomplete-child invariant; the gate's
+		// safety-net is for stragglers in the *subtree*, not the root drop.
+		// Without this exclusion every gate close raises a spurious safety
+		// net during the normal close sequence (gate closes BEFORE the
+		// level_1 drop transitions to complete).
+		if strings.TrimSpace(item.ParentID) == "" && item.DropNumber > 0 {
+			continue
+		}
+		stragglers = append(stragglers, item)
+	}
+	if len(stragglers) == 0 {
+		return nil
+	}
+	sort.Slice(stragglers, func(i, j int) bool {
+		return stragglers[i].ID < stragglers[j].ID
+	})
+	titles := make([]string, 0, len(stragglers))
+	for _, item := range stragglers {
+		titles = append(titles, fmt.Sprintf("- `%s` (%s, state=%s)", item.ID, item.Title, item.LifecycleState))
+	}
+	body := strings.Join(append([]string{
+		fmt.Sprintf("Refinements-gate `%s` (drop %d) closed while %d drop_number=%d action item(s) remained non-terminal:", gate.Title, gate.DropNumber, len(stragglers), gate.DropNumber),
+		"",
+	}, titles...), "\n") + "\n\n" +
+		"Likely cause: a mid-drop refinement plan-item was created AFTER the gate's blocked_by list was assembled, and the gate was closed without manually adding it to the gate's blocked_by edges. The level_1 drop close path will independently reject completion while these items are non-terminal (per Drop 1's parent-blocks-on-incomplete-child rule); this attention item exists to surface the cause directly to the dev."
+	item, err := domain.NewAttentionItem(domain.AttentionItemInput{
+		ID:                 fmt.Sprintf("refinements-gate-forgotten::%s", gate.ID),
+		ProjectID:          gate.ProjectID,
+		ScopeType:          domain.ScopeLevelProject,
+		ScopeID:            gate.ProjectID,
+		Kind:               domain.AttentionKindRiskNote,
+		Summary:            fmt.Sprintf("refinements-gate %s closed with %d non-terminal drop_number=%d items", gate.Title, len(stragglers), gate.DropNumber),
+		BodyMarkdown:       body,
+		RequiresUserAction: true,
+		CreatedByActor:     stewardOwner,
+		CreatedByType:      domain.ActorTypeSystem,
+	}, s.clock())
+	if err != nil {
+		return fmt.Errorf("safety-net build attention: %w", err)
+	}
+	if err := s.repo.CreateAttentionItem(ctx, item); err != nil {
+		return fmt.Errorf("safety-net create attention: %w", err)
+	}
+	return nil
+}
+
 // firstColumnForProject returns the first non-archived column on the
 // supplied project so seedStewardAnchors / seedDropFindingsAndGate have a
 // landing column for the children they create. Auto-create columns

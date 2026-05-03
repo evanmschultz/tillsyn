@@ -862,6 +862,19 @@ func (s *Service) MoveActionItem(ctx context.Context, actionItemID, toColumnID s
 	if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "task_moved"); err != nil {
 		return domain.ActionItem{}, err
 	}
+	// Per droplet 3.22 + finding 5.C.11: when a refinements-gate transitions
+	// to complete, run the safety-net check that warns the dev if any
+	// drop_number=N items remain non-terminal at gate-close time. The check
+	// is a regression net for the "drop-orch forgot to update blocked_by"
+	// failure mode — it documents the cause without papering over the
+	// underlying parent-blocks-on-incomplete-child invariant on the level_1
+	// drop. Non-gate moves and non-complete transitions are no-ops inside
+	// raiseRefinementsGateForgottenAttention.
+	if toState == domain.StateComplete && isRefinementsGate(actionItem) {
+		if err := s.raiseRefinementsGateForgottenAttention(ctx, actionItem); err != nil {
+			return domain.ActionItem{}, err
+		}
+	}
 	return actionItem, nil
 }
 
