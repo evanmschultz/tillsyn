@@ -122,6 +122,13 @@ var (
 	// references a kind that is not a member of the closed 12-value Kind
 	// enum, or when a [kinds.*] / [agent_bindings.*] map key does likewise.
 	ErrUnknownKindReference = errors.New("template references an unknown kind")
+
+	// ErrInvalidAgentBinding is returned by AgentBinding.Validate when one of
+	// its fields fails the rules in main/PLAN.md § 19.3 lines 1653-1656
+	// (empty agent_name/model, non-positive max_tries/max_turns, negative
+	// max_budget_usd/blocked_retries/blocked_retry_cooldown). The wrapped
+	// message names the offending field and the offending value for UX.
+	ErrInvalidAgentBinding = errors.New("invalid agent binding")
 )
 
 // validateChildRuleKinds asserts every Kind referenced in [child_rules] is a
