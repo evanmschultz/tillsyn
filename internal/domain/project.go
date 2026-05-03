@@ -14,9 +14,29 @@ type Project struct {
 	Name        string
 	Description string
 	Metadata    ProjectMetadata
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	ArchivedAt  *time.Time
+	// KindCatalogJSON is the lazy-decode envelope for the per-project
+	// KindCatalog snapshot baked from the project's bound Template at
+	// creation time. Per Drop 3 fix L5 (CE4 import-cycle resolution) this
+	// field is a json.RawMessage rather than a typed catalog value: the
+	// concrete KindCatalog type lives in internal/templates, and a typed
+	// field here would re-introduce the forbidden
+	// internal/domain → internal/templates dependency.
+	//
+	// Decoding lives in internal/app or internal/templates — never on
+	// Project's methods. Callers consult this field via templates.KindCatalog
+	// JSON-decoding helpers; an empty / nil value signals "no template was
+	// bound at create time" and triggers the legacy repo fallback path per
+	// droplet 3.12 acceptance criterion (preserves Drop 2.8 universal-
+	// nesting boot compatibility).
+	//
+	// Per Drop 3 finding 5.B.14 (runtime mutability): edits to a project's
+	// <project_root>/.tillsyn/template.toml AFTER project creation are
+	// ignored until the dev fresh-DBs ~/.tillsyn/tillsyn.db. The catalog
+	// is baked once and frozen for the project's lifetime.
+	KindCatalogJSON json.RawMessage `json:"kind_catalog_json,omitempty"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ArchivedAt      *time.Time
 }
 
 // ProjectCapabilityPolicy stores project-level capability and override policy values.

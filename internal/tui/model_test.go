@@ -502,14 +502,7 @@ func (f *fakeService) ListHandoffs(_ context.Context, in app.ListHandoffsInput) 
 			continue
 		}
 		if len(filter.Statuses) > 0 {
-			match := false
-			for _, status := range filter.Statuses {
-				if domain.NormalizeHandoffStatus(handoff.Status) == status {
-					match = true
-					break
-				}
-			}
-			if !match {
+			if !slices.Contains(filter.Statuses, domain.NormalizeHandoffStatus(handoff.Status)) {
 				continue
 			}
 		}
@@ -2457,7 +2450,7 @@ func TestModelActionItemInfoDetailsViewportScrolls(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	lines := make([]string, 0, 240)
-	for i := 0; i < 240; i++ {
+	for i := range 240 {
 		lines = append(lines, fmt.Sprintf("line %03d full page md details", i))
 	}
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
@@ -3625,7 +3618,7 @@ func TestModelDescriptionEditorPreviewModeToggleAndScrollSync(t *testing.T) {
 	}
 
 	lines := make([]string, 0, 80)
-	for idx := 0; idx < 80; idx++ {
+	for idx := range 80 {
 		lines = append(lines, fmt.Sprintf("line %02d", idx+1))
 	}
 	m.descriptionEditorInput.SetValue(strings.Join(lines, "\n"))
@@ -3634,7 +3627,7 @@ func TestModelDescriptionEditorPreviewModeToggleAndScrollSync(t *testing.T) {
 	m.descriptionEditorInput.MoveToBegin()
 	m.syncDescriptionPreviewOffsetToEditor()
 
-	for idx := 0; idx < 60; idx++ {
+	for range 60 {
 		m.descriptionEditorInput.CursorDown()
 	}
 	m.syncDescriptionPreviewOffsetToEditor()
@@ -4090,7 +4083,7 @@ func TestModelCommandPaletteWindowedRendering(t *testing.T) {
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune(':'))
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		m = applyMsg(t, m, keyRune('j'))
 	}
 	if m.commandIndex != 12 {
@@ -4915,7 +4908,7 @@ func TestModelBoardScrollKeepsSelectedRowVisible(t *testing.T) {
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 
 	tasks := make([]domain.ActionItem, 0, 36)
-	for i := 0; i < 36; i++ {
+	for i := range 36 {
 		actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 			ID:        fmt.Sprintf("t-%02d", i),
 			ProjectID: p.ID,
@@ -4929,7 +4922,7 @@ func TestModelBoardScrollKeepsSelectedRowVisible(t *testing.T) {
 
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, tasks)
 	m := loadReadyModel(t, NewModel(svc))
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		m = applyMsg(t, m, keyRune('j'))
 	}
 
@@ -9515,7 +9508,7 @@ func TestAuthInventoryMouseWheelReachesLowerSections(t *testing.T) {
 	}
 	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.ActionItem{actionItem})
 	svc.authRequests[pending.ID] = pending
-	for idx := 0; idx < 7; idx++ {
+	for idx := range 7 {
 		id := fmt.Sprintf("req-pending-%d", idx)
 		svc.authRequests[id] = domain.AuthRequest{
 			ID:                  id,
@@ -10833,7 +10826,7 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 	m.mode = modeNone
 	m.noticesFocused = true
 
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		m = applyMsg(t, m, keyRune('j'))
 	}
 	if m.noticesActivity != 4 {
@@ -11521,7 +11514,7 @@ func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
 // TestModelActivityAndHistoryBounds verifies capped retention and transition helpers.
 func TestModelActivityAndHistoryBounds(t *testing.T) {
 	m := Model{}
-	for i := 0; i < 205; i++ {
+	for i := range 205 {
 		m.appendActivity(activityEntry{
 			At:      time.Date(2026, 2, 21, 12, 0, i%60, 0, time.UTC),
 			Summary: "event",
@@ -14933,7 +14926,14 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		"UpdatedAt":  {},
 		"ArchivedAt": {},
 	}
-	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.Project{}), editable, readOnly, nil)
+	projectInternal := map[string]struct{}{
+		// KindCatalogJSON is the per-project Drop 3 droplet 3.12
+		// lazy-decode envelope for the baked KindCatalog snapshot. It is
+		// neither user-editable through the TUI nor part of the read-only
+		// system surface — internal scaffolding the TUI does not render.
+		"KindCatalogJSON": {},
+	}
+	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.Project{}), editable, readOnly, projectInternal)
 
 	projectMetadataEditable := map[string]struct{}{
 		"Owner":    {},
