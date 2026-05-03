@@ -18,20 +18,20 @@ Hylla-specific ergonomic guidance lives in `HYLLA_WIKI.md`. Cascade architecture
 
 ## The Tillsyn Model (Node Types)
 
-Tillsyn has exactly **two node types** you should use today:
+Tillsyn has exactly **two node tables** in the runtime:
 
-1. **Project** — the root container. One per repo / product / coordination scope. Never nested inside another project.
-2. **Drop** — every node below the project. Drops nest **infinitely**.
+1. **`projects`** — the root container. One per repo / product / coordination scope. Never nested inside another project. No `kind` column post-Drop-1.75.
+2. **`action_items`** — every node below the project. Nest **infinitely**. The `kind` column is a closed 12-value enum (see `CLAUDE.md` § "Post-Drop-1.75 Creation Rule" for the full enum + creator-chooses-explicitly rule).
 
-A "drop" is the Tillsyn-native word for a unit of work. In current runtime terms it is a action item with `kind='actionItem'` (the pre-Drop-2 creation rule — see `CLAUDE.md` § "Pre-Drop-2 Creation Rule"). Drop 2 of the cascade collapses every non-project kind to literal `kind='drop'`; for now, write `kind='actionItem', scope='actionItem'` and **refer to the node as a drop in prose**.
+In prose we call any non-project node a **drop**, classified along three orthogonal axes — `kind` (what work), `metadata.role` (who does it), and `metadata.structural_type` (where it sits in the cascade flow: `drop | segment | confluence | droplet`). See § Cascade Vocabulary below for the full structural_type enum and orthogonality table.
 
-### Do Not Use Other Kinds Today
+### Closed 12-Value `kind` Enum (Post-Drop-1.75)
 
-The `kind_catalog` still lists `build-actionItem`, `subtask`, `qa-check`, `plan-actionItem`, `commit-and-reingest`, `a11y-check`, `visual-qa`, `design-review`, `phase`, `branch`, `decision`, `note`. **Do not use them.** Drop 2's SQL rewrites every non-project node to `drop`. Pre-Drop-2, stick to plain `actionItem` and keep the runtime writes consistent.
+`action_items.kind` is the closed 12-value enum: `plan`, `research`, `build`, `plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`, `closeout`, `commit`, `refinement`, `discussion`, `human-verify`. There is no inferred default and no fallback kind — the creator picks explicitly at create time. Old kinds (`actionItem`, `build-actionItem`, `subtask`, `qa-check`, `plan-actionItem`, `commit-and-reingest`, `a11y-check`, `visual-qa`, `design-review`, `phase`, `branch`, `decision`, `note`) were rewritten by `main/scripts/drops-rewrite.sql` during Drop 1.75 and are no longer accepted.
 
 ### Do Not Use Templates Right Now
 
-Templates are part of the long-term cascade design, but **do not bind a template to new projects today**. The Tillsyn project itself is template-free (`template: none`). Templates will come back in Drop 3+ when `child_rules` can enforce required-QA subtasks and role gates. Until then, **the orchestrator enforces the tree shape manually** and this wiki is the specification for what that shape looks like.
+Templates are part of the long-term cascade design, but **do not bind a template to new projects today**. The Tillsyn project itself is template-free (`template: none`). Templates land in Drop 3+ when `child_rules` enforce required-QA children and role gates. Until then, **the orchestrator enforces the tree shape manually** and this wiki is the specification for what that shape looks like.
 
 ## Cascade Vocabulary
 
@@ -134,7 +134,7 @@ If a drop is too large to fit those constraints, **nest further** rather than st
 These are adopter best practices for how the orchestrator + dev shape the drop tree. Guidance, not gates — override when the domain genuinely demands it.
 
 - **Level-1 drops should be small and domain-specific.** One level-1 drop = one coherent chunk of change (one package, one subsystem, one cross-cutting concern). If a level-1 drop starts pulling in a second unrelated domain, prefer splitting into two level-1 drops.
-- **Nested drops (level_2 and deeper) bottom out at atomic single-actionItem action items.** One builder subagent (or one orchestrator + dev pairing) finishes the leaf cleanly — see "Atomic Drop Granularity" above.
+- **Nested drops (level_2 and deeper) bottom out at atomic `structural_type=droplet` nodes.** One builder subagent (or one orchestrator + dev pairing) finishes the leaf cleanly — see "Atomic Drop Granularity" above.
 - **Run level-1 drops in parallel when their domains don't overlap.** Two level-1 drops whose `paths` / `packages` / coordination surfaces don't touch each other SHOULD run concurrently, each under its own drop orch. If they touch — shared packages, shared runtime surfaces, shared auth flow — serialize with explicit `blocked_by`, coordinate via `till.handoff`, or merge-and-respin.
 - **When parallel level-1 drops complete, the persistent integrating orchestrator finalizes and local-cleans up.** Each drop-orch runs its own drop-end sequence on its branch (finalize artifact MDs under `workflow/drop_N/`, rebase, PR, merge, delete remote + local branch refs). Post-merge, the persistent orch reads `workflow/drop_N/`, splices content into top-level MDs on `main`, runs the refinements-gate, and removes the local worktree dir. The parallel set converges at a single integration point (in this repo, `STEWARD`; in adopter repos, whatever your equivalent persistent orch is).
 - **Motivating constraint: integrating orchestrator context budget.** The sizing + parallelism rules exist so each level-1 drop — and each concurrent group of them — stays small enough for the integrating orch to manage post-merge without overloading context. A level-1 drop so big that its full findings-drop set can't fit into one coherent review session is too big — split it. A parallel group so wide that the combined post-merge queue blows context is too wide — stagger it.
@@ -203,7 +203,7 @@ These land in:
 
 ### 2. Cross-Project Improvement Prompt (When Tillsyn Is Used Externally)
 
-**When Tillsyn is being used by a project that is NOT this repo**, the adopting project's drop-end actionItem has one additional deliverable: **a prompt written to give back to Tillsyn itself** so the Tillsyn team can improve the runtime based on real external usage.
+**When Tillsyn is being used by a project that is NOT this repo**, the adopting project's drop-end closeout has one additional deliverable: **a prompt written to give back to Tillsyn itself** so the Tillsyn team can improve the runtime based on real external usage.
 
 The prompt should capture:
 
@@ -239,7 +239,7 @@ The dev only ever sees orchestrator auth requests in the TUI. Planner / QA / bui
 2. The request's `principal_role` is **not** `orchestrator`. Orch-spawning-orch is out of scope; orch chains require dev approval at every step.
 3. The orch claims the approval action through its own session tuple — no acting-on-behalf-of for approval.
 
-**Pre-fix vs post-fix state.** The capability to approve subagent auth from an orch session lands in the auth-approval-cascade drop (PLAN §19.1.6), scheduled between Drop 1.5 and Drop 2. Until that drop ships, orch-side approval may fail with a permission error — when it does, the orch surfaces the request_id to the dev in chat for manual TUI approval and files a level_2 actionItem under REFINEMENTS so the auth-approval-cascade drop has a concrete repro to point at. Once §19.1.6 ships, orch-side approval is the canonical path; dev approval becomes the configurable fallback (a later refinement drop adds the configuration).
+**Pre-fix vs post-fix state.** The capability to approve subagent auth from an orch session lands in the auth-approval-cascade drop (PLAN §19.1.6), scheduled between Drop 1.5 and Drop 2. Until that drop ships, orch-side approval may fail with a permission error — when it does, the orch surfaces the request_id to the dev in chat for manual TUI approval and files a level_2 `kind=refinement` node under REFINEMENTS so the auth-approval-cascade drop has a concrete repro to point at. Once §19.1.6 ships, orch-side approval is the canonical path; dev approval becomes the configurable fallback (a later refinement drop adds the configuration).
 
 **Auth handoff to the subagent.** After the orch creates and approves the request, the orch passes `request_id` + `resume_token` + `path` + `principal_id` + `client_id` to the subagent in the spawn prompt — **never** the orch's own session tuple. The subagent runs `till.auth_request(operation=claim)` itself and issues its own scope-appropriate lease.
 
@@ -247,14 +247,14 @@ External adopters: this rule generalizes. Any orchestrator-shaped session that f
 
 ## Drop Orch Cross-Subtree Exception
 
-Drop orchs operate inside their assigned level_1 subtree. The one exception: drop orchs may **add** level_2 actionItem nodes under STEWARD's six persistent level_1 parents — `DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS` — and may nest further actionItem drops under their own additions.
+Drop orchs operate inside their assigned level_1 subtree. The one exception: drop orchs may **add** level_2 nodes under STEWARD's six persistent level_1 parents — `DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS` — and may nest further descendants under their own additions.
 
-This lets drop orchs route per-drop content through the Tillsyn tree for STEWARD visibility, while the on-disk source of truth lives in `workflow/drop_N/` on the drop branch (see `PLAN.md` §15.9). Findings, refinement candidates, ledger entries, wiki-changelog entries, Hylla feedback, and ad-hoc discussion topics each become a `kind=actionItem, scope=actionItem` level_2 node under the matching persistent parent; the Tillsyn description can hold a short summary + pointer into `workflow/drop_N/` files, while the full content lives on disk. STEWARD post-merge reads both the Tillsyn nodes and the `workflow/drop_N/` files, writes the top-level MDs on `main`, and closes the level_2 nodes.
+This lets drop orchs route per-drop content through the Tillsyn tree for STEWARD visibility, while the on-disk source of truth lives in `workflow/drop_N/` on the drop branch (see `PLAN.md` §15.9). Findings, refinement candidates, ledger entries, wiki-changelog entries, Hylla feedback, and ad-hoc discussion topics each become a level_2 node (`kind=refinement` for refinements, `kind=discussion` for discussion topics, `kind=closeout` or `kind=plan` for ledger / wiki-changelog / findings rollups as appropriate) under the matching persistent parent; the Tillsyn description can hold a short summary + pointer into `workflow/drop_N/` files, while the full content lives on disk. STEWARD post-merge reads both the Tillsyn nodes and the `workflow/drop_N/` files, writes the top-level MDs on `main`, and closes the level_2 nodes.
 
 **Hard restrictions on the exception:**
 
 - **Adds only.** The drop orch may create new nodes under STEWARD's persistent parents and may edit/extend its own creations. The drop orch may **not** modify or delete the persistent parents themselves, or any node created by STEWARD or another orch.
-- **`kind=actionItem, scope=actionItem`** still applies — the pre-Drop-2 rule has no carve-outs.
+- **`kind` chosen from the closed 12-value enum** (post-Drop-1.75) — see `CLAUDE.md` § "Post-Drop-1.75 Creation Rule" for the enum and creator-chooses-explicitly rule. No fallback kind, no carve-outs.
 - **No state transitions on STEWARD-owned nodes.** STEWARD owns the close on every level_2 node it consumes; drop orchs leave them in `in_progress` (or `todo`) until STEWARD acts.
 - **Subagents inherit the exception** through their orch-issued auth: a planner / QA agent may file findings into REFINEMENTS / HYLLA_FINDINGS the same way, scoped by the orch's approval grant.
 
