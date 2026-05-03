@@ -63,6 +63,10 @@ type SnapshotActionItem struct {
 	Role           domain.Role               `json:"role,omitempty"`
 	StructuralType domain.StructuralType     `json:"structural_type,omitempty"`
 	Irreducible    bool                      `json:"irreducible,omitempty"`
+	Owner          string                    `json:"owner,omitempty"`
+	DropNumber     int                       `json:"drop_number,omitempty"`
+	Persistent     bool                      `json:"persistent,omitempty"`
+	DevGated       bool                      `json:"dev_gated,omitempty"`
 	LifecycleState domain.LifecycleState     `json:"lifecycle_state"`
 	ColumnID       string                    `json:"column_id"`
 	Position       int                       `json:"position"`
@@ -1073,6 +1077,10 @@ func snapshotActionItemFromDomain(t domain.ActionItem) SnapshotActionItem {
 		Role:           t.Role,
 		StructuralType: t.StructuralType,
 		Irreducible:    t.Irreducible,
+		Owner:          t.Owner,
+		DropNumber:     t.DropNumber,
+		Persistent:     t.Persistent,
+		DevGated:       t.DevGated,
 		LifecycleState: t.LifecycleState,
 		ColumnID:       t.ColumnID,
 		Position:       t.Position,
@@ -1325,6 +1333,16 @@ func (t SnapshotActionItem) toDomain() domain.ActionItem {
 		// contract. Inventing a default here would mask schema drift.
 		StructuralType: t.StructuralType,
 		Irreducible:    t.Irreducible,
+		// Owner / DropNumber / Persistent / DevGated have no fallback — same
+		// rationale as StructuralType above. Pre-droplet-3.21 snapshots
+		// without these fields deserialize to zero values (empty string / 0
+		// / false), which are the legitimate domain defaults; legacy-format
+		// compatibility is covered by the json:",omitempty" tags. No
+		// SnapshotVersion bump required.
+		Owner:          t.Owner,
+		DropNumber:     t.DropNumber,
+		Persistent:     t.Persistent,
+		DevGated:       t.DevGated,
 		LifecycleState: state,
 		ColumnID:       strings.TrimSpace(t.ColumnID),
 		Position:       t.Position,

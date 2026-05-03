@@ -78,14 +78,32 @@ type CreateActionItemRequest struct {
 	// domain.NewActionItem returns ErrInvalidStructuralType. Diverges from
 	// Role's permissive empty.
 	StructuralType string
-	ColumnID       string
-	Title          string
-	Description    string
-	Priority       string
-	DueAt          string
-	Labels         []string
-	Metadata       domain.ActionItemMetadata
-	Actor          ActorLeaseTuple
+	// Owner optionally tags the new action item with a principal-name
+	// string (e.g. "STEWARD"). Empty string is permitted; whitespace-only
+	// collapses to empty. Domain primitive (per L13) — not STEWARD-specific.
+	// Threaded through app.CreateActionItemInput → domain.NewActionItem in
+	// droplet 3.21.
+	Owner string
+	// DropNumber stores the cascade drop index. Zero is permitted (treated
+	// as "not a numbered drop"); positive values round-trip; negative values
+	// reject with ErrInvalidDropNumber. Domain primitive — not STEWARD-
+	// specific.
+	DropNumber int
+	// Persistent marks long-lived umbrella / anchor / perpetual-tracking
+	// nodes. Default false. Domain primitive — not STEWARD-specific.
+	Persistent bool
+	// DevGated marks nodes whose terminal transition requires dev sign-off
+	// (refinement rollups, human-verify hold points). Default false.
+	// Domain primitive — not STEWARD-specific.
+	DevGated    bool
+	ColumnID    string
+	Title       string
+	Description string
+	Priority    string
+	DueAt       string
+	Labels      []string
+	Metadata    domain.ActionItemMetadata
+	Actor       ActorLeaseTuple
 }
 
 // UpdateActionItemRequest stores transport input for actionItem updates.
@@ -118,13 +136,25 @@ type UpdateActionItemRequest struct {
 	// MCP plumbing); 3.19 reads the pointer in the gate only.
 	Owner *string
 	// DropNumber optionally updates the action-item drop-number. nil
-	// pointer = "preserve existing"; non-nil pointer = "set to this value"
-	// (negative values are rejected at the service-validation boundary
-	// when the field is wired through in 3.21). Same pointer-sentinel
-	// reasoning as Owner above.
+	// pointer = "preserve existing"; non-nil pointer = "set to this value".
+	// Negative values reject with domain.ErrInvalidDropNumber at the
+	// service-validation boundary. Same pointer-sentinel reasoning as
+	// Owner above.
 	DropNumber *int
-	Metadata   *domain.ActionItemMetadata
-	Actor      ActorLeaseTuple
+	// Persistent optionally updates the Persistent flag. nil =
+	// "preserve existing"; non-nil = "set to this value". The pointer
+	// sentinel matters because Persistent=true is a load-bearing marker on
+	// STEWARD anchor nodes seeded by the default template; a description-
+	// only update with a value-typed bool would silently clobber it to
+	// false. Domain primitive (per L13) — not STEWARD-specific. Service-
+	// side wiring lands in 3.21 alongside the rest of the
+	// Owner/DropNumber/Persistent/DevGated MCP plumbing.
+	Persistent *bool
+	// DevGated optionally updates the DevGated flag. Same pointer-sentinel
+	// rationale as Persistent above.
+	DevGated *bool
+	Metadata *domain.ActionItemMetadata
+	Actor    ActorLeaseTuple
 }
 
 // MoveActionItemRequest stores transport input for actionItem move operations.

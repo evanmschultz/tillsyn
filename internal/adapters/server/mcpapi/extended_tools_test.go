@@ -3664,3 +3664,157 @@ func TestActionItemMCPRejectsEmptyOrInvalidStructuralType(t *testing.T) {
 		}
 	})
 }
+
+// TestActionItemMCPOwnerDropNumberPersistentDevGatedRoundTrip verifies the
+// 4 domain primitives added in droplet 3.21 — owner / drop_number /
+// persistent / dev_gated — plumb cleanly through the till.action_item MCP
+// tool on both create and update operations. Each field is asserted on the
+// CreateActionItemRequest / UpdateActionItemRequest the boundary forwards
+// to the underlying service stub, so the wiring at the JSON-RPC →
+// CreateActionItemRequest → service hop is exercised end-to-end without a
+// full app-service stack.
+//
+// Update semantics: the MCP boundary forwards the parsed value to
+// UpdateActionItemRequest's pointer-sentinel fields. Omitted fields stay
+// nil (preserve existing); supplied values land non-nil so the
+// service-layer no-op branch can distinguish "no field on request" from
+// "set to zero value." This test pins the absence-vs-presence distinction
+// for all four fields.
+func TestActionItemMCPOwnerDropNumberPersistentDevGatedRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*stubExpandedService, *httptest.Server) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return service, server
+	}
+
+	t.Run("create plumbs owner/drop_number/persistent/dev_gated", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7200, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "ActionItem One",
+			"owner":             "STEWARD",
+			"drop_number":       float64(7),
+			"persistent":        true,
+			"dev_gated":         true,
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if got := service.lastCreateActionItemReq.Owner; got != "STEWARD" {
+			t.Fatalf("CreateActionItemRequest.Owner = %q, want %q", got, "STEWARD")
+		}
+		if got := service.lastCreateActionItemReq.DropNumber; got != 7 {
+			t.Fatalf("CreateActionItemRequest.DropNumber = %d, want 7", got)
+		}
+		if got := service.lastCreateActionItemReq.Persistent; got != true {
+			t.Fatalf("CreateActionItemRequest.Persistent = %v, want true", got)
+		}
+		if got := service.lastCreateActionItemReq.DevGated; got != true {
+			t.Fatalf("CreateActionItemRequest.DevGated = %v, want true", got)
+		}
+	})
+
+	t.Run("create without the four fields round-trips zero-values", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7201, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "ActionItem One",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if got := service.lastCreateActionItemReq.Owner; got != "" {
+			t.Fatalf("CreateActionItemRequest.Owner = %q, want empty", got)
+		}
+		if got := service.lastCreateActionItemReq.DropNumber; got != 0 {
+			t.Fatalf("CreateActionItemRequest.DropNumber = %d, want 0", got)
+		}
+		if got := service.lastCreateActionItemReq.Persistent; got != false {
+			t.Fatalf("CreateActionItemRequest.Persistent = %v, want false", got)
+		}
+		if got := service.lastCreateActionItemReq.DevGated; got != false {
+			t.Fatalf("CreateActionItemRequest.DevGated = %v, want false", got)
+		}
+	})
+
+	t.Run("update plumbs all four fields as non-nil pointer-sentinels", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7202, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "ActionItem One Updated",
+			"owner":             "STEWARD",
+			"drop_number":       float64(11),
+			"persistent":        true,
+			"dev_gated":         true,
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Owner == nil || *service.lastUpdateActionItemReq.Owner != "STEWARD" {
+			t.Fatalf("UpdateActionItemRequest.Owner = %v, want pointer to %q", service.lastUpdateActionItemReq.Owner, "STEWARD")
+		}
+		if service.lastUpdateActionItemReq.DropNumber == nil || *service.lastUpdateActionItemReq.DropNumber != 11 {
+			t.Fatalf("UpdateActionItemRequest.DropNumber = %v, want pointer to 11", service.lastUpdateActionItemReq.DropNumber)
+		}
+		if service.lastUpdateActionItemReq.Persistent == nil || *service.lastUpdateActionItemReq.Persistent != true {
+			t.Fatalf("UpdateActionItemRequest.Persistent = %v, want pointer to true", service.lastUpdateActionItemReq.Persistent)
+		}
+		if service.lastUpdateActionItemReq.DevGated == nil || *service.lastUpdateActionItemReq.DevGated != true {
+			t.Fatalf("UpdateActionItemRequest.DevGated = %v, want pointer to true", service.lastUpdateActionItemReq.DevGated)
+		}
+	})
+
+	t.Run("update without the four fields preserves prior via nil pointer-sentinels", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7203, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "ActionItem One Updated",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Owner != nil {
+			t.Fatalf("UpdateActionItemRequest.Owner = %v, want nil (preserve)", service.lastUpdateActionItemReq.Owner)
+		}
+		if service.lastUpdateActionItemReq.DropNumber != nil {
+			t.Fatalf("UpdateActionItemRequest.DropNumber = %v, want nil (preserve)", service.lastUpdateActionItemReq.DropNumber)
+		}
+		if service.lastUpdateActionItemReq.Persistent != nil {
+			t.Fatalf("UpdateActionItemRequest.Persistent = %v, want nil (preserve)", service.lastUpdateActionItemReq.Persistent)
+		}
+		if service.lastUpdateActionItemReq.DevGated != nil {
+			t.Fatalf("UpdateActionItemRequest.DevGated = %v, want nil (preserve)", service.lastUpdateActionItemReq.DevGated)
+		}
+	})
+}

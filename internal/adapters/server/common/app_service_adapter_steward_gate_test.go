@@ -197,7 +197,14 @@ func TestAssertOwnerStateGateUpdateActionItemOwnerMutationAgentRejected(t *testi
 		t.Fatalf("UpdateActionItem(agent setting Owner=ROGUE) error = %v, want ErrAuthorizationDenied", err)
 	}
 
-	// Steward principal CAN change the Owner.
+	// Steward principal CAN change the Owner. Per droplet 3.21's MCP-
+	// surface plumbing, the Owner field now flows from
+	// UpdateActionItemRequest → UpdateActionItemInput → actionItem.Owner via
+	// the service-side mutation block; the gate-permission check must be
+	// paired with a re-fetch that proves the field actually mutated. Pre-
+	// 3.21 this test asserted only the gate permission (per the 3.19
+	// falsification NIT) — it cannot prove the field actually changed
+	// because Owner was not yet wired through the service layer.
 	stewardActor := stewardGatedActor("steward")
 	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: stewardGated.ID,
@@ -206,6 +213,13 @@ func TestAssertOwnerStateGateUpdateActionItemOwnerMutationAgentRejected(t *testi
 		Actor:        stewardActor,
 	}); err != nil {
 		t.Fatalf("UpdateActionItem(steward changing Owner) error = %v", err)
+	}
+	after, getErr := fixture.adapter.GetActionItem(ctx, stewardGated.ID)
+	if getErr != nil {
+		t.Fatalf("GetActionItem() after steward Owner mutation error = %v", getErr)
+	}
+	if after.Owner != mutatedOwner {
+		t.Fatalf("UpdateActionItem(steward) did not persist Owner: got %q, want %q", after.Owner, mutatedOwner)
 	}
 }
 
@@ -397,4 +411,3 @@ func newStewardGatedActionItem(t *testing.T, fixture commonLifecycleFixture, own
 	}
 	return got
 }
-
