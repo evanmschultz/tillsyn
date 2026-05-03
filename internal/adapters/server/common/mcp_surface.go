@@ -34,6 +34,14 @@ type ActorLeaseTuple struct {
 	AgentInstanceID string
 	LeaseToken      string
 	OverrideToken   string
+	// AuthRequestPrincipalType carries the auth-request principal-class
+	// axis (user|agent|service|steward) sourced from the authenticated
+	// session. Drop 3 droplet 3.19 added it so the STEWARD owner-state-lock
+	// can key on the "steward" value without collapsing it into "agent" at
+	// the actor-class boundary. Empty string is the dominant case (legacy
+	// callers + non-MCP test fixtures); the gate treats absent as
+	// non-steward and rejects STEWARD-owned mutations accordingly.
+	AuthRequestPrincipalType string
 }
 
 // CreateProjectRequest stores transport input for project creation.
@@ -98,8 +106,25 @@ type UpdateActionItemRequest struct {
 	// closed StructuralType enum or the service returns
 	// ErrInvalidStructuralType.
 	StructuralType string
-	Metadata       *domain.ActionItemMetadata
-	Actor          ActorLeaseTuple
+	// Owner optionally updates the action-item owner (a free-form
+	// principal-name string). nil pointer = "preserve existing" (the
+	// dominant case); non-nil pointer = "set to this value". The pointer
+	// shape is required by Drop 3 droplet 3.19's STEWARD owner-state-lock
+	// field-level guard: without a sentinel, an absent field is
+	// indistinguishable from "" and a description-only update by a
+	// non-steward agent on a STEWARD-owned item would falsely trigger the
+	// "Owner differs" rejection. Service-side wiring of the value lands in
+	// 3.21 (alongside the rest of the Owner/DropNumber/Persistent/DevGated
+	// MCP plumbing); 3.19 reads the pointer in the gate only.
+	Owner *string
+	// DropNumber optionally updates the action-item drop-number. nil
+	// pointer = "preserve existing"; non-nil pointer = "set to this value"
+	// (negative values are rejected at the service-validation boundary
+	// when the field is wired through in 3.21). Same pointer-sentinel
+	// reasoning as Owner above.
+	DropNumber *int
+	Metadata   *domain.ActionItemMetadata
+	Actor      ActorLeaseTuple
 }
 
 // MoveActionItemRequest stores transport input for actionItem move operations.

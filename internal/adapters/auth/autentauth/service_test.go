@@ -1257,3 +1257,141 @@ func TestSessionViewAndPrincipalHelpers(t *testing.T) {
 		t.Fatalf("firstNonEmpty() = %q, want agent-1", got)
 	}
 }
+
+// TestIssueSessionStewardBoundaryMap verifies the Drop 3 droplet 3.19 L2
+// autent boundary-map: a tillsyn-side principal_type=steward IssueSession
+// call lands `autentdomain.PrincipalTypeAgent` on autent's principal record,
+// preserves "steward" on the issued session's metadata, and surfaces the
+// original value back through Authorize's AuthenticatedCaller as
+// AuthRequestPrincipalType.
+func TestIssueSessionStewardBoundaryMap(t *testing.T) {
+	t.Parallel()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	auth, err := NewSharedDB(Config{DB: repo.DB()})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+
+	issued, err := auth.IssueSession(context.Background(), IssueSessionInput{
+		PrincipalID:   "STEWARD",
+		PrincipalType: "steward",
+		PrincipalName: "STEWARD orch",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		ClientName:    "Till MCP STDIO",
+	})
+	if err != nil {
+		t.Fatalf("IssueSession(steward) error = %v", err)
+	}
+	if issued.Session.ID == "" || issued.Secret == "" {
+		t.Fatalf("IssueSession(steward) returned empty session bundle: %#v", issued)
+	}
+	// Boundary map: autent stored PrincipalTypeAgent (autent has no
+	// "steward"); session metadata preserves the tillsyn axis.
+	if got := issued.Session.Metadata["auth_request_principal_type"]; got != "steward" {
+		t.Fatalf("IssueSession(steward) metadata[auth_request_principal_type] = %q, want steward", got)
+	}
+	principals, err := auth.service.ListPrincipals(context.Background())
+	if err != nil {
+		t.Fatalf("ListPrincipals() error = %v", err)
+	}
+	var stewardPrincipal autentdomain.Principal
+	for _, principal := range principals {
+		if principal.ID == "STEWARD" {
+			stewardPrincipal = principal
+			break
+		}
+	}
+	if stewardPrincipal.ID == "" {
+		t.Fatalf("STEWARD principal not registered after IssueSession(steward)")
+	}
+	if stewardPrincipal.Type != autentdomain.PrincipalTypeAgent {
+		t.Fatalf("STEWARD principal autent type = %q, want %q (boundary-map)", stewardPrincipal.Type, autentdomain.PrincipalTypeAgent)
+	}
+
+	result, err := auth.Authorize(context.Background(), AuthorizationRequest{
+		SessionID:     issued.Session.ID,
+		SessionSecret: issued.Secret,
+		Action:        "create_task",
+		Namespace:     "project:p1",
+		ResourceType:  "actionItem",
+		ResourceID:    "new",
+	})
+	if err != nil {
+		t.Fatalf("Authorize(steward) error = %v", err)
+	}
+	if result.DecisionCode != "allow" {
+		t.Fatalf("Authorize(steward) decision = %q, want allow", result.DecisionCode)
+	}
+	if result.Caller.AuthRequestPrincipalType != "steward" {
+		t.Fatalf("Authorize(steward) caller.AuthRequestPrincipalType = %q, want steward", result.Caller.AuthRequestPrincipalType)
+	}
+	// Actor-class axis still collapses to ActorTypeAgent (autent's view).
+	if result.Caller.PrincipalType != domain.ActorTypeAgent {
+		t.Fatalf("Authorize(steward) caller.PrincipalType = %q, want %q (actor-class axis)", result.Caller.PrincipalType, domain.ActorTypeAgent)
+	}
+}
+
+// TestAuthorizeNonStewardCallerHasEmptyOrAgentAuthRequestPrincipalType
+// verifies non-steward Authorize results carry the existing principal-type
+// (no false steward elevation) so the gate doesn't accidentally permit
+// non-STEWARD callers.
+func TestAuthorizeNonStewardCallerHasEmptyOrAgentAuthRequestPrincipalType(t *testing.T) {
+	t.Parallel()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	auth, err := NewSharedDB(Config{DB: repo.DB()})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+
+	issued, err := auth.IssueSession(context.Background(), IssueSessionInput{
+		PrincipalID:   "agent-1",
+		PrincipalType: "agent",
+		PrincipalName: "Agent One",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		ClientName:    "Till MCP STDIO",
+	})
+	if err != nil {
+		t.Fatalf("IssueSession(agent) error = %v", err)
+	}
+	result, err := auth.Authorize(context.Background(), AuthorizationRequest{
+		SessionID:     issued.Session.ID,
+		SessionSecret: issued.Secret,
+		Action:        "create_task",
+		Namespace:     "project:p1",
+		ResourceType:  "actionItem",
+		ResourceID:    "new",
+	})
+	if err != nil {
+		t.Fatalf("Authorize(agent) error = %v", err)
+	}
+	if result.Caller.AuthRequestPrincipalType == "steward" {
+		t.Fatalf("Authorize(agent) caller.AuthRequestPrincipalType = %q, want anything-but-steward", result.Caller.AuthRequestPrincipalType)
+	}
+	if result.Caller.AuthRequestPrincipalType != "agent" {
+		t.Fatalf("Authorize(agent) caller.AuthRequestPrincipalType = %q, want agent", result.Caller.AuthRequestPrincipalType)
+	}
+}

@@ -180,11 +180,33 @@ func (s *Service) ReplaceRules(ctx context.Context, rules []autentdomain.Rule) e
 }
 
 // IssueSession ensures the requested principal/client exist and returns one issued session bundle.
+//
+// Drop 3 droplet 3.19 (L2 boundary-map): tillsyn's auth-request principal-type
+// enum widens beyond autent's closed {user, agent, service} to include
+// "steward" — a tillsyn-internal axis used by the STEWARD owner-state-lock.
+// autent has no notion of stewardship; mapping steward → PrincipalTypeAgent
+// here lets autent treat the principal as a regular agent for permission
+// evaluation while tillsyn preserves the steward distinction in its own
+// auth_requests table + on the issued session's metadata (key
+// `auth_request_principal_type`). The Authorize path reads that metadata
+// back to populate AuthenticatedCaller.AuthRequestPrincipalType so the gate
+// can fire on STEWARD-owned items.
 func (s *Service) IssueSession(ctx context.Context, in IssueSessionInput) (autent.IssuedSession, error) {
 	if s == nil || s.service == nil {
 		return autent.IssuedSession{}, fmt.Errorf("autent service is not configured: %w", autentdomain.ErrInvalidConfig)
 	}
+	tillsynPrincipalType := strings.TrimSpace(strings.ToLower(in.PrincipalType))
 	principalType := normalizePrincipalType(in.PrincipalType)
+	// Per L2 boundary-map: steward is a tillsyn-internal axis distinct from
+	// autent's closed {user, agent, service} enum. autent's
+	// NormalizePrincipalType only trims+lowercases (it does NOT validate),
+	// so "steward" survives normalization unchanged and would crash autent's
+	// principal registration with "invalid principal type". Collapse it
+	// here; tillsyn preserves the steward value via session metadata + the
+	// AuthenticatedCaller.AuthRequestPrincipalType field.
+	if principalType == autentdomain.PrincipalType("steward") {
+		principalType = autentdomain.PrincipalTypeAgent
+	}
 	if principalType == "" {
 		principalType = autentdomain.PrincipalTypeUser
 	}
@@ -194,11 +216,22 @@ func (s *Service) IssueSession(ctx context.Context, in IssueSessionInput) (auten
 	if _, err := s.ensureClient(ctx, strings.TrimSpace(in.ClientID), strings.TrimSpace(in.ClientType), strings.TrimSpace(in.ClientName)); err != nil {
 		return autent.IssuedSession{}, err
 	}
+	metadata := cloneContext(in.Metadata)
+	// Persist the tillsyn-side principal-type on session metadata so the
+	// Authorize path can recover the steward distinction when populating
+	// AuthenticatedCaller.AuthRequestPrincipalType. autent's own
+	// principal-type column collapses steward → agent at the boundary above.
+	if tillsynPrincipalType != "" {
+		if metadata == nil {
+			metadata = make(map[string]string, 1)
+		}
+		metadata["auth_request_principal_type"] = tillsynPrincipalType
+	}
 	issued, err := s.service.IssueSession(ctx, autent.IssueSessionInput{
 		PrincipalID: strings.TrimSpace(in.PrincipalID),
 		ClientID:    strings.TrimSpace(in.ClientID),
 		TTL:         in.TTL,
-		Metadata:    cloneContext(in.Metadata),
+		Metadata:    metadata,
 	})
 	if err != nil {
 		return autent.IssuedSession{}, fmt.Errorf("issue autent session: %w", err)
@@ -715,11 +748,22 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizationRequest) (Autho
 			DecisionReason: "approved_path_denied",
 		}, nil
 	}
+	// Drop 3 droplet 3.19: read the tillsyn-side principal-type back from
+	// session metadata so AuthenticatedCaller.AuthRequestPrincipalType
+	// preserves the steward distinction the autent layer collapsed at issue
+	// time. Falls back to the actor-class string when metadata is absent
+	// (e.g. legacy sessions issued before the metadata key existed) so
+	// non-steward callers behave identically to pre-3.19.
+	authRequestPrincipalType := strings.TrimSpace(validated.Session.Metadata["auth_request_principal_type"])
+	if authRequestPrincipalType == "" {
+		authRequestPrincipalType = string(autentdomain.NormalizePrincipalType(validated.Principal.Type))
+	}
 	result.Caller = domain.NormalizeAuthenticatedCaller(domain.AuthenticatedCaller{
-		PrincipalID:   validated.Principal.ID,
-		PrincipalName: validated.Principal.DisplayName,
-		PrincipalType: principalTypeToActorType(validated.Principal.Type),
-		SessionID:     validated.Session.ID,
+		PrincipalID:              validated.Principal.ID,
+		PrincipalName:            validated.Principal.DisplayName,
+		PrincipalType:            principalTypeToActorType(validated.Principal.Type),
+		AuthRequestPrincipalType: authRequestPrincipalType,
+		SessionID:                validated.Session.ID,
 	})
 	return result, nil
 }

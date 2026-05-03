@@ -73,10 +73,14 @@ func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mc
 	if caller.IsZero() {
 		return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: authenticated caller is required for mutating MCP tools")
 	}
+	// Drop 3 droplet 3.19: thread AuthRequestPrincipalType through the
+	// MCP-layer actor tuple so the STEWARD owner-state-lock survives the
+	// trip into withMutationGuardContext. Mirrors the HTTP transport.
 	actor := common.ActorLeaseTuple{
-		ActorID:   caller.PrincipalID,
-		ActorName: caller.PrincipalName,
-		ActorType: string(caller.PrincipalType),
+		ActorID:                  caller.PrincipalID,
+		ActorName:                caller.PrincipalName,
+		ActorType:                string(caller.PrincipalType),
+		AuthRequestPrincipalType: caller.AuthRequestPrincipalType,
 	}
 
 	guard.AgentInstanceID = strings.TrimSpace(guard.AgentInstanceID)

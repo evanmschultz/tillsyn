@@ -460,6 +460,137 @@ func TestNewAuthRequestAgentRoleDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+// TestNewAuthRequestStewardPrincipalRoleValidation verifies the
+// principal_type=steward case lands with role=orchestrator and rejects every
+// other role with ErrInvalidAuthRequestRole.
+//
+// Drop 3 droplet 3.19 (L2 + finding 5.C.15): steward is a tillsyn-internal
+// principal-type axis; it only ever pairs with the orchestrator role
+// (STEWARD itself is a persistent post-merge orchestrator). The auth-request
+// validation block is the chokepoint that rejects other-role pairings before
+// any session ever issues.
+func TestNewAuthRequestStewardPrincipalRoleValidation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+
+	// Steward + orchestrator role: SUCCEEDS. Round-trip preserves "steward".
+	req, err := NewAuthRequest(AuthRequestInput{
+		ID:                  "req-steward-1",
+		Path:                AuthRequestPath{Kind: AuthRequestPathKindGlobal},
+		PrincipalID:         "STEWARD",
+		PrincipalType:       "steward",
+		PrincipalRole:       "orchestrator",
+		PrincipalName:       "STEWARD orch",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "post-merge MD collation",
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest(steward + orchestrator) error = %v", err)
+	}
+	if req.PrincipalType != "steward" {
+		t.Fatalf("NewAuthRequest(steward + orchestrator) principal_type = %q, want steward", req.PrincipalType)
+	}
+	if req.PrincipalRole != string(AuthRequestRoleOrchestrator) {
+		t.Fatalf("NewAuthRequest(steward + orchestrator) principal_role = %q, want orchestrator", req.PrincipalRole)
+	}
+
+	// Steward + builder role: REJECTED with ErrInvalidAuthRequestRole.
+	if _, err := NewAuthRequest(AuthRequestInput{
+		ID:                  "req-steward-2",
+		Path:                AuthRequestPath{Kind: AuthRequestPathKindGlobal},
+		PrincipalID:         "STEWARD",
+		PrincipalType:       "steward",
+		PrincipalRole:       "builder",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "invalid steward + builder pairing",
+		Timeout:             30 * time.Minute,
+	}, now); !errors.Is(err, ErrInvalidAuthRequestRole) {
+		t.Fatalf("NewAuthRequest(steward + builder) error = %v, want ErrInvalidAuthRequestRole", err)
+	}
+
+	// Steward + qa role: REJECTED.
+	if _, err := NewAuthRequest(AuthRequestInput{
+		ID:                  "req-steward-3",
+		Path:                AuthRequestPath{Kind: AuthRequestPathKindGlobal},
+		PrincipalID:         "STEWARD",
+		PrincipalType:       "steward",
+		PrincipalRole:       "qa",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "invalid steward + qa pairing",
+		Timeout:             30 * time.Minute,
+	}, now); !errors.Is(err, ErrInvalidAuthRequestRole) {
+		t.Fatalf("NewAuthRequest(steward + qa) error = %v, want ErrInvalidAuthRequestRole", err)
+	}
+
+	// Steward + research role: REJECTED.
+	if _, err := NewAuthRequest(AuthRequestInput{
+		ID:                  "req-steward-4",
+		Path:                AuthRequestPath{Kind: AuthRequestPathKindGlobal},
+		PrincipalID:         "STEWARD",
+		PrincipalType:       "steward",
+		PrincipalRole:       "research",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "invalid steward + research pairing",
+		Timeout:             30 * time.Minute,
+	}, now); !errors.Is(err, ErrInvalidAuthRequestRole) {
+		t.Fatalf("NewAuthRequest(steward + research) error = %v, want ErrInvalidAuthRequestRole", err)
+	}
+
+	// Steward without an explicit role: defaults to orchestrator (parallels
+	// the agent + missing-role default-to-builder behavior). This keeps
+	// callers from needing to remember the steward → orchestrator pairing
+	// when they already declared principal_type=steward.
+	defaulted, err := NewAuthRequest(AuthRequestInput{
+		ID:                  "req-steward-5",
+		Path:                AuthRequestPath{Kind: AuthRequestPathKindGlobal},
+		PrincipalID:         "STEWARD",
+		PrincipalType:       "steward",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "steward defaults to orchestrator",
+		Timeout:             30 * time.Minute,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAuthRequest(steward + default role) error = %v", err)
+	}
+	if defaulted.PrincipalRole != string(AuthRequestRoleOrchestrator) {
+		t.Fatalf("NewAuthRequest(steward + default role) principal_role = %q, want orchestrator", defaulted.PrincipalRole)
+	}
+}
+
+// TestNewAuthRequestRejectsUnknownPrincipalType verifies the closed
+// principal-type set (user|agent|service|steward) rejects unknown values.
+func TestNewAuthRequestRejectsUnknownPrincipalType(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	_, err := NewAuthRequest(AuthRequestInput{
+		ID:                  "req-bogus-1",
+		Path:                AuthRequestPath{ProjectID: "p1"},
+		PrincipalID:         "anyone",
+		PrincipalType:       "robot",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "unknown principal type",
+		Timeout:             30 * time.Minute,
+	}, now)
+	if !errors.Is(err, ErrInvalidActorType) {
+		t.Fatalf("NewAuthRequest(unknown principal_type) error = %v, want ErrInvalidActorType", err)
+	}
+}
+
 // TestAuthRequestLifecycleRejectsInvalidStates verifies creation and mutation guards fail closed on bad inputs.
 func TestAuthRequestLifecycleRejectsInvalidStates(t *testing.T) {
 	t.Parallel()
