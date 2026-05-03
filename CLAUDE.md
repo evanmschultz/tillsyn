@@ -48,6 +48,16 @@ Drop 1.75 is the **kind-collapse** drop. Two node tables survive: `projects` and
 
 **Project-level kind restriction (future drop).** Project templates will carry an allowed-kinds enum + a `disallow_generics` bool to restrict which kinds a project accepts — lands alongside template customization. Drop 1.75 treats all 12 kinds as allowed on every project.
 
+### Three Orthogonal Axes — `kind` × `metadata.role` × `metadata.structural_type`
+
+Every non-project node is classified along three independent axes, set explicitly at create time. None of them are inferred from the others. Templates `child_rules`, gate rules, and agent bindings dispatch on combinations of all three.
+
+- **`kind` (what work)** — the closed 12-value enum above (post-Drop-1.75). Names the kind of work the agent does (`build` / `plan` / `build-qa-proof` / …).
+- **`metadata.role` (who does it)** — closed enum (post-Drop-2): `builder`, `qa-proof`, `qa-falsification`, `qa-a11y`, `qa-visual`, `design`, `commit`, `planner`, `research`. The dual-axis design earns its keep on QA kinds where parent context disambiguates (`build-qa-proof` vs `plan-qa-proof` both carry `role=qa-proof`); non-QA role values exist for agent-binding-lookup symmetry. Pre-Drop-2 the role lives in description prose (`Role: builder`, `Role: qa-proof`, …); post-Drop-2 it lands on `metadata.role`.
+- **`metadata.structural_type` (where it sits in the cascade flow)** — closed 4-value enum landing in Drop 3: `drop | segment | confluence | droplet`. Names the node's cascade shape independent of role / kind. Atomicity rules: `droplet` MUST have zero children; `confluence` MUST have non-empty `blocked_by`; `segment` may recurse; `drop` is the level_1 cascade step.
+
+**Cascade vocabulary canonical: `WIKI.md` § `Cascade Vocabulary` — the worked-combinations table, atomicity rules, and orthogonality with `metadata.role` live there. Do not redefine the structural_type vocabulary in this file or any other doc.** Pre-Drop-3, `metadata.structural_type` is not yet validated at the create/update boundary; the orchestrator chooses values consistent with the WIKI definition and Drop 3 lands the validation. Adopters mirror the same canonical-pointer rule in their own project `CLAUDE.md` (see `workflow/example/CLAUDE.md` line 27).
+
 ### Kind Hierarchy
 
 Two node types, one enum. `project` is a table, not a kind. Everything below is `action_items.kind`:
