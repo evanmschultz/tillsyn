@@ -66,7 +66,7 @@ The first child of every **level-1 drop** (i.e. every immediate child of the pro
 3. Sets `blocked_by` across siblings where ordering matters.
 4. Files any cross-cutting discussions as their own drops under the DISCUSSIONS subtree (see `PLAN.md` § 2.2).
 
-**Until the planning drop is `done`, no build drop under the level-1 drop is eligible to start.** This is how we guarantee decomposition actually happens instead of drifting into ad-hoc "I'll figure out the next step as I go" execution.
+**Until the planning drop is `complete`, no build drop under the level-1 drop is eligible to start.** This is how we guarantee decomposition actually happens instead of drifting into ad-hoc "I'll figure out the next step as I go" execution.
 
 Nested drops (level_2 and deeper) do **not** universally require their own planning drop — but if a nested drop is itself ambiguous or large enough to need decomposition, add a planning drop under it too. The recursive pattern is documented in `PLAN.md` § 2.2.
 
@@ -96,7 +96,7 @@ Treat these as defaults. If a level-1 drop genuinely has to be large and monolit
 
 Tillsyn has two primitives for "this comes after that":
 
-1. **Parent-child nesting** — a parent drop cannot move to `done` while any child is incomplete. **This is what `depends_on` would be for.** You get it for free by nesting. Do not layer a `depends_on` field on top of nesting.
+1. **Parent-child nesting** — a parent drop cannot move to `complete` while any child is incomplete. **This is what `depends_on` would be for.** You get it for free by nesting. Do not layer a `depends_on` field on top of nesting.
 2. **`blocked_by`** — the **only** sibling and cross-drop ordering primitive. Planners set `blocked_by` at creation time; the dispatcher adds runtime blockers when file/package locks conflict (Drop 4+).
 
 **Rule of thumb:** if X should finish before Y and they're **siblings** (or in different subtrees), use `blocked_by`. If X should finish before Y and Y's completion genuinely depends on X's result, **make Y a child of X** instead of siblings-with-blocked_by, so the parent-child rule does the work.
@@ -105,7 +105,7 @@ Avoid using `depends_on` at all. It's redundant with nesting and the cascade run
 
 ## QA Discipline — Every Build Drop Gets QA
 
-**No build drop is `done` without QA passing.** This is a gate, not a suggestion.
+**No build drop is `complete` without QA passing.** This is a gate, not a suggestion.
 
 Every build drop (any drop whose role is `builder` — i.e., the drop that actually edits code) has **two QA children**:
 
@@ -121,8 +121,8 @@ External adopters: run QA even when you don't have `go-qa-*-agent` subagents —
 Until the cascade dispatcher ships (Drop 4+), the parent orchestrator session runs this loop manually:
 
 1. **Plan** — `go-planning-agent` (or orchestrator + dev, for trivial drops) decomposes into atomic drops with `paths` / `packages` / acceptance criteria.
-2. **Build** — `go-builder-agent` subagent implements the increment. Builder moves its own drop to `in_progress` at start, commits evidence to `implementation_notes_agent` + `completion_notes`, moves to `done` at end, and closes with a `## Hylla Feedback` section.
-3. **QA proof + QA falsification** — parallel subagent spawn, each with fresh context. Each moves its own QA drop to `in_progress` at start, `done` on pass, or leaves `in_progress` + posts findings on fail.
+2. **Build** — `go-builder-agent` subagent implements the increment. Builder moves its own drop to `in_progress` at start, commits evidence to `implementation_notes_agent` + `completion_notes`, moves to `complete` at end, and closes with a `## Hylla Feedback` section.
+3. **QA proof + QA falsification** — parallel subagent spawn, each with fresh context. Each moves its own QA drop to `in_progress` at start, `complete` on pass, or leaves `in_progress` + posts findings on fail.
 4. **Fix** — if either QA fails, respawn the builder, re-run QA.
 5. **Commit** — after both QA pass, orchestrator + dev commit with conventional-commit format. `git add <paths>` — never `git add .`.
 6. **Push + CI green** — `git push` then `gh run watch --exit-status` until green.
@@ -246,7 +246,7 @@ Drop-close is drop-orch-owned end-to-end per `main/workflow/example/drops/WORKFL
 
 **Drop-orch steps (pre-merge, on the drop branch):**
 
-1. All sibling droplets `done`. `git status --porcelain` clean.
+1. All sibling droplets `complete`. `git status --porcelain` clean.
 2. All commits on remote. CI green (`gh run watch --exit-status`).
 3. Aggregate per-subagent `## Hylla Feedback` sections from `BUILDER_WORKLOG.md` into `CLOSEOUT.md § "Code-Understanding Index Feedback Aggregation"` per `workflow/example/drops/_TEMPLATE/CLOSEOUT.md`.
 4. Aggregate usage findings into `CLOSEOUT.md § "Refinements"`.
