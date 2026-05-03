@@ -618,6 +618,30 @@ func (f *fakeRepo) ListActionItems(_ context.Context, projectID string, includeA
 	return out, nil
 }
 
+// ListActionItemsByParent lists action items whose ParentID matches parentID
+// within the supplied project, ordered deterministically by CreatedAt ASC,
+// ID ASC. The empty parentID returns level-1 children (no parent). Mirrors
+// the SQLite-side adapter contract used by the dotted-address resolver.
+func (f *fakeRepo) ListActionItemsByParent(_ context.Context, projectID, parentID string) ([]domain.ActionItem, error) {
+	out := make([]domain.ActionItem, 0, len(f.tasks))
+	for _, t := range f.tasks {
+		if t.ProjectID != projectID {
+			continue
+		}
+		if t.ParentID != parentID {
+			continue
+		}
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
 // DeleteActionItem deletes actionItem.
 func (f *fakeRepo) DeleteActionItem(_ context.Context, id string) error {
 	actionItem, ok := f.tasks[id]

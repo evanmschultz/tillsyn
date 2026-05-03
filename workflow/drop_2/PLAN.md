@@ -278,7 +278,7 @@ Same-package-blocking: 2.10 owns the resolver in `internal/app` + the `Repositor
 
 #### Droplet 2.10 — Pure dotted-address resolver in `internal/app` + `Repository.ListActionItemsByParent`
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/app/dotted_address.go` (new — function `ResolveDottedAddress(ctx, repo, projectID, dotted string) (actionItemID string, err error)` with sentinel errors `ErrDottedAddressNotFound`, `ErrDottedAddressInvalidSyntax`), `internal/app/dotted_address_test.go` (new — table-driven tests using an in-memory fake or the existing test SQLite fixture), `internal/app/ports.go` (add `ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error)` to the `Repository` interface), `internal/app/service_test.go` (extend `fakeRepo` to implement the new method — without this, `mage test-pkg ./internal/app` compile-fails on every test that constructs `fakeRepo`), `internal/adapters/storage/sqlite/repo.go` (add `ListActionItemsByParent` method on `*Repository` alongside existing `ListActionItems` at `:1393`), `internal/adapters/storage/sqlite/repo_test.go` (round-trip test for the new method)
 - **Packages:** `internal/app`, `internal/adapters/storage/sqlite`
 - **Acceptance:**

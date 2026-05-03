@@ -1424,6 +1424,41 @@ func (r *Repository) ListActionItems(ctx context.Context, projectID string, incl
 	return out, rows.Err()
 }
 
+// ListActionItemsByParent lists action items whose parent_id matches parentID
+// within the supplied project, ordered deterministically by created_at ASC,
+// id ASC. The empty parentID returns level-1 children (action items with no
+// parent — parent_id is the empty string in storage). Position N in this ordering is the
+// dotted-address index used by the dotted-address resolver in internal/app;
+// callers MUST NOT confuse this ordering with the column-scoped `position`
+// column (Kanban TUI arrangement). Powered by index
+// idx_action_items_project_parent on (project_id, parent_id).
+func (r *Repository) ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error) {
+	query := `
+		SELECT
+			id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+		FROM action_items
+		WHERE project_id = ? AND parent_id = ?
+		ORDER BY created_at ASC, id ASC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, projectID, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []domain.ActionItem{}
+	for rows.Next() {
+		actionItem, err := scanActionItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, actionItem)
+	}
+	return out, rows.Err()
+}
+
 // DeleteActionItem deletes actionItem.
 func (r *Repository) DeleteActionItem(ctx context.Context, id string) error {
 	tx, err := r.db.BeginTx(ctx, nil)

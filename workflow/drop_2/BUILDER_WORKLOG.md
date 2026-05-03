@@ -507,3 +507,44 @@ N/A — task touched only Go production + test code in 3 packages, with paths fu
 ## Hylla Feedback
 
 N/A — task touched only Go production + test code in 3 PLAN-listed packages plus 1 audit-trail trim, with paths fully scoped by the spawn prompt and PLAN.md acceptance criteria. Investigation was a `git grep "AllowedParentKinds"` enumeration (instant, language-agnostic) plus a `LSP findReferences` symbol-reference confirmation (3 references: definition + 2 test usages, exactly matching the deletion plan). Hylla symbol-search was not needed — the deletion target was named explicitly in the PLAN, and `git grep` was the right tool for the whole-tree completeness check (acceptance #1). No stale-ingest concerns, no symbol-search ambiguity, no ergonomic gripes for this round.
+
+## Droplet 2.10 — Round 1
+
+**Outcome:** success.
+
+**Files touched:**
+
+- `internal/app/dotted_address.go` — NEW (113 lines). `ResolveDottedAddress(ctx, repo, projectID, dotted)` plus `ErrDottedAddressNotFound` and `ErrDottedAddressInvalidSyntax` sentinels. Body regex `^\d+(\.\d+)*$`; slug-prefix regex matches the `domain.normalizeSlug` output shape (`[a-z0-9]+(-[a-z0-9]+)*`).
+- `internal/app/dotted_address_test.go` — NEW (227 lines). Table-driven coverage: 12 success cases (single/two/three-level, slug-prefix, leading-zero, same-CreatedAt UUID tie-break), 6 not-found cases (level-1/level-2 under multiple parents, level-3 under leaf, level-2 under no-children leaf, level-1 leading-zero out of range), 17 invalid-syntax cases (empty, leading/trailing/double dots, non-digit, leading-dash, negative segment, deep-nested non-digit, embedded whitespace, UUID-shaped input, slug-prefix variants including double-colon and slug mismatch), and an empty-projectID rejection test. All covered explicitly in PLAN.md acceptance #7.
+- `internal/app/ports.go` — +1 line. Added `ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error)` to the `Repository` interface, immediately after `ListActionItems` for clean diff and natural reading order.
+- `internal/app/service_test.go` — +24 lines. Extended `fakeRepo` with `ListActionItemsByParent` mirroring the SQLite contract: filter by `ProjectID == projectID && ParentID == parentID`, then `sort.Slice` by `CreatedAt` ascending with `ID` ASC tie-breaker. Inserted directly after `fakeRepo.ListActionItems` per PLAN R3-5 directive — without it, every test that constructs `fakeRepo` (25+ sites) compile-fails when the interface gains the new method.
+- `internal/adapters/storage/sqlite/repo.go` — +35 lines (after gofumpt). Added `ListActionItemsByParent` method on `*Repository` immediately after `ListActionItems`. Query: `SELECT ... FROM action_items WHERE project_id = ? AND parent_id = ? ORDER BY created_at ASC, id ASC`. Powered by the existing `idx_action_items_project_parent` index on `(project_id, parent_id)` (verified at `repo.go:490`); the `ORDER BY` is a small in-memory sort over the parent's children — no per-call full-table scan.
+- `internal/adapters/storage/sqlite/repo_test.go` — +166 lines. Added `TestRepository_ListActionItemsByParent` round-trip covering: (a) empty `parentID` returns level-1 children only and respects project isolation; (b) explicit `parentID` returns direct children only (no grandchildren); (c) same-`CreatedAt` UUID tie-break (`a-tie-aaa` < `a-tie-zzz` lexicographically); (d) cross-project `parent_id` collision (project B's row with `parent_id="a-root-1"` does NOT leak into project A's listing); (e) empty result for known-leaf parent; (f) empty result for unknown parent.
+- `workflow/drop_2/PLAN.md` — Droplet 2.10 `**State:** todo` → `**State:** in_progress` at start; flipped to `**State:** done` at end of round.
+
+**Mage targets run:**
+
+- `mage testPkg ./internal/app` — green. 245 tests passed.
+- `mage testPkg ./internal/adapters/storage/sqlite` — green. 71 tests passed (one new).
+- `mage ci` — green. 1431 tests across 19 packages, 0 failures, 0 skipped. Minimum package coverage 70.0% met (sqlite 75.1%, app 71.8%). Build of `./cmd/till` succeeded. Exit code 0.
+
+**Test-cycle iterations:** one false-start. The first run of `TestRepository_ListActionItemsByParent` failed because the fixture used `id="a-c0-zzz"` and `id="a-c1-aaa"` for the tie-break pair — the desired-first row was `a-c1-aaa` per the inline comment, but the IDs sort lexicographically as `a-c0-zzz` < `a-c1-aaa` (the `0` < `1` digit at position 4 wins before `aaa` vs `zzz` is reached). Renamed to `a-tie-aaa` < `a-tie-zzz` so the digit-prefix ambiguity is gone and the test asserts the documented tie-break direction unambiguously. Fix verified by rerunning `mage testFunc ./internal/adapters/storage/sqlite TestRepository_ListActionItemsByParent`. No production-code changes were required — the SQLite implementation was always correct; the test fixture was self-contradictory.
+
+**Design notes:**
+
+- **Slug-prefix verification model.** PLAN R3-8 specifies "Slug verified against the supplied/inferred `projectID`" — meaning the resolver does NOT need a `GetProjectBySlug` lookup. Implementation: when `dotted` contains `:`, split on the first colon, validate both halves are non-empty, validate the slug matches `dottedSlugRegex`, then call the existing `repo.GetProject(ctx, projectID)` (already on the `Repository` interface) and assert `project.Slug == providedSlug`. Mismatch returns `ErrDottedAddressInvalidSyntax`. This avoids expanding the `Repository` surface for a verification-only path; CLI/MCP slug→ID mapping (where it's actually needed) is the 2.11 caller's concern.
+- **Why `dottedSlugRegex` and not the domain's `normalizeSlug` directly.** `normalizeSlug` is unexported in `internal/domain`, and exporting it for resolver use would expand the domain surface. The regex `^[a-z0-9]+(-[a-z0-9]+)*$` matches the same shape `normalizeSlug` produces (lowercase a-z, 0-9, internal `-` separators, no leading/trailing dashes, no consecutive dashes after `Trim`). Resolver's slug check is a shape gate; the actual equality check against `project.Slug` is the authoritative comparison.
+- **Body regex ordering matters.** Empty-body check happens before the colon-split AND after — the entry-level guard at `dotted == ""` rejects fully-empty input; the split-then-empty-body check rejects `slug:` (slug-prefix with empty body). Otherwise the body regex applies to the post-split body and rejects `1.`, `.1`, `1..2`, `abc`, `-1`, `1.-1.2`, etc.
+- **Leading-zero handled by `strconv.Atoi`.** `Atoi("007")` returns `7` without error, and `n < 0` rejects negative integers (which `Atoi` parses willingly from `-1`). The body regex already excludes leading dashes from each segment, so the `n < 0` branch is defensive but unreachable on regex-validated input.
+- **`fakeRepo` ordering uses `sort.Slice` with `time.Time.Equal` tie-break.** `time.Time` equality requires `Equal()` not `==` because `Time` carries a monotonic clock reading that breaks `==` for serialize/deserialize round-trips; `Equal` ignores monotonic and compares wall time. Tie-break falls through to `ID < ID` lexicographic.
+- **SQLite query uses indexed `WHERE` + post-filter `ORDER BY`.** `idx_action_items_project_parent` on `(project_id, parent_id)` selects the rows; SQLite does an in-memory sort by `created_at, id` over those rows. For a tree depth of D and average per-parent child count C, the resolver costs D queries each over ~C rows — well-bounded.
+- **No `tc := tc` in `for _, tc := range cases`** loops in the new test file. Go 1.22+ scopes loop variables per iteration; modern style omits the shadow. Matches the project's existing test style.
+- **Doc comment style** mirrors existing `Repository` methods (period-terminated short summaries on the next-line comment). The resolver's package-level comment block on `ResolveDottedAddress` is a fuller exposition because it documents the input contract, ordering invariant, and error taxonomy in one place — a deliberate readability choice over splitting across the var-decl, function, and tests.
+
+**PLAN.md state confirmation:** Droplet 2.10 flipped `todo` → `in_progress` at start of work, then `in_progress` → `done` after `mage ci` green.
+
+## Hylla Feedback
+
+None — Hylla answered everything needed.
+
+The investigation surface for this droplet was almost entirely repo-local, named-symbol lookup (`Repository` interface in `internal/app/ports.go:11-53`, `fakeRepo` in `internal/app/service_test.go`, existing `ListActionItems` at `repo.go:1397`, `ActionItem.ParentID` field, `Project.Slug` field, the `idx_action_items_project_parent` index). Every site was named explicitly in the spawn prompt or in the surrounding PLAN.md spec, so `git grep` + targeted `Read` were the right tools — Hylla symbol-search was not needed and would have been redundant. No stale-ingest concerns (working in `main/`), no schema gaps, no ergonomic gripes encountered for this round.
