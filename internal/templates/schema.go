@@ -53,6 +53,14 @@ type Template struct {
 	// AgentBindings maps each domain.Kind to the agent-spawn parameters the
 	// dispatcher uses when the kind transitions to in_progress.
 	AgentBindings map[domain.Kind]AgentBinding `toml:"agent_bindings"`
+
+	// GateRulesRaw is the strict-decode escape hatch for the [gate_rules] TOML
+	// table reserved per Drop 3 fix L6 (finding 5.B.11). The Go struct for the
+	// gate-rule schema lands in Drop 4's dispatcher; until then the loader
+	// preserves whatever the document declares as a free-form map so strict
+	// decode does not reject the reserved table. The field is excluded from
+	// any structural validation in Drop 3 and exists purely for forward-compat.
+	GateRulesRaw map[string]any `toml:"gate_rules"`
 }
 
 // KindRule encodes one closed-enum kind's structural constraints inside a
