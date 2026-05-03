@@ -26,6 +26,7 @@ var (
 	ErrInvalidKindPayload          = errors.New("invalid kind payload")
 	ErrInvalidKindPayloadSchema    = errors.New("invalid kind payload schema")
 	ErrInvalidRole                 = errors.New("invalid role")
+	ErrInvalidStructuralType       = errors.New("invalid structural type")
 	ErrInvalidLifecycleState       = errors.New("invalid lifecycle state")
 	ErrInvalidActorType            = errors.New("invalid actor type")
 	ErrInvalidAttentionState       = errors.New("invalid attention state")
