@@ -23,12 +23,25 @@ import (
 //     vocabulary churn.
 //  2. Reject if the declared schema_version is not SchemaVersionV1.
 //  3. Strict decode — re-decode the buffered bytes into a Template using a
-//     Decoder configured with DisallowUnknownFields so any non-schema key
-//     (other than the forward-compat [gate_rules] table reserved on
-//     Template.GateRulesRaw) becomes ErrUnknownTemplateKey.
-//  4. Load-time validators — assert every Kind referenced in [child_rules]
-//     is a member of the closed 12-value enum, then run cycle detection
-//     over the parent → child kind graph.
+//     Decoder configured with DisallowUnknownFields so any unknown FIELD
+//     inside a known table (e.g. a misspelled key inside an existing
+//     [kinds.build] row) becomes ErrUnknownTemplateKey. The forward-compat
+//     [gate_rules] table reserved on Template.GateRulesRaw is exempt.
+//     Strict decode does NOT validate map KEYS themselves: TOML treats
+//     [kinds.bulid] and [agent_bindings.totally-bogus] as legitimate map
+//     entries with arbitrary keys, so a transposed-letter or otherwise
+//     unknown kind survives this pass and is caught by validateMapKeys
+//     below.
+//  4. Load-time validators in this order:
+//     a. validateMapKeys — assert every map key in Template.Kinds and
+//     Template.AgentBindings is a member of the closed 12-value Kind
+//     enum. Catches typos like [kinds.bulid] that strict decode cannot.
+//     b. validateChildRuleKinds — assert every Kind referenced in
+//     [child_rules] is a member of the closed enum.
+//     c. validateChildRuleCycles — DFS the parent → child kind graph for
+//     directed cycles.
+//     d. validateChildRuleReachability — reserved extension point;
+//     currently a no-op.
 //
 // Sentinel errors at package scope wrap the underlying failure so callers
 // can use errors.Is for routing without reaching into pelletier/go-toml/v2
@@ -60,23 +73,29 @@ func Load(r io.Reader) (Template, error) {
 		return Template{}, fmt.Errorf("schema_version %q: %w", versionProbe.SchemaVersion, ErrUnsupportedSchemaVersion)
 	}
 
-	// Step 3 — strict decode of the full template. Unknown top-level keys
-	// (including unknown [kinds.*] and [agent_bindings.*] subkeys) become
-	// StrictMissingError, which we wrap with ErrUnknownTemplateKey so
-	// callers can route on the sentinel.
+	// Step 3 — strict decode of the full template. Unknown FIELDS inside a
+	// known table (e.g. an unrecognized key inside a [kinds.build] row)
+	// become StrictMissingError, which we wrap with ErrUnknownTemplateKey so
+	// callers can route on the sentinel. Note this does NOT validate map
+	// KEYS: TOML accepts arbitrary keys in [kinds.*] and [agent_bindings.*]
+	// because those tables decode into maps. Bogus map keys are caught by
+	// validateMapKeys in Step 4 below.
 	var tpl Template
 	strictDecoder := toml.NewDecoder(bytes.NewReader(raw))
 	strictDecoder.DisallowUnknownFields()
 	if err := strictDecoder.Decode(&tpl); err != nil {
-		var strictErr *toml.StrictMissingError
-		if errors.As(err, &strictErr) {
+		if strictErr, ok := errors.AsType[*toml.StrictMissingError](err); ok {
 			return Template{}, fmt.Errorf("%w: %s", ErrUnknownTemplateKey, strictErr.String())
 		}
 		return Template{}, fmt.Errorf("templates: parse: %w", err)
 	}
 
-	// Step 4 — load-time validators. Order matters: kind-membership runs
-	// first so cycle detection never traverses a corrupt vocabulary.
+	// Step 4 — load-time validators. Order matters: map-key membership and
+	// child-rule kind membership run first so cycle detection never
+	// traverses a corrupt vocabulary.
+	if err := validateMapKeys(tpl); err != nil {
+		return Template{}, err
+	}
 	if err := validateChildRuleKinds(tpl.ChildRules); err != nil {
 		return Template{}, err
 	}
@@ -130,6 +149,28 @@ var (
 	// message names the offending field and the offending value for UX.
 	ErrInvalidAgentBinding = errors.New("invalid agent binding")
 )
+
+// validateMapKeys asserts every key in Template.Kinds and
+// Template.AgentBindings is a member of the closed 12-value domain.Kind enum.
+// Catches typos like [kinds.bulid] (transposed letters) or
+// [agent_bindings.totally-bogus] at load time rather than letting them
+// silently coexist with the real entries — strict decode validates fields
+// inside a row but not the map keys themselves, because pelletier/go-toml/v2
+// treats arbitrary keys as legitimate map entries when the destination type
+// is a map.
+func validateMapKeys(tpl Template) error {
+	for k := range tpl.Kinds {
+		if !domain.IsValidKind(k) {
+			return fmt.Errorf("%w: kinds map key %q", ErrUnknownKindReference, k)
+		}
+	}
+	for k := range tpl.AgentBindings {
+		if !domain.IsValidKind(k) {
+			return fmt.Errorf("%w: agent_bindings map key %q", ErrUnknownKindReference, k)
+		}
+	}
+	return nil
+}
 
 // validateChildRuleKinds asserts every Kind referenced in [child_rules] is a
 // member of the closed 12-value enum. The check runs before cycle detection
