@@ -97,6 +97,16 @@ func (c KindCatalog) LookupAgentBinding(kind domain.Kind) (AgentBinding, bool) {
 	return binding, ok
 }
 
+// AllowsNesting reports whether a child kind may nest under a parent kind per
+// the catalog's KindRule allow-lists. It mirrors Template.AllowsNesting's
+// contract by promoting the catalog's Kinds map into a Template envelope and
+// delegating to the canonical resolver. Per droplet 3.15 this is the catalog-
+// side entry point used by internal/app/kind_capability.go's parent-scope
+// gate, replacing the legacy KindDefinition.AllowsParentScope check.
+func (c KindCatalog) AllowsNesting(parent, child domain.Kind) (allowed bool, reason string) {
+	return Template{Kinds: c.Kinds}.AllowsNesting(parent, child)
+}
+
 // cloneKindRule returns a deep copy of one KindRule so the catalog cannot
 // observe later mutations to the source Template's slice fields.
 func cloneKindRule(r KindRule) KindRule {

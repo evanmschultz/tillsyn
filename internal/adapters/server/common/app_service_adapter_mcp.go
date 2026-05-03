@@ -1192,9 +1192,7 @@ func (a *AppServiceAdapter) UpsertKindDefinition(ctx context.Context, in UpsertK
 		DisplayName:         strings.TrimSpace(in.DisplayName),
 		DescriptionMarkdown: strings.TrimSpace(in.DescriptionMarkdown),
 		AppliesTo:           toKindAppliesToList(in.AppliesTo),
-		AllowedParentScopes: toKindAppliesToList(in.AllowedParentScopes),
 		PayloadSchemaJSON:   strings.TrimSpace(in.PayloadSchemaJSON),
-		Template:            in.Template,
 	})
 	if err != nil {
 		return domain.KindDefinition{}, mapAppError("upsert kind definition", err)

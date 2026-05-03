@@ -612,17 +612,15 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "kind",
 			args: []string{"kind", "--help"},
-			want: []string{"till kind", "list", "upsert", "allowlist"},
+			// Per Drop 3 droplet 3.15 (finding 5.B.13 / CE8) the
+			// `till kind upsert` subcommand was deleted. Only `list` +
+			// `allowlist` remain.
+			want: []string{"till kind", "list", "allowlist"},
 		},
 		{
 			name: "kind list",
 			args: []string{"kind", "list", "--help"},
 			want: []string{"till kind list", "--include-archived", "discover valid kind ids"},
-		},
-		{
-			name: "kind upsert",
-			args: []string{"kind", "upsert", "--help"},
-			want: []string{"till kind upsert", "--id", "--display-name", "--applies-to", "--payload-schema-json", "compatibility-only"},
 		},
 		{
 			name: "kind allowlist",
@@ -1788,7 +1786,13 @@ func TestRunProjectDiscoverArchivedGuidance(t *testing.T) {
 	}
 }
 
-// TestRunKindAndAllowlistCommands verifies kind upsert/list and project allowlist updates.
+// TestRunKindAndAllowlistCommands verifies kind list and project allowlist updates.
+//
+// Per Drop 3 droplet 3.15 the `till kind upsert` subcommand was deleted along
+// with the till.kind operation=upsert wire surface. This test now exercises
+// the read-only `kind list` plus `kind allowlist set/list` paths against
+// built-in kinds (closed 12-value Kind enum); programmatic
+// Service.UpsertKindDefinition is exercised in package-level tests instead.
 func TestRunKindAndAllowlistCommands(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)
@@ -1801,36 +1805,10 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 	writeBootstrapReadyConfig(t, cfgPath, workspace)
 	seedProjectForAuthCLITest(t, dbPath, "p1")
 
-	var upsertOut strings.Builder
-	if err := run(context.Background(), []string{
-		"--db", dbPath,
-		"--config", cfgPath,
-		"kind", "upsert",
-		"--id", "qa-check",
-		"--display-name", "QA Check",
-		"--applies-to", "build-qa-proof",
-		"--template-json", "{}",
-	}, &upsertOut, io.Discard); err != nil {
-		t.Fatalf("run(kind upsert) error = %v", err)
-	}
-	var kind struct {
-		ID          string   `json:"id"`
-		DisplayName string   `json:"display_name"`
-		AppliesTo   []string `json:"applies_to"`
-	}
-	if err := json.Unmarshal([]byte(upsertOut.String()), &kind); err != nil {
-		t.Fatalf("Unmarshal(kind upsert) error = %v", err)
-	}
-	if kind.ID != "qa-check" || kind.DisplayName != "QA Check" {
-		t.Fatalf("kind upsert output = %#v, want qa-check/QA Check", kind)
-	}
-	if strings.Contains(upsertOut.String(), "agents_file_sections") {
-		t.Fatalf("kind upsert output still contains legacy agents_file_sections key: %s", upsertOut.String())
-	}
-	if strings.Contains(upsertOut.String(), "claude_file_sections") {
-		t.Fatalf("kind upsert output still contains legacy claude_file_sections key: %s", upsertOut.String())
-	}
-
+	// kind list against an empty catalog returns an empty array (the
+	// closed Kind enum lives in domain.IsValidKind, not in the SQLite
+	// kind_catalog table). This asserts the read path is wired and the
+	// CLI emits a JSON array even when the underlying table is empty.
 	var listOut strings.Builder
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "kind", "list"}, &listOut, io.Discard); err != nil {
 		t.Fatalf("run(kind list) error = %v", err)
@@ -1841,24 +1819,17 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 	if err := json.Unmarshal([]byte(listOut.String()), &kinds); err != nil {
 		t.Fatalf("Unmarshal(kind list) error = %v", err)
 	}
-	foundKind := false
-	for _, item := range kinds {
-		if item.ID == "qa-check" {
-			foundKind = true
-			break
-		}
-	}
-	if !foundKind {
-		t.Fatalf("expected kind list to include qa-check, got %#v", kinds)
-	}
 
+	// kind allowlist set against a built-in kind succeeds via the
+	// post-3.15 fallback that accepts any domain.IsValidKind member even
+	// when the catalog row is missing.
 	var allowSetOut strings.Builder
 	if err := run(context.Background(), []string{
 		"--db", dbPath,
 		"--config", cfgPath,
 		"kind", "allowlist", "set",
 		"--project-id", "p1",
-		"--kind-id", "qa-check",
+		"--kind-id", "build-qa-proof",
 	}, &allowSetOut, io.Discard); err != nil {
 		t.Fatalf("run(kind allowlist set) error = %v", err)
 	}
@@ -1869,8 +1840,8 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 	if err := json.Unmarshal([]byte(allowSetOut.String()), &allowSet); err != nil {
 		t.Fatalf("Unmarshal(kind allowlist set) error = %v", err)
 	}
-	if allowSet.ProjectID != "p1" || len(allowSet.KindIDs) != 1 || allowSet.KindIDs[0] != "qa-check" {
-		t.Fatalf("allowlist set output = %#v, want p1/qa-check", allowSet)
+	if allowSet.ProjectID != "p1" || len(allowSet.KindIDs) != 1 || allowSet.KindIDs[0] != "build-qa-proof" {
+		t.Fatalf("allowlist set output = %#v, want p1/build-qa-proof", allowSet)
 	}
 
 	var allowListOut strings.Builder
@@ -1884,8 +1855,8 @@ func TestRunKindAndAllowlistCommands(t *testing.T) {
 	if err := json.Unmarshal([]byte(allowListOut.String()), &allowList); err != nil {
 		t.Fatalf("Unmarshal(kind allowlist list) error = %v", err)
 	}
-	if allowList.ProjectID != "p1" || len(allowList.KindIDs) != 1 || allowList.KindIDs[0] != "qa-check" {
-		t.Fatalf("allowlist list output = %#v, want p1/qa-check", allowList)
+	if allowList.ProjectID != "p1" || len(allowList.KindIDs) != 1 || allowList.KindIDs[0] != "build-qa-proof" {
+		t.Fatalf("allowlist list output = %#v, want p1/build-qa-proof", allowList)
 	}
 }
 

@@ -111,10 +111,10 @@ func TestKindCatalogResolutionFromBakedCatalog(t *testing.T) {
 	if def.DisplayName != "build" {
 		t.Fatalf("resolveActionItemKindDefinition() DisplayName = %q, want %q (synthesized catalog path)", def.DisplayName, "build")
 	}
-	// AllowedParentScopes derived from KindRule.AllowedParentKinds.
-	if len(def.AllowedParentScopes) != 1 || def.AllowedParentScopes[0] != domain.KindAppliesToPlan {
-		t.Fatalf("resolveActionItemKindDefinition() AllowedParentScopes = %#v, want [%q]", def.AllowedParentScopes, domain.KindAppliesToPlan)
-	}
+	// Per droplet 3.15 the synthesized definition no longer carries an
+	// AllowedParentScopes mirror — that field was deleted. Parent-nesting
+	// gates flow through KindCatalog.AllowsNesting on the live catalog
+	// snapshot instead. The catalog hit is asserted by DisplayName above.
 }
 
 // TestKindCatalogResolutionFallsBackOnMalformedJSON covers the soft-failure

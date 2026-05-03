@@ -286,104 +286,49 @@ func (r *Repository) migrate(ctx context.Context) error {
 				updated_at TEXT NOT NULL,
 				FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 			);`,
+		// Per Drop 3 droplet 3.15 (finding 5.B.8) the kind_catalog table no
+		// longer carries allowed_parent_scopes_json or template_json
+		// columns: nesting rules flow through the project's baked
+		// templates.KindCatalog (per fix L5), and the legacy KindTemplate
+		// surface was deleted. The 12-value Kind enum is no longer
+		// boot-seeded into kind_catalog either — KindCatalog (Bake from
+		// templates/builtin/default.toml) is the catalog of record at
+		// project-create time. Equivalent universal-allow assertions live
+		// in internal/templates/embed_test.go; the legacy boot-seed
+		// regression tests
+		// (TestRepositoryFreshOpenKindCatalog +
+		// TestRepositoryFreshOpenKindCatalogUniversalParentAllow) were
+		// retired alongside this seed.
+		//
+		// Pre-MVP rule honored: the table itself is retained so legacy
+		// CreateKindDefinition / GetKindDefinition / ListKindDefinitions
+		// callers (snapshot import + admin tooling) still resolve. The dev
+		// fresh-DBs ~/.tillsyn/tillsyn.db when this droplet lands.
 		`CREATE TABLE IF NOT EXISTS kind_catalog (
 			id TEXT PRIMARY KEY,
 			display_name TEXT NOT NULL,
 			description_markdown TEXT NOT NULL DEFAULT '',
 			applies_to_json TEXT NOT NULL DEFAULT '[]',
-			allowed_parent_scopes_json TEXT NOT NULL DEFAULT '[]',
 			payload_schema_json TEXT NOT NULL DEFAULT '',
-			template_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			archived_at TEXT
 		);`,
-		// Seed the 12-value Kind enum into the kind catalog at boot. Scope
-		// mirrors kind (applies_to_json = ["<kind-id>"]). Every row's
-		// allowed_parent_scopes_json is the empty list "[]" (universal-allow):
-		// domain.KindDefinition.AllowsParentScope returns true for every parent
-		// scope when AllowedParentScopes is empty (see internal/domain/kind.go
-		// AllowsParentScope early return). Per-project nesting constraints land
-		// in the future template overhaul.
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'plan', 'Plan', 'Planning-dominant action item', '["plan"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'research', 'Research', 'Read-only investigation action item', '["research"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'build', 'Build', 'Code-changing leaf action item', '["build"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'plan-qa-proof', 'Plan QA Proof', 'Proof-completeness QA pass on a plan parent', '["plan-qa-proof"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'plan-qa-falsification', 'Plan QA Falsification', 'Falsification QA pass on a plan parent', '["plan-qa-falsification"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'build-qa-proof', 'Build QA Proof', 'Proof-completeness QA pass on a build parent', '["build-qa-proof"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'build-qa-falsification', 'Build QA Falsification', 'Falsification QA pass on a build parent', '["build-qa-falsification"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'closeout', 'Closeout', 'Drop-end coordination action item', '["closeout"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'commit', 'Commit', 'Commit action item', '["commit"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'refinement', 'Refinement', 'Long-lived tracking umbrella', '["refinement"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'discussion', 'Discussion', 'Cross-cutting decision park', '["discussion"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
-		`INSERT OR IGNORE INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
-		) VALUES (
-			'human-verify', 'Human Verify', 'Dev sign-off hold point', '["human-verify"]', '[]', '', '{}',
-			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
-		);`,
+		// Per Drop 3 droplet 3.15 the FK from project_allowed_kinds.kind_id
+		// onto kind_catalog(id) was dropped: kind_catalog is no longer
+		// boot-seeded with the closed 12-value Kind enum, so requiring a
+		// matching catalog row would break CreateProject's
+		// initializeProjectAllowedKinds call when no UpsertKindDefinition
+		// has populated the catalog yet (the dominant case in tests + at
+		// boot). The closed Kind enum lives in domain.IsValidKind; the
+		// project_allowed_kinds row is a logical allowlist filter, not a
+		// catalog FK.
 		`CREATE TABLE IF NOT EXISTS project_allowed_kinds (
 			project_id TEXT NOT NULL,
 			kind_id TEXT NOT NULL,
 			created_at TEXT NOT NULL,
 			PRIMARY KEY(project_id, kind_id),
-			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-			FOREIGN KEY(kind_id) REFERENCES kind_catalog(id) ON DELETE CASCADE
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS capability_leases (
 			instance_id TEXT PRIMARY KEY,
@@ -1065,27 +1010,17 @@ func (r *Repository) CreateKindDefinition(ctx context.Context, kind domain.KindD
 	if err != nil {
 		return fmt.Errorf("encode kind applies_to_json: %w", err)
 	}
-	parentJSON, err := json.Marshal(kind.AllowedParentScopes)
-	if err != nil {
-		return fmt.Errorf("encode kind allowed_parent_scopes_json: %w", err)
-	}
-	templateJSON, err := json.Marshal(kind.Template)
-	if err != nil {
-		return fmt.Errorf("encode kind template_json: %w", err)
-	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO kind_catalog(
-			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+			id, display_name, description_markdown, applies_to_json, payload_schema_json, created_at, updated_at, archived_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		string(domain.NormalizeKindID(kind.ID)),
 		strings.TrimSpace(kind.DisplayName),
 		strings.TrimSpace(kind.DescriptionMarkdown),
 		string(appliesJSON),
-		string(parentJSON),
 		strings.TrimSpace(kind.PayloadSchemaJSON),
-		string(templateJSON),
 		ts(kind.CreatedAt),
 		ts(kind.UpdatedAt),
 		nullableTS(kind.ArchivedAt),
@@ -1099,25 +1034,15 @@ func (r *Repository) UpdateKindDefinition(ctx context.Context, kind domain.KindD
 	if err != nil {
 		return fmt.Errorf("encode kind applies_to_json: %w", err)
 	}
-	parentJSON, err := json.Marshal(kind.AllowedParentScopes)
-	if err != nil {
-		return fmt.Errorf("encode kind allowed_parent_scopes_json: %w", err)
-	}
-	templateJSON, err := json.Marshal(kind.Template)
-	if err != nil {
-		return fmt.Errorf("encode kind template_json: %w", err)
-	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE kind_catalog
-		SET display_name = ?, description_markdown = ?, applies_to_json = ?, allowed_parent_scopes_json = ?, payload_schema_json = ?, template_json = ?, updated_at = ?, archived_at = ?
+		SET display_name = ?, description_markdown = ?, applies_to_json = ?, payload_schema_json = ?, updated_at = ?, archived_at = ?
 		WHERE id = ?
 	`,
 		strings.TrimSpace(kind.DisplayName),
 		strings.TrimSpace(kind.DescriptionMarkdown),
 		string(appliesJSON),
-		string(parentJSON),
 		strings.TrimSpace(kind.PayloadSchemaJSON),
-		string(templateJSON),
 		ts(kind.UpdatedAt),
 		nullableTS(kind.ArchivedAt),
 		string(domain.NormalizeKindID(kind.ID)),
@@ -1131,7 +1056,7 @@ func (r *Repository) UpdateKindDefinition(ctx context.Context, kind domain.KindD
 // GetKindDefinition loads one kind catalog entry by id.
 func (r *Repository) GetKindDefinition(ctx context.Context, kindID domain.KindID) (domain.KindDefinition, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		SELECT id, display_name, description_markdown, applies_to_json, payload_schema_json, created_at, updated_at, archived_at
 		FROM kind_catalog
 		WHERE id = ?
 	`, string(domain.NormalizeKindID(kindID)))
@@ -1141,7 +1066,7 @@ func (r *Repository) GetKindDefinition(ctx context.Context, kindID domain.KindID
 // ListKindDefinitions lists kind catalog entries.
 func (r *Repository) ListKindDefinitions(ctx context.Context, includeArchived bool) ([]domain.KindDefinition, error) {
 	query := `
-		SELECT id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		SELECT id, display_name, description_markdown, applies_to_json, payload_schema_json, created_at, updated_at, archived_at
 		FROM kind_catalog
 	`
 	if !includeArchived {
@@ -2944,25 +2869,25 @@ func scanComment(s scanner) (domain.Comment, error) {
 }
 
 // scanKindDefinition decodes one kind_catalog row.
+//
+// Per Drop 3 droplet 3.15 the row no longer carries
+// allowed_parent_scopes_json or template_json columns; the SELECT list +
+// scanned variables are reduced accordingly.
 func scanKindDefinition(s scanner) (domain.KindDefinition, error) {
 	var (
-		kind            domain.KindDefinition
-		idRaw           string
-		appliesRaw      string
-		parentScopesRaw string
-		templateRaw     string
-		createdRaw      string
-		updatedRaw      string
-		archivedRaw     sql.NullString
+		kind        domain.KindDefinition
+		idRaw       string
+		appliesRaw  string
+		createdRaw  string
+		updatedRaw  string
+		archivedRaw sql.NullString
 	)
 	if err := s.Scan(
 		&idRaw,
 		&kind.DisplayName,
 		&kind.DescriptionMarkdown,
 		&appliesRaw,
-		&parentScopesRaw,
 		&kind.PayloadSchemaJSON,
-		&templateRaw,
 		&createdRaw,
 		&updatedRaw,
 		&archivedRaw,
@@ -2981,18 +2906,6 @@ func scanKindDefinition(s scanner) (domain.KindDefinition, error) {
 	}
 	if err := json.Unmarshal([]byte(appliesRaw), &kind.AppliesTo); err != nil {
 		return domain.KindDefinition{}, fmt.Errorf("decode applies_to_json: %w", err)
-	}
-	if strings.TrimSpace(parentScopesRaw) == "" {
-		parentScopesRaw = "[]"
-	}
-	if err := json.Unmarshal([]byte(parentScopesRaw), &kind.AllowedParentScopes); err != nil {
-		return domain.KindDefinition{}, fmt.Errorf("decode allowed_parent_scopes_json: %w", err)
-	}
-	if strings.TrimSpace(templateRaw) == "" {
-		templateRaw = "{}"
-	}
-	if err := json.Unmarshal([]byte(templateRaw), &kind.Template); err != nil {
-		return domain.KindDefinition{}, fmt.Errorf("decode template_json: %w", err)
 	}
 	kind.CreatedAt = parseTS(createdRaw)
 	kind.UpdatedAt = parseTS(updatedRaw)

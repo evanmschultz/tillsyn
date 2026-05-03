@@ -647,7 +647,6 @@ func mapAppError(operation string, err error) error {
 		errors.Is(err, domain.ErrInvalidKind),
 		errors.Is(err, domain.ErrInvalidKindID),
 		errors.Is(err, domain.ErrInvalidKindAppliesTo),
-		errors.Is(err, domain.ErrInvalidKindTemplate),
 		errors.Is(err, domain.ErrInvalidKindPayload),
 		errors.Is(err, domain.ErrInvalidKindPayloadSchema),
 		errors.Is(err, domain.ErrKindNotAllowed),

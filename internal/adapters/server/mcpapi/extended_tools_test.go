@@ -740,7 +740,6 @@ func (s *stubExpandedService) ListKindDefinitions(_ context.Context, includeArch
 			DisplayName:         "ActionItem",
 			DescriptionMarkdown: "Normal implementation work item. Prefer comments for progress and handoffs for explicit routing.",
 			AppliesTo:           []domain.KindAppliesTo{domain.KindAppliesToPlan},
-			AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToDiscussion, domain.KindAppliesToPlan},
 			CreatedAt:           now,
 			UpdatedAt:           now,
 		},
@@ -1224,7 +1223,6 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.project", args: map[string]any{"operation": "list_change_events", "project_id": "p1", "limit": 25}},
 		{name: "till.project", args: map[string]any{"operation": "get_dependency_rollup", "project_id": "p1"}},
 		{name: "till.kind", args: map[string]any{"operation": "list"}},
-		{name: "till.kind", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "upsert", "id": "phase", "applies_to": []any{"phase"}})},
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "set_allowed_kinds", "project_id": "p1", "kind_ids": []any{"phase", "actionItem"}})},
 		{name: "till.project", args: map[string]any{"operation": "list_allowed_kinds", "project_id": "p1"}},
 		{name: "till.embeddings", args: map[string]any{"operation": "status", "project_id": "p1", "limit": 10}},
@@ -1509,12 +1507,16 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 		"till.create_project",
 		"till.update_project",
 		"till.list_kind_definitions",
-		"till.upsert_kind_definition",
 		"till.set_project_allowed_kinds",
 	} {
 		if slices.Contains(defaultTools, legacy) {
 			t.Fatalf("unexpected legacy project tool %q in default surface: %#v", legacy, defaultTools)
 		}
+	}
+	// Per Drop 3 droplet 3.15 till.upsert_kind_definition was deleted; it
+	// must not appear in EITHER surface.
+	if slices.Contains(defaultTools, "till.upsert_kind_definition") {
+		t.Fatalf("till.upsert_kind_definition unexpectedly registered in default surface: %#v", defaultTools)
 	}
 
 	legacyTools := collectToolNames(t, Config{ExposeLegacyProjectTools: true})
@@ -1524,12 +1526,14 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 		"till.create_project",
 		"till.update_project",
 		"till.list_kind_definitions",
-		"till.upsert_kind_definition",
 		"till.set_project_allowed_kinds",
 	} {
 		if !slices.Contains(legacyTools, required) {
 			t.Fatalf("legacy project mode missing %q: %#v", required, legacyTools)
 		}
+	}
+	if slices.Contains(legacyTools, "till.upsert_kind_definition") {
+		t.Fatalf("till.upsert_kind_definition unexpectedly registered in legacy surface (deleted in droplet 3.15): %#v", legacyTools)
 	}
 }
 
@@ -1819,14 +1823,6 @@ func TestHandlerExpandedLegacyProjectReadAdminAliases(t *testing.T) {
 			tool: "till.list_kind_definitions",
 			args: map[string]any{"include_archived": true},
 		},
-		{
-			name: "upsert_kind_definition",
-			tool: "till.upsert_kind_definition",
-			args: mergeArgs(validSessionArgs(), map[string]any{
-				"id":         "go-project",
-				"applies_to": []any{"project"},
-			}),
-		},
 	}
 
 	for idx, tc := range callCases {
@@ -1841,9 +1837,6 @@ func TestHandlerExpandedLegacyProjectReadAdminAliases(t *testing.T) {
 	}
 	if !service.lastListKindsArchived {
 		t.Fatal("legacy list_kind_definitions include_archived = false, want true")
-	}
-	if got := service.lastUpsertKindReq.ID; got != "go-project" {
-		t.Fatalf("legacy upsert_kind_definition id = %q, want go-project", got)
 	}
 	if got := service.lastSetAllowedKindsReq.ProjectID; got != "" {
 		t.Fatalf("legacy set_project_allowed_kinds unexpectedly ran, got project_id %q", got)
@@ -3306,17 +3299,9 @@ func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing
 			wantNamespace: "project:" + domain.AuthRequestGlobalProjectID,
 			wantProjectID: domain.AuthRequestGlobalProjectID,
 		},
-		{
-			name: "upsert kind definition uses global sentinel scope",
-			tool: "till.kind",
-			args: mergeArgs(validSessionArgs(), map[string]any{
-				"operation":  "upsert",
-				"id":         "go-project",
-				"applies_to": []any{"project"},
-			}),
-			wantNamespace: "project:" + domain.AuthRequestGlobalProjectID,
-			wantProjectID: domain.AuthRequestGlobalProjectID,
-		},
+		// Per Drop 3 droplet 3.15 till.kind operation=upsert was deleted —
+		// the kind-definition upsert wire surface no longer exists, so the
+		// global-sentinel scope mapping for it is no longer reachable.
 	}
 
 	for _, tc := range cases {

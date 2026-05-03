@@ -120,17 +120,6 @@ type kindListCommandOptions struct {
 	includeArchived bool
 }
 
-// kindUpsertCommandOptions stores kind upsert flag values.
-type kindUpsertCommandOptions struct {
-	id                  string
-	displayName         string
-	descriptionMarkdown string
-	appliesTo           []string
-	allowedParentScopes []string
-	payloadSchemaJSON   string
-	templateJSON        string
-}
-
 // kindAllowlistCommandOptions stores project allowlist flag values.
 type kindAllowlistCommandOptions struct {
 	projectID string
@@ -425,7 +414,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		waitPollInterval: 2 * time.Second,
 	}
 	kindListOpts := kindListCommandOptions{}
-	kindUpsertOpts := kindUpsertCommandOptions{}
 	kindAllowlistOpts := kindAllowlistCommandOptions{}
 	leaseListOpts := leaseListCommandOptions{scopeType: string(domain.CapabilityScopeProject)}
 	leaseIssueOpts := leaseIssueCommandOptions{scopeType: string(domain.CapabilityScopeProject), role: string(domain.CapabilityRoleBuilder), requestedTTL: 8 * time.Hour}
@@ -440,7 +428,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	actionItemOpts := actionItemCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -892,15 +880,18 @@ overview, attention overview, and follow-up pointers.
 	captureStateCmd.Flags().StringVar(&captureStateOpts.scopeID, "scope-id", "", "Optional scope identifier")
 	captureStateCmd.Flags().StringVar(&captureStateOpts.view, "view", captureStateOpts.view, "Capture state view (summary|full)")
 
+	// Per Drop 3 droplet 3.15 (finding 5.B.13 / CE8) the `till kind upsert`
+	// CLI subcommand was deleted along with the till.kind operation=upsert
+	// MCP wire surface and the till.upsert_kind_definition legacy alias.
+	// Read-only `till kind list` + `till kind allowlist list/set` remain.
 	kindCmd := &cobra.Command{
 		Use:   "kind",
-		Short: "Inspect and update kind definitions and allowlists",
+		Short: "Inspect kind definitions and project allowlists",
 		Long: strings.TrimSpace(`
 Inspect kind definitions and project allowlists.
 `),
 		Example: strings.Join([]string{
 			"  till kind list",
-			"  till kind upsert --id qa-check --display-name \"QA Check\" --applies-to subtask",
 			"  till kind allowlist list --project-id PROJECT_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -924,39 +915,6 @@ creation. Add --include-archived when auditing historical kinds.
 		},
 	}
 	kindListCmd.Flags().BoolVar(&kindListOpts.includeArchived, "include-archived", false, "Include archived kind definitions")
-	kindUpsertCmd := &cobra.Command{
-		Use:   "upsert",
-		Short: "Create or update one kind definition",
-		Long: strings.TrimSpace(`
-Create or update one kind definition in the kind registry.
-
-Use this for structural kind metadata such as id, display name, applies-to
-scope, parent-scope rules, and optional payload schema. The hidden
-'--template-json' flag remains compatibility-only and should not be used for
-new work.
-`),
-		Example: strings.Join([]string{
-			"  till kind upsert --id research-actionItem --display-name \"Research ActionItem\" --applies-to actionItem",
-			"  till kind upsert --id qa-check --display-name \"QA Check\" \\",
-			"    --applies-to subtask --allowed-parent-scopes actionItem \\",
-			"    --payload-schema-json '{\"type\":\"object\"}'",
-		}, "\n"),
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "kind.upsert")
-		},
-	}
-	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.id, "id", "", "Kind identifier")
-	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.displayName, "display-name", "", "Display name")
-	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.descriptionMarkdown, "description-markdown", "", "Description markdown")
-	kindUpsertCmd.Flags().StringSliceVar(&kindUpsertOpts.appliesTo, "applies-to", nil, "Allowed applies-to values")
-	kindUpsertCmd.Flags().StringSliceVar(&kindUpsertOpts.allowedParentScopes, "allowed-parent-scopes", nil, "Allowed parent scopes")
-	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.payloadSchemaJSON, "payload-schema-json", "", "Optional payload schema JSON")
-	kindUpsertCmd.Flags().StringVar(&kindUpsertOpts.templateJSON, "template-json", "", "Optional kind template JSON")
-	mustMarkFlagHidden(kindUpsertCmd, "template-json")
-	mustMarkFlagRequired(kindUpsertCmd, "id")
-	mustMarkFlagRequired(kindUpsertCmd, "display-name")
-	mustMarkFlagRequired(kindUpsertCmd, "applies-to")
 	kindAllowlistCmd := &cobra.Command{
 		Use:   "allowlist",
 		Short: "Inspect and update a project's explicit kind allowlist",
@@ -1011,7 +969,7 @@ project limited to a curated set of node kinds.
 	kindAllowlistSetCmd.Flags().StringVar(&kindAllowlistOpts.projectID, "project-id", "", "Project identifier")
 	kindAllowlistSetCmd.Flags().StringSliceVar(&kindAllowlistOpts.kindIDs, "kind-id", nil, "Allowed kind identifier")
 	kindAllowlistCmd.AddCommand(kindAllowlistListCmd, kindAllowlistSetCmd)
-	kindCmd.AddCommand(kindListCmd, kindUpsertCmd, kindAllowlistCmd)
+	kindCmd.AddCommand(kindListCmd, kindAllowlistCmd)
 
 	leaseCmd := &cobra.Command{
 		Use:   "lease",
@@ -2082,7 +2040,6 @@ func executeCommandFlow(
 	embeddingsStatusOpts embeddingsStatusCommandOptions,
 	embeddingsReindexOpts embeddingsReindexCommandOptions,
 	kindListOpts kindListCommandOptions,
-	kindUpsertOpts kindUpsertCommandOptions,
 	kindAllowlistOpts kindAllowlistCommandOptions,
 	leaseListOpts leaseListCommandOptions,
 	leaseIssueOpts leaseIssueCommandOptions,
@@ -2417,10 +2374,6 @@ func executeCommandFlow(
 		return runOneShotCommand("kind.list", "kind list", func() error {
 			return runKindList(ctx, svc, kindListOpts, stdout)
 		})
-	case "kind.upsert":
-		return runOneShotCommand("kind.upsert", "kind upsert", func() error {
-			return runKindUpsert(ctx, svc, cfg, kindUpsertOpts, stdout)
-		})
 	case "kind.allowlist.list":
 		return runOneShotCommand("kind.allowlist.list", "kind allowlist list", func() error {
 			return runKindAllowlistList(ctx, svc, kindAllowlistOpts, stdout)
@@ -2688,30 +2641,10 @@ func runKindList(ctx context.Context, svc *app.Service, opts kindListCommandOpti
 	return writeJSON(stdout, payload)
 }
 
-// runKindUpsert creates or updates one kind definition and writes it as stable JSON.
-func runKindUpsert(ctx context.Context, svc *app.Service, cfg config.Config, opts kindUpsertCommandOptions, stdout io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("app service is not configured")
-	}
-	template, err := parseOptionalKindTemplateJSON(opts.templateJSON)
-	if err != nil {
-		return err
-	}
-	ctx = cliMutationContext(ctx, cfg)
-	kind, err := svc.UpsertKindDefinition(ctx, app.CreateKindDefinitionInput{
-		ID:                  domain.KindID(strings.TrimSpace(opts.id)),
-		DisplayName:         strings.TrimSpace(opts.displayName),
-		DescriptionMarkdown: strings.TrimSpace(opts.descriptionMarkdown),
-		AppliesTo:           toKindAppliesToList(opts.appliesTo),
-		AllowedParentScopes: toKindAppliesToList(opts.allowedParentScopes),
-		PayloadSchemaJSON:   strings.TrimSpace(opts.payloadSchemaJSON),
-		Template:            template,
-	})
-	if err != nil {
-		return fmt.Errorf("upsert kind definition: %w", err)
-	}
-	return writeJSON(stdout, kindDefinitionPayload(kind))
-}
+// Per Drop 3 droplet 3.15 (finding 5.B.13 / CE8) the runKindUpsert handler
+// was deleted along with the till.kind operation=upsert wire surface,
+// the till.upsert_kind_definition legacy alias, and the till kind upsert
+// CLI subcommand.
 
 // runKindAllowlistList lists one project's explicit kind allowlist and writes it as stable JSON.
 func runKindAllowlistList(ctx context.Context, svc *app.Service, opts kindAllowlistCommandOptions, stdout io.Writer) error {
@@ -3036,19 +2969,6 @@ func parseCLIContinuationJSON(raw string) (map[string]any, error) {
 		return nil, fmt.Errorf("parse --continuation-json: continuation metadata must be a non-empty JSON object")
 	}
 	return out, nil
-}
-
-// parseOptionalKindTemplateJSON parses one optional kind template JSON document.
-func parseOptionalKindTemplateJSON(raw string) (domain.KindTemplate, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return domain.KindTemplate{}, nil
-	}
-	var template domain.KindTemplate
-	if err := json.Unmarshal([]byte(raw), &template); err != nil {
-		return domain.KindTemplate{}, fmt.Errorf("parse --template-json: %w", err)
-	}
-	return template, nil
 }
 
 // cliMutationContext attaches a deterministic CLI mutation actor to context.
@@ -3432,17 +3352,19 @@ func persistIdentity(configPath, actorID, displayName, defaultActorType string) 
 }
 
 // kindDefinitionPayloadJSON stores JSON-friendly kind-definition output fields.
+//
+// Per Drop 3 droplet 3.15 the legacy AllowedParentScopes + Template fields
+// were removed; nesting now flows through templates.KindCatalog.AllowsNesting
+// on the project's baked snapshot.
 type kindDefinitionPayloadJSON struct {
-	ID                  string              `json:"id"`
-	DisplayName         string              `json:"display_name"`
-	DescriptionMarkdown string              `json:"description_markdown,omitempty"`
-	AppliesTo           []string            `json:"applies_to"`
-	AllowedParentScopes []string            `json:"allowed_parent_scopes,omitempty"`
-	PayloadSchemaJSON   string              `json:"payload_schema_json,omitempty"`
-	Template            domain.KindTemplate `json:"template"`
-	CreatedAt           time.Time           `json:"created_at"`
-	UpdatedAt           time.Time           `json:"updated_at"`
-	ArchivedAt          *time.Time          `json:"archived_at,omitempty"`
+	ID                  string     `json:"id"`
+	DisplayName         string     `json:"display_name"`
+	DescriptionMarkdown string     `json:"description_markdown,omitempty"`
+	AppliesTo           []string   `json:"applies_to"`
+	PayloadSchemaJSON   string     `json:"payload_schema_json,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	ArchivedAt          *time.Time `json:"archived_at,omitempty"`
 }
 
 // kindAllowlistPayloadJSON stores JSON-friendly project allowlist fields.
@@ -3614,9 +3536,7 @@ func kindDefinitionPayload(kind domain.KindDefinition) kindDefinitionPayloadJSON
 		DisplayName:         kind.DisplayName,
 		DescriptionMarkdown: kind.DescriptionMarkdown,
 		AppliesTo:           toStrings(kind.AppliesTo),
-		AllowedParentScopes: toStrings(kind.AllowedParentScopes),
 		PayloadSchemaJSON:   kind.PayloadSchemaJSON,
-		Template:            kind.Template,
 		CreatedAt:           kind.CreatedAt.UTC(),
 		UpdatedAt:           kind.UpdatedAt.UTC(),
 		ArchivedAt:          kind.ArchivedAt,

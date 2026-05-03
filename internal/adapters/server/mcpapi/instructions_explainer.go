@@ -238,9 +238,11 @@ func explainKindInstructions(ctx context.Context, services instructionsExplainSe
 	rules := []string{
 		fmt.Sprintf("Kind %q applies to scope(s): %s.", kind.ID, joinKindScopes(kind.AppliesTo)),
 	}
-	if len(kind.AllowedParentScopes) > 0 {
-		rules = append(rules, fmt.Sprintf("Allowed parent scopes for this kind: %s.", joinKindScopes(kind.AllowedParentScopes)))
-	}
+	// Per Drop 3 droplet 3.15 the legacy KindDefinition.AllowedParentScopes
+	// field was deleted; nesting rules are exposed through the project's
+	// baked KindCatalog (templates.KindCatalog.AllowsNesting) rather than
+	// the per-kind catalog row. The instructions explainer no longer
+	// surfaces a parent-scope rule line for the kind in isolation.
 	if projectID != "" {
 		allowedKinds, err := listProjectAllowedKinds(ctx, services.kinds, projectID)
 		if err != nil {
