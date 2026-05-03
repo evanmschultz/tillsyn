@@ -2605,3 +2605,171 @@ func TestRepositoryFreshOpenProjectsSchema(t *testing.T) {
 		t.Fatalf("pragma_table_info('projects') returned 0 columns — table missing?")
 	}
 }
+
+// TestRepository_ListActionItemsByParent verifies the parent-scoped listing
+// used by the dotted-address resolver. The test asserts (a) empty parentID
+// returns level-1 children only, (b) explicit parentID returns that parent's
+// direct children only (not grandchildren), (c) ordering is created_at ASC
+// with id ASC tie-breaker, (d) project isolation filters out same-parent rows
+// from a different project.
+func TestRepository_ListActionItemsByParent(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	base := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+
+	projectA, err := domain.NewProject("proj-a", "Project A", "", base)
+	if err != nil {
+		t.Fatalf("NewProject(A) error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, projectA); err != nil {
+		t.Fatalf("CreateProject(A) error = %v", err)
+	}
+	columnA, err := domain.NewColumn("col-a", projectA.ID, "Todo", 0, 0, base)
+	if err != nil {
+		t.Fatalf("NewColumn(A) error = %v", err)
+	}
+	if err := repo.CreateColumn(ctx, columnA); err != nil {
+		t.Fatalf("CreateColumn(A) error = %v", err)
+	}
+
+	projectB, err := domain.NewProject("proj-b", "Project B", "", base)
+	if err != nil {
+		t.Fatalf("NewProject(B) error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, projectB); err != nil {
+		t.Fatalf("CreateProject(B) error = %v", err)
+	}
+	columnB, err := domain.NewColumn("col-b", projectB.ID, "Todo", 0, 0, base)
+	if err != nil {
+		t.Fatalf("NewColumn(B) error = %v", err)
+	}
+	if err := repo.CreateColumn(ctx, columnB); err != nil {
+		t.Fatalf("CreateColumn(B) error = %v", err)
+	}
+
+	// Project A tree:
+	//   level-1: a-root-0 (t=+1s), a-root-1 (t=+2s).
+	//   parent a-root-1: a-tie-aaa (t=+10s) and a-tie-zzz (t=+10s) — same
+	//     CreatedAt; id ASC tie-break selects a-tie-aaa < a-tie-zzz first.
+	//   parent a-root-0: a-leaf (t=+5s).
+	type spec struct {
+		id        string
+		projectID string
+		columnID  string
+		parentID  string
+		title     string
+		createdAt time.Time
+	}
+	specs := []spec{
+		{id: "a-root-0", projectID: projectA.ID, columnID: columnA.ID, parentID: "", title: "A root 0", createdAt: base.Add(1 * time.Second)},
+		{id: "a-root-1", projectID: projectA.ID, columnID: columnA.ID, parentID: "", title: "A root 1", createdAt: base.Add(2 * time.Second)},
+		{id: "a-leaf", projectID: projectA.ID, columnID: columnA.ID, parentID: "a-root-0", title: "A leaf", createdAt: base.Add(5 * time.Second)},
+		{id: "a-tie-zzz", projectID: projectA.ID, columnID: columnA.ID, parentID: "a-root-1", title: "A child zzz", createdAt: base.Add(10 * time.Second)},
+		{id: "a-tie-aaa", projectID: projectA.ID, columnID: columnA.ID, parentID: "a-root-1", title: "A child aaa", createdAt: base.Add(10 * time.Second)},
+		// Project B has its OWN action items at parent_id "a-root-1" — same
+		// parent_id string but different project_id; the listing must NOT
+		// surface these when projectA.ID is supplied.
+		{id: "b-cross", projectID: projectB.ID, columnID: columnB.ID, parentID: "a-root-1", title: "Cross-project leak guard", createdAt: base.Add(11 * time.Second)},
+		{id: "b-root", projectID: projectB.ID, columnID: columnB.ID, parentID: "", title: "B root", createdAt: base.Add(3 * time.Second)},
+	}
+
+	for _, s := range specs {
+		item, err := domain.NewActionItem(domain.ActionItemInput{
+			ID:        s.id,
+			ProjectID: s.projectID,
+			ParentID:  s.parentID,
+			Kind:      domain.KindPlan,
+			ColumnID:  s.columnID,
+			Title:     s.title,
+		}, s.createdAt)
+		if err != nil {
+			t.Fatalf("NewActionItem(%q) error = %v", s.id, err)
+		}
+		if err := repo.CreateActionItem(ctx, item); err != nil {
+			t.Fatalf("CreateActionItem(%q) error = %v", s.id, err)
+		}
+	}
+
+	// Empty parentID returns level-1 children only — and only for projectA.
+	rootsA, err := repo.ListActionItemsByParent(ctx, projectA.ID, "")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent(A, \"\") error = %v", err)
+	}
+	gotIDs := make([]string, 0, len(rootsA))
+	for _, item := range rootsA {
+		gotIDs = append(gotIDs, item.ID)
+	}
+	wantRoots := []string{"a-root-0", "a-root-1"}
+	if len(gotIDs) != len(wantRoots) {
+		t.Fatalf("ListActionItemsByParent(A, \"\") len = %d (%v), want %d (%v)", len(gotIDs), gotIDs, len(wantRoots), wantRoots)
+	}
+	for i, want := range wantRoots {
+		if gotIDs[i] != want {
+			t.Fatalf("ListActionItemsByParent(A, \"\")[%d] = %q, want %q (full = %v)", i, gotIDs[i], want, gotIDs)
+		}
+	}
+
+	// Explicit parent returns direct children only (no grandchildren), and
+	// asserts the same-CreatedAt UUID tie-breaker: a-tie-aaa < a-tie-zzz
+	// lexicographically, so a-tie-aaa MUST land at index 0.
+	tieKids, err := repo.ListActionItemsByParent(ctx, projectA.ID, "a-root-1")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent(A, a-root-1) error = %v", err)
+	}
+	tieIDs := make([]string, 0, len(tieKids))
+	for _, item := range tieKids {
+		tieIDs = append(tieIDs, item.ID)
+	}
+	wantTie := []string{"a-tie-aaa", "a-tie-zzz"}
+	if len(tieIDs) != len(wantTie) {
+		t.Fatalf("ListActionItemsByParent(A, a-root-1) len = %d (%v), want %d (%v)", len(tieIDs), tieIDs, len(wantTie), wantTie)
+	}
+	for i, want := range wantTie {
+		if tieIDs[i] != want {
+			t.Fatalf("tie-break ordering[%d] = %q, want %q (full = %v)", i, tieIDs[i], want, tieIDs)
+		}
+	}
+
+	// Project isolation: projectB's roots do NOT bleed into projectA's listing.
+	rootsB, err := repo.ListActionItemsByParent(ctx, projectB.ID, "")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent(B, \"\") error = %v", err)
+	}
+	if len(rootsB) != 1 || rootsB[0].ID != "b-root" {
+		t.Fatalf("ListActionItemsByParent(B, \"\") = %#v, want [b-root]", rootsB)
+	}
+
+	// Cross-project parent_id collision: projectA listing for parent a-root-1
+	// must NOT include projectB's "b-cross" row even though their parent_id
+	// strings match.
+	for _, item := range tieKids {
+		if item.ID == "b-cross" {
+			t.Fatalf("ListActionItemsByParent(A, a-root-1) leaked projectB item %q", item.ID)
+		}
+	}
+
+	// Empty result for a parent with no children.
+	none, err := repo.ListActionItemsByParent(ctx, projectA.ID, "a-leaf")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent(A, a-leaf) error = %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("ListActionItemsByParent(A, a-leaf) = %d rows, want 0 (%v)", len(none), none)
+	}
+
+	// Empty result for an unknown parent (no matching parent_id at all).
+	nope, err := repo.ListActionItemsByParent(ctx, projectA.ID, "does-not-exist")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent(A, does-not-exist) error = %v", err)
+	}
+	if len(nope) != 0 {
+		t.Fatalf("ListActionItemsByParent(A, does-not-exist) = %d rows, want 0 (%v)", len(nope), nope)
+	}
+}

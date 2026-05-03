@@ -30,6 +30,7 @@ type Repository interface {
 	UpdateActionItem(context.Context, domain.ActionItem) error
 	GetActionItem(context.Context, string) (domain.ActionItem, error)
 	ListActionItems(context.Context, string, bool) ([]domain.ActionItem, error)
+	ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error)
 	DeleteActionItem(context.Context, string) error
 	CreateComment(context.Context, domain.Comment) error
 	ListCommentsByTarget(context.Context, domain.CommentTarget) ([]domain.Comment, error)
