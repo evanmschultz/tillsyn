@@ -239,7 +239,7 @@ Same-package-blocking: 2.8 + 2.9 are in different packages (`internal/adapters/s
 
 #### Droplet 2.8 — Empty `AllowedParentScopes` for every kind in boot-seed
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/adapters/storage/sqlite/repo.go` (change every `INSERT OR IGNORE INTO kind_catalog` row at `:304-375` so `allowed_parent_scopes_json` is `'[]'` instead of `'["plan"]'` or `'["build"]'` — 12 rows total: `plan`, `research`, `build`, `plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`, `closeout`, `commit`, `refinement`, `discussion`, `human-verify`), `internal/adapters/storage/sqlite/repo_test.go` and `internal/app/kind_capability_test.go` and `internal/domain/kind_capability_test.go` (update any test that asserted the old `["plan"]`/`["build"]` defaults; assert universal-allow behavior of `AllowsParentScope` per `internal/domain/kind.go:224-236` with the empty-list early return at `:227-229`)
 - **Packages:** `internal/adapters/storage/sqlite`, `internal/app`, `internal/domain` (test-only edit)
 - **Acceptance:**

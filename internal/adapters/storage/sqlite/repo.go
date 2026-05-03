@@ -305,73 +305,73 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'plan', 'Plan', 'Planning-dominant action item', '["plan"]', '["plan"]', '', '{}',
+			'plan', 'Plan', 'Planning-dominant action item', '["plan"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'research', 'Research', 'Read-only investigation action item', '["research"]', '["plan"]', '', '{}',
+			'research', 'Research', 'Read-only investigation action item', '["research"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'build', 'Build', 'Code-changing leaf action item', '["build"]', '["plan"]', '', '{}',
+			'build', 'Build', 'Code-changing leaf action item', '["build"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'plan-qa-proof', 'Plan QA Proof', 'Proof-completeness QA pass on a plan parent', '["plan-qa-proof"]', '["plan"]', '', '{}',
+			'plan-qa-proof', 'Plan QA Proof', 'Proof-completeness QA pass on a plan parent', '["plan-qa-proof"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'plan-qa-falsification', 'Plan QA Falsification', 'Falsification QA pass on a plan parent', '["plan-qa-falsification"]', '["plan"]', '', '{}',
+			'plan-qa-falsification', 'Plan QA Falsification', 'Falsification QA pass on a plan parent', '["plan-qa-falsification"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'build-qa-proof', 'Build QA Proof', 'Proof-completeness QA pass on a build parent', '["build-qa-proof"]', '["build"]', '', '{}',
+			'build-qa-proof', 'Build QA Proof', 'Proof-completeness QA pass on a build parent', '["build-qa-proof"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'build-qa-falsification', 'Build QA Falsification', 'Falsification QA pass on a build parent', '["build-qa-falsification"]', '["build"]', '', '{}',
+			'build-qa-falsification', 'Build QA Falsification', 'Falsification QA pass on a build parent', '["build-qa-falsification"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'closeout', 'Closeout', 'Drop-end coordination action item', '["closeout"]', '["plan"]', '', '{}',
+			'closeout', 'Closeout', 'Drop-end coordination action item', '["closeout"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'commit', 'Commit', 'Commit action item', '["commit"]', '["plan"]', '', '{}',
+			'commit', 'Commit', 'Commit action item', '["commit"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'refinement', 'Refinement', 'Long-lived tracking umbrella', '["refinement"]', '["plan"]', '', '{}',
+			'refinement', 'Refinement', 'Long-lived tracking umbrella', '["refinement"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'discussion', 'Discussion', 'Cross-cutting decision park', '["discussion"]', '["plan"]', '', '{}',
+			'discussion', 'Discussion', 'Cross-cutting decision park', '["discussion"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (
-			'human-verify', 'Human Verify', 'Dev sign-off hold point', '["human-verify"]', '["plan"]', '', '{}',
+			'human-verify', 'Human Verify', 'Dev sign-off hold point', '["human-verify"]', '[]', '', '{}',
 			strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS project_allowed_kinds (

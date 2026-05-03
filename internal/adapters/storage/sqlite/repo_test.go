@@ -2517,6 +2517,57 @@ func TestRepositoryFreshOpenKindCatalog(t *testing.T) {
 	}
 }
 
+// TestRepositoryFreshOpenKindCatalogUniversalParentAllow verifies that every
+// boot-seeded kind in the kind_catalog carries an empty AllowedParentScopes
+// list and therefore allows any parent scope per the empty-list early-return
+// in domain.KindDefinition.AllowsParentScope (internal/domain/kind.go:225-232).
+// This is the post-Droplet-2.8 universal-allow contract — Droplet 2.9 will
+// follow up by deleting the now-orphan domain.AllowedParentKinds helper.
+func TestRepositoryFreshOpenKindCatalogUniversalParentAllow(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	kinds, err := repo.ListKindDefinitions(ctx, false)
+	if err != nil {
+		t.Fatalf("ListKindDefinitions() error = %v", err)
+	}
+	if len(kinds) != 12 {
+		t.Fatalf("ListKindDefinitions() len = %d, want 12 seeded kinds", len(kinds))
+	}
+
+	parentScopeProbes := []domain.KindAppliesTo{
+		domain.KindAppliesToPlan,
+		domain.KindAppliesToBuild,
+		domain.KindAppliesToResearch,
+		domain.KindAppliesToCloseout,
+		domain.KindAppliesToCommit,
+		domain.KindAppliesToDiscussion,
+		domain.KindAppliesToRefinement,
+		domain.KindAppliesToHumanVerify,
+		domain.KindAppliesToPlanQAProof,
+		domain.KindAppliesToPlanQAFalsification,
+		domain.KindAppliesToBuildQAProof,
+		domain.KindAppliesToBuildQAFalsification,
+	}
+
+	for _, kind := range kinds {
+		if len(kind.AllowedParentScopes) != 0 {
+			t.Fatalf("kind %q AllowedParentScopes = %#v, want empty (universal-allow)", kind.ID, kind.AllowedParentScopes)
+		}
+		for _, scope := range parentScopeProbes {
+			if !kind.AllowsParentScope(scope) {
+				t.Fatalf("kind %q AllowsParentScope(%q) = false, want true (universal-allow)", kind.ID, scope)
+			}
+		}
+	}
+}
+
 // TestRepositoryFreshOpenProjectsSchema verifies that a fresh DB open produces a projects table with no kind column.
 func TestRepositoryFreshOpenProjectsSchema(t *testing.T) {
 	ctx := context.Background()
