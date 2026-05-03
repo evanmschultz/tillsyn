@@ -172,6 +172,8 @@ func (r *Repository) migrate(ctx context.Context) error {
 			kind TEXT NOT NULL DEFAULT 'actionItem',
 			scope TEXT NOT NULL DEFAULT 'actionItem',
 			role TEXT NOT NULL DEFAULT '',
+			structural_type TEXT NOT NULL DEFAULT '',
+			irreducible INTEGER NOT NULL DEFAULT 0,
 			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			column_id TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -1251,10 +1253,10 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO action_items(
-			id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		t.ID,
 		t.ProjectID,
@@ -1262,6 +1264,8 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 		string(t.Kind),
 		string(scope),
 		string(t.Role),
+		string(t.StructuralType),
+		boolToInt(t.Irreducible),
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -1345,7 +1349,7 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE action_items
-		SET parent_id = ?, kind = ?, scope = ?, role = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
+		SET parent_id = ?, kind = ?, scope = ?, role = ?, structural_type = ?, irreducible = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
 		    labels_json = ?, metadata_json = ?, updated_by_actor = ?, updated_by_name = ?, updated_by_type = ?, updated_at = ?, started_at = ?, completed_at = ?, archived_at = ?, canceled_at = ?
 		WHERE id = ?
 	`,
@@ -1353,6 +1357,8 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 		string(t.Kind),
 		string(scope),
 		string(t.Role),
+		string(t.StructuralType),
+		boolToInt(t.Irreducible),
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -1411,7 +1417,7 @@ func (r *Repository) GetActionItem(ctx context.Context, id string) (domain.Actio
 func (r *Repository) ListActionItems(ctx context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
 	query := `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ?
@@ -1449,7 +1455,7 @@ func (r *Repository) ListActionItems(ctx context.Context, projectID string, incl
 func (r *Repository) ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error) {
 	query := `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ? AND parent_id = ?
@@ -2497,7 +2503,7 @@ type queryRowser interface {
 func getActionItemByID(ctx context.Context, q queryRower, id string) (domain.ActionItem, error) {
 	row := q.QueryRowContext(ctx, `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE id = ?
@@ -2790,22 +2796,24 @@ func scanProject(s scanner) (domain.Project, error) {
 // scanActionItem handles scan actionItem.
 func scanActionItem(s scanner) (domain.ActionItem, error) {
 	var (
-		t            domain.ActionItem
-		dueRaw       sql.NullString
-		labelsRaw    string
-		metadataRaw  string
-		createdRaw   string
-		updatedRaw   string
-		startedRaw   sql.NullString
-		completedRaw sql.NullString
-		archivedRaw  sql.NullString
-		canceledRaw  sql.NullString
-		priority     string
-		kind         string
-		scopeRaw     string
-		roleRaw      string
-		state        string
-		updatedType  string
+		t                 domain.ActionItem
+		dueRaw            sql.NullString
+		labelsRaw         string
+		metadataRaw       string
+		createdRaw        string
+		updatedRaw        string
+		startedRaw        sql.NullString
+		completedRaw      sql.NullString
+		archivedRaw       sql.NullString
+		canceledRaw       sql.NullString
+		priority          string
+		kind              string
+		scopeRaw          string
+		roleRaw           string
+		structuralTypeRaw string
+		irreducibleRaw    int
+		state             string
+		updatedType       string
 	)
 	if err := s.Scan(
 		&t.ID,
@@ -2814,6 +2822,8 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		&kind,
 		&scopeRaw,
 		&roleRaw,
+		&structuralTypeRaw,
+		&irreducibleRaw,
 		&state,
 		&t.ColumnID,
 		&t.Position,
@@ -2844,6 +2854,8 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 	t.Kind = domain.Kind(kind)
 	t.Scope = domain.NormalizeKindAppliesTo(domain.KindAppliesTo(scopeRaw))
 	t.Role = domain.Role(roleRaw)
+	t.StructuralType = domain.StructuralType(structuralTypeRaw)
+	t.Irreducible = irreducibleRaw != 0
 	t.LifecycleState = domain.LifecycleState(state)
 	t.UpdatedByType = domain.ActorType(updatedType)
 	t.CreatedAt = parseTS(createdRaw)
