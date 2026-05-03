@@ -28,14 +28,6 @@ type descriptionEditorLayoutMetrics struct {
 	previewBodyHeight         int
 }
 
-// descriptionEditorFrame stores single-line header/footer text after width clamping.
-type descriptionEditorFrame struct {
-	header string
-	path   string
-	footer string
-	status string
-}
-
 // renderDescriptionEditorModeView renders the dedicated full-screen description editor surface.
 func (m Model) renderDescriptionEditorModeView() tea.View {
 	accent := lipgloss.Color("62")
@@ -159,23 +151,6 @@ func (m Model) descriptionEditorLayout() descriptionEditorLayoutMetrics {
 	layout.editorBodyHeight = max(3, layout.editorPanelContentHeight-1)
 	layout.previewBodyHeight = max(3, layout.previewPanelContentHeight-1)
 	return layout
-}
-
-// descriptionEditorFrameText returns single-line clamped text for the description-editor frame.
-func (m Model) descriptionEditorFrameText(lineWidth int) descriptionEditorFrame {
-	lineWidth = max(20, lineWidth)
-	pathPrefix := "path: "
-	pathWidth := max(8, lineWidth-len(pathPrefix))
-	status := strings.TrimSpace(m.status)
-	if status == "ready" {
-		status = ""
-	}
-	return descriptionEditorFrame{
-		header: truncate("Description Editor", lineWidth),
-		path:   pathPrefix + collapsePathForDisplay(m.descriptionEditorPathLabel(), pathWidth),
-		footer: truncate(m.descriptionEditorFooterHint(), lineWidth),
-		status: truncate(status, lineWidth),
-	}
 }
 
 // descriptionEditorFooterHint returns bottom-hint text for description editor submodes.

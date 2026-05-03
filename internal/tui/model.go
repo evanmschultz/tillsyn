@@ -4571,11 +4571,6 @@ func (m Model) bootstrapActorType() string {
 	return bootstrapActorTypes[idx]
 }
 
-// cycleBootstrapActor cycles bootstrap actor type selection by delta.
-func (m *Model) cycleBootstrapActor(delta int) {
-	m.bootstrapActorIndex = wrapIndex(m.bootstrapActorIndex, delta, len(bootstrapActorTypes))
-}
-
 // addBootstrapSearchRoot sets the single normalized bootstrap default path.
 func (m *Model) addBootstrapSearchRoot(root string) bool {
 	root = strings.TrimSpace(root)
@@ -5023,11 +5018,6 @@ func (m *Model) focusActionItemFormField(field int) tea.Cmd {
 	return cmd
 }
 
-// actionItemFormFieldCount returns the number of navigable fields for the active actionItem form mode.
-func (m Model) actionItemFormFieldCount() int {
-	return len(m.actionItemFormFocusOrder())
-}
-
 // actionItemFormFocusOrder returns the visual-navigation order for actionItem form fields.
 func (m Model) actionItemFormFocusOrder() []int {
 	if len(m.formInputs) == 0 {
@@ -5393,11 +5383,6 @@ func (m *Model) startActionItemFormMarkdownEditor(field int, seed tea.KeyPressMs
 	return m.descriptionEditorInput.Focus()
 }
 
-// startActionItemDescriptionEditor opens the full-screen markdown description editor for actionItem forms.
-func (m *Model) startActionItemDescriptionEditor(seed tea.KeyPressMsg) tea.Cmd {
-	return m.startActionItemFormMarkdownEditor(actionItemFieldDescription, seed)
-}
-
 // startProjectDescriptionEditor opens the full-screen markdown description editor for project forms.
 func (m *Model) startProjectDescriptionEditor(seed tea.KeyPressMsg) tea.Cmd {
 	if m == nil {
@@ -5414,30 +5399,6 @@ func (m *Model) startProjectDescriptionEditor(seed tea.KeyPressMsg) tea.Cmd {
 	m.descriptionEditorInput.CursorEnd()
 	m.descriptionEditorInput.ShowLineNumbers = true
 	m.applySeedKeyToDescriptionEditor(seed)
-	m.resetDescriptionEditorHistory()
-	m.resetDescriptionPreviewToTop()
-	m.help.ShowAll = false
-	m.status = "editing description"
-	return m.descriptionEditorInput.Focus()
-}
-
-// startThreadDescriptionEditor opens the full-screen markdown description editor for thread details.
-func (m *Model) startThreadDescriptionEditor() tea.Cmd {
-	if m == nil {
-		return nil
-	}
-	m.descriptionEditorBack = modeThread
-	m.descriptionEditorTarget = descriptionEditorTargetThread
-	m.descriptionEditorActionItemFormField = -1
-	m.descriptionEditorMode = descriptionEditorViewModeEdit
-	m.descriptionEditorPath = m.descriptionEditorPathForThreadTarget()
-	m.descriptionEditorThreadDetails = m.threadDetailsActive
-	m.mode = modeDescriptionEditor
-	m.threadComposerActive = false
-	m.threadInput.Blur()
-	m.descriptionEditorInput.SetValue(strings.TrimSpace(m.threadDescriptionMarkdown))
-	m.descriptionEditorInput.CursorEnd()
-	m.descriptionEditorInput.ShowLineNumbers = true
 	m.resetDescriptionEditorHistory()
 	m.resetDescriptionPreviewToTop()
 	m.help.ShowAll = false
@@ -6576,11 +6537,6 @@ func (m *Model) normalizePanelFocus() {
 	}
 }
 
-// noticesFocusStatus returns a status label for the active panel focus target.
-func (m Model) noticesFocusStatus() string {
-	return ""
-}
-
 // bootstrapActorTypeIndex resolves one actor type to its canonical bootstrap option index.
 func bootstrapActorTypeIndex(actorType string) int {
 	actorType = strings.TrimSpace(strings.ToLower(actorType))
@@ -7387,17 +7343,6 @@ func (m *Model) startLabelPicker() tea.Cmd {
 		m.status = "label picker"
 	}
 	return m.labelPickerInput.Focus()
-}
-
-// startDependencyInspectorFromActionItemInfo opens dependency inspector for one existing actionItem.
-func (m *Model) startDependencyInspectorFromActionItemInfo(actionItem domain.ActionItem) tea.Cmd {
-	return m.startDependencyInspector(
-		modeActionItemInfo,
-		actionItem.ID,
-		actionItem.Metadata.DependsOn,
-		actionItem.Metadata.BlockedBy,
-		actionItemFieldDependsOn,
-	)
 }
 
 // startDependencyInspectorFromForm opens dependency inspector for actionItem-form dependency fields.
@@ -8352,55 +8297,6 @@ func (m *Model) appendActionItemFormLabel(label string) {
 	m.formInputs[actionItemFieldLabels].SetValue(strings.Join(current, ","))
 }
 
-// acceptCurrentLabelSuggestion applies the active autocomplete suggestion into the labels field.
-func (m *Model) acceptCurrentLabelSuggestion() bool {
-	if len(m.formInputs) <= actionItemFieldLabels {
-		return false
-	}
-	suggestion := strings.TrimSpace(strings.ToLower(m.formInputs[actionItemFieldLabels].CurrentSuggestion()))
-	if suggestion == "" {
-		matches := m.formInputs[actionItemFieldLabels].MatchedSuggestions()
-		if len(matches) == 0 {
-			return false
-		}
-		suggestion = strings.TrimSpace(strings.ToLower(matches[0]))
-	}
-	if suggestion == "" {
-		return false
-	}
-
-	raw := strings.TrimSpace(m.formInputs[actionItemFieldLabels].Value())
-	if raw == "" || raw == "-" {
-		m.formInputs[actionItemFieldLabels].SetValue(suggestion)
-		m.formInputs[actionItemFieldLabels].CursorEnd()
-		return true
-	}
-
-	parts := strings.Split(raw, ",")
-	labels := make([]string, 0, len(parts))
-	seen := map[string]struct{}{}
-	for idx, part := range parts {
-		label := strings.TrimSpace(strings.ToLower(part))
-		if idx == len(parts)-1 {
-			label = suggestion
-		}
-		if label == "" {
-			continue
-		}
-		if _, ok := seen[label]; ok {
-			continue
-		}
-		seen[label] = struct{}{}
-		labels = append(labels, label)
-	}
-	if len(labels) == 0 {
-		labels = append(labels, suggestion)
-	}
-	m.formInputs[actionItemFieldLabels].SetValue(strings.Join(labels, ","))
-	m.formInputs[actionItemFieldLabels].CursorEnd()
-	return true
-}
-
 // startResourcePicker opens filesystem resource selection for a actionItem.
 func (m *Model) startResourcePicker(actionItemID string, back inputMode) tea.Cmd {
 	actionItemID = strings.TrimSpace(actionItemID)
@@ -8799,14 +8695,6 @@ func uniqueTrimmed(values []string) []string {
 		out = append(out, value)
 	}
 	return out
-}
-
-// formatLabelSource renders one inherited label source for modal hints.
-func formatLabelSource(source string, labels []string) string {
-	if len(labels) == 0 {
-		return source + ": -"
-	}
-	return source + ": " + strings.Join(labels, ", ")
 }
 
 // mergeLabelSources merges inherited label sources using global -> project -> branch -> phase precedence.
@@ -11412,20 +11300,6 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// isCtrlG reports whether a keypress represents the Ctrl+G autocomplete shortcut.
-func isCtrlG(msg tea.KeyPressMsg) bool {
-	if msg.String() == "ctrl+g" {
-		return true
-	}
-	if (msg.Mod & tea.ModCtrl) == 0 {
-		return false
-	}
-	if msg.Code == 'g' || msg.Code == 'G' {
-		return true
-	}
-	return strings.EqualFold(msg.Text, "g")
-}
-
 // isClipboardCopyKey reports whether a keypress is a platform clipboard-copy shortcut.
 func isClipboardCopyKey(msg tea.KeyPressMsg) bool {
 	switch msg.String() {
@@ -12586,16 +12460,6 @@ func (m Model) moveActionItemIDs(actionItemIDs []string, delta int, label, targe
 			activityItem:      &activity,
 		}
 	}
-}
-
-// deleteSelectedActionItem deletes or archives the currently focused actionItem.
-func (m Model) deleteSelectedActionItem(mode app.DeleteMode) (tea.Model, tea.Cmd) {
-	actionItem, ok := m.selectedActionItemInCurrentColumn()
-	if !ok {
-		m.status = "no actionItem selected"
-		return m, nil
-	}
-	return m.deleteActionItemIDs([]string{actionItem.ID}, mode)
 }
 
 // deleteActionItemIDs archives/deletes actionItem ids and records undo metadata when possible.
@@ -14023,29 +13887,6 @@ func (m Model) projectionPathWithProject(projectName string) (string, string) {
 	return strings.Join(chain, " -> "), parentLabel
 }
 
-// searchLevelsSummary returns a compact list of active non-project search levels.
-func (m Model) searchLevelsSummary() string {
-	levels := canonicalSearchLevels(m.searchLevels)
-	if len(levels) == len(canonicalSearchLevelsOrdered) {
-		return ""
-	}
-	items := make([]string, 0, len(levels))
-	for _, level := range levels {
-		if level == "project" {
-			continue
-		}
-		label := canonicalSearchLevelLabels[level]
-		if label == "" {
-			label = level
-		}
-		items = append(items, strings.ToLower(label))
-	}
-	if len(items) == 0 {
-		return "project"
-	}
-	return strings.Join(items, ",")
-}
-
 // actionItemAttentionCount returns unresolved attention signals for one board-visible actionItem.
 func (m Model) actionItemAttentionCount(actionItem domain.ActionItem, byID map[string]domain.ActionItem) int {
 	count := 0
@@ -14278,11 +14119,6 @@ func (m Model) selectedActionItemAtLevels(levels ...string) (domain.ActionItem, 
 	return actionItem, true
 }
 
-// focusedScopeActionItemAtLevel returns the active focus root actionItem when it matches one hierarchy level.
-func (m Model) focusedScopeActionItemAtLevel(level string) (domain.ActionItem, bool) {
-	return m.focusedScopeActionItemAtLevels(level)
-}
-
 // focusedScopeActionItemAtLevels returns the active focus root actionItem when it matches one provided hierarchy level.
 func (m Model) focusedScopeActionItemAtLevels(levels ...string) (domain.ActionItem, bool) {
 	rootID := strings.TrimSpace(m.projectionRootActionItemID)
@@ -14488,11 +14324,6 @@ func (m Model) selectedActionItemHighlightColor() color.Color {
 		value = defaultHighlightColor
 	}
 	return lipgloss.Color(value)
-}
-
-// canFocusNoticesPanel reports whether the notices panel can accept keyboard focus.
-func (m Model) canFocusNoticesPanel() bool {
-	return m.isNoticesPanelVisible()
 }
 
 // hasGlobalNoticesPanel reports whether the global-notifications panel should be rendered and focusable.
@@ -14935,16 +14766,6 @@ func (m *Model) setNoticesSelectionIndex(section noticesSectionID, idx int) {
 	}
 }
 
-// noticesSectionPosition resolves one section id to its traversal position.
-func noticesSectionPosition(section noticesSectionID) int {
-	for idx, candidate := range noticesPanelSectionOrder {
-		if candidate == section {
-			return idx
-		}
-	}
-	return -1
-}
-
 // noticesSectionIndex resolves one section id to its concrete position in one rendered notices slice.
 func noticesSectionIndex(sections []noticesPanelSection, section noticesSectionID) int {
 	for idx, candidate := range sections {
@@ -15171,31 +14992,6 @@ func (m *Model) clampNoticesSelectionForSections(sections []noticesPanelSection)
 	}
 }
 
-// clampNoticesActivitySelection keeps compatibility for existing activity-only call sites.
-func (m *Model) clampNoticesActivitySelection() {
-	m.clampNoticesSelection()
-}
-
-// selectedNoticesActivity returns the currently selected notices-panel activity entry.
-func (m Model) selectedNoticesActivity() (activityEntry, bool) {
-	sections := m.noticesSectionsForInteraction()
-	for _, section := range sections {
-		if section.ID != noticesSectionRecentActivity {
-			continue
-		}
-		if len(section.Items) == 0 {
-			return activityEntry{}, false
-		}
-		idx := clamp(m.noticesSelectionIndex(section.ID), 0, len(section.Items)-1)
-		item := section.Items[idx]
-		if !item.HasActivity {
-			return activityEntry{}, false
-		}
-		return item.Activity, true
-	}
-	return activityEntry{}, false
-}
-
 // selectedNoticesPanelItem returns the currently selected notices-panel row.
 func (m Model) selectedNoticesPanelItem() (noticesPanelItem, bool) {
 	sections := m.noticesSectionsForInteraction()
@@ -15265,14 +15061,6 @@ func authRequestResolutionNoteWithPathLabel(req domain.AuthRequest, decision, pa
 	principal := firstNonEmptyTrimmed(req.PrincipalName, req.PrincipalID)
 	pathLabel = firstNonEmptyTrimmed(pathLabel, req.Path)
 	return fmt.Sprintf("%s in Tillsyn for %s at %s", action, principal, pathLabel)
-}
-
-// authRequestNoteLooksDefault reports whether one note still matches the built-in auth review copy.
-func authRequestNoteLooksDefault(note string) bool {
-	note = strings.ToLower(strings.TrimSpace(note))
-	return strings.HasPrefix(note, "approved in tillsyn for ") ||
-		strings.HasPrefix(note, "denied in tillsyn for ") ||
-		strings.HasPrefix(note, "resolved in tillsyn for ")
 }
 
 // humanActorLabel renders one actor name with its type when the type is known.
@@ -16019,13 +15807,6 @@ func (m Model) displayActivityOwnerWithContext(entry activityEntry) (domain.Acto
 		return actorType, owner
 	}
 	return actorType, owner + " (" + actorID + ")"
-}
-
-// activityOwnerLabel returns a compact owner label used in notices rows.
-func (m Model) activityOwnerLabel(entry activityEntry, width int) string {
-	actorType, owner := m.displayActivityOwner(entry)
-	label := string(actorType) + "|" + owner
-	return truncate(label, max(8, width))
 }
 
 // actionItemSystemActorLine renders one readable system ownership line using activity identity context when available.

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -113,21 +112,4 @@ func renderFilePickerBody(core filePickerCore, opts filePickerRenderOptions) str
 	lines = append(lines, hintStyle.Render("tab/space select • enter accept • →/l open dir • ←/h parent • ctrl+u clear • esc cancel"))
 
 	return strings.Join(lines, "\n")
-}
-
-// renderFilePickerSurface composes the full-page bordered surface used by the
-// file-picker variants. It reuses renderFullPageSurfaceView /
-// fullPageSurfaceBoxChrome so chrome stays identical to other TUI surfaces and
-// no sibling viewport shim is introduced.
-func (m Model) renderFilePickerSurface(accent, muted, dim color.Color) tea.View {
-	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, m.appInnerWidth(), filePickerTitleFor(m.pickerCore.mode), filePickerSubtitleFor(m.pickerCore.mode), "")
-	body := renderFilePickerBody(m.pickerCore, filePickerRenderOptions{
-		accent:   accent,
-		muted:    muted,
-		dim:      dim,
-		boxWidth: metrics.boxWidth,
-		maxRows:  metrics.bodyHeight - 6,
-	})
-	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, filePickerTitleFor(m.pickerCore.mode), filePickerSubtitleFor(m.pickerCore.mode), "", body)
-	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
 }

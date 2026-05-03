@@ -94,17 +94,6 @@ func (c *filePickerCore) start(mode filePickerMode, taskID, root string) {
 	c.filter.CursorEnd()
 }
 
-// stop clears state after accept/cancel so the picker is idle.
-func (c *filePickerCore) stop() {
-	c.mode = filePickerModeNone
-	c.taskID = ""
-	c.entries = nil
-	c.index = 0
-	c.selected = make(map[string]struct{})
-	c.filter.SetValue("")
-	c.filter.Blur()
-}
-
 // setEntries swaps the raw entries and absolute-path directory after a
 // successful load. Index is clamped to the new length.
 func (c *filePickerCore) setEntries(entries []filePickerEntry, dir string) {
@@ -120,17 +109,6 @@ func (c *filePickerCore) setEntries(entries []filePickerEntry, dir string) {
 // visibleEntries returns the fuzzy-filtered slice the renderer draws.
 func (c filePickerCore) visibleEntries() []filePickerEntry {
 	return filterFilePickerEntries(c.entries, c.filter.Value())
-}
-
-// selectedEntry returns the currently highlighted entry and whether the slice
-// is non-empty.
-func (c filePickerCore) selectedEntry() (filePickerEntry, bool) {
-	items := c.visibleEntries()
-	if len(items) == 0 {
-		return filePickerEntry{}, false
-	}
-	idx := clamp(c.index, 0, len(items)-1)
-	return items[idx], true
 }
 
 // toggleSelect flips the multi-select state for entry (absolute-path key).

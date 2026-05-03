@@ -149,22 +149,6 @@ func (m Model) fullPageSurfaceMetrics(accent, muted, dim color.Color, boxWidth i
 	}
 }
 
-// shouldHideSurfaceStatus suppresses low-value repeated status text on full-page views.
-func (m Model) shouldHideSurfaceStatus(status string) bool {
-	status = strings.TrimSpace(strings.ToLower(status))
-	switch status {
-	case "", "ready", "actionItem info", "parent actionItem info", "edit actionItem", "new actionItem", "edit project", "new project", "thread loaded":
-		return true
-	}
-	if strings.HasPrefix(status, "text selection mode ") {
-		return true
-	}
-	if strings.HasSuffix(status, " focus") {
-		return true
-	}
-	return false
-}
-
 // fullPageSurfaceBoxChrome renders the non-body lines that consume height inside one bordered surface.
 func fullPageSurfaceBoxChrome(accent, muted color.Color, boxWidth int, title, subtitle, status string) string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
@@ -205,7 +189,7 @@ func (m Model) renderFullPageSurfaceView(accent, muted, dim color.Color, metrics
 }
 
 // renderFullPageSurfaceWithOverlay wraps one centered bordered surface and composes one centered overlay on top when provided.
-func (m Model) renderFullPageSurfaceWithOverlay(accent, muted, dim color.Color, metrics fullPageSurfaceMetrics, surface, overlay string) tea.View {
+func (m Model) renderFullPageSurfaceWithOverlay(_, _, _ color.Color, metrics fullPageSurfaceMetrics, surface, overlay string) tea.View {
 	centeredSurface := lipgloss.PlaceHorizontal(metrics.innerWidth, lipgloss.Center, surface)
 	sections := []string{metrics.headerBlock}
 	for i := 0; i < metrics.headerGapY; i++ {
