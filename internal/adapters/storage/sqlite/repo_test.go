@@ -2521,8 +2521,7 @@ func TestRepositoryFreshOpenKindCatalog(t *testing.T) {
 // boot-seeded kind in the kind_catalog carries an empty AllowedParentScopes
 // list and therefore allows any parent scope per the empty-list early-return
 // in domain.KindDefinition.AllowsParentScope (internal/domain/kind.go:225-232).
-// This is the post-Droplet-2.8 universal-allow contract — Droplet 2.9 will
-// follow up by deleting the now-orphan domain.AllowedParentKinds helper.
+// This is the post-Droplet-2.8 universal-allow contract.
 func TestRepositoryFreshOpenKindCatalogUniversalParentAllow(t *testing.T) {
 	ctx := context.Background()
 	repo, err := OpenInMemory()

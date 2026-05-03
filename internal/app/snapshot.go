@@ -446,9 +446,11 @@ func (s *Snapshot) Validate() error {
 		if _, exists := actionItemIDs[t.ParentID]; !exists {
 			return fmt.Errorf("tasks[%d] references unknown parent_id %q", i, t.ParentID)
 		}
-		// Parent-kind constraints are enforced by domain.AllowedParentKinds at
-		// action-item creation. Snapshot validation no longer special-cases the
-		// legacy KindPhase hierarchy because the 12-value Kind enum removed it.
+		// Parent-scope constraints are enforced by
+		// domain.KindDefinition.AllowsParentScope (against the kind's
+		// AllowedParentScopes list) at action-item creation. Snapshot validation
+		// no longer special-cases the legacy KindPhase hierarchy because the
+		// 12-value Kind enum removed it.
 		_ = actionItemByID[t.ParentID]
 	}
 

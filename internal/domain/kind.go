@@ -91,31 +91,6 @@ var validKindAppliesTo = []KindAppliesTo{
 	KindAppliesToHumanVerify,
 }
 
-// AllowedParentKinds returns the kinds permitted as a direct parent of the
-// given kind. An empty parent identifier at creation time represents a
-// project-root placement and is acceptable for KindPlan only; for every other
-// kind a non-empty parent is required and must match one of the returned
-// values.
-func AllowedParentKinds(kind Kind) []Kind {
-	switch Kind(strings.TrimSpace(strings.ToLower(string(kind)))) {
-	case KindPlan,
-		KindResearch,
-		KindPlanQAProof,
-		KindPlanQAFalsification,
-		KindBuild,
-		KindCloseout,
-		KindCommit,
-		KindRefinement,
-		KindDiscussion,
-		KindHumanVerify:
-		return []Kind{KindPlan}
-	case KindBuildQAProof, KindBuildQAFalsification:
-		return []Kind{KindBuild}
-	default:
-		return nil
-	}
-}
-
 // KindTemplateChildSpec defines one child item auto-created by a kind template.
 type KindTemplateChildSpec struct {
 	Title           string          `json:"title"`

@@ -254,7 +254,7 @@ Same-package-blocking: 2.8 + 2.9 are in different packages (`internal/adapters/s
 
 #### Droplet 2.9 — Delete `domain.AllowedParentKinds` function + test fixture + doc-comment cleanup
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/domain/kind.go` (delete `AllowedParentKinds` function at `:94-117`), `internal/domain/domain_test.go` (delete `TestAllowedParentKindsEncodesHierarchy` at `:680-714`), `internal/app/snapshot.go` (update doc comment at `:448` referencing `domain.AllowedParentKinds` — replace with reference to `KindDefinition.AllowedParentScopes` + `AllowsParentScope`), `internal/adapters/storage/sqlite/repo.go` (update doc comment at `:300` referencing `domain.AllowedParentKinds` — same replacement)
 - **Packages:** `internal/domain`, `internal/app`, `internal/adapters/storage/sqlite`
 - **Acceptance:**

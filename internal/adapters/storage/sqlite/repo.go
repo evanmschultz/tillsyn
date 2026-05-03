@@ -297,11 +297,12 @@ func (r *Repository) migrate(ctx context.Context) error {
 			archived_at TEXT
 		);`,
 		// Seed the 12-value Kind enum into the kind catalog at boot. Scope
-		// mirrors kind (applies_to_json = ["<kind-id>"]), and the parent-scope
-		// list encodes the domain.AllowedParentKinds rule: build-qa-proof /
-		// build-qa-falsification nest under build; every other non-plan kind
-		// nests under plan; plan itself nests under plan (and accepts a
-		// project-root placement through an empty parent).
+		// mirrors kind (applies_to_json = ["<kind-id>"]). Every row's
+		// allowed_parent_scopes_json is the empty list "[]" (universal-allow):
+		// domain.KindDefinition.AllowsParentScope returns true for every parent
+		// scope when AllowedParentScopes is empty (see internal/domain/kind.go
+		// AllowsParentScope early return). Per-project nesting constraints land
+		// in the future template overhaul.
 		`INSERT OR IGNORE INTO kind_catalog(
 			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
 		) VALUES (

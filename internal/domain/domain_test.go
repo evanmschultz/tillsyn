@@ -793,44 +793,6 @@ func TestDefaultActionItemScopeMirrorsKind(t *testing.T) {
 	}
 }
 
-// TestAllowedParentKindsEncodesHierarchy verifies the hierarchy rules for the
-// 12-value Kind enum. Build-QA children require a build parent; every other
-// kind requires a plan parent. Plan is the only kind that may also sit at
-// project-root (caller checks by allowing empty parent id for KindPlan).
-func TestAllowedParentKindsEncodesHierarchy(t *testing.T) {
-	tests := []struct {
-		kind Kind
-		want []Kind
-	}{
-		{kind: KindPlan, want: []Kind{KindPlan}},
-		{kind: KindResearch, want: []Kind{KindPlan}},
-		{kind: KindBuild, want: []Kind{KindPlan}},
-		{kind: KindPlanQAProof, want: []Kind{KindPlan}},
-		{kind: KindPlanQAFalsification, want: []Kind{KindPlan}},
-		{kind: KindCloseout, want: []Kind{KindPlan}},
-		{kind: KindCommit, want: []Kind{KindPlan}},
-		{kind: KindRefinement, want: []Kind{KindPlan}},
-		{kind: KindDiscussion, want: []Kind{KindPlan}},
-		{kind: KindHumanVerify, want: []Kind{KindPlan}},
-		{kind: KindBuildQAProof, want: []Kind{KindBuild}},
-		{kind: KindBuildQAFalsification, want: []Kind{KindBuild}},
-	}
-	for _, tc := range tests {
-		got := AllowedParentKinds(tc.kind)
-		if len(got) != len(tc.want) {
-			t.Fatalf("AllowedParentKinds(%q) = %#v, want %#v", tc.kind, got, tc.want)
-		}
-		for idx, want := range tc.want {
-			if got[idx] != want {
-				t.Fatalf("AllowedParentKinds(%q)[%d] = %q, want %q", tc.kind, idx, got[idx], want)
-			}
-		}
-	}
-	if got := AllowedParentKinds(Kind("bogus")); got != nil {
-		t.Fatalf("AllowedParentKinds(bogus) = %#v, want nil", got)
-	}
-}
-
 // TestNormalizeKindIDLowercaseAndTrim verifies the simplified normalizer only
 // lowercases and trims; it no longer rewrites the actionItem token.
 func TestNormalizeKindIDLowercaseAndTrim(t *testing.T) {
