@@ -2773,3 +2773,50 @@ func TestRepository_ListActionItemsByParent(t *testing.T) {
 		t.Fatalf("ListActionItemsByParent(A, does-not-exist) = %d rows, want 0 (%v)", len(nope), nope)
 	}
 }
+
+// TestRepository_GetProjectBySlug verifies the slug-indexed project lookup
+// added in Droplet 2.11. The lookup must (a) return the matching project for
+// a known slug, (b) return ErrNoRows for an unknown slug, and (c) refuse to
+// surface the hidden global-auth project even if its slug were supplied.
+func TestRepository_GetProjectBySlug(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	base := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProject("proj-slug-test", "Slug Test", "", base)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	project.Slug = "tillsyn-slug-fixture"
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	got, err := repo.GetProjectBySlug(ctx, "tillsyn-slug-fixture")
+	if err != nil {
+		t.Fatalf("GetProjectBySlug(known slug) error = %v", err)
+	}
+	if got.ID != project.ID {
+		t.Fatalf("GetProjectBySlug(known slug) ID = %q, want %q", got.ID, project.ID)
+	}
+	if got.Slug != "tillsyn-slug-fixture" {
+		t.Fatalf("GetProjectBySlug(known slug) Slug = %q, want %q", got.Slug, "tillsyn-slug-fixture")
+	}
+
+	if _, err := repo.GetProjectBySlug(ctx, "does-not-exist"); err == nil {
+		t.Fatal("GetProjectBySlug(unknown slug) expected error, got nil")
+	}
+
+	// The hidden internal-auth project carries `globalAuthProjectSlug` and
+	// must NOT be reachable through this surface even if a caller stumbles
+	// onto the value.
+	if _, err := repo.GetProjectBySlug(ctx, globalAuthProjectSlug); err == nil {
+		t.Fatal("GetProjectBySlug(globalAuthProjectSlug) expected error, got nil")
+	}
+}

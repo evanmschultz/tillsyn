@@ -240,6 +240,16 @@ type projectListCommandOptions struct {
 	includeArchived bool
 }
 
+// actionItemCommandOptions stores action-item subcommand flag values shared
+// across `till action_item get|update|move|move_state|delete|restore|reparent`.
+// Per Droplet 2.11: read commands (get) accept dotted addresses with project
+// resolved by --project flag or slug-prefix shorthand; mutation commands reject
+// dotted form with a mutations-require-UUID error.
+type actionItemCommandOptions struct {
+	projectSlug  string
+	actionItemID string
+}
+
 // projectCreateCommandOptions stores project create flag values.
 type projectCreateCommandOptions struct {
 	name              string
@@ -427,9 +437,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffGetOpts := handoffGetCommandOptions{}
 	handoffListOpts := handoffListCommandOptions{scopeType: string(domain.ScopeLevelProject), limit: 50}
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
+	actionItemOpts := actionItemCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindUpsertOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -689,6 +700,102 @@ in order rather than relying on remembered setup steps.
 	projectDiscoverCmd.Flags().StringVar(&projectDiscoverOpts.projectID, "project-id", "", "Project identifier")
 	projectDiscoverCmd.Flags().BoolVar(&projectDiscoverOpts.includeArchived, "include-archived", false, "Include archived projects")
 	projectCmd.AddCommand(projectListCmd, projectCreateCmd, projectShowCmd, projectDiscoverCmd)
+
+	actionItemCmd := &cobra.Command{
+		Use:   "action_item",
+		Short: "Read or mutate one action-item under a project",
+		Long: strings.TrimSpace(`
+Read action items by UUID or by dotted address (positional path through the
+tree, e.g. 1.5.2). Mutation subcommands require a UUID — dotted addresses are
+positional and shift under sibling reordering, which would let a caller silently
+mutate the wrong item.
+
+Project context is supplied either with --project <slug> for a bare dotted body
+or via the slug-prefix shorthand <slug>:<dotted> (e.g. tillsyn:1.5.2). UUID
+lookups do not require a project hint.
+`),
+		Example: strings.Join([]string{
+			"  till action_item get --project tillsyn 1.5.2",
+			"  till action_item get tillsyn:1.5.2",
+			"  till action_item get 11111111-1111-1111-1111-111111111111",
+		}, "\n"),
+		Args: cobra.NoArgs,
+	}
+	actionItemGetCmd := &cobra.Command{
+		Use:   "get [action_item_id]",
+		Short: "Show one action item by UUID or dotted address",
+		Long: strings.TrimSpace(`
+Show one action item by either UUID (resolved directly) or dotted address
+(resolved through the cascade tree).
+
+Dotted form requires a project context. Supply it with --project <slug> for a
+bare body, or use the slug-prefix shorthand <slug>:<dotted>. Slug-prefix and
+--project may be combined; if both are present the slug must match the project.
+`),
+		Example: strings.Join([]string{
+			"  till action_item get --project tillsyn 1.5.2",
+			"  till action_item get tillsyn:1.5.2",
+			"  till action_item get 11111111-1111-1111-1111-111111111111",
+		}, "\n"),
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			actionItemOpts.actionItemID = strings.TrimSpace(args[0])
+			return runFlow(cmd.Context(), "action_item.get")
+		},
+	}
+	actionItemGetCmd.Flags().StringVar(&actionItemOpts.projectSlug, "project", "", "Project slug (required for dotted addresses without slug-prefix; ignored for UUIDs)")
+
+	actionItemMutationRunE := func(operation string) func(cmd *cobra.Command, args []string) error {
+		return func(cmd *cobra.Command, args []string) error {
+			actionItemOpts.actionItemID = strings.TrimSpace(args[0])
+			return runFlow(cmd.Context(), "action_item."+operation)
+		}
+	}
+	actionItemUpdateCmd := &cobra.Command{
+		Use:   "update [action_item_id]",
+		Short: "Update one action item (requires UUID — dotted addresses rejected)",
+		Args:  cobra.ExactArgs(1),
+		RunE:  actionItemMutationRunE("update"),
+	}
+	actionItemMoveCmd := &cobra.Command{
+		Use:   "move [action_item_id]",
+		Short: "Move one action item between columns (requires UUID — dotted addresses rejected)",
+		Args:  cobra.ExactArgs(1),
+		RunE:  actionItemMutationRunE("move"),
+	}
+	actionItemMoveStateCmd := &cobra.Command{
+		Use:   "move_state [action_item_id]",
+		Short: "Change one action item's lifecycle state (requires UUID — dotted addresses rejected)",
+		Args:  cobra.ExactArgs(1),
+		RunE:  actionItemMutationRunE("move_state"),
+	}
+	actionItemDeleteCmd := &cobra.Command{
+		Use:   "delete [action_item_id]",
+		Short: "Archive or delete one action item (requires UUID — dotted addresses rejected)",
+		Args:  cobra.ExactArgs(1),
+		RunE:  actionItemMutationRunE("delete"),
+	}
+	actionItemRestoreCmd := &cobra.Command{
+		Use:   "restore [action_item_id]",
+		Short: "Restore one archived action item (requires UUID — dotted addresses rejected)",
+		Args:  cobra.ExactArgs(1),
+		RunE:  actionItemMutationRunE("restore"),
+	}
+	actionItemReparentCmd := &cobra.Command{
+		Use:   "reparent [action_item_id]",
+		Short: "Reparent one action item (requires UUID — dotted addresses rejected)",
+		Args:  cobra.ExactArgs(1),
+		RunE:  actionItemMutationRunE("reparent"),
+	}
+	actionItemCmd.AddCommand(
+		actionItemGetCmd,
+		actionItemUpdateCmd,
+		actionItemMoveCmd,
+		actionItemMoveStateCmd,
+		actionItemDeleteCmd,
+		actionItemRestoreCmd,
+		actionItemReparentCmd,
+	)
 
 	embeddingsCmd := &cobra.Command{
 		Use:   "embeddings",
@@ -1657,7 +1764,7 @@ default development config file restored quickly.
 			return runInitDevConfig(stdout, rootOpts)
 		},
 	}
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	applyCommandHelp(rootCmd)
 	return fang.Execute(
 		ctx,
@@ -1999,6 +2106,7 @@ func executeCommandFlow(
 	revokeSessionOpts revokeSessionCommandOptions,
 	exportOpts exportCommandOptions,
 	importOpts importCommandOptions,
+	actionItemOpts actionItemCommandOptions,
 	stdout io.Writer,
 	stderr io.Writer,
 ) error {
@@ -2360,6 +2468,15 @@ func executeCommandFlow(
 	case "handoff.update":
 		return runOneShotCommand("handoff.update", "handoff update", func() error {
 			return runHandoffUpdate(ctx, svc, cfg, handoffUpdateOpts, stdout)
+		})
+	case "action_item.get":
+		return runOneShotCommand("action_item.get", "action_item get", func() error {
+			return runActionItemGet(ctx, svc, actionItemOpts, stdout)
+		})
+	case "action_item.update", "action_item.move", "action_item.move_state",
+		"action_item.delete", "action_item.restore", "action_item.reparent":
+		return runOneShotCommand(command, "action_item mutation", func() error {
+			return runActionItemMutationGate(strings.TrimPrefix(command, "action_item."), actionItemOpts)
 		})
 	case "export":
 		return runOneShotCommand("export", "export", func() error {

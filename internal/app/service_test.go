@@ -491,6 +491,16 @@ func (f *fakeRepo) GetProject(_ context.Context, id string) (domain.Project, err
 	return p, nil
 }
 
+// GetProjectBySlug returns the project whose slug equals the supplied value.
+func (f *fakeRepo) GetProjectBySlug(_ context.Context, slug string) (domain.Project, error) {
+	for _, p := range f.projects {
+		if p.Slug == slug {
+			return p, nil
+		}
+	}
+	return domain.Project{}, ErrNotFound
+}
+
 // ListProjects lists projects.
 func (f *fakeRepo) ListProjects(_ context.Context, includeArchived bool) ([]domain.Project, error) {
 	out := make([]domain.Project, 0, len(f.projects))

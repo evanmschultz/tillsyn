@@ -616,6 +616,36 @@ func (a *AppServiceAdapter) GetActionItem(ctx context.Context, actionItemID stri
 	return actionItem, nil
 }
 
+// ResolveActionItemID accepts either a UUID or a dotted address (with optional
+// slug-prefix already stripped by the caller) and returns the canonical UUID.
+// UUID input is returned unchanged after shape validation; dotted input is
+// resolved against the supplied projectID via the app-layer resolver. Returns
+// transport-mapped invalid_request errors for shape failures and not_found for
+// out-of-range dotted indices.
+func (a *AppServiceAdapter) ResolveActionItemID(ctx context.Context, projectID, idOrDotted string) (string, error) {
+	if a == nil || a.service == nil {
+		return "", fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	resolved, err := a.service.ResolveActionItemID(ctx, strings.TrimSpace(projectID), strings.TrimSpace(idOrDotted))
+	if err != nil {
+		return "", mapAppError("resolve action_item_id", err)
+	}
+	return resolved, nil
+}
+
+// GetProjectBySlug returns the project whose slug equals the supplied value,
+// mapping app/domain errors into transport-layer error sentinels.
+func (a *AppServiceAdapter) GetProjectBySlug(ctx context.Context, slug string) (domain.Project, error) {
+	if a == nil || a.service == nil {
+		return domain.Project{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	project, err := a.service.GetProjectBySlug(ctx, strings.TrimSpace(slug))
+	if err != nil {
+		return domain.Project{}, mapAppError("get project by slug", err)
+	}
+	return project, nil
+}
+
 // CreateActionItem creates one level-scoped actionItem/work item.
 func (a *AppServiceAdapter) CreateActionItem(ctx context.Context, in CreateActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {

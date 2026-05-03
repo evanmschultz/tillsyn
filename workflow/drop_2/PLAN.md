@@ -298,7 +298,7 @@ Same-package-blocking: 2.10 owns the resolver in `internal/app` + the `Repositor
 
 #### Droplet 2.11 — Wire resolver into CLI + MCP read paths; mutation paths reject dotted form
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/adapters/server/common/app_service_adapter_mcp.go` (in `till.action_item(operation=get)`, accept either UUID or dotted form for `action_item_id` — when input doesn't parse as UUID, call `ResolveDottedAddress`; mutation operations `create|update|move|move_state|delete|restore|reparent` reject dotted form with a clear error), `internal/adapters/server/mcpapi/extended_tools.go` (mirror the get-vs-mutate distinction in tool-level argument validation), `cmd/till/main.go` (CLI read commands accept dotted form via the same resolver; CLI mutation commands reject dotted form), test files for each path
 - **Packages:** `internal/adapters/server/common`, `internal/adapters/server/mcpapi`, `cmd/till`
 - **Acceptance:**

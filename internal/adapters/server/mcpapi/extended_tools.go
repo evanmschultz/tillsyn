@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -907,7 +908,11 @@ func registerActionItemTools(
 				if actionItemID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
-				actionItem, err := tasks.GetActionItem(ctx, actionItemID)
+				resolvedID, err := resolveActionItemIDForRead(ctx, tasks, strings.TrimSpace(args.ProjectID), actionItemID)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actionItem, err := tasks.GetActionItem(ctx, resolvedID)
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
@@ -1053,6 +1058,9 @@ func registerActionItemTools(
 				if actionItemID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
+				if err := rejectMutationDottedActionItemID(actionItemID); err != nil {
+					return toolResultFromError(err), nil
+				}
 				title := strings.TrimSpace(args.Title)
 				if title == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "title" not found`), nil
@@ -1105,6 +1113,9 @@ func registerActionItemTools(
 				if actionItemID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
+				if err := rejectMutationDottedActionItemID(actionItemID); err != nil {
+					return toolResultFromError(err), nil
+				}
 				toColumnID := strings.TrimSpace(args.ToColumnID)
 				if toColumnID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "to_column_id" not found`), nil
@@ -1155,6 +1166,9 @@ func registerActionItemTools(
 				if actionItemID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
+				if err := rejectMutationDottedActionItemID(actionItemID); err != nil {
+					return toolResultFromError(err), nil
+				}
 				state := strings.TrimSpace(args.State)
 				if state == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "state" not found`), nil
@@ -1201,6 +1215,9 @@ func registerActionItemTools(
 				if actionItemID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
+				if err := rejectMutationDottedActionItemID(actionItemID); err != nil {
+					return toolResultFromError(err), nil
+				}
 				caller, err := authorizeMCPMutation(
 					ctx,
 					pickMutationAuthorizer(tasks),
@@ -1246,6 +1263,9 @@ func registerActionItemTools(
 				if actionItemID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
 				}
+				if err := rejectMutationDottedActionItemID(actionItemID); err != nil {
+					return toolResultFromError(err), nil
+				}
 				caller, err := authorizeMCPMutation(
 					ctx,
 					pickMutationAuthorizer(tasks),
@@ -1286,6 +1306,9 @@ func registerActionItemTools(
 				actionItemID := strings.TrimSpace(args.ActionItemID)
 				if actionItemID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
+				}
+				if err := rejectMutationDottedActionItemID(actionItemID); err != nil {
+					return toolResultFromError(err), nil
 				}
 				caller, err := authorizeMCPMutation(
 					ctx,
@@ -1332,10 +1355,10 @@ func registerActionItemTools(
 		srv.AddTool(
 			mcp.NewTool(
 				"till.action_item",
-				mcp.WithDescription("Read or mutate one action-item operation for branch|phase|actionItem|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent."+mcpGuardedMutationToolSuffix),
+				mcp.WithDescription("Read or mutate one action-item operation for branch|phase|actionItem|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent. operation=get accepts action_item_id as either a UUID or a dotted address (e.g. \"1.5.2\" or \"<project_slug>:1.5.2\"); dotted form requires project_id (or the slug-prefix form, which carries the slug). Mutation operations (update|move|move_state|delete|restore|reparent) require a UUID action_item_id and reject dotted addresses with an invalid_request error — dotted addresses are positional and shift under sibling reordering, so allowing them on mutations would let a caller silently mutate the wrong item."+mcpGuardedMutationToolSuffix),
 				mcp.WithString("operation", mcp.Required(), mcp.Description("Action-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent")),
-				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|create and optional for operation=search")),
-				mcp.WithString("action_item_id", mcp.Description("Action-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent")),
+				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|create, optional for operation=search, and required for operation=get when action_item_id is a bare dotted address (omit when action_item_id is a UUID or carries a slug-prefix shorthand)")),
+				mcp.WithString("action_item_id", mcp.Description("Action-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent. operation=get accepts a UUID OR a dotted address (\"1.5.2\" or \"<slug>:1.5.2\"); mutations reject dotted form and require the UUID")),
 				mcp.WithString("column_id", mcp.Description("Column identifier. Required for operation=create")),
 				mcp.WithString("to_column_id", mcp.Description("Destination column identifier. Required for operation=move")),
 				mcp.WithNumber("position", mcp.Description("Destination position. Required for operation=move")),
@@ -2182,4 +2205,58 @@ func invalidRequestToolResult(err error) *mcp.CallToolResult {
 		return mcp.NewToolResultError("invalid_request: malformed arguments")
 	}
 	return mcp.NewToolResultError("invalid_request: " + err.Error())
+}
+
+// resolveActionItemIDForRead accepts the raw `action_item_id` string from a
+// read-only MCP operation and returns the canonical UUID. UUID-shaped input
+// is returned unchanged. Dotted input (with or without `<slug>:` prefix) is
+// resolved against a projectID drawn from one of two sources, in order:
+//
+//  1. The dotted string carries a `<slug>:<body>` prefix — the slug is mapped
+//     to a projectID via tasks.GetProjectBySlug; the dotted form (slug intact)
+//     is then forwarded into the resolver, which re-validates the slug against
+//     the resolved projectID's slug.
+//  2. The caller supplied an explicit `project_id` argument.
+//
+// If neither source yields a projectID, an invalid_request error is returned
+// naming the missing input. Resolver errors (not-found / invalid-syntax) flow
+// through tasks.ResolveActionItemID's transport-mapped error sentinels.
+func resolveActionItemIDForRead(ctx context.Context, tasks common.ActionItemService, projectID, idOrDotted string) (string, error) {
+	idOrDotted = strings.TrimSpace(idOrDotted)
+	if idOrDotted == "" {
+		return "", fmt.Errorf(`invalid_request: required argument "action_item_id" not found`)
+	}
+	if !app.IsLikelyDottedAddress(idOrDotted) {
+		// Not dotted — let ResolveActionItemID validate UUID shape and pass through.
+		return tasks.ResolveActionItemID(ctx, projectID, idOrDotted)
+	}
+	if slug := app.SplitDottedSlugPrefix(idOrDotted); slug != "" {
+		project, err := tasks.GetProjectBySlug(ctx, slug)
+		if err != nil {
+			return "", err
+		}
+		projectID = project.ID
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return "", fmt.Errorf(`invalid_request: project_id is required when action_item_id is a dotted address without a slug prefix`)
+	}
+	return tasks.ResolveActionItemID(ctx, projectID, idOrDotted)
+}
+
+// rejectMutationDottedActionItemID enforces that mutation operations receive a
+// UUID action_item_id, not a dotted address. Returning a non-nil error from
+// this helper at the start of a mutation case sends an invalid_request error
+// back to the caller before any auth or service work is attempted. Empty input
+// returns nil so the existing required-argument check still owns that error
+// surface. The returned error is wrapped under common.ErrInvalidCaptureStateRequest
+// so toolResultFromError maps it to the `invalid_request:` 400-class.
+func rejectMutationDottedActionItemID(actionItemID string) error {
+	actionItemID = strings.TrimSpace(actionItemID)
+	if actionItemID == "" {
+		return nil
+	}
+	if err := app.ValidateActionItemIDForMutation(actionItemID); err != nil {
+		return fmt.Errorf("%w: %w", common.ErrInvalidCaptureStateRequest, err)
+	}
+	return nil
 }

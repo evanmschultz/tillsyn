@@ -903,6 +903,20 @@ func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project,
 	return scanProject(row)
 }
 
+// GetProjectBySlug returns the project whose slug equals the supplied value.
+// Slugs are unique across the projects table; the lookup is single-row by the
+// existing `idx_projects_slug` unique index. The hidden internal-auth project
+// (`globalAuthProjectSlug`) is excluded from the result so external callers
+// cannot resolve it through this surface.
+func (r *Repository) GetProjectBySlug(ctx context.Context, slug string) (domain.Project, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
+		FROM projects
+		WHERE slug = ? AND id != ?
+	`, slug, domain.AuthRequestGlobalProjectID)
+	return scanProject(row)
+}
+
 // ListProjects lists projects.
 func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error) {
 	query := `
