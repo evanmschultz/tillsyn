@@ -27,6 +27,26 @@ import (
 // gate.
 const SchemaVersionV1 = "v1"
 
+// Duration is a time.Duration that round-trips as a TOML / JSON string
+// via encoding.TextMarshaler / encoding.TextUnmarshaler. Strings parse
+// per time.ParseDuration ("30s", "5m", "1h30m", etc.).
+type Duration time.Duration
+
+// MarshalText implements encoding.TextMarshaler.
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(time.Duration(d).String()), nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (d *Duration) UnmarshalText(text []byte) error {
+	parsed, err := time.ParseDuration(string(text))
+	if err != nil {
+		return err
+	}
+	*d = Duration(parsed)
+	return nil
+}
+
 // Template is the closed-schema root for a cascade-template definition. It
 // pairs a schema_version pin with the closed kind, child-rule, and
 // agent-binding tables.
@@ -170,8 +190,10 @@ type AgentBinding struct {
 	BlockedRetries int `toml:"blocked_retries"`
 
 	// BlockedRetryCooldown is the wall-clock delay between blocked-retry
-	// attempts. Parsed from TOML duration strings such as "30s" or "5m".
-	BlockedRetryCooldown time.Duration `toml:"blocked_retry_cooldown"`
+	// attempts. Parsed from TOML duration strings ("30s", "5m", "1h30m") via
+	// templates.Duration's TextUnmarshaler. Round-trips back to the canonical
+	// time.Duration.String() form.
+	BlockedRetryCooldown Duration `toml:"blocked_retry_cooldown"`
 }
 
 // Validate reports field-level errors on an AgentBinding. Returns nil if all
@@ -212,8 +234,8 @@ func (b AgentBinding) Validate() error {
 	if b.BlockedRetries < 0 {
 		return fmt.Errorf("%w: blocked_retries must be >= 0 (got %d)", ErrInvalidAgentBinding, b.BlockedRetries)
 	}
-	if b.BlockedRetryCooldown < 0 {
-		return fmt.Errorf("%w: blocked_retry_cooldown must be >= 0 (got %s)", ErrInvalidAgentBinding, b.BlockedRetryCooldown)
+	if time.Duration(b.BlockedRetryCooldown) < 0 {
+		return fmt.Errorf("%w: blocked_retry_cooldown must be >= 0 (got %s)", ErrInvalidAgentBinding, time.Duration(b.BlockedRetryCooldown))
 	}
 	return nil
 }

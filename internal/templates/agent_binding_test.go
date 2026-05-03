@@ -3,6 +3,7 @@ package templates
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func fullyPopulatedAgentBinding() AgentBinding {
 		AutoPush:             true,
 		CommitAgent:          "commit-agent",
 		BlockedRetries:       2,
-		BlockedRetryCooldown: 30 * time.Second,
+		BlockedRetryCooldown: Duration(30 * time.Second),
 	}
 }
 
@@ -130,7 +131,7 @@ func TestAgentBindingValidate(t *testing.T) {
 		},
 		{
 			name:      "blocked_retry_cooldown negative rejected",
-			mutate:    func(b *AgentBinding) { b.BlockedRetryCooldown = -time.Second },
+			mutate:    func(b *AgentBinding) { b.BlockedRetryCooldown = Duration(-time.Second) },
 			wantValid: false,
 		},
 		{
@@ -178,6 +179,56 @@ func TestAgentBindingValidate(t *testing.T) {
 				t.Fatalf("Validate() = %v; want errors.Is(_, ErrInvalidAgentBinding) true", err)
 			}
 		})
+	}
+}
+
+// TestAgentBindingDurationStringWireForm exercises the TOML string-form wire
+// path PLAN.md § 19.3 line 333 promises: blocked_retry_cooldown declared as a
+// duration string ("30s", "5m") must decode into AgentBinding.BlockedRetryCooldown
+// and re-marshal back to the same canonical string. The check is asymmetric on
+// purpose — pelletier/go-toml/v2 won't decode a string into a bare
+// time.Duration, so this test is the regression bar for the templates.Duration
+// wrapper's TextMarshaler / TextUnmarshaler pair.
+func TestAgentBindingDurationStringWireForm(t *testing.T) {
+	const wireDoc = `agent_name = "go-builder-agent"
+model = "opus"
+max_tries = 3
+max_turns = 50
+blocked_retry_cooldown = "30s"
+`
+	var decoded AgentBinding
+	if err := toml.Unmarshal([]byte(wireDoc), &decoded); err != nil {
+		t.Fatalf("toml.Unmarshal of duration-string wire form: %v\ndoc:\n%s", err, wireDoc)
+	}
+	want := Duration(30 * time.Second)
+	if decoded.BlockedRetryCooldown != want {
+		t.Fatalf("decoded BlockedRetryCooldown = %v; want %v", time.Duration(decoded.BlockedRetryCooldown), time.Duration(want))
+	}
+
+	encoded, err := toml.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("toml.Marshal after decode: %v", err)
+	}
+	// pelletier/go-toml/v2 emits TOML strings using either basic ("...") or
+	// literal ('...') form depending on content; both round-trip identically
+	// per the TOML spec. Accept either quote style for the canonical "30s"
+	// payload so the test asserts wire-form correctness without coupling to
+	// the encoder's quote-style heuristic.
+	encodedStr := string(encoded)
+	if !strings.Contains(encodedStr, `blocked_retry_cooldown = "30s"`) &&
+		!strings.Contains(encodedStr, `blocked_retry_cooldown = '30s'`) {
+		t.Fatalf("re-marshaled TOML missing canonical duration string \"30s\" or '30s'\nencoded:\n%s", encoded)
+	}
+
+	// Round-trip the re-encoded bytes one more time to confirm the canonical
+	// string form decodes back into the same wrapper value the original wire
+	// document produced — closes the loop end-to-end.
+	var roundTripped AgentBinding
+	if err := toml.Unmarshal(encoded, &roundTripped); err != nil {
+		t.Fatalf("toml.Unmarshal of re-marshaled doc: %v\nencoded:\n%s", err, encoded)
+	}
+	if roundTripped.BlockedRetryCooldown != want {
+		t.Fatalf("round-tripped BlockedRetryCooldown = %v; want %v", time.Duration(roundTripped.BlockedRetryCooldown), time.Duration(want))
 	}
 }
 
