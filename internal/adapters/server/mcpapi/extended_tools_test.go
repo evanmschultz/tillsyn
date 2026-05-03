@@ -1121,14 +1121,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.handoff",
 	}
 	for _, toolName := range requiredTools {
-		found := false
-		for _, candidate := range toolNames {
-			if candidate == toolName {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(toolNames, toolName) {
 			t.Fatalf("tool %q missing from expanded surface: %#v", toolName, toolNames)
 		}
 	}

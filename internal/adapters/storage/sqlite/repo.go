@@ -2494,11 +2494,6 @@ type queryRower interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-// queryRowser represents a read-only DB contract used by DB and Tx implementations.
-type queryRowser interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}
-
 // getActionItemByID returns a actionItem using the canonical action_items table.
 func getActionItemByID(ctx context.Context, q queryRower, id string) (domain.ActionItem, error) {
 	row := q.QueryRowContext(ctx, `
@@ -3246,15 +3241,6 @@ func normalizeOptionalActorType(actorType domain.ActorType) string {
 	default:
 		return ""
 	}
-}
-
-// nullableString converts empty strings into SQL NULL values.
-func nullableString(value string) any {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	return value
 }
 
 // ts handles ts.

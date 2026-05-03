@@ -453,22 +453,6 @@ func validateDelegatedAuthRequestRequester(in CreateAuthRequestRequest, actingSe
 	return nil
 }
 
-// approvedPathFromSessionMetadata parses one approved path from session metadata.
-func approvedPathFromSessionMetadata(sessionMetadata map[string]string) (domain.AuthRequestPath, error) {
-	if sessionMetadata == nil {
-		return domain.AuthRequestPath{}, fmt.Errorf("auth session governance is not configured: %w", ErrInvalidCaptureStateRequest)
-	}
-	approvedPath := strings.TrimSpace(sessionMetadata["approved_path"])
-	if approvedPath == "" {
-		return domain.AuthRequestPath{}, ErrAuthorizationDenied
-	}
-	path, err := domain.ParseAuthRequestPath(approvedPath)
-	if err != nil {
-		return domain.AuthRequestPath{}, fmt.Errorf("approved_path %q is invalid: %w", approvedPath, ErrAuthorizationDenied)
-	}
-	return path, nil
-}
-
 // authSessionWithinApprovedPath reports whether one governed session row stays within the acting approved path.
 func authSessionWithinApprovedPath(session app.AuthSession, actingPath domain.AuthRequestPath) bool {
 	targetPath, err := authSessionApprovedPath(session)
