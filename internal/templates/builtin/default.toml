@@ -1,0 +1,476 @@
+# Tillsyn default cascade template (builtin).
+#
+# Authoritative source for the closed 12-kind catalog, agent bindings, and
+# auto-create [child_rules] consumed by the cascade dispatcher.
+#
+# Loaded via internal/templates.LoadDefaultTemplate (embed.FS at
+# internal/templates/embed.go). Projects ship without an explicit
+# <project_root>/.tillsyn/template.toml fall back to this default at
+# project-creation bake time (KindCatalog.Bake — internal/templates/catalog.go).
+#
+# Canonical specs:
+#   - main/PLAN.md § 19.3 (template-overhaul scope, line 1623+).
+#   - main/CLAUDE.md "Agent Bindings" table (kind → agent name + model + role).
+#   - workflow/drop_3/PLAN.md droplet 3.14 (this file's acceptance contract).
+#
+# Encoding rules:
+#   - schema_version is pinned to "v1"; bumping it requires a migration gate
+#     in internal/templates/load.go (see SchemaVersionV1 constant).
+#   - Reverse-hierarchy prohibitions (PLAN.md § 19.3 finding 5.B.16 N3) are
+#     EXPLICIT via [kinds.<parent>].allowed_child_kinds enumerating every
+#     allowed child EXCEPT the prohibited one. Adding a 13th kind in a
+#     future drop is therefore an explicit opt-in, not an implicit allow.
+#   - Auto-create rules (PLAN.md § 19.3 line 1635) are encoded as
+#     [[child_rules]] entries; the auto-generator (Drop 3 droplet 3.20)
+#     materializes one ActionItem per rule when the parent is created.
+#   - STEWARD persistent parent seeds (PLAN.md § 15.7 + § 19.3 line 1637)
+#     are deferred to droplet 3.20 — the current ChildRule schema cannot
+#     express "spawn N items at project creation" because WhenParentKind is
+#     a closed-enum domain.Kind and there is no "project" Kind value. See
+#     "STEWARD seeds — DEFERRED" comment near the bottom of this file.
+
+schema_version = "v1"
+
+# -----------------------------------------------------------------------------
+# [kinds] — closed 12-value Kind enum.
+# -----------------------------------------------------------------------------
+#
+# Each row records:
+#   - owner: principal responsible for materializing children (per fix L7;
+#     "STEWARD" marks STEWARD-owned, the auth gate at internal/adapters/
+#     server/common/app_service_adapter_mcp.go reads this).
+#   - allowed_parent_kinds: kinds that may parent this kind. Empty =
+#     universal-allow.
+#   - allowed_child_kinds: kinds that may be children of this kind. Empty =
+#     universal-allow. The four reverse-hierarchy prohibitions documented in
+#     PLAN.md § 19.3 are encoded by enumerating every kind EXCEPT the
+#     prohibited child here, mirroring the hand-coded fixture in
+#     internal/templates/nesting_test.go (3.10).
+#   - structural_type: cascade-shape classification per PLAN.md § 19.3 line
+#     1635. drop / segment / confluence / droplet — orthogonal to kind.
+
+[kinds.plan]
+# Planning-dominant — planner agent decomposes work into children. Plans
+# nest infinitely; a plan may contain sub-plans, builds, research,
+# discussions, etc.
+structural_type = "droplet"
+
+[kinds.research]
+# Read-only investigation — research agent compiles findings, posts a
+# comment, dies. Does NOT auto-create QA children.
+structural_type = "droplet"
+
+[kinds.build]
+# Code-changing leaf — builder agent implements, tests, commits.
+# Auto-creates build-qa-proof + build-qa-falsification children via
+# [[child_rules]] below.
+structural_type = "droplet"
+
+[kinds.plan-qa-proof]
+# Proof-completeness QA pass on a plan parent.
+structural_type = "droplet"
+
+[kinds.plan-qa-falsification]
+# Falsification QA pass on a plan parent.
+structural_type = "droplet"
+
+[kinds.build-qa-proof]
+# Proof-completeness QA pass on a build parent. Reverse-hierarchy
+# prohibition (PLAN.md § 19.3): build-qa-proof cannot parent a plan.
+# allowed_child_kinds enumerates every kind EXCEPT plan.
+allowed_child_kinds = [
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.build-qa-falsification]
+# Falsification QA pass on a build parent. Reverse-hierarchy prohibition
+# (PLAN.md § 19.3): build-qa-falsification cannot parent a plan.
+allowed_child_kinds = [
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.closeout]
+# Drop-end coordination — aggregates ledger / refinements / findings.
+# STEWARD-owned per PLAN.md § 15.7 (§ 19.3 bullet 9). Reverse-hierarchy
+# prohibition: closeout cannot parent another closeout. allowed_child_kinds
+# enumerates every kind EXCEPT closeout.
+owner = "STEWARD"
+allowed_child_kinds = [
+    "plan",
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.commit]
+# Commit action — template-triggered under plan at level >= 2 (Commit
+# Cadence rule, CLAUDE.md). Reverse-hierarchy prohibition: commit cannot
+# parent a plan. allowed_child_kinds enumerates every kind EXCEPT plan.
+allowed_child_kinds = [
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.refinement]
+# Perpetual / long-lived tracking umbrella — drop-end entries roll up
+# here. STEWARD-owned per PLAN.md § 15.7.
+owner = "STEWARD"
+structural_type = "droplet"
+
+[kinds.discussion]
+# Cross-cutting decision park — description = converged shape, comments =
+# audit trail.
+structural_type = "droplet"
+
+[kinds.human-verify]
+# Dev sign-off hold point — attention items + checklist children, no
+# plan/QA. Reverse-hierarchy prohibition: human-verify cannot parent a
+# build. allowed_child_kinds enumerates every kind EXCEPT build.
+allowed_child_kinds = [
+    "plan",
+    "research",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+# -----------------------------------------------------------------------------
+# [[child_rules]] — auto-create directives evaluated at parent creation time.
+# -----------------------------------------------------------------------------
+#
+# Per PLAN.md § 19.3 line 1635:
+#   - build → build-qa-proof + build-qa-falsification
+#   - plan  → plan-qa-proof  + plan-qa-falsification
+#   - structural_type=drop → planner droplet + qa-proof droplet +
+#                            qa-falsification droplet (a kind=plan with
+#                            its own QA twins).
+#
+# WhenParentStructuralType narrows the rule when set; an empty value
+# matches every parent structural_type. blocked_by_parent wires the
+# auto-created child with a blocked_by edge to the parent so the child
+# cannot start until the parent reaches its terminal completion state.
+
+# build → build-qa-proof
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+# build → build-qa-falsification
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+# plan → plan-qa-proof
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "plan-qa-proof"
+title = "PLAN-QA-PROOF"
+blocked_by_parent = true
+
+# plan → plan-qa-falsification
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "plan-qa-falsification"
+title = "PLAN-QA-FALSIFICATION"
+blocked_by_parent = true
+
+# structural_type=drop planner droplet — DEFERRED.
+#
+# PLAN.md § 19.3 line 1635 names three children for a drop-structural
+# parent: "a planner droplet + qa-proof droplet + qa-falsification droplet."
+# The planner-droplet is itself kind=plan, which produces a parent->child
+# edge of plan->plan in the cycle-detection graph at internal/templates/
+# load.go:validateChildRuleCycles. The validator (committed in droplet
+# 3.9) does NOT model the structural_type narrowing, so a plan->plan rule
+# even when filtered by when_parent_structural_type still trips the
+# self-loop cycle check.
+#
+# Resolution: the QA-twins-for-drop pair below covers two of the three
+# children the spec names. The drop-planner droplet remains drop-orch
+# created manually (consistent with pre-cascade behavior). Droplet 3.20
+# may revisit either by relaxing the cycle validator to ignore self-loops
+# narrowed by structural_type, or by introducing a distinct kind for the
+# drop-planner role. For now, omitting the drop-planner rule is the
+# correct trade against breaking the load-time cycle invariant.
+
+# structural_type=drop -> plan-qa-proof (drop-level plan QA twin).
+[[child_rules]]
+when_parent_kind = "plan"
+when_parent_structural_type = "drop"
+create_child_kind = "plan-qa-proof"
+title = "DROP-PLAN-QA-PROOF"
+blocked_by_parent = true
+
+# structural_type=drop -> plan-qa-falsification (drop-level plan QA twin).
+[[child_rules]]
+when_parent_kind = "plan"
+when_parent_structural_type = "drop"
+create_child_kind = "plan-qa-falsification"
+title = "DROP-PLAN-QA-FALSIFICATION"
+blocked_by_parent = true
+
+# -----------------------------------------------------------------------------
+# STEWARD persistent parent seeds — DEFERRED to droplet 3.20.
+# -----------------------------------------------------------------------------
+#
+# PLAN.md § 15.7 names six STEWARD-owned persistent level_1 parents seeded
+# at project creation: DISCUSSIONS, HYLLA_FINDINGS, LEDGER, WIKI_CHANGELOG,
+# REFINEMENTS, HYLLA_REFINEMENTS. Per droplet 3.14 fix L3 these were to be
+# encoded as [[child_rules]] entries here.
+#
+# DEFERRED rationale: the current ChildRule schema (3.8) requires
+# WhenParentKind to be a closed-enum domain.Kind value, but project-root
+# children have NO parent kind — projects are stored in a separate
+# `projects` table without a kind column post-Drop-1.75. There is no
+# clean way to express "spawn at project creation" with the current
+# WhenParentKind closed-enum constraint.
+#
+# Droplet 3.20's auto-generator will need either (a) a new TOML table
+# (e.g. [[steward_seeds]]) with its own loader path, or (b) a sentinel
+# WhenParentKind value documented as the project-root marker, or (c) a
+# new ChildRule.AtProjectCreation bool. Drop 3.14 surfaces this as a
+# scope finding to the orchestrator; the encoding choice is 3.20's call.
+#
+# When 3.20 lands, each STEWARD seed should land with:
+#   - owner = "STEWARD"
+#   - persistent = true (per L9 — once that flag exists on the schema)
+#   - dev_gated = false
+#   - structural_type unset (per PLAN.md § 19.3 line 1637 — STEWARD's
+#     persistent parents are NOT drops/segments/confluences/droplets;
+#     they are long-lived coordination anchors with no cascade shape).
+
+# -----------------------------------------------------------------------------
+# [agent_bindings] — closed 12-value Kind → agent spawn parameters.
+# -----------------------------------------------------------------------------
+#
+# Mapping per main/CLAUDE.md "Agent Bindings" table.
+#
+# model = "opus" for builders + QA + planning + research per pre-MVP rule
+# (memory feedback_opus_builders_pre_mvp.md — "no optimization before
+# measurement; run opus until cascade dogfooding begins"). The commit
+# kind binds the haiku-driven commit-message-agent per CLAUDE.md.
+#
+# Coordination kinds (closeout, refinement, discussion, human-verify) are
+# orchestrator-managed today (CLAUDE.md "Agent Bindings" table) — they do
+# not spawn an automated agent. Pre-cascade these are worked by the
+# parent orchestrator session manually. Their bindings here record a
+# placeholder agent name + model so the dispatcher (Drop 4) has a row to
+# look up; the actual spawn behavior for those kinds remains
+# orchestrator-driven until later drops define dedicated agents for them.
+#
+# tools = [] is the placeholder — the actual MCP tool allow-list lands
+# in Drop 4 per finding 5.B.5. AgentBinding.Validate (schema.go) does
+# not constrain Tools content beyond Drop 4's gating, so an empty list
+# decodes cleanly.
+
+[agent_bindings.plan]
+agent_name = "go-planning-agent"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.research]
+agent_name = "go-research-agent"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.plan-qa-proof]
+agent_name = "go-qa-proof-agent"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.plan-qa-falsification]
+agent_name = "go-qa-falsification-agent"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.build-qa-proof]
+agent_name = "go-qa-proof-agent"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.build-qa-falsification]
+agent_name = "go-qa-falsification-agent"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.closeout]
+# Orchestrator-managed today (CLAUDE.md "Agent Bindings" table). Binding
+# is a placeholder so the dispatcher (Drop 4) has a row to look up.
+agent_name = "orchestrator-managed"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 1
+max_budget_usd = 0.0
+max_turns = 1
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.commit]
+agent_name = "commit-message-agent"
+model = "haiku"
+effort = "low"
+tools = []
+max_tries = 3
+max_budget_usd = 1.0
+max_turns = 10
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.refinement]
+# Orchestrator-managed today (CLAUDE.md "Agent Bindings" table).
+agent_name = "orchestrator-managed"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 1
+max_budget_usd = 0.0
+max_turns = 1
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.discussion]
+# Orchestrator-managed today (CLAUDE.md "Agent Bindings" table).
+agent_name = "orchestrator-managed"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 1
+max_budget_usd = 0.0
+max_turns = 1
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.human-verify]
+# Orchestrator-managed + dev sign-off (CLAUDE.md "Agent Bindings" table).
+agent_name = "orchestrator-managed"
+model = "opus"
+effort = "medium"
+tools = []
+max_tries = 1
+max_budget_usd = 0.0
+max_turns = 1
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
