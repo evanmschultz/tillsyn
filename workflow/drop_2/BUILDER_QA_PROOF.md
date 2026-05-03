@@ -773,3 +773,42 @@ N/A — task touched 25 Go files for surgical state-vocabulary renames + 1 TOML 
 ### Hylla Feedback
 
 N/A — task touched only Go production + test code in 4 packages, all 8 files known-by-name from the spawn prompt. QA verification used `Read` for whole-file context around each cite + `Bash` for `mage ci` + `git diff` / `git log` / `git status` for change scope. Hylla queries were not the right shape for "verify these 4 specific symbols + 8 specific test functions exist with the documented contract" — direct `Read` against known absolute paths is the natural fit when the spawn prompt enumerates exact file:line targets and you need byte-level certainty (vs. semantic similarity). Working tree commits at `c7e07f2` are uncommitted-since-last-ingest (Hylla is stale by design until drop-end reingest per CLAUDE.md "Code Understanding Rules" §2), so Hylla wouldn't have been authoritative anyway. Zero Hylla misses, zero ergonomic gripes for this round.
+
+## Droplet 2.8 — Round 1
+
+**Verdict:** PASS
+**Date:** 2026-05-01
+
+### Findings
+
+1. **All 12 INSERT rows flipped `allowed_parent_scopes_json` to `'[]'`.** `git diff internal/adapters/storage/sqlite/repo.go` shows exactly 12 hunks — one per seeded kind — each replacing the 5th VALUES literal (`'["plan"]'` x10, `'["build"]'` x2) with `'[]'`. Lines verified at `repo.go:308` (`plan`), `:314` (`research`), `:320` (`build`), `:326` (`plan-qa-proof`), `:332` (`plan-qa-falsification`), `:338` (`build-qa-proof`), `:344` (`build-qa-falsification`), `:350` (`closeout`), `:356` (`commit`), `:362` (`refinement`), `:368` (`discussion`), `:374` (`human-verify`). Builder's enumeration matches the diff line-for-line.
+
+2. **`applies_to_json` untouched on every row.** `rg -n '"plan"\]|"build"\]' internal/adapters/storage/sqlite/repo.go` returns exactly 2 hits — `:308` (the `plan` row's `applies_to_json = '["plan"]'` slot) and `:320` (the `build` row's `applies_to_json = '["build"]'` slot). These are the scope-mirror values the spawn prompt called out as the collision risk, and they are the *4th* VALUES literal (not the 5th). The diff confirms only the 5th literal was edited per row — `applies_to_json`, `display_name`, `description_markdown`, `payload_schema_json`, `template_json`, and timestamp slots are byte-identical to pre-droplet state.
+
+3. **`AllowsParentScope` empty-list early return intact at `internal/domain/kind.go:225-236`.** Read confirms the body is unchanged: signature at `:225`, normalize at `:226`, empty-list early return at `:227-229` (`if len(k.AllowedParentScopes) == 0 { return true }`), match-loop at `:230-234`, fallback `return false` at `:235`. Universal-allow semantics are correct: empty `AllowedParentScopes` (which the seeded rows now carry post-flip) trigger the early return → every parent scope accepted.
+
+4. **`internal/app/kind_capability.go:566` enforcement path unchanged.** Read confirms the gate at `:565-568`: `if parent != nil { if !kind.AllowsParentScope(parent.Scope) { return ..., fmt.Errorf("%w: ...", domain.ErrKindNotAllowed) } }`. The `Errorf` quoting and surrounding `GetKindDefinition` / `AppliesToScope` / `resolveProjectAllowedKinds` blocks are byte-identical to pre-droplet state per `git diff` (file is not in `git status --porcelain`).
+
+5. **`TestRepositoryFreshOpenKindCatalogUniversalParentAllow` exists with 144 probes (12 × 12).** The new test occupies `repo_test.go:2520-2567` per the diff. It (a) opens an in-memory repo via `OpenInMemory()`, (b) lists kinds via `repo.ListKindDefinitions(ctx, false)`, (c) asserts `len(kinds) == 12`, (d) defines a `parentScopeProbes` slice with 12 `KindAppliesTo` constants (`Plan`, `Build`, `Research`, `Closeout`, `Commit`, `Discussion`, `Refinement`, `HumanVerify`, `PlanQAProof`, `PlanQAFalsification`, `BuildQAProof`, `BuildQAFalsification`), (e) outer-loops the 12 seeded kinds, (f) inner-loops the 12 probes calling `kind.AllowsParentScope(scope)` and failing if false. Outer×inner = 12×12 = 144 probe assertions. Plus an outer per-kind `len(kind.AllowedParentScopes) != 0` guard for direct empty-list verification. Math checks.
+
+6. **No `tc := tc` in the new test loop.** The test uses `for _, kind := range kinds` (not table-driven; not `for _, tc := range cases`). No subtests, no `t.Parallel()`, no shadow-rebind needed. Loop-variable-capture is not in play. Builder claim correct.
+
+7. **`mage ci` green at HEAD now.** Ran `mage ci` from `main/`. Result: `tests: 1392, passed: 1392, failed: 0, skipped: 0, packages: 19, pkg passed: 19, pkg failed: 0`. Per-package coverage: `sqlite 75.1%`, `app 71.6%`, `domain 79.4%`, all ≥ 70% threshold. Build succeeded (`Built till from ./cmd/till`). Source verification + format check + coverage threshold + build all green.
+
+8. **No `ALTER TABLE` added by 2.8.** `rg -n "ALTER TABLE" internal/adapters/storage/sqlite/repo.go` returns 22 hits at `:511, :514, :518-530, :547-549, :633, :694, :742` — none in the diff. `git diff internal/adapters/storage/sqlite/repo.go` shows zero `ALTER TABLE` lines added or removed. Schema-shape unchanged; only data-shape (the seeded INSERT VALUES) flipped, consistent with droplet acceptance ("DB action: DELETE `~/.tillsyn/tillsyn.db` BEFORE running `mage ci`" — confirmed local DB doesn't exist, no stale-data masking).
+
+9. **`git status --porcelain` shows 5 files, not the builder-reported 4.** Output: ` M internal/adapters/storage/sqlite/repo.go`, ` M internal/adapters/storage/sqlite/repo_test.go`, ` M workflow/drop_2/BUILDER_QA_FALSIFICATION.md`, ` M workflow/drop_2/BUILDER_WORKLOG.md`, ` M workflow/drop_2/PLAN.md`. The 5th file (`BUILDER_QA_FALSIFICATION.md`) is the parallel-spawned falsification sibling's Round 1 append (169 lines added), not a builder-attributable artifact. The builder's claim of "4 expected files" was scoped to *the builder's own write surface* and is correct under that scope. The falsification sibling's MD edit is expected during a parallel QA run and is in scope for the falsification agent's write window. Not a blocking finding; noted for transparency.
+
+10. **PLAN.md state-flip — Droplet 2.8 reads `**State:** done`.** `workflow/drop_2/PLAN.md:240-242` confirms: `#### Droplet 2.8 — Empty AllowedParentScopes for every kind in boot-seed` then `- **State:** done`. Adjacent Droplet 2.9 at `:255-257` correctly remains `- **State:** todo` (Droplet 2.9 owns the `AllowedParentKinds` deletion + doc-comment cleanup, blocked by 2.8).
+
+### Missing Evidence
+
+(none — every required check landed grounded evidence)
+
+### Verdict Summary
+
+PASS. All 10 required proof checks satisfied with file:line citations. The 12-row INSERT flip is byte-precise and confined to the `allowed_parent_scopes_json` slot; sibling columns including the `plan`/`build` `applies_to_json` collision-candidates are untouched. `AllowsParentScope`'s empty-list early return at `domain/kind.go:227-229` is the runtime mechanism that turns the data-shape change into universal-allow semantics, and the new `TestRepositoryFreshOpenKindCatalogUniversalParentAllow` covers the contract at the boot-seed boundary with 144 explicit (kind, parent-scope) probes. `mage ci` green: 1392/1392 tests, all packages ≥ 70% coverage. Enforcement path at `app/kind_capability.go:566` and the `domain.AllowedParentKinds` doc-comment at `repo.go:299-304` are correctly untouched (Droplet 2.9's scope). No `ALTER TABLE` added; no schema migration; pre-MVP "dev fresh-DBs" rule honored. Builder's 4-file claim is scope-correct (the 5th file in `git status` is the parallel falsification sibling's append, expected). Cleared for the build → QA → fix → commit gate to advance.
+
+### Hylla Feedback
+
+N/A — task touched only Go production + test code (2 files) plus 3 MD coordination artifacts. All 4 spawn-prompt-named files (`internal/adapters/storage/sqlite/repo.go`, `internal/adapters/storage/sqlite/repo_test.go`, `internal/domain/kind.go`, `internal/app/kind_capability.go`) addressable by absolute path with exact line ranges from the prompt. QA used `Read` for whole-file context, `Bash` for `git diff` / `git status` / `mage ci` / `rg`, and direct line-anchored cross-checks. Hylla is stale by design for the working-tree changes (CLAUDE.md "Code Understanding Rules" §2), and the "verify these N specific INSERT rows + 1 specific test function exist with documented byte-shape" question is naturally a `Read` + `git diff` shape, not a semantic-similarity / refs-graph shape. Zero Hylla queries attempted, zero misses to log, zero ergonomic gripes.

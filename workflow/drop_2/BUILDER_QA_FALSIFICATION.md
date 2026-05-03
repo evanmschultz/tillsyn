@@ -1802,3 +1802,172 @@ Both Round 1 routing items are addressed without scope creep. No new soft drifts
 ### Hylla Feedback
 
 N/A — Hylla queries not issued during this falsification round. Reviewed surface is one Go commit (`c7e07f2`) with 7 files changed, immediately verifiable via `git show`, `git diff`, `git grep`, and `Read`. The relevant code regions are in actively-edited code (Round 1 + Round 2 cleanup both within ~24h), so Hylla's index would be stale on every queried symbol. Code-local navigation against committed-plus-just-cleaned-up Go code via `git show <sha>` + targeted `Read` is the right tool fit; `git grep` for whole-tree literal sweeps (`"in-progress"`, `"done"`, `"completed"`) is the natural fit for "verify no remaining coercion sites." Zero ergonomic gripes for this round.
+
+## Droplet 2.8 — Round 1
+
+### Reviewer
+
+go-qa-falsification-agent (build-qa, opus, 2026-05-01)
+
+### Surface Reviewed
+
+Uncommitted working-tree change against `internal/adapters/storage/sqlite/repo.go` + `internal/adapters/storage/sqlite/repo_test.go`. Twelve `INSERT OR IGNORE INTO kind_catalog` rows in the boot-seed migration, fifth positional column (`allowed_parent_scopes_json`), flipped from prior values (`'["plan"]'` for 11 rows; `'["build"]'` was NOT used here — the prior values were 100% `'["plan"]'`) to `'[]'`. Universal-allow contract carried by domain.KindDefinition.AllowsParentScope's empty-list early return at internal/domain/kind.go:227-229. One new test added at repo_test.go:2520-2569 (`TestRepositoryFreshOpenKindCatalogUniversalParentAllow`).
+
+### Attack Vectors
+
+#### V1 — Column Collision Attack (Wrong-Column Edit)
+
+**Premise:** rows `plan` and `build` had `applies_to_json` = `'["plan"]'` / `'["build"]'` (col 4) AND `allowed_parent_scopes_json` = `'["plan"]'` / `'["plan"]'` (col 5). Two columns of identical JSON-list shape adjacent in the same INSERT row create wrong-column-edit risk: a careless edit could have flipped col 4 instead of col 5 on the `plan` and `build` rows.
+
+**Evidence:** `git diff` shows for every one of the 12 rows the substitution lands ONLY on the 5th positional value (`'[]'`), and the 4th positional value (`'["plan"]'` / `'["build"]'` / `'["research"]'` / `'["plan-qa-proof"]'` / `'["plan-qa-falsification"]'` / `'["build-qa-proof"]'` / `'["build-qa-falsification"]'` / `'["closeout"]'` / `'["commit"]'` / `'["refinement"]'` / `'["discussion"]'` / `'["human-verify"]'`) is preserved byte-identical on every row. Specifically for the `plan` row (line 308): `'["plan"]', '[]'` — col 4 still `'["plan"]'`, col 5 now `'[]'`. For `build` (line 320): `'["build"]', '[]'` — col 4 still `'["build"]'`, col 5 now `'[]'`. Every `INSERT OR IGNORE INTO kind_catalog` header lists columns in the order `id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, ...` so positional col 5 is unambiguously `allowed_parent_scopes_json`.
+
+**Trace or cases:** REFUTED. All 12 rows verified column-correct by reading the diff line-by-line. No collision attack lands.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** none.
+
+#### V2 — Row Count
+
+**Premise:** `kind_catalog` boot-seed must contain exactly 12 rows (one per closed-enum kind: plan, research, build, plan-qa-proof, plan-qa-falsification, build-qa-proof, build-qa-falsification, closeout, commit, refinement, discussion, human-verify).
+
+**Evidence:** `git grep -c "INSERT OR IGNORE INTO kind_catalog" internal/adapters/storage/sqlite/repo.go` returns `12`. The new test asserts `len(kinds) != 12 → t.Fatalf` at repo_test.go:2540-2542 — runtime invariant matches static count.
+
+**Trace or cases:** REFUTED. Static count = 12, runtime assert = 12, test green in mage ci.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** none.
+
+#### V3 — Universal-Allow Behavior
+
+**Premise:** `AllowsParentScope(any)` returns `true` for every seeded kind because `len(k.AllowedParentScopes) == 0` triggers the early-return-true branch at internal/domain/kind.go:227-229.
+
+**Evidence:** the new test iterates 12 boot-seeded kinds × 12 parent-scope probes (covering all closed-enum scopes: Plan, Build, Research, Closeout, Commit, Discussion, Refinement, HumanVerify, PlanQAProof, PlanQAFalsification, BuildQAProof, BuildQAFalsification) and asserts `kind.AllowsParentScope(scope)` is true and `len(kind.AllowedParentScopes) == 0`. That is 144 positive assertions per run. mage ci passes 1392/1392 tests including this one.
+
+**Trace or cases:** REFUTED. Every kind × every scope yields true. The empty-list branch is the only branch reached. No bypass path, no ambiguity.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** none.
+
+#### V4 — Hidden Enforcement Path (Direct Readers Of `AllowedParentScopes`)
+
+**Premise:** there could be readers that bypass `AllowsParentScope` and read the slice directly, then misinterpret empty-slice as "no parents allowed" instead of "any parent allowed."
+
+**Evidence:** `git grep -nE '\.AllowedParentScopes' -- '*.go'` enumerates 14 sites:
+
+- `cmd/till/main.go:3500` — copies slice into CLI projection (`toStrings(...)`); empty stays empty, no enforcement.
+- `internal/adapters/server/common/app_service_adapter_mcp.go:1179` — passes through to upsert input.
+- `internal/adapters/server/mcpapi/extended_tools.go:1695,1791` — `append([]string(nil), args.AllowedParentScopes...)` for upsert request shaping; empty stays empty, no enforcement.
+- `internal/adapters/server/mcpapi/instructions_explainer.go:241-242` — `if len(kind.AllowedParentScopes) > 0 { rules = append(...) }`. Empty list short-circuits — no rule line emitted, which is the correct "universal-allow" semantics rendered into the explainer text.
+- `internal/adapters/storage/sqlite/repo.go:1051,1085` — JSON-marshals the slice for write-back. Empty slice marshals to `'[]'`, round-trips cleanly.
+- `internal/adapters/storage/sqlite/repo.go:2931` — JSON-unmarshals into the slice on read. `'[]'` → `len==0`, then AllowsParentScope's empty-branch fires.
+- `internal/app/snapshot.go:1096,1343` — slice copy for snapshot enc/dec; empty stays empty.
+- `internal/domain/kind.go:182,227,230` — input normalization (passes through empty), the early-return-true branch (V3 covered), and the candidate-loop body (skipped on empty).
+- `internal/app/kind_capability.go:112` — passes through to NewKindDefinition input.
+- `internal/adapters/storage/sqlite/repo_test.go:2560-2561` — the new universal-allow test (positive assertion of empty).
+
+**Trace or cases:** REFUTED. Zero enforcement readers misinterpret empty-as-deny. The only behavioral consequence of empty-slice is `AllowsParentScope → true` (V3) and the explainer string omitting one rule line (correct semantics). All other readers are pass-through serialization or copy.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** none.
+
+#### V5 — Test Fixture Coupling
+
+**Premise:** existing test fixtures could have hard-coded expected `AllowedParentScopes` values for seeded kinds, which would now drift to empty.
+
+**Evidence:** `git grep -nE 'AllowedParentScopes|AllowsParentScope' -- '*_test.go'` enumerates 6 sites:
+
+- `internal/adapters/server/mcpapi/extended_tools_test.go:668` — synthetic stub kind `"actionItem"` with hand-set `[Discussion, Plan]`. Not a boot-seeded kind. Stub-local, untouched by this droplet. Tests the upsert/list machinery, not the boot-seed.
+- `internal/adapters/storage/sqlite/repo_test.go:2520-2569` — the NEW test added by this droplet. Asserts empty.
+- `internal/domain/kind_capability_test.go:16,49` — `TestNewKindDefinitionValidation` with hand-set `[Plan]` on a synthetic `"refactor"` kind. Tests `NewKindDefinition` normalization, not the boot-seed.
+
+`mage ci` ran 1392/1392 tests green, including the seeded-kind round-trip test (`TestRepositoryFreshOpenKindCatalog` at repo_test.go:2470-2516, which I read implicitly via the new test's neighborhood — its presence pre-droplet means seeded kinds are read back fresh; if it asserted specific non-empty parent scopes it would have failed in this commit).
+
+**Trace or cases:** REFUTED. No fixture asserts non-empty `AllowedParentScopes` on a boot-seeded kind. The two synthetic-fixture sites use kind IDs (`actionItem`, `refactor`) that are NOT in the closed-enum 12, so they do not run through the migration's seed inserts — they are constructed directly in test code via `domain.KindDefinition{...}` literals or `NewKindDefinition` inputs.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** none.
+
+#### V6 — Snapshot Serialization
+
+**Premise:** snapshots serialize `AllowedParentScopes`; old snapshots (pre-flip) carry non-empty slices, new snapshots emit empty. Cross-version snapshot import could mismatch.
+
+**Evidence:** `internal/app/snapshot.go:1096` (domain → snapshot) and 1343 (snapshot → domain) both `append([]domain.KindAppliesTo(nil), ...)` — identity copy, no transformation. Pre-MVP fresh-DB rule (Memory entry "No Migration Logic Pre-MVP") covers schema/state-vocab change: dev deletes `~/.tillsyn/tillsyn.db` on change, no migration code in Go, no migration scripts. A snapshot taken pre-droplet that lands in a post-droplet repo would carry the OLD non-empty `["plan"]` lists; on round-trip those would override the seeded empty values via the repo's overwrite-on-import path. But that scenario is exactly what the pre-MVP fresh-DB rule targets — schema/state-vocab change means fresh DB. Not a real counterexample under the project's actual constraint.
+
+**Trace or cases:** REFUTED under pre-MVP fresh-DB regime. Would-be-counterexample only manifests on cross-version snapshot import, which is explicitly out-of-scope per project memory rule.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** post-MVP snapshot migration story is not in scope for this droplet — flagged for whoever lifts the fresh-DB rule.
+
+#### V7 — `mage ci` Re-Run
+
+**Premise:** the build/test toolchain remains green.
+
+**Evidence:** I ran `mage ci` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. Result: 1392/1392 tests pass across 19 packages, coverage above 70% on every package (TUI on the 70.0% floor as historical baseline), build successful (`Built till from ./cmd/till`). New universal-allow test included in the count.
+
+**Trace or cases:** REFUTED. mage ci is GREEN.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** none.
+
+#### V8 — No `ALTER TABLE` Introduced
+
+**Premise:** the droplet must be a pure literal flip; introducing an `ALTER TABLE` migration would violate the no-migration-logic-pre-MVP rule and the boot-seed-only scope.
+
+**Evidence:** the `git diff HEAD -- internal/adapters/storage/sqlite/repo.go` is exactly 90 lines and contains only the 12 paired `-`/`+` literal substitutions on the `allowed_parent_scopes_json` positional value. No `ALTER`, no `CREATE TABLE` other than what was pre-existing, no `UPDATE`, no schema migration entries appended to the migrations slice. Pure literal swap.
+
+**Trace or cases:** REFUTED.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** none.
+
+#### V9 — Custom Kinds Via Dev-Runtime API
+
+**Premise:** runtime-defined custom kinds (via `UpsertKindDefinition` → `NewKindDefinition`) could be coupled to the boot-seed defaults; flipping seed defaults to universal-allow could leak to runtime-set values.
+
+**Evidence:** `internal/app/kind_capability.go:104-115` (`UpsertKindDefinition`) passes the caller-supplied `in.AllowedParentScopes` straight into `domain.NewKindDefinition`'s input. `internal/domain/kind.go:182` runs `normalizeKindParentScopes(in.AllowedParentScopes)` — pure normalization (whitespace/canonical-form), no defaulting from seed values, no implicit override. A caller passing `[Plan]` keeps `[Plan]`; a caller passing `[]` keeps `[]`. The boot-seed flip is data-only on the 12 seeded rows; the runtime path is parameter-driven and unchanged.
+
+**Trace or cases:** REFUTED. Runtime custom kinds remain free to set non-empty parent scopes; the universal-allow contract is opt-in for the 12 seeded kinds only.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** none.
+
+#### V10 — Forvar Capture
+
+**Premise:** the new test's `for _, kind := range kinds` and `for _, scope := range parentScopeProbes` loops capture loop variables for use across iterations, which under pre-Go-1.22 semantics could alias.
+
+**Evidence:** `git grep "tc := tc" internal/adapters/storage/sqlite/repo_test.go` returns no matches (empty). The new test's loops use the loop variables `kind` and `scope` only synchronously inside the loop body (no goroutines, no closures captured outside, no t.Run subtests with parallel). Each `t.Fatalf` consumes the value in the same iteration. Go 1.22+ scoping makes this safe regardless. Project on go 1.26 per project CLAUDE.md.
+
+**Trace or cases:** REFUTED.
+
+**Conclusion:** No counterexample.
+
+**Unknowns:** none.
+
+### Counterexamples
+
+None.
+
+### Nits Worth Noting
+
+None worth blocking.
+
+### Most Damaging Counterexample
+
+None — verdict PASS.
+
+### Verdict Summary
+
+**PASS.** All 10 required attack vectors run; 0 counterexamples constructed. The boot-seed flip is a pure data-only literal substitution (12 rows × 1 positional value), the new universal-allow test pins the contract end-to-end (catalog → repo read → AllowsParentScope), no enforcement reader misinterprets empty-as-deny, no test fixture asserts non-empty parent scopes for seeded kinds, custom-kind runtime path is parameter-driven and untouched, no migration code introduced, mage ci green at 1392/1392. Ready to commit.
+
+### Hylla Feedback
+
+N/A — task touched non-Go and Go files reviewed entirely against uncommitted working-tree changes (`git diff` is the right tool for not-yet-committed code; Hylla's index is by definition stale). Code surface reviewed via `Read` + `git diff` + `git grep` for the static, behavioral, and call-graph attack vectors. Zero ergonomic gripes.
