@@ -212,6 +212,64 @@ func TestLoadNilReader(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsBogusKindsMapKey verifies validateMapKeys rejects a
+// [kinds.<bogus>] table whose map key is not a member of the closed 12-value
+// domain.Kind enum. Strict decode cannot catch this: TOML treats arbitrary
+// keys under [kinds.*] as legitimate map entries, so a typo like
+// [kinds.totally-bogus] survives strict decode and must be caught by the
+// dedicated map-key validator at load time.
+func TestLoadRejectsBogusKindsMapKey(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[kinds.totally-bogus]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = []
+structural_type = "droplet"
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownKindReference; got nil")
+	}
+	if !errors.Is(err, ErrUnknownKindReference) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownKindReference) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "kinds map key") {
+		t.Fatalf("Load: err = %q; want substring %q", err.Error(), "kinds map key")
+	}
+	if !strings.Contains(err.Error(), "totally-bogus") {
+		t.Fatalf("Load: err = %q; want offending key %q in message", err.Error(), "totally-bogus")
+	}
+}
+
+// TestLoadRejectsBogusAgentBindingsMapKey verifies validateMapKeys rejects an
+// [agent_bindings.<bogus>] table whose map key is not a member of the closed
+// 12-value domain.Kind enum. Same rationale as TestLoadRejectsBogusKindsMapKey
+// but for the agent_bindings map.
+func TestLoadRejectsBogusAgentBindingsMapKey(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.totally-bogus]
+agent_name = "go-builder-agent"
+model = "opus"
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownKindReference; got nil")
+	}
+	if !errors.Is(err, ErrUnknownKindReference) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownKindReference) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "agent_bindings map key") {
+		t.Fatalf("Load: err = %q; want substring %q", err.Error(), "agent_bindings map key")
+	}
+	if !strings.Contains(err.Error(), "totally-bogus") {
+		t.Fatalf("Load: err = %q; want offending key %q in message", err.Error(), "totally-bogus")
+	}
+}
+
 // TestLoadSelfCycleSingleRule verifies a self-loop child_rule (A -> A) is
 // detected as ErrTemplateCycle. A self-loop is the smallest-possible cycle
 // and exercises the gray-color branch of the DFS without relying on
