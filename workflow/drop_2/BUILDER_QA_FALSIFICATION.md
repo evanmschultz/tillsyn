@@ -1971,3 +1971,237 @@ None — verdict PASS.
 ### Hylla Feedback
 
 N/A — task touched non-Go and Go files reviewed entirely against uncommitted working-tree changes (`git diff` is the right tool for not-yet-committed code; Hylla's index is by definition stale). Code surface reviewed via `Read` + `git diff` + `git grep` for the static, behavioral, and call-graph attack vectors. Zero ergonomic gripes.
+
+## Droplet 2.9 — Round 1
+
+**Verdict:** pass
+**Date:** 2026-05-01
+**Reviewer:** go-qa-falsification-agent (subagent), Round 1
+
+### Summary
+
+Adversarial attack on the builder's claim that deleting `domain.AllowedParentKinds`, its
+test fixture `TestAllowedParentKindsEncodesHierarchy`, and rewriting two doc comments
+(`internal/app/snapshot.go:449` + `internal/adapters/storage/sqlite/repo.go:299`) is
+clean and `mage ci` is green. 11 attack vectors run; 0 blocking counterexamples; 1
+non-blocking nit (pre-existing, scope-excluded). Local `mage ci` reproduces the
+builder's reported result (1391 tests / 19 packages / all coverage ≥ 70.0% / build of
+`./cmd/till` succeeds / exit 0).
+
+### Attack Vectors and Findings
+
+#### 1. Hidden caller hunt — Go-tree exhaustive
+
+- `git grep -n 'AllowedParentKinds' -- '*.go'` → empty (exit 1, no matches).
+- `git grep -n 'AllowedParentKind\b' -- '*.go'` → empty (singular variant).
+
+REFUTED — no production caller, no test caller, no doc-comment textual reference
+remains in the Go tree. Builder's whole-tree-empty claim is correct.
+
+#### 2. Indirect-reference variants
+
+- `git grep -n 'allowedParentKinds\|allowed_parent_kinds' -- '*.go' '*.sql'` → empty.
+- Snake-case / camelCase variants do not exist anywhere in code, SQL, or test fixtures.
+- Non-Go references (`PLAN.md`, `BUILDER_QA_PROOF.md`, `BUILDER_WORKLOG.md`,
+  `PLAN_QA_FALSIFICATION.md`, `PLAN_QA_PROOF.md`) are audit-trail prose explicitly
+  scoped OUT by the orchestrator's "MD-file references in audit-trail artifacts" carve-out.
+
+REFUTED.
+
+#### 3. Test-fixture orphans
+
+- `internal/domain/domain_test.go` — read lines 775-810 surrounding the deleted block:
+  `TestDefaultActionItemScopeMirrorsKind` (preceding) and `TestNormalizeKindIDLowercaseAndTrim`
+  (succeeding) are both self-contained — no shared package-level fixtures, no shared
+  state, no test-ordering dependency on the deleted `TestAllowedParentKindsEncodesHierarchy`.
+  The deleted test had its own internal `tests := []struct{...}` table; no helper
+  outside the function. Surrounding tests independently re-iterate the same enum
+  values (`KindPlan`, `KindResearch`, ..., `KindHumanVerify`), so the constants
+  are not orphaned.
+
+REFUTED.
+
+#### 4. Helper closures inside the deleted function
+
+- Pre-deletion source (`git show HEAD:internal/domain/kind.go` lines 94-117) shows a
+  pure `switch`/`case` returning slice literals. No inner closures, no inner
+  function definitions, no calls to private helpers that were sole-callers of the
+  deleted symbol.
+- `strings.TrimSpace` + `strings.ToLower` are the only external calls; both have
+  11+ other call sites in the same file (`IsValidKind`, `NormalizeKindID`,
+  `NormalizeKindAppliesTo`, `NewKindDefinition`, `normalizeKindTemplate`).
+- `git diff internal/domain/kind.go` confirms the `strings` package import is
+  retained (line 8 of the file) — no dangling import removal needed and no
+  unused-import compile failure.
+
+REFUTED.
+
+#### 5. Doc comment narrative coherence
+
+- `internal/app/snapshot.go:449-453` (new): "Parent-scope constraints are enforced
+  by domain.KindDefinition.AllowsParentScope (against the kind's AllowedParentScopes
+  list) at action-item creation. Snapshot validation no longer special-cases the
+  legacy KindPhase hierarchy because the 12-value Kind enum removed it."
+  → Symbol `domain.KindDefinition.AllowsParentScope` exists at
+  `internal/domain/kind.go:200`. Field `AllowedParentScopes` exists at
+  `internal/domain/kind.go:118` and `:132`. Both references resolve. Narrative
+  correctly anchors creation-time enforcement (matches the actual call site
+  `internal/app/kind_capability.go:566`). Coherent.
+- `internal/adapters/storage/sqlite/repo.go:299-305` (new): "Seed the 12-value Kind
+  enum into the kind catalog at boot. Scope mirrors kind (applies_to_json =
+  ["<kind-id>"]). Every row's allowed_parent_scopes_json is the empty list "[]"
+  (universal-allow): domain.KindDefinition.AllowsParentScope returns true for every
+  parent scope when AllowedParentScopes is empty (see internal/domain/kind.go
+  AllowsParentScope early return). Per-project nesting constraints land in the
+  future template overhaul."
+  → Empty-list early-return is at `internal/domain/kind.go:202-204` (`if len(k.AllowedParentScopes) == 0 { return true }`). Comment is accurate. Narrative
+  describes the post-2.8 universal-allow data shape AND the post-2.7 strict-canonical
+  enum membership consistently. Coherent.
+
+REFUTED.
+
+#### 6. mage ci re-run
+
+Ran from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`:
+
+```
+Test summary
+  tests: 1391
+  passed: 1391
+  failed: 0
+  skipped: 0
+  packages: 19
+  pkg passed: 19
+[SUCCESS] All tests passed
+[SUCCESS] Coverage threshold met
+  All packages are at or above 70.0% coverage.
+[SUCCESS] Built till from ./cmd/till
+```
+
+Reproduces builder's claim. REFUTED.
+
+#### 7. Snapshot validation drift
+
+- Read `internal/app/snapshot.go:425-455` (the `Validate()` method's actionItem-loop).
+- The loop performs (a) timestamp check, (b) project_id existence, (c) column_id
+  existence, (d) duplicate-id check, then a separate parent-id loop with
+  (e) self-parent rejection, (f) parent-id existence in `actionItemIDs`, then the
+  rewritten doc comment, then `_ = actionItemByID[t.ParentID]` (line 454) — a
+  no-op map lookup retained as a structural placeholder.
+- There is NO live call to `domain.AllowedParentKinds` in `snapshot.go` HEAD or
+  pre-deletion. The pre-deletion comment was a reference to a constraint enforced
+  ELSEWHERE (in `kind_capability.go:566`); the rewritten comment correctly
+  re-points to the same enforcement site under its current symbol name.
+- Snapshot validation never directly enforced parent-kind constraints — the
+  enforcement is at action-item-creation time in `internal/app/kind_capability.go:566`,
+  which calls `kind.AllowsParentScope(parent.Scope)`. Untouched by 2.9.
+
+REFUTED.
+
+#### 8. repo_test.go scope-expansion correctness
+
+- Read `repo_test.go:2510-2570` (the `TestRepositoryFreshOpenKindCatalog` /
+  `TestRepositoryFreshOpenKindCatalogUniversalParentAllow` block).
+- Builder trimmed the trailing forward-looking sentence at `:2524-2525`:
+  `"This is the post-Droplet-2.8 universal-allow contract — Droplet 2.9 will
+  follow up by deleting the now-orphan domain.AllowedParentKinds helper."` →
+  `"This is the post-Droplet-2.8 universal-allow contract."`.
+- Test body at `:2525-2568` is unchanged and still references
+  `domain.KindDefinition.AllowsParentScope` (line 2563, via `kind.AllowsParentScope(scope)`)
+  and `kind.AllowedParentScopes` (line 2559). Trim does not orphan any code reference.
+- Scope-expansion is acknowledged in builder's worklog and is mechanically required
+  by acceptance criterion #1 (`git grep "AllowedParentKinds"` returns empty across
+  Go tree). Justified.
+
+REFUTED.
+
+#### 9. Coverage drop
+
+- `mage ci` coverage table: `internal/domain` at 79.4% (was 79.4% at 2.8 close per
+  builder worklog ≥ 70%). All other touched packages (`internal/app` 71.6%,
+  `internal/adapters/storage/sqlite` 75.1%) remain ≥ 70%. The mage ci threshold
+  guard prints `[SUCCESS] Coverage threshold met. All packages are at or above
+  70.0% coverage.`
+- Test-count delta: 1392 → 1391 (exactly 1 test removed, matching the deletion of
+  `TestAllowedParentKindsEncodesHierarchy`).
+- Builder's claim of 1391/1391 reproduces locally.
+
+REFUTED.
+
+#### 10. Forvar absence
+
+- `git diff` inspected for `+\s*tc := tc` introductions. None added. The deleted
+  test contained a `for _, tc := range tests` loop but Go 1.22+ semantics make
+  per-iteration shadowing implicit (the project is on Go 1.26+ per CLAUDE.md
+  Tech Stack); even pre-1.22 the deleted test was correct because it called
+  `t.Fatalf` (not `t.Run` with goroutines).
+- Net zero change to forvar discipline in surviving tests.
+
+REFUTED.
+
+#### 11. No `ALTER TABLE` introduced
+
+- `git diff > /tmp/droplet_2_9.diff` then `Read` of the full 225-line diff: zero
+  occurrences of `ALTER TABLE`, `CREATE TABLE`, `DROP TABLE`, or any DDL.
+- Per pre-MVP no-migration rule (`feedback_no_migration_logic_pre_mvp` in MEMORY),
+  this is the correct outcome — code-deletion only, no schema change.
+
+REFUTED.
+
+### Non-Blocking Nits (For Note, Not Blocking)
+
+- **Pre-existing inaccurate line citation in `repo_test.go:2523`.** The comment
+  reads `"in domain.KindDefinition.AllowsParentScope (internal/domain/kind.go:225-232)"`
+  but `AllowsParentScope` is actually at `kind.go:199-211` (early return at line 202).
+  Lines 225-232 are inside `NormalizeKindAppliesTo`, an unrelated function. Verified
+  via `git log -p -S '225-232' -- internal/adapters/storage/sqlite/repo_test.go`:
+  the citation was introduced in commit `c203371` (Droplet 2.8) and was NOT touched
+  by 2.9. Pre-existing per the orchestrator's "Out Of Scope: Pre-existing lint
+  warnings" carve-out — flagging only as a note for a future cleanup droplet.
+
+### Most Damaging Counterexample
+
+None — verdict PASS. Closest blocker candidate was the inaccurate `kind.go:225-232`
+line citation in `repo_test.go:2523`, but git blame proves it predates Droplet 2.9
+(introduced in 2.8 commit `c203371`) and 2.9 did not touch that specific line — so
+it cannot be charged against this droplet.
+
+### mage ci Result
+
+`mage ci` ran green from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`:
+
+- 1391/1391 tests passed across 19 packages (sources verified, formatting checked,
+  coverage threshold met at 70.0%, binary build succeeded).
+- Per-package coverage: `internal/domain` 79.4%, `internal/adapters/storage/sqlite`
+  75.1%, `internal/app` 71.6%, `internal/tui` 70.0%. All other packages above 70%.
+- Test-count delta from 2.8 close (1392) to 2.9 (1391) = -1, matching the single
+  deleted test fixture exactly.
+
+### Unknowns
+
+None — every required attack vector ran with a concrete reproducible result. No
+deferred questions, no Hylla misses (Hylla not consulted; investigation was
+working-tree-resident `git diff` plus `git grep` plus `LSP`).
+
+### Verdict Summary
+
+**PASS.** Function deletion is self-contained (pure switch, no helpers, `strings`
+import retained for siblings). Test deletion is clean (no shared fixtures, no
+ordering coupling). Both doc-comment rewrites correctly re-point to the live
+production symbols (`KindDefinition.AllowsParentScope` + `AllowedParentScopes`
+field). Scope expansion to trim `repo_test.go:2524-2525` is mechanically required
+by acceptance #1 and properly logged in the worklog. `mage ci` green at 1391/1391
+with coverage ≥ 70% in every package. No `ALTER TABLE`, no migration, no
+`mage install` invocation, no raw `go` toolchain bypass. Pre-MVP rules honored.
+The single nit (pre-existing 2.8 line citation) is out of scope per orchestrator
+guidance. Cleared to commit.
+
+### Hylla Feedback
+
+N/A — task touched only Go production + test code in 3 packages, all reviewed
+against uncommitted working-tree state via `git diff` + `git grep` + `LSP`-equivalent
+`git grep` for symbol existence (`AllowsParentScope`, `AllowedParentScopes`).
+Hylla's committed-code index is by definition stale for an uncommitted droplet,
+so `git diff` was the correct primary tool. The deletion target was named
+explicitly in the spawn prompt + PLAN.md acceptance, so no symbol search was
+needed. Zero ergonomic gripes.
