@@ -81,6 +81,10 @@ func TestTemplateTOMLRoundTrip(t *testing.T) {
 				BlockedRetryCooldown: Duration(30 * time.Second),
 			},
 		},
+		StewardSeeds: []StewardSeed{
+			{Title: "DISCUSSIONS", Description: "Cross-cutting discussion topics."},
+			{Title: "REFINEMENTS", Description: "Tillsyn product refinements."},
+		},
 	}
 
 	encoded, err := toml.Marshal(original)

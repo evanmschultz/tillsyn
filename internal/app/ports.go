@@ -32,6 +32,19 @@ type Repository interface {
 	GetActionItem(context.Context, string) (domain.ActionItem, error)
 	ListActionItems(context.Context, string, bool) ([]domain.ActionItem, error)
 	ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error)
+	// FindActionItemByOwnerAndTitle returns the action item whose owner +
+	// title pair matches within the supplied project. Index-covered by the
+	// idx_action_items_owner_title (project_id, owner, title) composite
+	// (droplet 3.18). Returns ErrNotFound when no row matches.
+	FindActionItemByOwnerAndTitle(ctx context.Context, projectID, owner, title string) (domain.ActionItem, error)
+	// ListActionItemsByDropNumber returns every non-archived action item in
+	// the supplied project that carries the requested drop_number, ordered
+	// deterministically by created_at ASC, id ASC. Index-covered by the
+	// idx_action_items_drop_number (project_id, drop_number, owner)
+	// composite (droplet 3.18). Includes drop_number=0 rows when the caller
+	// passes 0; callers that want to exclude "no drop number" rows must
+	// filter at the call site.
+	ListActionItemsByDropNumber(ctx context.Context, projectID string, dropNumber int) ([]domain.ActionItem, error)
 	DeleteActionItem(context.Context, string) error
 	CreateComment(context.Context, domain.Comment) error
 	ListCommentsByTarget(context.Context, domain.CommentTarget) ([]domain.Comment, error)

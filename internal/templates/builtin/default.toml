@@ -24,10 +24,14 @@
 #     [[child_rules]] entries; the auto-generator (Drop 3 droplet 3.20)
 #     materializes one ActionItem per rule when the parent is created.
 #   - STEWARD persistent parent seeds (PLAN.md § 15.7 + § 19.3 line 1637)
-#     are deferred to droplet 3.20 — the current ChildRule schema cannot
-#     express "spawn N items at project creation" because WhenParentKind is
-#     a closed-enum domain.Kind and there is no "project" Kind value. See
-#     "STEWARD seeds — DEFERRED" comment near the bottom of this file.
+#     are encoded as [[steward_seeds]] entries below; the auto-generator
+#     (droplet 3.20) materializes one ActionItem per seed at project-
+#     creation time with Owner = "STEWARD", Persistent = true, Kind =
+#     "discussion", StructuralType = "droplet". This is option (a) from
+#     droplet 3.14's deferred comment — a separate top-level table with
+#     its own loader path keeps the closed-enum ChildRule.WhenParentKind
+#     invariant intact while making "fires at project creation" semantics
+#     explicit.
 
 schema_version = "v1"
 
@@ -261,34 +265,56 @@ title = "DROP-PLAN-QA-FALSIFICATION"
 blocked_by_parent = true
 
 # -----------------------------------------------------------------------------
-# STEWARD persistent parent seeds — DEFERRED to droplet 3.20.
+# [[steward_seeds]] — long-lived coordination anchors seeded at project creation.
 # -----------------------------------------------------------------------------
 #
-# PLAN.md § 15.7 names six STEWARD-owned persistent level_1 parents seeded
-# at project creation: DISCUSSIONS, HYLLA_FINDINGS, LEDGER, WIKI_CHANGELOG,
-# REFINEMENTS, HYLLA_REFINEMENTS. Per droplet 3.14 fix L3 these were to be
-# encoded as [[child_rules]] entries here.
+# Per fix L3 + droplet 3.20 (this file's auto-generation consumer): six
+# STEWARD-owned level_1 persistent parents are spawned once on project
+# creation by Service.CreateProjectWithMetadata. Each seed materializes as
+# an ActionItem with:
 #
-# DEFERRED rationale: the current ChildRule schema (3.8) requires
-# WhenParentKind to be a closed-enum domain.Kind value, but project-root
-# children have NO parent kind — projects are stored in a separate
-# `projects` table without a kind column post-Drop-1.75. There is no
-# clean way to express "spawn at project creation" with the current
-# WhenParentKind closed-enum constraint.
+#   - Owner          = "STEWARD"
+#   - Persistent     = true        (per fix L9 — anchor nodes survive across drops)
+#   - DevGated       = false       (anchors do not gate dev sign-off themselves)
+#   - Kind           = "discussion" (cross-cutting, no auto-QA twins)
+#   - StructuralType = "droplet"   (terminal anchor, not cascade work; the
+#                                   closest fit since domain.NewActionItem
+#                                   rejects an empty StructuralType)
+#   - DropNumber     = 0           (anchors are not numbered drops)
 #
-# Droplet 3.20's auto-generator will need either (a) a new TOML table
-# (e.g. [[steward_seeds]]) with its own loader path, or (b) a sentinel
-# WhenParentKind value documented as the project-root marker, or (c) a
-# new ChildRule.AtProjectCreation bool. Drop 3.14 surfaces this as a
-# scope finding to the orchestrator; the encoding choice is 3.20's call.
-#
-# When 3.20 lands, each STEWARD seed should land with:
-#   - owner = "STEWARD"
-#   - persistent = true (per L9 — once that flag exists on the schema)
-#   - dev_gated = false
-#   - structural_type unset (per PLAN.md § 19.3 line 1637 — STEWARD's
-#     persistent parents are NOT drops/segments/confluences/droplets;
-#     they are long-lived coordination anchors with no cascade shape).
+# Encoding choice: option (a) from droplet 3.14's deferred comment — a
+# separate [[steward_seeds]] table with its own loader path. This keeps the
+# closed-enum ChildRule.WhenParentKind invariant intact (every [[child_rules]]
+# entry still triggers on a real Kind), while making "fires at project
+# creation" semantics explicit on a distinct top-level table rather than
+# overloading ChildRule with a sentinel parent kind or a new
+# AtProjectCreation bool. The auto-generator iterates StewardSeeds in
+# declaration order; idempotency keys on (project_id, owner, title) so
+# re-running the project-creation hook does not duplicate rows.
+
+[[steward_seeds]]
+title = "DISCUSSIONS"
+description = "Cross-cutting discussion topics. Description = converged shape, comments = audit trail of dev quotes."
+
+[[steward_seeds]]
+title = "HYLLA_FINDINGS"
+description = "Per-drop Hylla feedback aggregated by drop-orch + STEWARD."
+
+[[steward_seeds]]
+title = "LEDGER"
+description = "Per-drop ledger entries — cost, node count, refactors, descriptions. Populated post-merge by STEWARD from each drop's DROP_N_LEDGER_ENTRY level_2 finding."
+
+[[steward_seeds]]
+title = "WIKI_CHANGELOG"
+description = "Per-drop wiki changelog entries — what shifted in WIKI.md and why. Populated post-merge by STEWARD."
+
+[[steward_seeds]]
+title = "REFINEMENTS"
+description = "Perpetual refinement rollup — entries raised during drop work that did not block the drop. Populated drop-end by drop-orch via DROP_N_REFINEMENTS_RAISED."
+
+[[steward_seeds]]
+title = "HYLLA_REFINEMENTS"
+description = "Perpetual Hylla-tooling refinement rollup — entries that came out of Hylla-feedback rounds. Populated drop-end by drop-orch via DROP_N_HYLLA_REFINEMENTS_RAISED."
 
 # -----------------------------------------------------------------------------
 # [agent_bindings] — closed 12-value Kind → agent spawn parameters.

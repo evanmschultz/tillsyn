@@ -74,6 +74,12 @@ type ServiceConfig struct {
 	DefaultDeleteMode        DeleteMode
 	StateTemplates           []StateTemplate
 	AutoCreateProjectColumns bool
+	// AutoSeedStewardAnchors controls whether project + numbered-drop creation
+	// auto-materialize the cascade template's STEWARD persistent anchors and
+	// per-drop level_2 findings + refinements-gate (droplet 3.20). Defaults
+	// false so existing tests that pre-allocate a fixed ID slice are not
+	// retro-broken; production callers (cmd/till/main.go) explicitly opt in.
+	AutoSeedStewardAnchors   bool
 	CapabilityLeaseTTL       time.Duration
 	RequireAgentLease        *bool
 	AuthRequests             AuthRequestGateway
@@ -111,6 +117,7 @@ type Service struct {
 	defaultDeleteMode  DeleteMode
 	stateTemplates     []StateTemplate
 	autoProjectCols    bool
+	autoSeedSteward    bool
 	defaultLeaseTTL    time.Duration
 	requireAgentLease  bool
 	authRequests       AuthRequestGateway
@@ -180,6 +187,7 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 		defaultDeleteMode:  cfg.DefaultDeleteMode,
 		stateTemplates:     templates,
 		autoProjectCols:    cfg.AutoCreateProjectColumns,
+		autoSeedSteward:    cfg.AutoSeedStewardAnchors,
 		defaultLeaseTTL:    cfg.CapabilityLeaseTTL,
 		requireAgentLease:  requireAgentLease,
 		authRequests:       cfg.AuthRequests,
@@ -235,6 +243,12 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 		return domain.Project{}, err
 	}
 
+	if s.autoSeedSteward {
+		if err := s.seedStewardAnchors(ctx, project); err != nil {
+			return domain.Project{}, err
+		}
+	}
+
 	return project, nil
 }
 
@@ -287,6 +301,11 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if s.autoProjectCols {
 		if err := s.createDefaultColumns(ctx, project.ID, now); err != nil {
 			return domain.Project{}, err
+		}
+		if s.autoSeedSteward {
+			if err := s.seedStewardAnchors(ctx, project); err != nil {
+				return domain.Project{}, err
+			}
 		}
 	}
 	if _, err := s.enqueueProjectDocumentEmbedding(ctx, project, false, "project_created"); err != nil {
@@ -346,6 +365,11 @@ func bakeProjectKindCatalog(project *domain.Project) error {
 // 3.14 fills this in with file-system + embedded TOML resolution. Until
 // then it returns (zero, false, nil), which routes the create path through
 // the empty-catalog branch.
+//
+// Note: droplet 3.20's STEWARD-seed auto-generator does NOT depend on this
+// helper — it loads the embedded default template independently via
+// templates.LoadDefaultTemplate so seed materialization is decoupled from
+// the KindCatalog-bake fallback semantics. See seedStewardAnchors below.
 func loadProjectTemplate() (templates.Template, bool, error) {
 	return templates.Template{}, false, nil
 }
@@ -480,6 +504,24 @@ type CreateActionItemInput struct {
 	// from Role's permissive empty: the cascade-methodology shape axis is
 	// mandatory at creation time.
 	StructuralType domain.StructuralType
+	// Owner optionally tags the new action item with a principal-name
+	// string (e.g. "STEWARD"). Empty string is permitted; whitespace-only
+	// collapses to empty. Domain primitive (per L13) — not STEWARD-specific.
+	// Threaded into domain.NewActionItem; semantics per
+	// `ta-docs/cascade-methodology.md` §11.2.
+	Owner string
+	// DropNumber stores the cascade drop index. Zero is permitted (treated
+	// as "not a numbered drop"); positive values round-trip; negative values
+	// reject with ErrInvalidDropNumber via domain.NewActionItem. Domain
+	// primitive — not STEWARD-specific.
+	DropNumber int
+	// Persistent marks long-lived umbrella / anchor / perpetual-tracking
+	// nodes. Default false. Domain primitive — not STEWARD-specific.
+	Persistent bool
+	// DevGated marks nodes whose terminal transition requires dev sign-off
+	// (refinement rollups, human-verify hold points). Default false. Domain
+	// primitive — not STEWARD-specific.
+	DevGated       bool
 	ColumnID       string
 	Title          string
 	Description    string
@@ -512,10 +554,31 @@ type UpdateActionItemInput struct {
 	// value must match the closed StructuralType enum or the service
 	// returns ErrInvalidStructuralType.
 	StructuralType domain.StructuralType
-	Metadata       *domain.ActionItemMetadata
-	UpdatedBy      string
-	UpdatedByName  string
-	UpdatedType    domain.ActorType
+	// Owner optionally updates the action-item Owner field. nil preserves
+	// the existing value (no-op); non-nil sets to the dereferenced string
+	// (whitespace-trimmed). Pointer-sentinel mirrors
+	// UpdateActionItemRequest.Owner so the L1 STEWARD field-level guard at
+	// the adapter boundary can distinguish "absent" from "explicit empty".
+	// Domain primitive (per L13) — not STEWARD-specific.
+	Owner *string
+	// DropNumber optionally updates the action-item DropNumber. nil preserves
+	// the existing value (no-op); non-nil sets the dereferenced int.
+	// Negative values reject with ErrInvalidDropNumber. Pointer-sentinel
+	// rationale matches Owner above.
+	DropNumber *int
+	// Persistent optionally updates the action-item Persistent flag. nil
+	// preserves the existing value (no-op); non-nil sets the dereferenced
+	// bool. Pointer-sentinel keeps "absent" distinguishable from
+	// "explicit false" so a description-only update doesn't silently clobber
+	// a STEWARD-seeded Persistent=true anchor node.
+	Persistent *bool
+	// DevGated optionally updates the action-item DevGated flag. Same
+	// pointer-sentinel rationale as Persistent above.
+	DevGated      *bool
+	Metadata      *domain.ActionItemMetadata
+	UpdatedBy     string
+	UpdatedByName string
+	UpdatedType   domain.ActorType
 }
 
 // CreateCommentInput holds input values for create comment operations.
@@ -684,6 +747,10 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 		Scope:          scope,
 		Role:           in.Role,
 		StructuralType: in.StructuralType,
+		Owner:          in.Owner,
+		DropNumber:     in.DropNumber,
+		Persistent:     in.Persistent,
+		DevGated:       in.DevGated,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,
@@ -708,6 +775,19 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 	}
 	if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "task_created"); err != nil {
 		return domain.ActionItem{}, err
+	}
+	// Per droplet 3.20: when a level_1 numbered drop lands (parent is the
+	// project root, drop_number > 0), auto-generate the 5 STEWARD-owned
+	// drop-end findings + the refinements-gate confluence. The seeder is a
+	// no-op for non-numbered drops (drop_number == 0) and for non-level_1
+	// items (parent_id != "") so it is safe to call unconditionally for
+	// numbered level_1 drops only. The check excludes the seeder's own
+	// findings (which carry drop_number=N but live under STEWARD anchors,
+	// so parent_id != "") to prevent infinite recursion.
+	if s.autoSeedSteward && strings.TrimSpace(actionItem.ParentID) == "" && actionItem.DropNumber > 0 {
+		if err := s.seedDropFindingsAndGate(ctx, actionItem); err != nil {
+			return domain.ActionItem{}, err
+		}
 	}
 	return actionItem, nil
 }
@@ -908,6 +988,31 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 			return domain.ActionItem{}, domain.ErrInvalidStructuralType
 		}
 		actionItem.StructuralType = normalized
+		actionItem.UpdatedAt = s.clock().UTC()
+	}
+	// Owner / DropNumber / Persistent / DevGated updates use pointer
+	// sentinels: nil preserves the existing value (no-op); non-nil applies
+	// the dereferenced value. Pre-droplet-3.21 callers that did NOT supply
+	// these fields are preserved cleanly; STEWARD-owned anchor nodes seeded
+	// with Persistent=true do not get clobbered by description-only edits.
+	// Per L13, all four are domain primitives — not STEWARD-specific.
+	if in.Owner != nil {
+		actionItem.Owner = strings.TrimSpace(*in.Owner)
+		actionItem.UpdatedAt = s.clock().UTC()
+	}
+	if in.DropNumber != nil {
+		if *in.DropNumber < 0 {
+			return domain.ActionItem{}, domain.ErrInvalidDropNumber
+		}
+		actionItem.DropNumber = *in.DropNumber
+		actionItem.UpdatedAt = s.clock().UTC()
+	}
+	if in.Persistent != nil {
+		actionItem.Persistent = *in.Persistent
+		actionItem.UpdatedAt = s.clock().UTC()
+	}
+	if in.DevGated != nil {
+		actionItem.DevGated = *in.DevGated
 		actionItem.UpdatedAt = s.clock().UTC()
 	}
 	if in.Metadata != nil {

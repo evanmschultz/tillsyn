@@ -2244,6 +2244,7 @@ func executeCommandFlow(
 	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
 		DefaultDeleteMode:        app.DeleteMode(cfg.Delete.DefaultMode),
 		AutoCreateProjectColumns: true,
+		AutoSeedStewardAnchors:   true,
 		AuthRequests:             authSvc,
 		AuthBackend:              authSvc,
 		LiveWaitBroker:           liveWaitBroker,

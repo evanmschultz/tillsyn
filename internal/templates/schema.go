@@ -83,6 +83,52 @@ type Template struct {
 	// decode does not reject the reserved table. The field is excluded from
 	// any structural validation in Drop 3 and exists purely for forward-compat.
 	GateRulesRaw map[string]any `toml:"gate_rules"`
+
+	// StewardSeeds is the ordered list of long-lived coordination anchor
+	// nodes the auto-generator (droplet 3.20) materializes once at project-
+	// creation time. Per fix L3 the canonical six are DISCUSSIONS,
+	// HYLLA_FINDINGS, LEDGER, WIKI_CHANGELOG, REFINEMENTS, HYLLA_REFINEMENTS;
+	// the seed list is open-ended at the schema level so projects with their
+	// own template TOML can declare additional anchors.
+	//
+	// Per droplet 3.14's deferred comment the steward-seed encoding chose
+	// option (a): a separate [[steward_seeds]] TOML table with its own
+	// loader path. The reasoning kept the closed-enum ChildRule.WhenParentKind
+	// invariant intact (every ChildRule still triggers off a real Kind),
+	// while making "fires at project creation" semantics explicit on a
+	// distinct top-level table rather than overloading ChildRule with a
+	// sentinel parent kind or a new at-project-creation bool.
+	//
+	// Each StewardSeed materializes as a level_1 ActionItem under the
+	// project root with Owner = "STEWARD", Persistent = true, DevGated = false,
+	// Kind = "discussion" (the closest cascade fit for cross-cutting anchor
+	// nodes), and StructuralType = "droplet" (single non-decomposable anchor;
+	// per PLAN.md § 19.3 line 1637 these are not cascade work themselves but
+	// domain.NewActionItem rejects an empty StructuralType, so the closest
+	// approximation is droplet — a terminal node that does not decompose).
+	StewardSeeds []StewardSeed `toml:"steward_seeds"`
+}
+
+// StewardSeed is one persistent-anchor specification consumed by droplet
+// 3.20's auto-generator at project-creation time. Per fix L13 the type is a
+// domain primitive — STEWARD is one consumer of Owner = "STEWARD", but seed
+// rows could in principle be authored for non-STEWARD anchor patterns by
+// future templates.
+//
+// Both fields are required: an empty Title would yield a duplicate-or-nil
+// row under the project root, and an empty Description would leave the
+// anchor with no descriptive text for downstream readers. The auto-generator
+// enforces non-empty Title; Description is recommended but not strictly
+// rejected at the schema layer.
+type StewardSeed struct {
+	// Title is the literal, ALL-CAPS title applied to the seeded anchor
+	// (e.g. "DISCUSSIONS"). Per repo memory project_tillsyn_titles all
+	// Tillsyn plan-item titles are FULL UPPERCASE.
+	Title string `toml:"title"`
+
+	// Description is the seeded anchor's description prose, written into
+	// ActionItem.Description verbatim at materialization time.
+	Description string `toml:"description"`
 }
 
 // KindRule encodes one closed-enum kind's structural constraints inside a
