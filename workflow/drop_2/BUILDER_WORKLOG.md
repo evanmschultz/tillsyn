@@ -443,3 +443,67 @@ N/A — task touched only Go production + test code in 4 packages, all 8 files k
 ## Hylla Feedback
 
 N/A — task touched only Go production + test code in 3 packages, with paths fully scoped by the spawn prompt and PLAN.md acceptance criteria. The investigation pattern was a literal-pattern sweep across SQL `INSERT OR IGNORE INTO kind_catalog` strings + a `git grep` for `AllowedParentScopes`/`AllowsParentScope` across `*_test.go` to confirm no existing tests asserted on the old defaults — this is naturally fast via `git grep` and Hylla symbol-search would not have improved the workflow. No stale-ingest concerns, no symbol-search ambiguity, no ergonomic gripes for this round.
+
+## Droplet 2.9 — Round 1
+
+**Outcome:** success.
+
+**Files touched (Go code — function/test deletion):**
+
+- `internal/domain/kind.go` — deleted `AllowedParentKinds(Kind) []Kind` function (24 lines: doc-comment 5 + signature/body 18 + trailing blank 1) at the former `:94-117` block. The `strings` package import is preserved — still used by `IsValidKind`, `NormalizeKindID`, `NormalizeKindAppliesTo`, `NewKindDefinition`, `normalizeKindTemplate`. LOC delta: -24.
+- `internal/domain/domain_test.go` — deleted `TestAllowedParentKindsEncodesHierarchy` test (37 lines: doc-comment 4 + test func 32 + trailing blank 1) at the former `:796-832` block. No helper closures inside; no other test depended on it (verified via `git grep -n "AllowedParentKinds"` post-delete returning empty across all `*.go`). LOC delta: -37.
+
+**Files touched (Go code — doc-comment rewrite, narrative shape preserved):**
+
+- `internal/app/snapshot.go` (former `:449-451`):
+  - Before: `Parent-kind constraints are enforced by domain.AllowedParentKinds at action-item creation. Snapshot validation no longer special-cases the legacy KindPhase hierarchy because the 12-value Kind enum removed it.`
+  - After: `Parent-scope constraints are enforced by domain.KindDefinition.AllowsParentScope (against the kind's AllowedParentScopes list) at action-item creation. Snapshot validation no longer special-cases the legacy KindPhase hierarchy because the 12-value Kind enum removed it.`
+  - LOC delta: 3 → 5 lines (rewrap to fit the symbol-name extension). Net +2.
+- `internal/adapters/storage/sqlite/repo.go` (former `:299-304`):
+  - Before: `Seed the 12-value Kind enum into the kind catalog at boot. Scope mirrors kind (applies_to_json = ["<kind-id>"]), and the parent-scope list encodes the domain.AllowedParentKinds rule: build-qa-proof / build-qa-falsification nest under build; every other non-plan kind nests under plan; plan itself nests under plan (and accepts a project-root placement through an empty parent).`
+  - After: `Seed the 12-value Kind enum into the kind catalog at boot. Scope mirrors kind (applies_to_json = ["<kind-id>"]). Every row's allowed_parent_scopes_json is the empty list "[]" (universal-allow): domain.KindDefinition.AllowsParentScope returns true for every parent scope when AllowedParentScopes is empty (see internal/domain/kind.go AllowsParentScope early return). Per-project nesting constraints land in the future template overhaul.`
+  - LOC delta: 6 → 7 lines. Net +1. The new comment narrates the post-Drop-2.8 universal-allow contract and points at the empty-list early-return mechanism rather than the deleted function.
+
+**Files touched (Go code — scope expansion beyond PLAN-listed Paths):**
+
+- `internal/adapters/storage/sqlite/repo_test.go:2520-2525` (was `:2520-2525`, now `:2520-2524`) — removed the trailing forward-looking sentence `This is the post-Droplet-2.8 universal-allow contract — Droplet 2.9 will follow up by deleting the now-orphan domain.AllowedParentKinds helper.` and replaced with `This is the post-Droplet-2.8 universal-allow contract.`. The original comment was the only remaining textual reference to `AllowedParentKinds` in the Go tree after the four PLAN-listed edits; acceptance #1 (`git grep "AllowedParentKinds"` returns empty across the whole repo) required removing it. **Scope-expansion note:** this file was NOT in the PLAN-listed Paths but the reference was a self-fulfilling artifact created in Droplet 2.8 specifically to anticipate this droplet's cleanup; removing it is implied by acceptance #1. LOC delta: 6 → 5 lines. Net -1.
+
+**Files touched (state-flips):**
+
+- `workflow/drop_2/PLAN.md` (Droplet 2.9 row): `**State:** todo` → `**State:** in_progress` at start of work; `**State:** in_progress` → `**State:** done` after `mage ci` green.
+
+**Files touched (worklog):**
+
+- `workflow/drop_2/BUILDER_WORKLOG.md` — this entry.
+
+**Mage gates (incremental):**
+
+- `mage test-pkg ./internal/domain` — 108/108 pass (0.26s).
+- `mage test-pkg ./internal/app` — 206/206 pass (1.28s).
+- `mage test-pkg ./internal/adapters/storage/sqlite` — 70/70 pass (1.03s).
+
+**Mage ci (whole-tree):**
+
+- 1391/1391 tests pass across 19 packages. Coverage threshold met: minimum 70.0% across every package (`internal/tui` at 70.0%, `internal/app` at 71.6%, `internal/adapters/storage/sqlite` at 75.1%, `internal/domain` at 79.4%). `till` binary build succeeded.
+- **Test count delta:** 1392 (post-2.8) → 1391 (post-2.9), exactly 1 test removed, matching the deletion of `TestAllowedParentKindsEncodesHierarchy`.
+
+**Acceptance verification:**
+
+- `git grep "AllowedParentKinds" -- '*.go'` returns empty (exit 1, no output) — every Go-tree reference deleted/rewritten.
+- `git grep "AllowedParentKinds"` (whole repo) still returns hits in MD planning/audit-trail files (`PLAN.md`, `workflow/drop_2/PLAN.md`, `workflow/drop_2/BUILDER_QA_PROOF.md`, `workflow/drop_2/BUILDER_WORKLOG.md`, `workflow/drop_2/PLAN_QA_FALSIFICATION.md`, `workflow/drop_2/PLAN_QA_PROOF.md`) — these are historical planning prose + audit-trail artifacts naming the deleted symbol as a description of what Drop 2 does. The "NEVER remove workflow drop files" rule + the audit-trail-load-bearing rule from MEMORY mean these MDs are not edited. The practical interpretation of acceptance #1 is the Go-tree sweep, which is empty.
+- `internal/app/kind_capability.go:566` enforcement path is unchanged (verified by `mage test-pkg ./internal/app` and `mage ci` green); it calls `kind.AllowsParentScope(parent.Scope)`, never `AllowedParentKinds`.
+- DB action: none (code-deletion only, no schema or data shape change). Confirmed by tests passing on the dev's existing fresh DB without any schema migration step.
+
+**Notes / scope discipline:**
+
+- **Function deletion is clean.** The `AllowedParentKinds` switch was self-contained — no helpers it was the sole caller of, no dependent constants. The `strings` package import in `kind.go` survives because 11 other call-sites in the file use `strings.TrimSpace` / `strings.ToLower`.
+- **Test deletion is clean.** `TestAllowedParentKindsEncodesHierarchy` was a single self-contained `func TestX(t *testing.T) { ... }` block with an internal `tests := []struct{...}{...}` table. No helper functions defined inside; no shared fixtures with siblings.
+- **Doc-comment rewrites preserve narrative shape.** Both rewrites swap the symbol reference (`domain.AllowedParentKinds` → `domain.KindDefinition.AllowsParentScope` + the empty-list mechanism) without losing the contextual prose around them. The `snapshot.go` comment still anchors the reader on action-item-creation enforcement; the `repo.go` comment still anchors the reader on what each seeded row's parent-scope list means.
+- **Scope expansion logged.** `repo_test.go:2520-2525` was edited despite not being in the PLAN-listed Paths. This is a one-line trim of a forward-looking comment authored in Droplet 2.8 specifically to anticipate this droplet — removing it is the natural consequence of completing 2.9, and acceptance #1's whole-repo `git grep` framing requires it for any Go-tree clean-room interpretation. Reporting per agent rules ("don't silently expand scope").
+- **Pre-MVP no-migration rule honored.** No SQL, no Go migration code, no `till migrate` CLI surface. Pure code deletion + doc-comment text changes.
+
+**PLAN.md state confirmation:** Droplet 2.9 flipped `todo` → `in_progress` at start of work, then `in_progress` → `done` after `mage ci` green.
+
+## Hylla Feedback
+
+N/A — task touched only Go production + test code in 3 PLAN-listed packages plus 1 audit-trail trim, with paths fully scoped by the spawn prompt and PLAN.md acceptance criteria. Investigation was a `git grep "AllowedParentKinds"` enumeration (instant, language-agnostic) plus a `LSP findReferences` symbol-reference confirmation (3 references: definition + 2 test usages, exactly matching the deletion plan). Hylla symbol-search was not needed — the deletion target was named explicitly in the PLAN, and `git grep` was the right tool for the whole-tree completeness check (acceptance #1). No stale-ingest concerns, no symbol-search ambiguity, no ergonomic gripes for this round.
