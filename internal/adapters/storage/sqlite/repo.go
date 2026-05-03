@@ -1418,6 +1418,59 @@ func (r *Repository) ListActionItemsByParent(ctx context.Context, projectID, par
 	return out, rows.Err()
 }
 
+// FindActionItemByOwnerAndTitle returns the action item whose owner + title
+// pair matches inside the supplied project. The query shape mirrors the
+// (project_id, owner, title) prefix of the idx_action_items_owner_title
+// index landed in droplet 3.18, so SQLite plans this as an equality lookup
+// against that index. Returns ErrNotFound when no row matches; the LIMIT 1
+// guard collapses any accidental duplicate to the first row by canonical
+// id-ascending tiebreak so callers see deterministic behavior.
+func (r *Repository) FindActionItemByOwnerAndTitle(ctx context.Context, projectID, owner, title string) (domain.ActionItem, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+		FROM action_items
+		WHERE project_id = ? AND owner = ? AND title = ?
+		ORDER BY id ASC
+		LIMIT 1
+	`, projectID, owner, title)
+	return scanActionItem(row)
+}
+
+// ListActionItemsByDropNumber returns every action item in the supplied
+// project that carries the requested drop_number, ordered deterministically
+// by created_at ASC, id ASC so callers can assert exact sequences in tests.
+// The (project_id, drop_number) prefix matches the index introduced in
+// droplet 3.18 — idx_action_items_drop_number(project_id, drop_number, owner)
+// — so SQLite plans this as an index range scan. Archived rows are included;
+// the auto-generator (droplet 3.20) needs the full set for refinements-gate
+// blocked_by enumeration.
+func (r *Repository) ListActionItemsByDropNumber(ctx context.Context, projectID string, dropNumber int) ([]domain.ActionItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+		FROM action_items
+		WHERE project_id = ? AND drop_number = ?
+		ORDER BY created_at ASC, id ASC
+	`, projectID, dropNumber)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []domain.ActionItem{}
+	for rows.Next() {
+		actionItem, err := scanActionItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, actionItem)
+	}
+	return out, rows.Err()
+}
+
 // DeleteActionItem deletes actionItem.
 func (r *Repository) DeleteActionItem(ctx context.Context, id string) error {
 	tx, err := r.db.BeginTx(ctx, nil)

@@ -652,6 +652,59 @@ func (f *fakeRepo) ListActionItemsByParent(_ context.Context, projectID, parentI
 	return out, nil
 }
 
+// FindActionItemByOwnerAndTitle returns the first action item in the project
+// matching the supplied owner + title pair. Mirrors the SQLite-side adapter
+// contract used by the auto-generator (droplet 3.20). Returns ErrNotFound
+// when no row matches. Iteration is deterministic by id ASC so callers can
+// assert exact behavior.
+func (f *fakeRepo) FindActionItemByOwnerAndTitle(_ context.Context, projectID, owner, title string) (domain.ActionItem, error) {
+	matches := make([]domain.ActionItem, 0)
+	for _, t := range f.tasks {
+		if t.ProjectID != projectID {
+			continue
+		}
+		if t.Owner != owner {
+			continue
+		}
+		if t.Title != title {
+			continue
+		}
+		matches = append(matches, t)
+	}
+	if len(matches) == 0 {
+		return domain.ActionItem{}, ErrNotFound
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].ID < matches[j].ID
+	})
+	return matches[0], nil
+}
+
+// ListActionItemsByDropNumber returns every action item in the supplied
+// project whose DropNumber matches dropNumber, ordered deterministically by
+// CreatedAt ASC, ID ASC. Mirrors the SQLite-side adapter contract used by
+// the auto-generator (droplet 3.20). Includes archived rows; callers filter
+// at the call site.
+func (f *fakeRepo) ListActionItemsByDropNumber(_ context.Context, projectID string, dropNumber int) ([]domain.ActionItem, error) {
+	out := make([]domain.ActionItem, 0, len(f.tasks))
+	for _, t := range f.tasks {
+		if t.ProjectID != projectID {
+			continue
+		}
+		if t.DropNumber != dropNumber {
+			continue
+		}
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
 // DeleteActionItem deletes actionItem.
 func (f *fakeRepo) DeleteActionItem(_ context.Context, id string) error {
 	actionItem, ok := f.tasks[id]
