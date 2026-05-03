@@ -78,7 +78,7 @@ func TestTemplateTOMLRoundTrip(t *testing.T) {
 				AutoPush:             true,
 				CommitAgent:          "commit-agent",
 				BlockedRetries:       2,
-				BlockedRetryCooldown: 30 * time.Second,
+				BlockedRetryCooldown: Duration(30 * time.Second),
 			},
 		},
 	}
