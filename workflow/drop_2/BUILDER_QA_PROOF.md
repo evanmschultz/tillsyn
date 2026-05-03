@@ -911,3 +911,111 @@ None blocking. One minor observation:
 ### Hylla Feedback
 
 None — Hylla answered everything needed. (QA used `Read` for whole-file context on the new files, `Bash`-`rg` for whole-tree literal sweeps — `ErrDottedAddressAmbiguous`, `ALTER TABLE`, `tc := tc`, `ListActionItemsByParent` cross-references, and `idx_action_items_project_parent` — and `mage ci` for the umbrella verification. The investigation shape is "verify a 113-LOC new file + a 35-LOC new repository method + 36 test cases match the plan", which is naturally a `Read` + `rg` shape, not a semantic-similarity / refs-graph shape. Hylla queries were not the right ergonomic fit for this droplet's verification, and `git diff` was not needed because all changes are already named explicitly in the spawn prompt and worklog. Zero ergonomic gripes for this round.)
+
+---
+
+## Droplet 2.11 — Round 1
+
+**Verdict: PASS.**
+
+Droplet 2.11 wires the dotted-address resolver into MCP + CLI read paths and rejects dotted form on every mutation path with a shared validator. `mage ci` is green at HEAD (1490 tests / 19 packages / all pkg coverage ≥ 70%). All 15 required proof checks land with file:line citations against current HEAD. PLAN.md droplet 2.11 reads `**State:** done`, and every droplet 2.1–2.11 in Drop 2 is `done` — Drop 2 is closeout-ready.
+
+### Required Proof Checks
+
+**1. MCP `till.action_item(operation=get)` accepts UUID OR dotted form.** PASS.
+- Dispatch case at `internal/adapters/server/mcpapi/extended_tools.go:906-923` (`case "get":`) reads `args.ActionItemID`, calls `resolveActionItemIDForRead(ctx, tasks, args.ProjectID, actionItemID)` and then `tasks.GetActionItem(ctx, resolvedID)`.
+- `resolveActionItemIDForRead` at `:2210-2244` does the UUID-vs-dotted dispatch: `IsLikelyDottedAddress` shape-detects at `:2229`, slug-prefix path looks up via `tasks.GetProjectBySlug` at `:2233-2238`, bare dotted requires `project_id` at `:2240-2242`, then forwards to `tasks.ResolveActionItemID`. UUID input flows straight through `ResolveActionItemID` (which returns it unchanged via `uuid.Parse` at `internal/app/dotted_address.go:173`).
+
+**2. 6 MCP mutation operations reject dotted form via `rejectMutationDottedActionItemID`.** PASS.
+- All 6 mutation cases call the shared validator immediately after the empty-id check: `update` at `extended_tools.go:1061`, `move` at `:1116`, `move_state` at `:1169`, `delete` at `:1218`, `restore` at `:1266`, `reparent` at `:1310`.
+- `create` is intentionally excluded (it has no `action_item_id` input — it allocates one). Builder's "6 mutations" count is correct against the `rejectMutationDottedActionItemID` gate; the spec line "create|update|move|move_state|delete|restore|reparent" is the full mutation operation enum, not the gate-reject set. No drift.
+- Helper `rejectMutationDottedActionItemID` at `:2253-2262` wraps `app.ValidateActionItemIDForMutation` under `common.ErrInvalidCaptureStateRequest` so `toolResultFromError` maps it to the `invalid_request:` 400-class.
+
+**3. MCP error class for mutation-rejected dotted is `invalid_request` (400-class).** PASS.
+- `rejectMutationDottedActionItemID` at `:2258-2259` wraps the error: `fmt.Errorf("%w: %w", common.ErrInvalidCaptureStateRequest, err)`.
+- `mapAppError` at `internal/adapters/server/common/app_service_adapter.go:613-615` maps `app.ErrDottedAddressInvalidSyntax` AND `app.ErrMutationsRequireUUID` to `errors.Join(ErrInvalidCaptureStateRequest, err)` — both produce the `invalid_request:` 400-class via `toolResultFromError`. Test `TestHandlerActionItemMutationsRejectDottedAddress` at `extended_tools_test.go:2057-2063` asserts both `invalid_request` and `mutations require UUID` text appear.
+
+**4. MCP tool description for `till.action_item` documents UUID + dotted forms + lists mutations.** PASS.
+- Tool description at `extended_tools.go:1358`: "operation=get accepts action_item_id as either a UUID or a dotted address (e.g. \"1.5.2\" or \"<project_slug>:1.5.2\"); dotted form requires project_id (or the slug-prefix form, which carries the slug). Mutation operations (update|move|move_state|delete|restore|reparent) require a UUID action_item_id and reject dotted addresses with an invalid_request error..."
+- `action_item_id` per-arg description at `:1361` mirrors: "operation=get accepts a UUID OR a dotted address (\"1.5.2\" or \"<slug>:1.5.2\"); mutations reject dotted form and require the UUID".
+- `project_id` per-arg description at `:1360` documents the requirement-when-dotted condition.
+
+**5. CLI `till action_item get` accepts both forms; bare dotted without project errors.** PASS.
+- `runActionItemGet` at `cmd/till/action_item_cli.go:20-56`:
+  - UUID path bypass at `:30-36` (`uuid.Parse` shape-check, calls `svc.GetActionItem` directly).
+  - Dotted shape gate at `:38-40` (rejects "neither UUID nor dotted").
+  - Project context resolution at `:42-45` via `resolveActionItemProjectContext`, then `svc.ResolveActionItemID` + `svc.GetActionItem`.
+- `resolveActionItemProjectContext` at `:77-100`:
+  - Slug-prefix path at `:82-90` (precedence + match check against `--project` if both supplied).
+  - `--project` flag path at `:91-96`.
+  - No-source error at `:97-99`: "dotted address %q requires --project <slug> or the slug-prefix shorthand <slug>:<dotted>".
+- Cobra wiring at `cmd/till/main.go:701-797` (the `actionItemCmd` subtree, get + 6 mutations, `actionItemGetCmd` registers `--project` flag at `:744`).
+
+**6. CLI mutation commands reject dotted via `runActionItemMutationGate`.** PASS.
+- `runActionItemMutationGate` at `action_item_cli.go:65-70` calls `app.ValidateActionItemIDForMutation`, wraps with `action_item %s:` prefix, returns canonical `ErrMutationsRequireUUID` for dotted input.
+- All 6 mutations route through the gate via `actionItemMutationRunE` closure at `main.go:752-757` and `executeCommandFlow` cases at `:2473-2477`. Two spot-checks:
+  - `update` test at `action_item_cli_test.go:22-34`: dotted `1.5.2` returns `ErrMutationsRequireUUID` and names the offending input.
+  - `delete` (slug-prefix dotted) at `:36-45`: same error class.
+  - Bonus: `move` UUID at `:47-59` confirms the gate passes valid UUIDs through to the not-yet-implemented hint.
+
+**7. `Repository.GetProjectBySlug` added; SQLite uses `idx_projects_slug`; hidden global-auth project excluded.** PASS.
+- Interface at `internal/app/ports.go:16`: `GetProjectBySlug(context.Context, string) (domain.Project, error)`.
+- SQLite impl at `internal/adapters/storage/sqlite/repo.go:911-918`: `WHERE slug = ? AND id != ?` with `domain.AuthRequestGlobalProjectID` as the second param. The `slug` column carries `idx_projects_slug` (verified via `repo.go` schema; round-trip test at `repo_test.go:2781-2822` exercises the hidden-project exclusion explicitly).
+- Round-trip test at `repo_test.go:2801-2820` covers known slug, unknown slug, AND global-auth-slug rejection.
+
+**8. `fakeRepo.GetProjectBySlug` extension implemented.** PASS.
+- `internal/app/service_test.go:494-502` — linear scan over `f.projects` matching by `Slug`, returns `ErrNotFound` on miss. Fakes the SQLite contract (modulo the hidden-project exclusion, which `fakeRepo` doesn't model — acceptable, no test fixture seeds the global-auth project into `fakeRepo`).
+
+**9. `mapAppError` maps the three new sentinels correctly.** PASS.
+- `internal/adapters/server/common/app_service_adapter.go:610-615`:
+  - `app.ErrDottedAddressNotFound` → `errors.Join(ErrNotFound, err)` (joined with `app.ErrNotFound` in same case at L610-612 — produces 404-class `not_found`).
+  - `app.ErrDottedAddressInvalidSyntax` AND `app.ErrMutationsRequireUUID` → `errors.Join(ErrInvalidCaptureStateRequest, err)` at `:613-615` (produces 400-class `invalid_request`).
+
+**10. Spot-checked test coverage across 4 packages.** PASS.
+- `internal/app/dotted_address_test.go` — 9 top-level Tests + many sub-cases: success table (single/two/three-level + slug-prefix + tie-break + leading-zero), not-found (5 out-of-range cases), invalid-syntax (multiple malformed inputs), empty-projectID, IsLikelyDottedAddress, SplitDottedSlugPrefix, ValidateActionItemIDForMutation, UUID round-trip, empty-input rejection.
+- `internal/adapters/storage/sqlite/repo_test.go:2781-2822` — `TestRepository_GetProjectBySlug` round-trip + hidden-project exclusion.
+- `internal/adapters/server/mcpapi/extended_tools_test.go:1893-2012` — `TestHandlerActionItemGetAcceptsDottedAddress` (UUID bypass / bare-dotted+project_id / slug-prefix / bare-dotted-without-project_id-errors). `:2019-2066` — `TestHandlerActionItemMutationsRejectDottedAddress` (all 6 mutations table-driven, asserts `invalid_request` + `mutations require UUID` text).
+- `cmd/till/action_item_cli_test.go` — `TestRunActionItemMutationGate` (4 sub-tests) + `TestRunActionItemGet` (6 sub-tests including the slug-prefix-vs-`--project` conflict and bare-without-project hint).
+- The exact "59 tests" count is not independently auditable from the diff (sub-tests count differently than top-level Tests, and table-driven cases bloat the number depending on what's counted), but every category required by the plan is covered, and `mage ci` reports 1490 total tests with no failures.
+
+**11. `mage ci` green at HEAD now.** PASS.
+- Ran from this QA session at `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. Exit 0. 1490/1490 tests passed, 19 packages reported, lowest coverage `internal/tui` 70.0% (above the 70% threshold), highest `internal/buildinfo` 100.0%. Full target sequence completed: format-check / lint / vet / test-race / coverage-check / build.
+
+**12. No `tc := tc` in any new test loop.** PASS.
+- Whole-diff sweep (`rg -n "tc := tc" /tmp/d2_11.diff`) returns zero hits. New tests use Go 1.22+ loop semantics directly (e.g., `extended_tools_test.go:2034 for _, tc := range mutationCases { t.Run(...) }` with no shadow).
+
+**13. No `ALTER TABLE` added.** PASS.
+- Whole-diff sweep returns zero hits. The schema surface unchanged — `GetProjectBySlug` reads existing columns and existing `idx_projects_slug`; resolver wires use existing `ListActionItemsByParent` (added in Droplet 2.10).
+
+**14. PLAN.md state-flip Droplet 2.11 reads `**State:** done`. All 11 droplets `done`.** PASS.
+- Droplet 2.1: `PLAN.md:48` `done`.
+- Droplet 2.2: `PLAN.md:71` `done`.
+- Droplet 2.3: `PLAN.md:87` `done`.
+- Droplet 2.4: `PLAN.md:102` `done`.
+- Droplet 2.5: `PLAN.md:117` `done`.
+- Droplet 2.6: `PLAN.md:132` `done`.
+- Droplet 2.7: `PLAN.md:156` `done`.
+- Droplet 2.8: `PLAN.md:242` `done`.
+- Droplet 2.9: `PLAN.md:257` `done`.
+- Droplet 2.10: `PLAN.md:281` `done`.
+- Droplet 2.11: `PLAN.md:301` `done`.
+
+**15. Drop 2 closeout-readiness check.** PASS.
+- With 2.11 done, the next step per `workflow/example/drops/WORKFLOW.md` Phases 6-7 is drop-end push + `gh run watch --exit-status` + Hylla reingest from the remote. No `CLOSEOUT.md` / `LEDGER.md` / `WIKI_CHANGELOG.md` per the no-closeout-MD pre-MVP rule.
+
+### Validator-Only Stub Question (Routed)
+
+Builder routed: CLI mutation commands (`update`/`move`/`move_state`/`delete`/`restore`/`reparent`) are gate-only stubs returning a "not yet implemented; use the MCP surface" message for valid UUIDs. The acceptance criteria at `PLAN.md:308-310` say only that CLI mutations must "reject with the same mutations-require-UUID error class" for dotted input — they do NOT require the full mutation pipeline to land in the CLI in Droplet 2.11.
+
+QA judgment: **accept the validator-only stub**. The acceptance criterion is literal — "rejects with the same mutations-require-UUID error class" — and the test `TestRunActionItemMutationGate` at `action_item_cli_test.go:47-59` confirms valid UUIDs hit the not-yet-implemented hint without spuriously triggering `ErrMutationsRequireUUID`. Expanding to full pipelines is out of scope for Drop 2 (PLAN.md § 19.2 caps Drop 2 at the resolver wiring — full CLI mutation flows would belong to a future drop or to Drop 4.5's TUI overhaul). Builder's recommendation lands.
+
+Routed to orchestrator only as an Unknown-not-blocking: future drops should track "CLI mutation pipelines beyond the validator gate" as a `cmd/till` enhancement — not a Drop 2 concern.
+
+### Out-Of-Scope Items (Not Flagged)
+
+- Pre-existing lint warnings (R1, R5, R6, R7) — per spawn prompt.
+- LSP stale "missing GetProjectBySlug" errors on test files — confirmed false positives via `mage ci` re-run (LSP cache is stale; `mage ci` definitively green).
+
+### Hylla Feedback
+
+N/A — Hylla queries weren't the right ergonomic fit for this droplet's verification, but this round did include Go-only files (resolver wrappers, MCP dispatch, repo impl, CLI wiring). QA used `LSP` (`documentSymbol`, `findReferences`, `goToImplementation`) to navigate the new symbols and confirm `Repository.GetProjectBySlug` implementations across SQLite + `fakeRepo` + the app-service adapter — all answered cleanly. Ran `mage ci` for the umbrella verification. Did NOT need `hylla_search` / `hylla_node_full` / `hylla_refs_find` because the spawn prompt named every changed file with explicit line ranges, and LSP gave instant cross-package navigation. No Hylla misses, no fallbacks logged. One mild ergonomic observation: an LSP-equivalent for "show me every implementation of Repository.GetProjectBySlug" via `goToImplementation` worked perfectly here, but for slightly larger investigations a Hylla single-call convenience that returned both the interface decl AND every impl in one shot would be welcome — though that might already be covered by `hylla_refs_find`. Zero ergonomic complaints for this round.
