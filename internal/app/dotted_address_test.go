@@ -82,7 +82,7 @@ func dottedFixture(t *testing.T) (*fakeRepo, string) {
 	}
 
 	for _, s := range specs {
-		item, err := domain.NewActionItem(domain.ActionItemInput{
+		item, err := domain.NewActionItemForTest(domain.ActionItemInput{
 			ID:        s.id,
 			ProjectID: project.ID,
 			ParentID:  s.parentID,

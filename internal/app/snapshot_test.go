@@ -28,8 +28,8 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	repo.columns[c1.ID] = c1
 	repo.columns[c2.ID] = c2
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: p1.ID, ColumnID: c1.ID, Position: 0, Title: "ActionItem A", Priority: domain.PriorityLow, Kind: domain.KindPlan}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t2", ProjectID: p2.ID, ColumnID: c2.ID, Position: 0, Title: "ActionItem B", Priority: domain.PriorityHigh, Kind: domain.KindPlan}, now)
+	t1, _ := domain.NewActionItemForTest(domain.ActionItemInput{ID: "t1", ProjectID: p1.ID, ColumnID: c1.ID, Position: 0, Title: "ActionItem A", Priority: domain.PriorityLow, Kind: domain.KindPlan}, now)
+	t2, _ := domain.NewActionItemForTest(domain.ActionItemInput{ID: "t2", ProjectID: p2.ID, ColumnID: c2.ID, Position: 0, Title: "ActionItem B", Priority: domain.PriorityHigh, Kind: domain.KindPlan}, now)
 	t2.Archive(now.Add(2 * time.Minute))
 	repo.tasks[t1.ID] = t1
 	repo.tasks[t2.ID] = t2
@@ -182,7 +182,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 
 	existingProject, _ := domain.NewProject("p1", "Old Name", "", now)
 	existingCol, _ := domain.NewColumn("c1", existingProject.ID, "Old Col", 0, 0, now)
-	existingActionItem, _ := domain.NewActionItem(domain.ActionItemInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old ActionItem", Priority: domain.PriorityLow, Kind: domain.KindPlan}, now)
+	existingActionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old ActionItem", Priority: domain.PriorityLow, Kind: domain.KindPlan}, now)
 
 	repo.projects[existingProject.ID] = existingProject
 	repo.columns[existingCol.ID] = existingCol
@@ -457,7 +457,7 @@ func TestSnapshotActionItemRoleRoundTripPreservesAllRoles(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			original, err := domain.NewActionItem(domain.ActionItemInput{
+			original, err := domain.NewActionItemForTest(domain.ActionItemInput{
 				ID:        "t-role",
 				ProjectID: "p1",
 				ColumnID:  "c1",
@@ -487,7 +487,7 @@ func TestSnapshotActionItemRoleRoundTripPreservesAllRoles(t *testing.T) {
 // JSON key on serialize.
 func TestSnapshotActionItemRoleEmptyRoundTripsEmpty(t *testing.T) {
 	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
-	original, err := domain.NewActionItem(domain.ActionItemInput{
+	original, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:        "t-empty-role",
 		ProjectID: "p1",
 		ColumnID:  "c1",

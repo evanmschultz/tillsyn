@@ -572,12 +572,18 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 	}
 
 	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
-		ID:             s.idGen(),
-		ProjectID:      in.ProjectID,
-		ParentID:       in.ParentID,
-		Kind:           domain.Kind(kindDef.ID),
-		Scope:          scope,
-		Role:           in.Role,
+		ID:        s.idGen(),
+		ProjectID: in.ProjectID,
+		ParentID:  in.ParentID,
+		Kind:      domain.Kind(kindDef.ID),
+		Scope:     scope,
+		Role:      in.Role,
+		// StructuralType defaults to droplet — the dominant cascade-leaf
+		// shape — until CreateActionItemInput grows a StructuralType field
+		// in a follow-up droplet that threads it through the CLI / MCP
+		// surfaces. NewActionItem rejects empty StructuralType with
+		// ErrInvalidStructuralType, so the default must be supplied here.
+		StructuralType: domain.StructuralTypeDroplet,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,

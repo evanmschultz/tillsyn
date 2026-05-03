@@ -114,7 +114,7 @@ func TestRepository_ProjectColumnActionItemLifecycle(t *testing.T) {
 	}
 
 	due := now.Add(24 * time.Hour)
-	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          "t1",
 		ProjectID:   project.ID,
@@ -201,7 +201,7 @@ func TestRepository_ActionItemEmbeddingsRoundTrip(t *testing.T) {
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -293,7 +293,7 @@ func TestRepository_EmbeddingDocumentsRoundTripMixedSubjectFamilies(t *testing.T
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -435,7 +435,7 @@ func TestRepository_ListCommentTargets(t *testing.T) {
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t-comment-targets",
 		ProjectID: project.ID,
@@ -904,7 +904,7 @@ func TestRepository_DeleteProjectCascades(t *testing.T) {
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -1243,7 +1243,7 @@ func TestRepositoryUpdateNotFound(t *testing.T) {
 		t.Fatalf("expected app.ErrNotFound for UpdateColumn, got %v", err)
 	}
 
-	tk, _ := domain.NewActionItem(domain.ActionItemInput{
+	tk, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "missing-actionItem",
 		ProjectID: "missing",
@@ -1282,7 +1282,7 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 		t.Fatalf("CreateColumn(done) error = %v", err)
 	}
 
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
@@ -1429,7 +1429,7 @@ func TestRepository_ActionItemLifecyclePreservesMutationActorName(t *testing.T) 
 			if err := repo.CreateColumn(baseCtx, todo); err != nil {
 				t.Fatalf("CreateColumn() error = %v", err)
 			}
-			actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+			actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 				Kind:      domain.KindPlan,
 				ID:        "t1",
 				ProjectID: project.ID,
@@ -2148,7 +2148,7 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	if err := repo.CreateColumn(ctx, column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:        "t-scope",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2172,7 +2172,7 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 		t.Fatalf("expected persisted actionItem scope phase, got %q", loadedActionItem.Scope)
 	}
 
-	nestedPhaseActionItem, err := domain.NewActionItem(domain.ActionItemInput{
+	nestedPhaseActionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:        "t-nested-phase",
 		ProjectID: project.ID,
 		ParentID:  actionItem.ID,
@@ -2223,7 +2223,7 @@ func TestRepository_PersistsActionItemRole(t *testing.T) {
 
 	// Empty-role item: confirms the empty-string default round-trips and that
 	// the SELECT/INSERT column ordering does not crash on the zero value.
-	emptyItem, err := domain.NewActionItem(domain.ActionItemInput{
+	emptyItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:        "t-role-empty",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2248,7 +2248,7 @@ func TestRepository_PersistsActionItemRole(t *testing.T) {
 
 	// Builder-role item: confirms a closed-enum value round-trips through
 	// create + get.
-	builderItem, err := domain.NewActionItem(domain.ActionItemInput{
+	builderItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:        "t-role-builder",
 		ProjectID: project.ID,
 		ColumnID:  column.ID,
@@ -2681,7 +2681,7 @@ func TestRepository_ListActionItemsByParent(t *testing.T) {
 	}
 
 	for _, s := range specs {
-		item, err := domain.NewActionItem(domain.ActionItemInput{
+		item, err := domain.NewActionItemForTest(domain.ActionItemInput{
 			ID:        s.id,
 			ProjectID: s.projectID,
 			ParentID:  s.parentID,

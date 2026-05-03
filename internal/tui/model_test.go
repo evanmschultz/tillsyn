@@ -14675,13 +14675,19 @@ func mustNewKindDefinitionForTest(id domain.KindID, displayName string, appliesT
 // inputs that omit Kind still construct valid rows. Empty Kind defaults to
 // KindPlan (and Scope to KindAppliesToPlan) to mirror the historical test
 // convention where fakeService treated every uninstantiated row as a leaf plan.
-// Callers that need a specific kind continue to pass one explicitly.
+// Empty StructuralType defaults to StructuralTypeDroplet (droplet 3.2) so
+// pre-droplet-3.2 fixtures that omit StructuralType still construct valid rows.
+// Callers that need a specific kind or structural type continue to pass them
+// explicitly.
 func newActionItemForTest(in domain.ActionItemInput, now time.Time) (domain.ActionItem, error) {
 	if strings.TrimSpace(string(in.Kind)) == "" {
 		in.Kind = domain.KindPlan
 	}
 	if strings.TrimSpace(string(in.Scope)) == "" {
 		in.Scope = domain.KindAppliesTo(in.Kind)
+	}
+	if strings.TrimSpace(string(in.StructuralType)) == "" {
+		in.StructuralType = domain.StructuralTypeDroplet
 	}
 	return domain.NewActionItem(in, now)
 }
@@ -14858,6 +14864,8 @@ func TestActionItemSchemaCoverageIsExplicit(t *testing.T) {
 		"Kind":           {},
 		"Scope":          {},
 		"Role":           {},
+		"StructuralType": {},
+		"Irreducible":    {},
 		"LifecycleState": {},
 		"ColumnID":       {},
 		"Position":       {},

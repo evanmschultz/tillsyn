@@ -128,7 +128,7 @@ func TestColumnMutations(t *testing.T) {
 func TestNewActionItemDefaultsAndLabels(t *testing.T) {
 	now := time.Now()
 	due := now.Add(24 * time.Hour)
-	actionItem, err := NewActionItem(ActionItemInput{
+	actionItem, err := NewActionItemForTest(ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -235,13 +235,14 @@ func TestNewActionItemRoleValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			actionItem, err := NewActionItem(ActionItemInput{
-				ID:        "t-role",
-				ProjectID: "p1",
-				ColumnID:  "c1",
-				Position:  0,
-				Title:     "x",
-				Kind:      KindBuild,
-				Role:      tc.input,
+				ID:             "t-role",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				Role:           tc.input,
 			}, now)
 			if err != tc.wantErr {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
@@ -256,10 +257,57 @@ func TestNewActionItemRoleValidation(t *testing.T) {
 	}
 }
 
+// TestNewActionItemStructuralTypeValidation covers the closed StructuralType
+// enum on the mandatory StructuralType field. Unlike Role's permissive empty,
+// StructuralType MUST be supplied — empty and whitespace-only inputs reject
+// with ErrInvalidStructuralType. Each of the four enum members round-trips,
+// and an unknown value rejects.
+func TestNewActionItemStructuralTypeValidation(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name    string
+		input   StructuralType
+		wantST  StructuralType
+		wantErr error
+	}{
+		{name: "drop", input: StructuralTypeDrop, wantST: StructuralTypeDrop, wantErr: nil},
+		{name: "segment", input: StructuralTypeSegment, wantST: StructuralTypeSegment, wantErr: nil},
+		{name: "confluence", input: StructuralTypeConfluence, wantST: StructuralTypeConfluence, wantErr: nil},
+		{name: "droplet", input: StructuralTypeDroplet, wantST: StructuralTypeDroplet, wantErr: nil},
+		{name: "empty rejects", input: "", wantST: "", wantErr: ErrInvalidStructuralType},
+		{name: "whitespace rejects", input: "   ", wantST: "", wantErr: ErrInvalidStructuralType},
+		{name: "unknown rejects", input: StructuralType("foobar"), wantST: "", wantErr: ErrInvalidStructuralType},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-st",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: tc.input,
+			}, now)
+			if err != tc.wantErr {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if actionItem.StructuralType != tc.wantST {
+				t.Fatalf("StructuralType = %q, want %q", actionItem.StructuralType, tc.wantST)
+			}
+		})
+	}
+}
+
 // TestActionItemMoveUpdateArchiveRestore verifies behavior for the covered scenario.
 func TestActionItemMoveUpdateArchiveRestore(t *testing.T) {
 	now := time.Now()
-	actionItem, err := NewActionItem(ActionItemInput{
+	actionItem, err := NewActionItemForTest(ActionItemInput{
 		ID:        "t1",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -301,7 +349,7 @@ func TestActionItemMoveUpdateArchiveRestore(t *testing.T) {
 func TestNewActionItemRichMetadataAndDefaults(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	lastVerified := now.Add(-time.Hour)
-	actionItem, err := NewActionItem(ActionItemInput{
+	actionItem, err := NewActionItemForTest(ActionItemInput{
 		ID:        "t-rich",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -361,7 +409,7 @@ func TestNewActionItemRichMetadataAndDefaults(t *testing.T) {
 // TestActionItemLifecycleTransitions verifies behavior for the covered scenario.
 func TestActionItemLifecycleTransitions(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	actionItem, err := NewActionItem(ActionItemInput{
+	actionItem, err := NewActionItemForTest(ActionItemInput{
 		ID:        "t-state",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -523,7 +571,7 @@ func TestChecklistItemUnmarshalRejectsLegacyDoneKey(t *testing.T) {
 // TestActionItemContractUnmetChecks verifies behavior for the covered scenario.
 func TestActionItemContractUnmetChecks(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	actionItem, err := NewActionItem(ActionItemInput{
+	actionItem, err := NewActionItemForTest(ActionItemInput{
 		ID:        "t-contract",
 		ProjectID: "p1",
 		ColumnID:  "c1",
@@ -566,7 +614,7 @@ func TestActionItemContractUnmetChecks(t *testing.T) {
 // TestNewActionItemRejectsInvalidMetadata verifies behavior for the covered scenario.
 func TestNewActionItemRejectsInvalidMetadata(t *testing.T) {
 	now := time.Now()
-	_, err := NewActionItem(ActionItemInput{
+	_, err := NewActionItemForTest(ActionItemInput{
 		ID:        "t-bad",
 		ProjectID: "p1",
 		ColumnID:  "c1",

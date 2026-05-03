@@ -260,7 +260,7 @@ func TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 	repo.columns[progress.ID] = progress
 	repo.columns[done.ID] = done
 
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:             "t1",
 		ProjectID:      project.ID,
 		Kind:           domain.KindPlan,

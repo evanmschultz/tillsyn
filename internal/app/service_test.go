@@ -379,7 +379,7 @@ func newSecondWaveEmbeddingService(t *testing.T, now time.Time, idGen func() str
 	if err := repo.CreateColumn(context.Background(), column); err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
 	}
-	actionItem, err := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          "t-second-wave",
 		ProjectID:   project.ID,
@@ -1244,7 +1244,7 @@ func TestDeleteActionItemModeValidation(t *testing.T) {
 func TestRenameActionItem(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: "p1",
@@ -1269,7 +1269,7 @@ func TestRenameActionItem(t *testing.T) {
 func TestUpdateActionItem(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: "p1",
@@ -1305,7 +1305,7 @@ func TestUpdateActionItem(t *testing.T) {
 func TestUpdateActionItemAppliesMutationActorContext(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      "p1",
@@ -1387,7 +1387,7 @@ func TestCreateActionItemCarriesHumanActorName(t *testing.T) {
 func TestUpdateActionItemCarriesExplicitActorName(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 26, 10, 30, 0, 0, time.UTC)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: "p1",
@@ -1430,7 +1430,7 @@ func TestUpdateActionItemCarriesExplicitActorName(t *testing.T) {
 func TestUpdateActionItemPreservesPriorityWhenOmitted(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: "p1",
@@ -1465,7 +1465,7 @@ func TestListAndSortHelpers(t *testing.T) {
 	repo.columns[c1.ID] = c1
 	repo.columns[c2.ID] = c2
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+	t1, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: p.ID,
@@ -1474,7 +1474,7 @@ func TestListAndSortHelpers(t *testing.T) {
 		Title:     "later",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+	t2, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: p.ID,
@@ -1483,7 +1483,7 @@ func TestListAndSortHelpers(t *testing.T) {
 		Title:     "earlier",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t3, _ := domain.NewActionItem(domain.ActionItemInput{
+	t3, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t3",
 		ProjectID: p.ID,
@@ -1552,7 +1552,7 @@ func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 	repo.columns[c2.ID] = c2
 	repo.columns[c3.ID] = c3
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+	t1, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          "t1",
 		ProjectID:   p1.ID,
@@ -1562,7 +1562,7 @@ func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 		Description: "planning",
 		Priority:    domain.PriorityMedium,
 	}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+	t2, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          "t2",
 		ProjectID:   p1.ID,
@@ -1572,7 +1572,7 @@ func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 		Description: "roadmap parser",
 		Priority:    domain.PriorityHigh,
 	}, now)
-	t3, _ := domain.NewActionItem(domain.ActionItemInput{
+	t3, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          "t3",
 		ProjectID:   p2.ID,
@@ -1626,7 +1626,7 @@ func TestSearchActionItemMatchesFuzzyQuery(t *testing.T) {
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	repo.columns[c1.ID] = c1
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+	t1, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          "t1",
 		ProjectID:   p1.ID,
@@ -1637,7 +1637,7 @@ func TestSearchActionItemMatchesFuzzyQuery(t *testing.T) {
 		Priority:    domain.PriorityMedium,
 		Labels:      []string{"frontend", "parsing"},
 	}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+	t2, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          "t2",
 		ProjectID:   p1.ID,
@@ -1713,7 +1713,7 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 	repo.columns[todo.ID] = todo
 	repo.columns[progress.ID] = progress
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+	t1, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
@@ -1724,7 +1724,7 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend", "urgent"},
 	}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+	t2, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:        "t2",
 		ProjectID: project.ID,
 		ColumnID:  todo.ID,
@@ -1735,7 +1735,7 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend"},
 	}, now)
-	t3, _ := domain.NewActionItem(domain.ActionItemInput{
+	t3, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:        "t3",
 		ProjectID: project.ID,
 		ColumnID:  progress.ID,
@@ -1746,7 +1746,7 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 		Labels:    []string{"backend", "urgent"},
 	}, now)
-	t4, _ := domain.NewActionItem(domain.ActionItemInput{
+	t4, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		ID:        "t4",
 		ProjectID: project.ID,
 		ColumnID:  progress.ID,
@@ -1820,7 +1820,7 @@ func TestSearchActionItemMatchesLexicalMetadataFields(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          "t1",
 		ProjectID:   project.ID,
@@ -1877,7 +1877,7 @@ func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+	t1, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -1886,7 +1886,7 @@ func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 		Title:     "Charlie",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+	t2, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
@@ -1895,7 +1895,7 @@ func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 		Title:     "Alpha",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t3, _ := domain.NewActionItem(domain.ActionItemInput{
+	t3, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t3",
 		ProjectID: project.ID,
@@ -1904,7 +1904,7 @@ func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 		Title:     "Bravo",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t4, _ := domain.NewActionItem(domain.ActionItemInput{
+	t4, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t4",
 		ProjectID: project.ID,
@@ -2023,7 +2023,7 @@ func TestSearchActionItemMatchesLimitDefaultsAndCaps(t *testing.T) {
 	repo.columns[column.ID] = column
 
 	for i := 0; i < 205; i++ {
-		actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+		actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 			Kind:      domain.KindPlan,
 			ID:        fmt.Sprintf("t%03d", i),
 			ProjectID: project.ID,
@@ -2218,7 +2218,7 @@ func TestSearchActionItemMatchesSemanticModeUsesIndex(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+	t1, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -2227,7 +2227,7 @@ func TestSearchActionItemMatchesSemanticModeUsesIndex(t *testing.T) {
 		Title:     "Update docs",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+	t2, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
@@ -2293,7 +2293,7 @@ func TestSearchActionItemMatchesSemanticFallsBackToKeyword(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	keywordActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	keywordActionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -2302,7 +2302,7 @@ func TestSearchActionItemMatchesSemanticFallsBackToKeyword(t *testing.T) {
 		Title:     "Server rollout checklist",
 		Priority:  domain.PriorityLow,
 	}, now)
-	otherActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	otherActionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
@@ -2358,7 +2358,7 @@ func TestSearchActionItemMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *te
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	t1, _ := domain.NewActionItem(domain.ActionItemInput{
+	t1, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -2367,7 +2367,7 @@ func TestSearchActionItemMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *te
 		Title:     "Alpha",
 		Priority:  domain.PriorityLow,
 	}, now)
-	t2, _ := domain.NewActionItem(domain.ActionItemInput{
+	t2, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
@@ -2421,7 +2421,7 @@ func TestSearchActionItemMatchesHybridFallsBackToKeyword(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	keywordActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	keywordActionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -2430,7 +2430,7 @@ func TestSearchActionItemMatchesHybridFallsBackToKeyword(t *testing.T) {
 		Title:     "Server rollout checklist",
 		Priority:  domain.PriorityLow,
 	}, now)
-	otherActionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	otherActionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t2",
 		ProjectID: project.ID,
@@ -2683,7 +2683,7 @@ func TestSearchActionItemMatchesSemanticUsesThreadContextDocuments(t *testing.T)
 		nextID++
 		return id
 	})
-	actionItemB, err := domain.NewActionItem(domain.ActionItemInput{
+	actionItemB, err := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:        domain.KindPlan,
 		ID:          "t-thread-b",
 		ProjectID:   project.ID,
@@ -2922,7 +2922,7 @@ func TestArchiveRestoreAndDeleteProject(t *testing.T) {
 
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -3063,7 +3063,7 @@ func TestMoveActionItemBlocksWhenStartCriteriaUnmet(t *testing.T) {
 	repo.columns[todo.ID] = todo
 	repo.columns[progress.ID] = progress
 
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -3097,7 +3097,7 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	repo.columns[progress.ID] = progress
 	repo.columns[done.ID] = done
 
-	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+	parent, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t-parent",
 		ProjectID:      project.ID,
@@ -3116,7 +3116,7 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 			},
 		},
 	}, now)
-	child, _ := domain.NewActionItem(domain.ActionItemInput{
+	child, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t-child",
 		ProjectID:      project.ID,
@@ -3154,7 +3154,7 @@ func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testi
 	repo.columns[progress.ID] = progress
 	repo.columns[done.ID] = done
 
-	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+	parent, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t-parent",
 		ProjectID:      project.ID,
@@ -3169,7 +3169,7 @@ func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testi
 			},
 		},
 	}, now)
-	child, _ := domain.NewActionItem(domain.ActionItemInput{
+	child, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t-child",
 		ProjectID:      project.ID,
@@ -3201,7 +3201,7 @@ func TestReparentActionItemAndListChildActionItems(t *testing.T) {
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
-	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+	parent, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "parent",
 		ProjectID: project.ID,
@@ -3210,7 +3210,7 @@ func TestReparentActionItemAndListChildActionItems(t *testing.T) {
 		Title:     "parent",
 		Priority:  domain.PriorityMedium,
 	}, now)
-	child, _ := domain.NewActionItem(domain.ActionItemInput{
+	child, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "child",
 		ProjectID: project.ID,
@@ -3248,7 +3248,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
 
-	readyDep, _ := domain.NewActionItem(domain.ActionItemInput{
+	readyDep, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "dep-ready",
 		ProjectID:      project.ID,
@@ -3258,7 +3258,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateComplete,
 	}, now)
-	openDep, _ := domain.NewActionItem(domain.ActionItemInput{
+	openDep, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "dep-open",
 		ProjectID:      project.ID,
@@ -3268,7 +3268,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 		Priority:       domain.PriorityLow,
 		LifecycleState: domain.StateInProgress,
 	}, now)
-	blocked, _ := domain.NewActionItem(domain.ActionItemInput{
+	blocked, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "blocked",
 		ProjectID: project.ID,
@@ -3335,7 +3335,7 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	nextID := 0
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -3472,7 +3472,7 @@ func TestCreateCommentUsesContextActorNameFallback(t *testing.T) {
 	now := time.Date(2026, 2, 26, 11, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -3513,7 +3513,7 @@ func TestCreateCommentCreatesMentionInboxAttention(t *testing.T) {
 	now := time.Date(2026, 2, 26, 11, 30, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -3568,7 +3568,7 @@ func TestCreateCommentValidation(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
 	repo.projects[project.ID] = project
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
 		ID:        "t1",
 		ProjectID: project.ID,
@@ -4635,7 +4635,7 @@ func TestMoveActionItemToFailedUsesMarkFailedCapability(t *testing.T) {
 	repo.columns[progress.ID] = progress
 	repo.columns[failed.ID] = failed
 
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
@@ -4671,7 +4671,7 @@ func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 	repo.columns[progress.ID] = progress
 	repo.columns[failed.ID] = failed
 
-	parent, _ := domain.NewActionItem(domain.ActionItemInput{
+	parent, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t-parent",
 		ProjectID:      project.ID,
@@ -4687,7 +4687,7 @@ func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 			},
 		},
 	}, now)
-	child, _ := domain.NewActionItem(domain.ActionItemInput{
+	child, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t-child",
 		ProjectID:      project.ID,
@@ -4722,7 +4722,7 @@ func TestMoveActionItemFromFailedToTodoBlocked(t *testing.T) {
 	repo.columns[todo.ID] = todo
 	repo.columns[failed.ID] = failed
 
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
@@ -4755,7 +4755,7 @@ func TestMoveActionItemFromDoneToTodoBlocked(t *testing.T) {
 	repo.columns[todo.ID] = todo
 	repo.columns[done.ID] = done
 
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
@@ -4786,7 +4786,7 @@ func TestMoveActionItemFromFailedIdempotentAllowed(t *testing.T) {
 	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
 	repo.columns[failed.ID] = failed
 
-	actionItem, _ := domain.NewActionItem(domain.ActionItemInput{
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
 		ID:             "t1",
 		ProjectID:      project.ID,
