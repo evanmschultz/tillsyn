@@ -102,9 +102,8 @@ Inspect kind definitions and project allowlists.
 `),
 		Example: []string{
 			"  till kind list",
-			"  till kind upsert --id research-actionItem --display-name \"Research ActionItem\" --applies-to actionItem",
 			"  till kind allowlist list --project-id PROJECT_ID",
-			"  till kind allowlist set --project-id PROJECT_ID --kind-id actionItem --kind-id research-actionItem",
+			"  till kind allowlist set --project-id PROJECT_ID --kind-id build --kind-id plan",
 		},
 	},
 	"till kind list": {
@@ -119,24 +118,6 @@ Discover valid kind ids here before project creation or actionItem creation.
 		Example: []string{
 			"  till kind list",
 			"  till kind list --include-archived",
-		},
-	},
-	"till kind upsert": {
-		Long: strings.TrimSpace(`
-Create or update one kind definition in the registry.
-
-Kinds describe structural node identity and placement rules.
-
-The hidden legacy '--template-json' flag remains compatibility-only and should
-not be used for new work.
-`),
-		Example: []string{
-			"  till kind upsert --id go-service --display-name \"Go Service\" --applies-to project",
-			"  till kind upsert --id build-actionItem --display-name \"Build ActionItem\" \\",
-			"    --applies-to actionItem --allowed-parent-scopes project \\",
-			"    --allowed-parent-scopes phase",
-			"  till kind upsert --id qa-check --display-name \"QA Check\" \\",
-			"    --applies-to subtask --payload-schema-json '{\"type\":\"object\"}'",
 		},
 	},
 	"till kind allowlist": {
