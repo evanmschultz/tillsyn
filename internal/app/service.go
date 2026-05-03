@@ -1647,10 +1647,7 @@ func (s *Service) SearchActionItems(ctx context.Context, in SearchActionItemsFil
 	})
 
 	if offset < len(out) {
-		end := offset + limit
-		if end > len(out) {
-			end = len(out)
-		}
+		end := min(offset+limit, len(out))
 		out = append([]ActionItemMatch(nil), out[offset:end]...)
 	} else {
 		out = []ActionItemMatch{}
@@ -2003,16 +2000,6 @@ func fieldLexicalScore(candidate, query string) float64 {
 	default:
 		return 0
 	}
-}
-
-// labelsContainQuery reports whether any label fuzzy-matches query.
-func labelsContainQuery(labels []string, query string) bool {
-	for _, label := range labels {
-		if fuzzyContainsQuery(label, query) {
-			return true
-		}
-	}
-	return false
 }
 
 // fuzzyContainsQuery reports whether candidate matches query by exact/prefix/contains

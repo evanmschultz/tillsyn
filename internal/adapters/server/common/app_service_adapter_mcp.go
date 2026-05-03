@@ -1863,8 +1863,7 @@ func (a *AppServiceAdapter) UpdateHandoff(ctx context.Context, in UpdateHandoffR
 
 // commentSummaryFromMarkdown extracts one deterministic summary line from markdown text.
 func commentSummaryFromMarkdown(markdown string) string {
-	lines := strings.Split(strings.TrimSpace(markdown), "\n")
-	for _, line := range lines {
+	for line := range strings.SplitSeq(strings.TrimSpace(markdown), "\n") {
 		candidate := strings.TrimSpace(line)
 		candidate = strings.TrimLeft(candidate, "#>*-` ")
 		candidate = strings.TrimSpace(candidate)

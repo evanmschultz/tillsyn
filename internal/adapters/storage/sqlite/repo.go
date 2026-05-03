@@ -2696,7 +2696,7 @@ func chooseActorName(actorID string, candidates ...string) string {
 
 // commentSummaryFromBody returns the first non-empty markdown line as summary text.
 func commentSummaryFromBody(bodyMarkdown string) string {
-	for _, line := range strings.Split(bodyMarkdown, "\n") {
+	for line := range strings.SplitSeq(bodyMarkdown, "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			return line
