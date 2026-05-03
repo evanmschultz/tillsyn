@@ -14,6 +14,8 @@
 package templates
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/domain"
@@ -170,4 +172,48 @@ type AgentBinding struct {
 	// BlockedRetryCooldown is the wall-clock delay between blocked-retry
 	// attempts. Parsed from TOML duration strings such as "30s" or "5m".
 	BlockedRetryCooldown time.Duration `toml:"blocked_retry_cooldown"`
+}
+
+// Validate reports field-level errors on an AgentBinding. Returns nil if all
+// fields are within acceptable bounds.
+//
+// Validation rules per main/PLAN.md § 19.3 lines 1653-1656:
+//   - AgentName: trimmed non-empty.
+//   - Model: trimmed non-empty.
+//   - MaxTries: > 0 (must allow at least one attempt).
+//   - MaxBudgetUSD: >= 0 (zero permitted; means unlimited at dispatcher's choice).
+//   - MaxTurns: > 0 (must allow at least one turn).
+//   - BlockedRetries: >= 0.
+//   - BlockedRetryCooldown: >= 0.
+//
+// Fields without validation rules (Effort, Tools, AutoPush, CommitAgent) are
+// free-form pass-through to the dispatcher; their interpretation is Drop 4's
+// concern. Tools content validation against the actual MCP/Claude tool catalog
+// is deferred to Drop 4 per finding 5.B.5.
+//
+// All non-nil returns wrap ErrInvalidAgentBinding so callers can route on the
+// sentinel via errors.Is.
+func (b AgentBinding) Validate() error {
+	if strings.TrimSpace(b.AgentName) == "" {
+		return fmt.Errorf("%w: agent_name must be non-empty", ErrInvalidAgentBinding)
+	}
+	if strings.TrimSpace(b.Model) == "" {
+		return fmt.Errorf("%w: model must be non-empty", ErrInvalidAgentBinding)
+	}
+	if b.MaxTries <= 0 {
+		return fmt.Errorf("%w: max_tries must be > 0 (got %d)", ErrInvalidAgentBinding, b.MaxTries)
+	}
+	if b.MaxTurns <= 0 {
+		return fmt.Errorf("%w: max_turns must be > 0 (got %d)", ErrInvalidAgentBinding, b.MaxTurns)
+	}
+	if b.MaxBudgetUSD < 0 {
+		return fmt.Errorf("%w: max_budget_usd must be >= 0 (got %v)", ErrInvalidAgentBinding, b.MaxBudgetUSD)
+	}
+	if b.BlockedRetries < 0 {
+		return fmt.Errorf("%w: blocked_retries must be >= 0 (got %d)", ErrInvalidAgentBinding, b.BlockedRetries)
+	}
+	if b.BlockedRetryCooldown < 0 {
+		return fmt.Errorf("%w: blocked_retry_cooldown must be >= 0 (got %s)", ErrInvalidAgentBinding, b.BlockedRetryCooldown)
+	}
+	return nil
 }

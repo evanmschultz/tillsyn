@@ -1,0 +1,198 @@
+package templates
+
+import (
+	"errors"
+	"reflect"
+	"testing"
+	"time"
+
+	toml "github.com/pelletier/go-toml/v2"
+)
+
+// fullyPopulatedAgentBinding returns a fresh AgentBinding with every one of
+// the 11 fields set to a non-zero, validation-passing value. Used as the
+// shared baseline for the round-trip test and as the start state for each
+// Validate table-row's targeted mutation.
+func fullyPopulatedAgentBinding() AgentBinding {
+	return AgentBinding{
+		AgentName:            "go-builder-agent",
+		Model:                "opus",
+		Effort:               "high",
+		Tools:                []string{"Edit", "Write", "Bash", "Read"},
+		MaxTries:             3,
+		MaxBudgetUSD:         2.5,
+		MaxTurns:             50,
+		AutoPush:             true,
+		CommitAgent:          "commit-agent",
+		BlockedRetries:       2,
+		BlockedRetryCooldown: 30 * time.Second,
+	}
+}
+
+// TestAgentBindingTOMLRoundTrip marshals a fully-populated AgentBinding via
+// pelletier/go-toml/v2 and unmarshals the resulting bytes back into a struct,
+// asserting reflect.DeepEqual equivalence. Every one of the 11 fields is
+// populated with a non-zero value (Tools has multiple elements,
+// BlockedRetryCooldown is non-zero) so the assertion does not pass trivially
+// for an unmarshaller that silently drops fields.
+func TestAgentBindingTOMLRoundTrip(t *testing.T) {
+	original := fullyPopulatedAgentBinding()
+
+	encoded, err := toml.Marshal(original)
+	if err != nil {
+		t.Fatalf("toml.Marshal: %v", err)
+	}
+
+	var decoded AgentBinding
+	if err := toml.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("toml.Unmarshal: %v\nencoded TOML:\n%s", err, encoded)
+	}
+
+	if !reflect.DeepEqual(original, decoded) {
+		t.Fatalf("round-trip mismatch\noriginal: %#v\ndecoded:  %#v\nencoded TOML:\n%s", original, decoded, encoded)
+	}
+}
+
+// TestAgentBindingValidate exhausts each validation rule encoded by
+// AgentBinding.Validate per main/PLAN.md § 19.3 lines 1653-1656. Every row
+// starts from a fully-populated valid binding and applies a single targeted
+// mutation so the failure mode under test is unambiguous.
+func TestAgentBindingValidate(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(*AgentBinding)
+		wantValid bool
+	}{
+		{
+			name:      "valid fully populated binding passes",
+			mutate:    func(b *AgentBinding) {},
+			wantValid: true,
+		},
+		{
+			name:      "missing agent_name rejected",
+			mutate:    func(b *AgentBinding) { b.AgentName = "" },
+			wantValid: false,
+		},
+		{
+			name:      "whitespace-only agent_name rejected",
+			mutate:    func(b *AgentBinding) { b.AgentName = "   \t\n" },
+			wantValid: false,
+		},
+		{
+			name:      "missing model rejected",
+			mutate:    func(b *AgentBinding) { b.Model = "" },
+			wantValid: false,
+		},
+		{
+			name:      "whitespace-only model rejected",
+			mutate:    func(b *AgentBinding) { b.Model = "  " },
+			wantValid: false,
+		},
+		{
+			name:      "max_tries zero rejected",
+			mutate:    func(b *AgentBinding) { b.MaxTries = 0 },
+			wantValid: false,
+		},
+		{
+			name:      "max_tries negative rejected",
+			mutate:    func(b *AgentBinding) { b.MaxTries = -1 },
+			wantValid: false,
+		},
+		{
+			name:      "max_turns zero rejected",
+			mutate:    func(b *AgentBinding) { b.MaxTurns = 0 },
+			wantValid: false,
+		},
+		{
+			name:      "max_turns negative rejected",
+			mutate:    func(b *AgentBinding) { b.MaxTurns = -10 },
+			wantValid: false,
+		},
+		{
+			name:      "max_budget_usd negative rejected",
+			mutate:    func(b *AgentBinding) { b.MaxBudgetUSD = -1.0 },
+			wantValid: false,
+		},
+		{
+			name:      "max_budget_usd zero allowed (means unlimited)",
+			mutate:    func(b *AgentBinding) { b.MaxBudgetUSD = 0 },
+			wantValid: true,
+		},
+		{
+			name:      "blocked_retries negative rejected",
+			mutate:    func(b *AgentBinding) { b.BlockedRetries = -1 },
+			wantValid: false,
+		},
+		{
+			name:      "blocked_retries zero allowed",
+			mutate:    func(b *AgentBinding) { b.BlockedRetries = 0 },
+			wantValid: true,
+		},
+		{
+			name:      "blocked_retry_cooldown negative rejected",
+			mutate:    func(b *AgentBinding) { b.BlockedRetryCooldown = -time.Second },
+			wantValid: false,
+		},
+		{
+			name:      "blocked_retry_cooldown zero allowed",
+			mutate:    func(b *AgentBinding) { b.BlockedRetryCooldown = 0 },
+			wantValid: true,
+		},
+		{
+			name:      "empty Tools slice allowed (Drop 4 deferral)",
+			mutate:    func(b *AgentBinding) { b.Tools = nil },
+			wantValid: true,
+		},
+		{
+			name:      "empty Effort allowed (free-form pass-through)",
+			mutate:    func(b *AgentBinding) { b.Effort = "" },
+			wantValid: true,
+		},
+		{
+			name:      "empty CommitAgent allowed (free-form pass-through)",
+			mutate:    func(b *AgentBinding) { b.CommitAgent = "" },
+			wantValid: true,
+		},
+		{
+			name:      "AutoPush false allowed (free-form pass-through)",
+			mutate:    func(b *AgentBinding) { b.AutoPush = false },
+			wantValid: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binding := fullyPopulatedAgentBinding()
+			tt.mutate(&binding)
+			err := binding.Validate()
+			if tt.wantValid {
+				if err != nil {
+					t.Fatalf("Validate() = %v; want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Validate() = nil; want error")
+			}
+			if !errors.Is(err, ErrInvalidAgentBinding) {
+				t.Fatalf("Validate() = %v; want errors.Is(_, ErrInvalidAgentBinding) true", err)
+			}
+		})
+	}
+}
+
+// TestAgentBindingValidateZeroValueRejected confirms the zero-value
+// AgentBinding fails Validate. The zero value has empty AgentName + Model +
+// MaxTries=0 + MaxTurns=0; the first rule to fire (AgentName) wraps
+// ErrInvalidAgentBinding, but the assertion only requires that some rule
+// fires, not which one.
+func TestAgentBindingValidateZeroValueRejected(t *testing.T) {
+	var b AgentBinding
+	err := b.Validate()
+	if err == nil {
+		t.Fatalf("Validate() on zero AgentBinding = nil; want error")
+	}
+	if !errors.Is(err, ErrInvalidAgentBinding) {
+		t.Fatalf("Validate() on zero AgentBinding = %v; want errors.Is(_, ErrInvalidAgentBinding) true", err)
+	}
+}
