@@ -119,7 +119,16 @@ type CreateActionItemRequest struct {
 	// intent / lock scope) may legitimately overlap, so no cross-axis
 	// check is performed. Domain primitive per Drop 4a L3 /
 	// WAVE_1_PLAN.md §1.3.
-	Files       []string
+	Files []string
+	// StartCommit optionally seeds the new action item's start-commit
+	// hash (free-form trimmed string; empty IS the meaningful zero value
+	// "not yet captured"). No pointer-sentinel needed at the create
+	// boundary. Threaded through app.CreateActionItemInput →
+	// domain.NewActionItem in droplet 4a.8. Opaque-domain field — the
+	// caller (orchestrator pre-cascade; Wave 2 dispatcher; Drop 4b
+	// commit-agent) supplies the value; domain layer never calls git
+	// itself. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
+	StartCommit string
 	ColumnID    string
 	Title       string
 	Description string
@@ -205,9 +214,20 @@ type UpdateActionItemRequest struct {
 	// trim/dedupe/forward-slash-check rules apply equally on update.
 	// Disjoint-axis with Paths — no cross-axis coverage / overlap check
 	// applies. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.3.
-	Files    *[]string
-	Metadata *domain.ActionItemMetadata
-	Actor    ActorLeaseTuple
+	Files *[]string
+	// StartCommit optionally updates the action-item StartCommit string.
+	// Pointer-sentinel: nil preserves the existing value; non-nil applies
+	// the dereferenced string (empty dereferenced string clears the prior
+	// commit hash — explicit caller intent, e.g. dispatcher rolling back
+	// a retry). Pointer shape matters because a description-only update
+	// must NOT silently clobber a dispatcher-set start commit. Threaded
+	// through app.UpdateActionItemInput; service applies inline
+	// strings.TrimSpace so the create-time trim rule applies equally on
+	// update. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
+	// Pointer-sentinel locked per WAVE_1_PLAN post-4a.5 amendment.
+	StartCommit *string
+	Metadata    *domain.ActionItemMetadata
+	Actor       ActorLeaseTuple
 }
 
 // MoveActionItemRequest stores transport input for actionItem move operations.

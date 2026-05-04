@@ -546,7 +546,17 @@ type CreateActionItemInput struct {
 	// and Paths (write intent / lock scope) may legitimately overlap, so
 	// no cross-axis check is performed. Domain primitive per Drop 4a L3 /
 	// WAVE_1_PLAN.md §1.3.
-	Files          []string
+	Files []string
+	// StartCommit optionally seeds the action-item start-commit hash at
+	// creation time (free-form trimmed string; empty IS the meaningful
+	// zero value "not yet captured"). No pointer-sentinel needed at the
+	// create boundary — an absent StartCommit at creation is the dominant
+	// case (caller hasn't run `git rev-parse HEAD` yet). Domain trims
+	// surrounding whitespace; no format check applies. Threaded through
+	// app.CreateActionItemInput → domain.NewActionItem in droplet 4a.8.
+	// Opaque-domain field — domain layer never calls git itself. Domain
+	// primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
+	StartCommit    string
 	ColumnID       string
 	Title          string
 	Description    string
@@ -627,7 +637,20 @@ type UpdateActionItemInput struct {
 	// update. Disjoint-axis: no coverage / overlap check against Paths —
 	// Files and Paths are independent (read attention vs write intent).
 	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.3.
-	Files         *[]string
+	Files *[]string
+	// StartCommit optionally updates the action-item StartCommit string.
+	// Pointer-sentinel: nil preserves the existing value (no-op); non-nil
+	// applies the dereferenced string (empty dereferenced string clears
+	// the prior commit hash — explicit caller intent). Pointer shape
+	// matters because a description-only update by an agent must NOT
+	// silently clobber a dispatcher-set start commit. Service applies
+	// inline `strings.TrimSpace` so the create-time trim rule applies
+	// equally on update (no domain helper exposed — single-line trim is
+	// too thin to warrant a wrapper, matching Owner's inline-trim
+	// precedent at the create site). Domain primitive per Drop 4a L3 /
+	// WAVE_1_PLAN.md §1.4. Pointer-sentinel locked per WAVE_1_PLAN
+	// post-4a.5 amendment.
+	StartCommit   *string
 	Metadata      *domain.ActionItemMetadata
 	UpdatedBy     string
 	UpdatedByName string
@@ -807,6 +830,7 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 		Paths:          in.Paths,
 		Packages:       in.Packages,
 		Files:          in.Files,
+		StartCommit:    in.StartCommit,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,
@@ -1135,6 +1159,17 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 			return domain.ActionItem{}, err
 		}
 		actionItem.Files = normalized
+		actionItem.UpdatedAt = s.clock().UTC()
+	}
+	// StartCommit update uses pointer-sentinel: nil preserves the existing
+	// value; non-nil applies the dereferenced string, trimmed to match the
+	// create-time rule. Empty dereferenced string clears the prior commit
+	// hash (explicit caller intent — e.g. dispatcher rolling back a
+	// retry). Inline trim mirrors NewActionItem's inline-trim approach;
+	// no domain helper exposed (single-line trim too thin to warrant the
+	// wrapper). Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
+	if in.StartCommit != nil {
+		actionItem.StartCommit = strings.TrimSpace(*in.StartCommit)
 		actionItem.UpdatedAt = s.clock().UTC()
 	}
 	if in.Metadata != nil {

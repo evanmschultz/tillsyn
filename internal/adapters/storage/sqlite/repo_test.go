@@ -3079,6 +3079,153 @@ func assertFilesEqual(t *testing.T, label string, got, want []string) {
 	}
 }
 
+// TestRepository_PersistsActionItemStartCommit verifies the start_commit TEXT
+// column added in Drop 4a droplet 4a.8 round-trips across create + get +
+// list + list-by-parent + update on an action item. Cases cover empty /
+// short-SHA / full-SHA inputs so the raw-string storage path exercises the
+// empty zero-value default and explicit-clear via update. Mirrors
+// TestRepository_PersistsActionItemFiles so the SELECT/INSERT/UPDATE
+// column-ordinal alignment for the new column is asserted on every storage
+// path. StartCommit is stored as a raw TEXT column (not JSON-encoded —
+// single value, not a list) with NOT NULL DEFAULT ” so legacy rows read
+// as the legitimate "not yet captured" zero value.
+func TestRepository_PersistsActionItemStartCommit(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-startcommit", "StartCommit", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c-startcommit", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	cases := []struct {
+		id          string
+		startCommit string
+		want        string
+	}{
+		{id: "t-startcommit-empty", startCommit: "", want: ""},
+		{id: "t-startcommit-short", startCommit: "0cf5194", want: "0cf5194"},
+		{id: "t-startcommit-full", startCommit: "0cf5194d4cb6c8d4f9b9b1d7e1f9d3c2b4e5a6f7", want: "0cf5194d4cb6c8d4f9b9b1d7e1f9d3c2b4e5a6f7"},
+	}
+
+	for i, tc := range cases {
+		item, err := domain.NewActionItem(domain.ActionItemInput{
+			ID:             tc.id,
+			ProjectID:      project.ID,
+			ColumnID:       column.ID,
+			Kind:           domain.KindBuild,
+			StructuralType: domain.StructuralTypeDroplet,
+			StartCommit:    tc.startCommit,
+			Position:       i,
+			Title:          "startcommit " + tc.id,
+			Priority:       domain.PriorityMedium,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewActionItem(%s) error = %v", tc.id, err)
+		}
+		if err := repo.CreateActionItem(ctx, item); err != nil {
+			t.Fatalf("CreateActionItem(%s) error = %v", tc.id, err)
+		}
+		loaded, err := repo.GetActionItem(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%s) error = %v", tc.id, err)
+		}
+		if loaded.StartCommit != tc.want {
+			t.Fatalf("GetActionItem(%s) StartCommit = %q, want %q", tc.id, loaded.StartCommit, tc.want)
+		}
+	}
+
+	// ListActionItems exercises the second SELECT path.
+	listed, err := repo.ListActionItems(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	if len(listed) != len(cases) {
+		t.Fatalf("ListActionItems() length = %d, want %d", len(listed), len(cases))
+	}
+	byID := map[string]domain.ActionItem{}
+	for _, item := range listed {
+		byID[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItems() missing %q", tc.id)
+		}
+		if got.StartCommit != tc.want {
+			t.Fatalf("ListActionItems()[%s] StartCommit = %q, want %q", tc.id, got.StartCommit, tc.want)
+		}
+	}
+
+	// ListActionItemsByParent exercises the third SELECT path.
+	parentListed, err := repo.ListActionItemsByParent(ctx, project.ID, "")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent() error = %v", err)
+	}
+	byIDParent := map[string]domain.ActionItem{}
+	for _, item := range parentListed {
+		byIDParent[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byIDParent[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItemsByParent() missing %q", tc.id)
+		}
+		if got.StartCommit != tc.want {
+			t.Fatalf("ListActionItemsByParent()[%s] StartCommit = %q, want %q", tc.id, got.StartCommit, tc.want)
+		}
+	}
+
+	// Reassign on update: replace t-startcommit-empty's StartCommit with a
+	// populated value, then clear t-startcommit-full's StartCommit back to
+	// empty. Verifies the UPDATE SET clause writes both populated and
+	// empty payloads.
+	target, err := repo.GetActionItem(ctx, "t-startcommit-empty")
+	if err != nil {
+		t.Fatalf("GetActionItem(reassign source) error = %v", err)
+	}
+	target.StartCommit = "deadbeef"
+	target.UpdatedAt = now.Add(time.Hour)
+	if err := repo.UpdateActionItem(ctx, target); err != nil {
+		t.Fatalf("UpdateActionItem(populate startcommit) error = %v", err)
+	}
+	reloaded, err := repo.GetActionItem(ctx, target.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after populate) error = %v", err)
+	}
+	if reloaded.StartCommit != "deadbeef" {
+		t.Fatalf("after populate: StartCommit = %q, want %q", reloaded.StartCommit, "deadbeef")
+	}
+
+	clearTarget, err := repo.GetActionItem(ctx, "t-startcommit-full")
+	if err != nil {
+		t.Fatalf("GetActionItem(clear source) error = %v", err)
+	}
+	clearTarget.StartCommit = ""
+	clearTarget.UpdatedAt = now.Add(2 * time.Hour)
+	if err := repo.UpdateActionItem(ctx, clearTarget); err != nil {
+		t.Fatalf("UpdateActionItem(clear startcommit) error = %v", err)
+	}
+	clearReloaded, err := repo.GetActionItem(ctx, clearTarget.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after clear) error = %v", err)
+	}
+	if clearReloaded.StartCommit != "" {
+		t.Fatalf("after clear: StartCommit = %q, want empty", clearReloaded.StartCommit)
+	}
+}
+
 // TestRepository_IndexCoversDropNumberQuery sanity-checks that querying by
 // (project_id, drop_number) returns the expected rows after the 3.18 schema
 // change. The query shape mirrors what the 3.20 auto-generator will issue;

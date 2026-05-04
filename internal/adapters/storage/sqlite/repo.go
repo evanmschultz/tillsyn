@@ -181,6 +181,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			paths_json TEXT NOT NULL DEFAULT '[]',
 			packages_json TEXT NOT NULL DEFAULT '[]',
 			files_json TEXT NOT NULL DEFAULT '[]',
+			start_commit TEXT NOT NULL DEFAULT '',
 			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			column_id TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -1199,10 +1200,10 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO action_items(
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, start_commit, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		t.ID,
 		t.ProjectID,
@@ -1219,6 +1220,7 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 		pathsJSON,
 		packagesJSON,
 		filesJSON,
+		t.StartCommit,
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -1314,7 +1316,7 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE action_items
-		SET parent_id = ?, kind = ?, scope = ?, role = ?, structural_type = ?, irreducible = ?, owner = ?, drop_number = ?, persistent = ?, dev_gated = ?, paths_json = ?, packages_json = ?, files_json = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
+		SET parent_id = ?, kind = ?, scope = ?, role = ?, structural_type = ?, irreducible = ?, owner = ?, drop_number = ?, persistent = ?, dev_gated = ?, paths_json = ?, packages_json = ?, files_json = ?, start_commit = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
 		    labels_json = ?, metadata_json = ?, updated_by_actor = ?, updated_by_name = ?, updated_by_type = ?, updated_at = ?, started_at = ?, completed_at = ?, archived_at = ?, canceled_at = ?
 		WHERE id = ?
 	`,
@@ -1331,6 +1333,7 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 		pathsJSON,
 		packagesJSON,
 		filesJSON,
+		t.StartCommit,
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -1389,7 +1392,7 @@ func (r *Repository) GetActionItem(ctx context.Context, id string) (domain.Actio
 func (r *Repository) ListActionItems(ctx context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
 	query := `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, start_commit, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ?
@@ -1427,7 +1430,7 @@ func (r *Repository) ListActionItems(ctx context.Context, projectID string, incl
 func (r *Repository) ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error) {
 	query := `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, start_commit, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ? AND parent_id = ?
@@ -1461,7 +1464,7 @@ func (r *Repository) ListActionItemsByParent(ctx context.Context, projectID, par
 func (r *Repository) FindActionItemByOwnerAndTitle(ctx context.Context, projectID, owner, title string) (domain.ActionItem, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, start_commit, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ? AND owner = ? AND title = ?
@@ -1482,7 +1485,7 @@ func (r *Repository) FindActionItemByOwnerAndTitle(ctx context.Context, projectI
 func (r *Repository) ListActionItemsByDropNumber(ctx context.Context, projectID string, dropNumber int) ([]domain.ActionItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, start_commit, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ? AND drop_number = ?
@@ -2523,7 +2526,7 @@ type queryRower interface {
 func getActionItemByID(ctx context.Context, q queryRower, id string) (domain.ActionItem, error) {
 	row := q.QueryRowContext(ctx, `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, files_json, start_commit, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE id = ?
@@ -2657,6 +2660,9 @@ func changedActionItemFields(prev, next domain.ActionItem) []string {
 	}
 	if !equalStringSlices(prev.Files, next.Files) {
 		changed = append(changed, "files")
+	}
+	if prev.StartCommit != next.StartCommit {
+		changed = append(changed, "start_commit")
 	}
 	if !equalMetadata(prev.Metadata, next.Metadata) {
 		changed = append(changed, "metadata")
@@ -2848,6 +2854,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		pathsRaw          string
 		packagesRaw       string
 		filesRaw          string
+		startCommitRaw    string
 		state             string
 		updatedType       string
 	)
@@ -2867,6 +2874,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		&pathsRaw,
 		&packagesRaw,
 		&filesRaw,
+		&startCommitRaw,
 		&state,
 		&t.ColumnID,
 		&t.Position,
@@ -2918,6 +2926,11 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		return domain.ActionItem{}, err
 	}
 	t.Files = files
+	// StartCommit is stored as a raw TEXT column (not JSON-encoded) so the
+	// scan reads the trimmed string straight through. Pre-droplet-4a.8
+	// rows (and the NOT NULL DEFAULT '' invariant) read as the empty
+	// string, the legitimate "not yet captured" zero value.
+	t.StartCommit = startCommitRaw
 	t.LifecycleState = domain.LifecycleState(state)
 	t.UpdatedByType = domain.ActorType(updatedType)
 	t.CreatedAt = parseTS(createdRaw)
