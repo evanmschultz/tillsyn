@@ -262,6 +262,28 @@ func (m *processMonitor) Track(ctx context.Context, actionItemID string, cmd *ex
 	return h, nil
 }
 
+// Unsubscribe removes the supplied actionItemID from the tracked-PID map. It
+// is the production-side seam consumed by cleanupHook (cleanup.go) when an
+// action item enters a terminal lifecycle state — by the time cleanup runs
+// the per-Handle goroutine has already deleted its own entry on exit, so
+// this method is a defensive scrub: an idempotent no-op when the entry is
+// already absent. The signature mirrors the cleanup.monitorUnsubscriber
+// interface and is fire-and-forget — the tracked map is a dashboard-facing
+// convenience, not a correctness invariant. Wired in droplet 4a.23 as part
+// of the dispatcher constructor's cleanup-hook plumbing.
+func (m *processMonitor) Unsubscribe(actionItemID string) {
+	if m == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(actionItemID)
+	if trimmed == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.tracked, trimmed)
+}
+
 // runHandle is the per-Handle goroutine that waits on cmd, builds the
 // TerminationOutcome, and (on crash) drives the action-item state
 // transition. Exactly one goroutine ever runs per Handle; it removes the

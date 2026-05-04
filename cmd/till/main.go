@@ -426,9 +426,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffListOpts := handoffListCommandOptions{scopeType: string(domain.ScopeLevelProject), limit: 50}
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 	actionItemOpts := actionItemCommandOptions{}
+	dispatcherRunOpts := dispatcherRunCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, dispatcherRunOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -784,6 +785,60 @@ bare body, or use the slug-prefix shorthand <slug>:<dotted>. Slug-prefix and
 		actionItemRestoreCmd,
 		actionItemReparentCmd,
 	)
+
+	dispatcherCmd := &cobra.Command{
+		Use:   "dispatcher",
+		Short: "Cascade dispatcher manual-trigger entry point",
+		Long: strings.TrimSpace(`
+Drive the cascade dispatcher manually for one action item at a time. Wave 2.10
+ships the manual-trigger milestone — Drop 4b lands the daemon variant.
+
+Each invocation bootstraps its own dispatcher (broker, service, lock managers,
+process monitor) and exits as soon as the spawn is observed. The dispatcher
+does NOT wait for the agent subprocess to finish: that is the agent's job.
+
+Two parallel "till dispatcher run" invocations DO race on the in-process lock
+managers (each CLI process owns its own copy). Run invocations serially during
+the manual-trigger milestone; the daemon variant in Drop 4b lands the
+long-running shared-broker dispatcher.
+`),
+		Example: strings.Join([]string{
+			"  till dispatcher run --action-item ACTION_ITEM_ID",
+			"  till dispatcher run --action-item ACTION_ITEM_ID --dry-run",
+		}, "\n"),
+		Args: cobra.NoArgs,
+	}
+	dispatcherRunCmd := &cobra.Command{
+		Use:   "run",
+		Short: "Evaluate one action item through the dispatcher (manual-trigger)",
+		Long: strings.TrimSpace(`
+Evaluate one action item through the cascade dispatcher's RunOnce path. The
+command emits a one-line human-readable summary on stdout describing the
+outcome (spawned, skipped, blocked, failed) plus a reason where applicable.
+
+When --dry-run is set, the command walks the same eligibility + binding
+resolution path but stops before the spawn. The resulting SpawnDescriptor is
+printed as indented JSON on stdout. The dry-run path never moves the action
+item, never acquires locks, and never starts a subprocess — it is safe to run
+against any project state.
+
+A failed outcome ("--dry-run is not set, RunOnce returned ResultFailed")
+exits non-zero with the failure reason on stderr.
+`),
+		Example: strings.Join([]string{
+			"  till dispatcher run --action-item 11111111-1111-1111-1111-111111111111",
+			"  till dispatcher run --action-item ACTION_ITEM_ID --dry-run",
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "dispatcher.run")
+		},
+	}
+	dispatcherRunCmd.Flags().StringVar(&dispatcherRunOpts.actionItemID, "action-item", "", "Action item identifier (UUID) to evaluate")
+	dispatcherRunCmd.Flags().StringVar(&dispatcherRunOpts.projectID, "project", "", "Optional project identifier; resolved from the action item when omitted")
+	dispatcherRunCmd.Flags().BoolVar(&dispatcherRunOpts.dryRun, "dry-run", false, "Build and print the spawn descriptor without executing the spawn")
+	mustMarkFlagRequired(dispatcherRunCmd, "action-item")
+	dispatcherCmd.AddCommand(dispatcherRunCmd)
 
 	embeddingsCmd := &cobra.Command{
 		Use:   "embeddings",
@@ -1722,7 +1777,7 @@ default development config file restored quickly.
 			return runInitDevConfig(stdout, rootOpts)
 		},
 	}
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	applyCommandHelp(rootCmd)
 	return fang.Execute(
 		ctx,
@@ -1837,7 +1892,7 @@ func resolveRuntimePaths(command string, opts rootCommandOptions, paths platform
 
 // ensureRuntimePathParents creates any required runtime parent directories before startup.
 func ensureRuntimePathParents(command string, paths resolvedRuntimePaths) error {
-	if command == "" || command == "serve" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" {
+	if command == "" || command == "serve" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" || command == "dispatcher.run" {
 		if err := os.MkdirAll(filepath.Dir(paths.ConfigPath), 0o755); err != nil {
 			return fmt.Errorf("create config directory: %w", err)
 		}
@@ -2064,6 +2119,7 @@ func executeCommandFlow(
 	exportOpts exportCommandOptions,
 	importOpts importCommandOptions,
 	actionItemOpts actionItemCommandOptions,
+	dispatcherRunOpts dispatcherRunCommandOptions,
 	stdout io.Writer,
 	stderr io.Writer,
 ) error {
@@ -2439,6 +2495,10 @@ func executeCommandFlow(
 	case "import":
 		return runOneShotCommand("import", "import", func() error {
 			return runImport(ctx, svc, importOpts)
+		})
+	case "dispatcher.run":
+		return runOneShotCommand("dispatcher.run", "dispatcher run", func() error {
+			return runDispatcherRun(ctx, svc, liveWaitBroker, dispatcherRunOpts, stdout, stderr)
 		})
 	default:
 		return fmt.Errorf("unknown command: %s", command)

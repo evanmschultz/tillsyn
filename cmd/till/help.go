@@ -238,6 +238,35 @@ state reset before work resumes.
 			"    --scope-id BRANCH_ID --reason branch_recovery",
 		},
 	},
+	"till dispatcher": {
+		Long: strings.TrimSpace(`
+Cascade dispatcher manual-trigger entry point.
+
+Use this when you want to drive one action item through the dispatcher
+synchronously from a dev shell — useful while the daemon variant (Drop 4b)
+is not yet wired.
+`),
+		Example: []string{
+			"  till dispatcher run --action-item ACTION_ITEM_ID",
+			"  till dispatcher run --action-item ACTION_ITEM_ID --dry-run",
+		},
+	},
+	"till dispatcher run": {
+		Long: strings.TrimSpace(`
+Evaluate one action item through the cascade dispatcher's RunOnce path.
+
+Use --dry-run to inspect the planned spawn descriptor without executing the
+spawn. The dry-run path never moves the action item, never acquires locks,
+and never starts a subprocess.
+
+A failed outcome exits non-zero with the failure reason on stderr; spawned,
+skipped, and blocked outcomes exit zero with a one-line summary on stdout.
+`),
+		Example: []string{
+			"  till dispatcher run --action-item 11111111-1111-1111-1111-111111111111",
+			"  till dispatcher run --action-item ACTION_ITEM_ID --dry-run",
+		},
+	},
 	"till handoff": {
 		Example: []string{
 			"  till handoff create --project-id PROJECT_ID \\",
