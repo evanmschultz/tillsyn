@@ -83,6 +83,55 @@ The list grows as Drops 4a + 4b run. Initial seed items:
 
 - Populated during 4a + 4b builds. Whatever surfaces in `project_drop_4a_refinements_raised.md` and the 4b equivalent that doesn't fit in those drops' scopes lands here.
 
+### Theme F — Template ergonomics (~15–18 droplets)
+
+The big theme. Drop 3 landed the template foundation; Drop 4a's dispatcher consumes it; today the loading + management surface is unfinished. Theme F closes the gaps so adopters can actually use the template system.
+
+**F.1 — Project-template auto-discovery (~3 droplets).** Wire `internal/app/service.go` `loadProjectTemplate()` (currently returns `(zero, false, nil)` per Drop 3.14 deferral) to walk `<project.RepoBareRoot>/.tillsyn/template.toml` first, fall back to `<project.RepoPrimaryWorktree>/.tillsyn/template.toml`, fall back to embedded `default.toml`. Each candidate runs through `templates.Load(r io.Reader)` for full validation. Position-aware errors surface to project-create.
+
+**F.2 — Generic + Go + FE builtin separation (~4 droplets).** Refactor `internal/templates/builtin/`:
+- `default-generic.toml` — language-agnostic cascade-vocabulary showcase. `agent_bindings` either empty (project must override) OR placeholder `agent_name = "{language}-builder-agent"` resolved at bake time via `project.Language`.
+- `default-go.toml` — generic + Go agent bindings (current `default.toml` content rebadged).
+- `default-fe.toml` — generic + FE agent bindings.
+- `internal/templates/embed.go` resolver picks the right template based on `project.Language` at bake time.
+- This repo gets its own `<project_root>/.tillsyn/template.toml` (NEW file) for tillsyn-self-host dogfood; references `default-go.toml` semantics + tillsyn-flavored agent bindings.
+
+**F.3 — `till.template` MCP tool (~3 droplets).** Operations:
+- `till.template(operation=get, project_id=...)` — return project's current template + bake state.
+- `till.template(operation=validate, content=<toml-string>)` — run full validation chain on candidate TOML; return findings.
+- `till.template(operation=set, project_id=..., content=<toml-string>)` — validate + install + re-bake catalog.
+- `till.template(operation=list_builtin)` — enumerate shipped builtins.
+
+**Wire-format decision (locked):** TOML in, TOML out. The MCP argument `content` is a string carrying TOML text verbatim. Server parses TOML, validates, persists TOML. Templates are TOML end-to-end; the MCP transport (JSON-RPC) just carries TOML-as-a-string. Same shape as `cat template.toml | till template validate -` for CLI symmetry.
+
+**F.4 — Marketplace CLI (~5 droplets).** Separate git repo (default: `github.com/evanmschultz/tillsyn-templates`) holds curated cascade templates. Tillsyn binary integration:
+- `internal/templates/marketplace.go` — git-shell-out wrapper. `git clone --depth 1` on first fetch, `git pull` on update. Cache to `~/.tillsyn/marketplace/`. Repo URL configurable via `~/.tillsyn/config.toml`.
+- `till template list` — show locally cached templates + last-fetched git commit + commit date + git log.
+- `till template fetch [--remote <url>]` — clone or pull. Show commit-log delta on update.
+- `till template show <name>` — print template content + meta.
+- `till template install <name>` — copy to `<project>/.tillsyn/template.toml`.
+- `till template validate <path>` — run full validation chain; emit findings. (Useful for marketplace contributors.)
+
+**F.5 — Extended validation (~2 droplets).** New checks layered into `templates.Load`:
+- `validateAgentBindingFiles` (warn-only) — walk `agent_bindings.<kind>.agent_name`; check `~/.claude/agents/<agent_name>.md` exists. Soft warning since the file might not be installed yet on this dev's machine; emit a finding without rejecting.
+- `validateRequiredChildRules` (error) — enumerate canonical "QA-required" parent kinds (`build`, `plan`); assert each has the mandatory child rules (`build-qa-proof` + `build-qa-falsification`; `plan-qa-proof` + `plan-qa-falsification`). Reject templates that silently remove QA rules.
+- `validateChildRuleReachability` — currently a no-op extension point. Grow into kind-orphan detection (every kind reachable from `plan` via child_rules; orphans flagged as findings).
+- (Optional) `validateKindStructuralCoherence` — light cross-axis check that each kind's structural-type expectation matches its work pattern (`build` is a leaf, `plan` recurses, `closeout` is drop-end). Soft warning.
+
+**F.6 — Cleanup of legacy KindTemplate stub (~1 droplet).** `internal/app/kind_capability.go:1002` `mergeActionItemMetadataWithKindTemplate` is a no-op pass-through stub kept "during the transition." Drop 3.15 retired the legacy KindTemplate surface; this stub can fold into its caller (`internal/app/service.go:716`). Doc comment confirms: *"a future drop will fold it into the caller."* Drop 4c is that future drop.
+
+### Theme G — Post-MVP marketplace evolution (NOT in Drop 4c scope; captured for persistence)
+
+Documented here so the design is preserved across compactions. **NONE of these land in Drop 4c.** They're post-MVP candidates.
+
+- **G.1 — TUI marketplace browser** (Drop 4.5+ scope; FE/TUI track). Visual template list, diff against current, install one-click, history view by commit + date.
+- **G.2 — Vector search.** Marketplace repo CI precomputes `<name>.embedding.json` per template (and per template tag). Tillsyn binary downloads embeddings during `fetch`. `till template search "<query>"` runs cosine-sim locally against cached embeddings. Embedding storage in marketplace repo (NOT in Tillsyn binary) keeps embeddings updateable without binary release.
+- **G.3 — User contribution flow.** GitHub PR against the marketplace repo. CI runs `tillsyn template validate --strict <path>` on each PR file. Manual review for design quality; merge auto-updates `INDEX.toml`. Eventually allow signed templates / curator review.
+- **G.4 — Live-runtime validation / dry-cascade simulation.** Take a synthetic action-item tree, walk dispatcher logic against the template, assert no orphans / no infinite loops / every promotion has a binding. Heavier than Theme F.5's static checks; requires dispatcher reusability for simulation mode.
+- **G.5 — Template inheritance / extends.** A project template may declare `extends = "go-cascade"` and override only specific bindings. Reduces duplication for adopter projects that follow the canonical Go cascade with one or two tweaks.
+- **G.6 — Template-bound agent prompts.** Today agent prompt files are global (`~/.claude/agents/*.md`). Marketplace templates may want to ship custom agent prompts inline (e.g. a `[agent_prompts.go-builder-agent]` table). Requires sandboxing semantics + adopter trust.
+- **G.7 — Versioned template references on Project.** `project.template_ref = "tillsyn-templates@v1.4.0/go-cascade"` so a project pins a specific marketplace version. Update flow: `till template update` re-fetches + re-bakes if the pinned ref hasn't moved.
+
 ## Pre-MVP Rules (carried forward)
 
 - No migration logic in Go; dev fresh-DBs.
@@ -102,7 +151,7 @@ The list grows as Drops 4a + 4b run. Initial seed items:
 
 ## Approximate Size
 
-~10–12 droplets. Smaller than 4b. Most items are 1–3 file edits each (audit-finding fixes are typically narrow). Full planning at post-4b-merge time will refine the count + the Theme E residue list.
+~25–30 droplets total (Themes A ~4 + B ~2 + C ~3 + D ~1–2 + F ~15–18; Theme E populated post-4a/4b). Larger than originally sketched once Theme F (template ergonomics) was added per dev decision (2026-05-03). Most items are 1–3 file edits each (audit-finding fixes are typically narrow); Theme F.4 marketplace CLI is the heaviest chunk at ~5 droplets. Full planning at post-4b-merge time will refine the count + the Theme E residue list. **If size becomes a planning concern, candidates for splitting into a separate Drop 4d:** F.4 (marketplace CLI) is the cleanest split point since it's largely additive new surface (CLI subcommand tree + git wrapper) with no cross-dependency on F.1–F.3 + F.5 + F.6.
 
 ## Hard Prerequisites
 
