@@ -29,6 +29,7 @@ var (
 	ErrInvalidDropNumber           = errors.New("invalid drop number")
 	ErrInvalidPaths                = errors.New("invalid paths")
 	ErrInvalidPackages             = errors.New("invalid packages")
+	ErrInvalidFiles                = errors.New("invalid files")
 	ErrInvalidLifecycleState       = errors.New("invalid lifecycle state")
 	ErrInvalidActorType            = errors.New("invalid actor type")
 	ErrInvalidAttentionState       = errors.New("invalid attention state")

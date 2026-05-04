@@ -14865,6 +14865,7 @@ func TestActionItemSchemaCoverageIsExplicit(t *testing.T) {
 		"DevGated":       {},
 		"Paths":          {},
 		"Packages":       {},
+		"Files":          {},
 		"LifecycleState": {},
 		"ColumnID":       {},
 		"Position":       {},

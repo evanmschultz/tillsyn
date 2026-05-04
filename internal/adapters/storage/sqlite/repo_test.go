@@ -2926,6 +2926,159 @@ func assertPackagesEqual(t *testing.T, label string, got, want []string) {
 	}
 }
 
+// TestRepository_PersistsActionItemFiles verifies the files_json column added
+// in Drop 4a droplet 4a.7 round-trips across create + get + list +
+// list-by-parent + update on an action item. Cases cover empty / single /
+// multi inputs so the JSON encode/decode path exercises insertion-order
+// preservation, the empty-slice "[]" default, and explicit-clear via
+// update. Mirrors TestRepository_PersistsActionItemPaths /
+// TestRepository_PersistsActionItemPackages so the SELECT/INSERT/UPDATE
+// column-ordinal alignment for the new column is asserted on every storage
+// path. Files is disjoint-axis with Paths so populated cases need NOT
+// supply a covering Paths/Packages pair — Files alone is independent.
+func TestRepository_PersistsActionItemFiles(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-files", "Files", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c-files", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	cases := []struct {
+		id    string
+		files []string
+		want  []string
+	}{
+		{id: "t-files-empty", files: nil, want: nil},
+		{id: "t-files-single", files: []string{"docs/README.md"}, want: []string{"docs/README.md"}},
+		{id: "t-files-multi", files: []string{"docs/A.md", "docs/B.md"}, want: []string{"docs/A.md", "docs/B.md"}},
+	}
+
+	for i, tc := range cases {
+		item, err := domain.NewActionItem(domain.ActionItemInput{
+			ID:             tc.id,
+			ProjectID:      project.ID,
+			ColumnID:       column.ID,
+			Kind:           domain.KindBuild,
+			StructuralType: domain.StructuralTypeDroplet,
+			Files:          tc.files,
+			Position:       i,
+			Title:          "files " + tc.id,
+			Priority:       domain.PriorityMedium,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewActionItem(%s) error = %v", tc.id, err)
+		}
+		if err := repo.CreateActionItem(ctx, item); err != nil {
+			t.Fatalf("CreateActionItem(%s) error = %v", tc.id, err)
+		}
+		loaded, err := repo.GetActionItem(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%s) error = %v", tc.id, err)
+		}
+		assertFilesEqual(t, "GetActionItem("+tc.id+")", loaded.Files, tc.want)
+	}
+
+	// ListActionItems exercises the second SELECT path.
+	listed, err := repo.ListActionItems(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	if len(listed) != len(cases) {
+		t.Fatalf("ListActionItems() length = %d, want %d", len(listed), len(cases))
+	}
+	byID := map[string]domain.ActionItem{}
+	for _, item := range listed {
+		byID[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItems() missing %q", tc.id)
+		}
+		assertFilesEqual(t, "ListActionItems()["+tc.id+"]", got.Files, tc.want)
+	}
+
+	// ListActionItemsByParent exercises the third SELECT path.
+	parentListed, err := repo.ListActionItemsByParent(ctx, project.ID, "")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent() error = %v", err)
+	}
+	byIDParent := map[string]domain.ActionItem{}
+	for _, item := range parentListed {
+		byIDParent[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byIDParent[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItemsByParent() missing %q", tc.id)
+		}
+		assertFilesEqual(t, "ListActionItemsByParent()["+tc.id+"]", got.Files, tc.want)
+	}
+
+	// Reassign on update: replace t-files-empty's Files with a populated
+	// slice, then clear t-files-multi's Files back to nil. Verifies the
+	// UPDATE SET clause writes both populated and empty payloads.
+	target, err := repo.GetActionItem(ctx, "t-files-empty")
+	if err != nil {
+		t.Fatalf("GetActionItem(reassign source) error = %v", err)
+	}
+	target.Files = []string{"docs/X.md", "docs/Y.md"}
+	target.UpdatedAt = now.Add(time.Hour)
+	if err := repo.UpdateActionItem(ctx, target); err != nil {
+		t.Fatalf("UpdateActionItem(populate files) error = %v", err)
+	}
+	reloaded, err := repo.GetActionItem(ctx, target.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after populate) error = %v", err)
+	}
+	assertFilesEqual(t, "after populate", reloaded.Files, []string{"docs/X.md", "docs/Y.md"})
+
+	clearTarget, err := repo.GetActionItem(ctx, "t-files-multi")
+	if err != nil {
+		t.Fatalf("GetActionItem(clear source) error = %v", err)
+	}
+	clearTarget.Files = nil
+	clearTarget.UpdatedAt = now.Add(2 * time.Hour)
+	if err := repo.UpdateActionItem(ctx, clearTarget); err != nil {
+		t.Fatalf("UpdateActionItem(clear files) error = %v", err)
+	}
+	clearReloaded, err := repo.GetActionItem(ctx, clearTarget.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after clear) error = %v", err)
+	}
+	if len(clearReloaded.Files) != 0 {
+		t.Fatalf("after clear: Files = %#v, want empty", clearReloaded.Files)
+	}
+}
+
+// assertFilesEqual fails the test when the actual and expected files slices
+// disagree on length or insertion order. nil and len-0 slices are treated
+// as equal so callers may pass either form.
+func assertFilesEqual(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s: Files length = %d (%#v), want %d (%#v)", label, len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s: Files[%d] = %q, want %q (full = %#v)", label, i, got[i], want[i], got)
+		}
+	}
+}
+
 // TestRepository_IndexCoversDropNumberQuery sanity-checks that querying by
 // (project_id, drop_number) returns the expected rows after the 3.18 schema
 // change. The query shape mirrors what the 3.20 auto-generator will issue;

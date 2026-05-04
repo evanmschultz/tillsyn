@@ -109,7 +109,17 @@ type CreateActionItemRequest struct {
 	// Domain coverage invariant ("non-empty Paths requires non-empty
 	// Packages") is enforced at the domain layer. Domain primitive per
 	// Drop 4a L3 / WAVE_1_PLAN.md §1.2.
-	Packages    []string
+	Packages []string
+	// Files optionally enumerates the new action item's reference-material
+	// file paths (forward-slash, repo-root-relative). Empty slice IS the
+	// meaningful zero value (no reference files attached) — no pointer-
+	// sentinel needed at the create boundary. Threaded through
+	// app.CreateActionItemInput → domain.NewActionItem in droplet 4a.7.
+	// Disjoint-axis with Paths — Files (read attention) and Paths (write
+	// intent / lock scope) may legitimately overlap, so no cross-axis
+	// check is performed. Domain primitive per Drop 4a L3 /
+	// WAVE_1_PLAN.md §1.3.
+	Files       []string
 	ColumnID    string
 	Title       string
 	Description string
@@ -187,6 +197,15 @@ type UpdateActionItemRequest struct {
 	// post-apply pair so paired Paths/Packages updates land atomically.
 	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
 	Packages *[]string
+	// Files optionally updates the action-item Files slice. Same pointer-
+	// sentinel rationale as Paths/Packages above — a description-only
+	// update must NOT silently clobber a planner-set Files declaration.
+	// Threaded through app.UpdateActionItemInput; service applies via
+	// domain.NormalizeActionItemFiles so the create-time
+	// trim/dedupe/forward-slash-check rules apply equally on update.
+	// Disjoint-axis with Paths — no cross-axis coverage / overlap check
+	// applies. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.3.
+	Files    *[]string
 	Metadata *domain.ActionItemMetadata
 	Actor    ActorLeaseTuple
 }

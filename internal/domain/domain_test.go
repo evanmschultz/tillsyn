@@ -1195,3 +1195,97 @@ func TestNewActionItemPackagesCoverageInvariant(t *testing.T) {
 		})
 	}
 }
+
+// TestNewActionItemFilesNormalization covers the Files []string field added
+// in Drop 4a droplet 4a.7. Empty input round-trips as nil; single + multi
+// file inputs round-trip with insertion order preserved (the canonical
+// consumer is the Drop 4.5 TUI file-viewer pane, which reads the slice
+// as ordered). Surrounding whitespace is trimmed. Duplicates after trim
+// are silently deduped to match the Labels / Paths precedent. Whitespace-
+// only / empty entries reject with ErrInvalidFiles. Backslash-bearing
+// entries also reject with ErrInvalidFiles to enforce the forward-slash /
+// `git ls-files` convention. No path-exists check is performed at the
+// domain layer — paths often refer to files the build droplet will create.
+func TestNewActionItemFilesNormalization(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name      string
+		input     []string
+		wantFiles []string
+		wantErr   error
+	}{
+		{name: "nil round-trips empty", input: nil, wantFiles: nil, wantErr: nil},
+		{name: "empty slice round-trips empty", input: []string{}, wantFiles: nil, wantErr: nil},
+		{name: "single file round-trips", input: []string{"docs/README.md"}, wantFiles: []string{"docs/README.md"}, wantErr: nil},
+		{name: "multi file preserves insertion order", input: []string{"docs/A.md", "docs/B.md"}, wantFiles: []string{"docs/A.md", "docs/B.md"}, wantErr: nil},
+		{name: "surrounding whitespace trimmed", input: []string{"  docs/A.md  ", "docs/B.md"}, wantFiles: []string{"docs/A.md", "docs/B.md"}, wantErr: nil},
+		{name: "duplicates after trim dedupe", input: []string{"docs/A.md", "docs/A.md", "  docs/A.md  ", "docs/B.md"}, wantFiles: []string{"docs/A.md", "docs/B.md"}, wantErr: nil},
+		{name: "empty entry rejects", input: []string{"docs/A.md", ""}, wantFiles: nil, wantErr: ErrInvalidFiles},
+		{name: "whitespace-only entry rejects", input: []string{"   ", "docs/A.md"}, wantFiles: nil, wantErr: ErrInvalidFiles},
+		{name: "backslash entry rejects", input: []string{`docs\A.md`}, wantFiles: nil, wantErr: ErrInvalidFiles},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-files",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				Files:          tc.input,
+			}, now)
+			if err != tc.wantErr {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if len(actionItem.Files) != len(tc.wantFiles) {
+				t.Fatalf("Files length = %d (%#v), want %d (%#v)", len(actionItem.Files), actionItem.Files, len(tc.wantFiles), tc.wantFiles)
+			}
+			for i := range tc.wantFiles {
+				if actionItem.Files[i] != tc.wantFiles[i] {
+					t.Fatalf("Files[%d] = %q, want %q (full = %#v)", i, actionItem.Files[i], tc.wantFiles[i], actionItem.Files)
+				}
+			}
+		})
+	}
+}
+
+// TestNewActionItemFilesAllowsOverlapWithPaths covers the Drop 4a droplet
+// 4a.7 disjoint-axis rule: Files (read attention) and Paths (write intent /
+// lock scope) are NOT cross-checked for overlap or disjointness.
+// Legitimate overlap — an agent referencing a file via the file-viewer
+// while also editing it as a write-scope target — must round-trip without
+// rejection. Both slices populated with the same path is the canonical
+// case. The covering Packages entry is supplied so the Paths/Packages
+// coverage invariant doesn't shadow the Files-overlap assertion.
+func TestNewActionItemFilesAllowsOverlapWithPaths(t *testing.T) {
+	now := time.Now()
+	shared := "internal/domain/action_item.go"
+	actionItem, err := NewActionItem(ActionItemInput{
+		ID:             "t-overlap",
+		ProjectID:      "p1",
+		ColumnID:       "c1",
+		Position:       0,
+		Title:          "x",
+		Kind:           KindBuild,
+		StructuralType: StructuralTypeDroplet,
+		Paths:          []string{shared},
+		Packages:       []string{"internal/domain"},
+		Files:          []string{shared},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewActionItem(overlap) error = %v", err)
+	}
+	if len(actionItem.Paths) != 1 || actionItem.Paths[0] != shared {
+		t.Fatalf("Paths = %#v, want [%q]", actionItem.Paths, shared)
+	}
+	if len(actionItem.Files) != 1 || actionItem.Files[0] != shared {
+		t.Fatalf("Files = %#v, want [%q]", actionItem.Files, shared)
+	}
+}
