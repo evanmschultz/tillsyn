@@ -1018,3 +1018,113 @@ func TestAppServiceAdapterClaimAuthRequestRejectsClaimantMismatch(t *testing.T) 
 		t.Fatalf("ClaimAuthRequest(claimant mismatch) error = %v, want ErrInvalidCaptureStateRequest", err)
 	}
 }
+
+// TestAppServiceAdapterApproveAuthRequestOrchSelfApproval verifies the
+// adapter-level happy path for the orch-self-approval cascade landed in
+// Drop 4a Wave 3 W3.1: an orchestrator with a project-scoped approved
+// session approves a pending builder request and receives both the
+// updated record and the issued subagent session secret.
+func TestAppServiceAdapterApproveAuthRequestOrchSelfApproval(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+
+	// Step 1: bootstrap an orchestrator session via the legacy dev-TUI
+	// approval path (gate bypassed because all four approver-identity
+	// fields are empty). This gives us the acting_session_id +
+	// acting_session_secret pair the new approve operation needs.
+	orchApproved := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "ORCH_INSTANCE_42",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		PrincipalName:    "Drop Orchestrator",
+		ClientID:         "till-mcp-stdio-orch",
+		ClientType:       "mcp-stdio",
+		ClientName:       "Drop Orch MCP",
+		RequestedByActor: "lane-user",
+		RequestedByType:  "user",
+		Reason:           "drop-orch session for cascade approvals",
+	}, "")
+	if orchApproved.SessionSecret == "" {
+		t.Fatal("orchestrator session secret missing from dev-TUI approve")
+	}
+
+	// Step 2: orchestrator delegates a builder auth request (created via
+	// the same dev-TUI path so the approve gate has a pending request to
+	// transition).
+	pendingBuilder, err := adapter.CreateAuthRequest(context.Background(), CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "BUILDER_AGENT_99",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		PrincipalName:    "Builder Subagent",
+		ClientID:         "till-mcp-stdio-builder",
+		ClientType:       "mcp-stdio",
+		ClientName:       "Builder MCP",
+		RequestedByActor: "ORCH_INSTANCE_42",
+		RequestedByType:  "agent",
+		Reason:           "delegated builder for drop work",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(builder) error = %v", err)
+	}
+
+	// Step 3: orch approves the builder request via the new approve
+	// operation. Adapter pulls approver identity from the validated
+	// session; caller supplies agent_instance_id + lease_token.
+	result, err := adapter.ApproveAuthRequest(context.Background(), ApproveAuthRequestRequest{
+		RequestID:           pendingBuilder.ID,
+		ActingSessionID:     orchApproved.Request.IssuedSessionID,
+		ActingSessionSecret: orchApproved.SessionSecret,
+		AgentInstanceID:     "AGENT_INSTANCE_42",
+		LeaseToken:          "LEASE_TOKEN_42",
+		ResolutionNote:      "orch self-approval cascade",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+	if got := result.Request.State; got != "approved" {
+		t.Fatalf("ApproveAuthRequest() state = %q, want approved", got)
+	}
+	if result.SessionSecret == "" {
+		t.Fatal("ApproveAuthRequest() returned empty SessionSecret")
+	}
+	if result.Request.IssuedSessionID == "" {
+		t.Fatal("ApproveAuthRequest() returned empty IssuedSessionID")
+	}
+}
+
+// TestAppServiceAdapterApproveAuthRequestRejectsMissingFields verifies the
+// adapter rejects approve calls with any of the five required fields
+// missing (request_id, acting_session_id, acting_session_secret,
+// agent_instance_id, lease_token).
+func TestAppServiceAdapterApproveAuthRequestRejectsMissingFields(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+	full := ApproveAuthRequestRequest{
+		RequestID:           "req-1",
+		ActingSessionID:     "sess-1",
+		ActingSessionSecret: "secret-1",
+		AgentInstanceID:     "AGENT_INSTANCE_42",
+		LeaseToken:          "LEASE_TOKEN_42",
+	}
+	cases := []struct {
+		name string
+		mut  func(r *ApproveAuthRequestRequest)
+	}{
+		{"request_id_empty", func(r *ApproveAuthRequestRequest) { r.RequestID = "" }},
+		{"acting_session_id_empty", func(r *ApproveAuthRequestRequest) { r.ActingSessionID = "" }},
+		{"acting_session_secret_empty", func(r *ApproveAuthRequestRequest) { r.ActingSessionSecret = "" }},
+		{"agent_instance_id_empty", func(r *ApproveAuthRequestRequest) { r.AgentInstanceID = "" }},
+		{"lease_token_empty", func(r *ApproveAuthRequestRequest) { r.LeaseToken = "" }},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			req := full
+			tc.mut(&req)
+			_, err := adapter.ApproveAuthRequest(context.Background(), req)
+			if err == nil || !errors.Is(err, ErrInvalidCaptureStateRequest) {
+				t.Fatalf("ApproveAuthRequest(%s) error = %v, want ErrInvalidCaptureStateRequest", tc.name, err)
+			}
+		})
+	}
+}

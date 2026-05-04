@@ -53,14 +53,43 @@ const (
 const AuthRequestGlobalProjectID = "__global__"
 
 // AuthRequestRole identifies one auth-request agent role for gatekeeping policy.
+//
+// This is a closed enum distinct from two other role-like axes in the
+// codebase:
+//
+//   - domain.Role — the action-item role enum (builder | qa-proof | qa-falsification | …)
+//     attached to ActionItem.Metadata.Role for cascade dispatch lookup.
+//   - action_items.kind — the closed 12-kind enum (plan | build | research | …)
+//     describing the work the action item carries.
+//
+// AuthRequestRole names the agent class for the auth-session a caller wants
+// issued; it is consumed by the orch-self-approval gate (Drop 4a Wave 3) to
+// decide whether an in-orch cascade approval may issue a session for a
+// requesting subagent. Three orthogonal axes — the same shape as Drop 3 L7
+// where steward principal_type became a tillsyn axis distinct from autent's
+// closed enum.
+//
+// Drop 4a Wave 3 (W3.1) widened the closed set from 4 values
+// (orchestrator | builder | qa | research) to 7 (orchestrator | planner |
+// qa-proof | qa-falsification | builder | research | commit). The bare "qa"
+// constant survives as a deprecated alias that NormalizeAuthRequestRole
+// REJECTS — callers must pick qa-proof or qa-falsification explicitly.
 type AuthRequestRole string
 
 // Auth request role values.
 const (
-	AuthRequestRoleOrchestrator AuthRequestRole = "orchestrator"
-	AuthRequestRoleBuilder      AuthRequestRole = "builder"
-	AuthRequestRoleQA           AuthRequestRole = "qa"
-	AuthRequestRoleResearch     AuthRequestRole = "research"
+	AuthRequestRoleOrchestrator    AuthRequestRole = "orchestrator"
+	AuthRequestRolePlanner         AuthRequestRole = "planner"
+	AuthRequestRoleQAProof         AuthRequestRole = "qa-proof"
+	AuthRequestRoleQAFalsification AuthRequestRole = "qa-falsification"
+	AuthRequestRoleBuilder         AuthRequestRole = "builder"
+	AuthRequestRoleResearch        AuthRequestRole = "research"
+	AuthRequestRoleCommit          AuthRequestRole = "commit"
+
+	// AuthRequestRoleQA is a DEPRECATED alias kept for source compatibility.
+	// NormalizeAuthRequestRole rejects bare "qa" — callers must choose
+	// qa-proof or qa-falsification explicitly per Drop 4a Wave 3 W3.1.
+	AuthRequestRoleQA AuthRequestRole = "qa"
 
 	// AuthRequestRoleSubagent preserves the legacy subagent token as an alias for builder.
 	AuthRequestRoleSubagent AuthRequestRole = AuthRequestRoleBuilder
@@ -68,9 +97,12 @@ const (
 
 var validAuthRequestRoles = []AuthRequestRole{
 	AuthRequestRoleOrchestrator,
+	AuthRequestRolePlanner,
+	AuthRequestRoleQAProof,
+	AuthRequestRoleQAFalsification,
 	AuthRequestRoleBuilder,
-	AuthRequestRoleQA,
 	AuthRequestRoleResearch,
+	AuthRequestRoleCommit,
 }
 
 // AuthRequest stores one persisted auth request and its approval outcome.
@@ -186,16 +218,42 @@ func ParseAuthRequestPath(raw string) (AuthRequestPath, error) {
 }
 
 // NormalizeAuthRequestRole canonicalizes one auth-request role value.
+//
+// Closed mapping (Drop 4a Wave 3 W3.1):
+//
+//   - orchestrator → orchestrator
+//   - planner → planner
+//   - qa-proof → qa-proof
+//   - qa-falsification → qa-falsification
+//   - builder | subagent | worker → builder (legacy aliases preserved)
+//   - research → research
+//   - commit → commit
+//   - qa (bare) → "" (REJECTED — caller must pick qa-proof or qa-falsification)
+//
+// Empty-string return for bare "qa" forces IsValidAuthRequestRole to fail,
+// surfacing the migration as a hard rejection at NewAuthRequest time.
 func NormalizeAuthRequestRole(role AuthRequestRole) AuthRequestRole {
 	switch strings.TrimSpace(strings.ToLower(string(role))) {
 	case string(AuthRequestRoleOrchestrator):
 		return AuthRequestRoleOrchestrator
+	case string(AuthRequestRolePlanner):
+		return AuthRequestRolePlanner
+	case string(AuthRequestRoleQAProof):
+		return AuthRequestRoleQAProof
+	case string(AuthRequestRoleQAFalsification):
+		return AuthRequestRoleQAFalsification
 	case string(AuthRequestRoleBuilder), "subagent", "worker":
 		return AuthRequestRoleBuilder
-	case string(AuthRequestRoleQA):
-		return AuthRequestRoleQA
 	case string(AuthRequestRoleResearch):
 		return AuthRequestRoleResearch
+	case string(AuthRequestRoleCommit):
+		return AuthRequestRoleCommit
+	case string(AuthRequestRoleQA):
+		// Drop 4a Wave 3 W3.1: bare "qa" is no longer a valid auth-request
+		// role. Callers must pick qa-proof or qa-falsification explicitly.
+		// Return empty so IsValidAuthRequestRole rejects the value at
+		// NewAuthRequest validation time.
+		return ""
 	default:
 		return AuthRequestRole(strings.TrimSpace(strings.ToLower(string(role))))
 	}
@@ -398,6 +456,13 @@ func NewAuthRequest(in AuthRequestInput, now time.Time) (AuthRequest, error) {
 		if !IsValidAuthRequestRole(AuthRequestRole(principalRole)) {
 			return AuthRequest{}, ErrInvalidAuthRequestRole
 		}
+		// Only orchestrator-role agent requests may carry global or
+		// projects/<list>... path shapes. Every non-orchestrator role
+		// (builder, planner, qa-proof, qa-falsification, research, commit
+		// post-Drop-4a-W3.1) MUST stay rooted under a single
+		// project/<id>[/branch/...]/[/phase/...] path. Drop 4a Wave 3 W3.1
+		// extended this rule to cover the four new values without changing
+		// its shape.
 		if path.Kind != AuthRequestPathKindProject && principalRole != string(AuthRequestRoleOrchestrator) {
 			return AuthRequest{}, ErrInvalidAuthRequestRole
 		}

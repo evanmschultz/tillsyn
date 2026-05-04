@@ -51,23 +51,39 @@ type AuthSessionFilter struct {
 }
 
 // AuthSession stores one caller-safe auth-session record.
+//
+// Two-axis principal-type design (Drop 4a Wave 3 W3.1 fix to droplet 4a.24):
+//
+//   - PrincipalType carries the autent-axis value (closed enum
+//     {user, agent, service}). For tillsyn-side "steward" principals the
+//     autent IssueSession boundary collapses "steward" → "agent" so the
+//     value stored here is "agent", not "steward".
+//   - AuthRequestPrincipalType carries the tillsyn-axis value preserved
+//     across the autent collapse via session metadata key
+//     "auth_request_principal_type". This is the field role gates (e.g.
+//     STEWARD cross-subtree exception in checkOrchSelfApprovalGate) MUST
+//     read when distinguishing steward from non-steward orch sessions —
+//     PrincipalType cannot make that distinction. Mirrors the
+//     domain.AuthenticatedCaller.AuthRequestPrincipalType precedent landed
+//     in Drop 3 droplet 3.19.
 type AuthSession struct {
-	SessionID        string
-	ProjectID        string
-	AuthRequestID    string
-	ApprovedPath     string
-	PrincipalID      string
-	PrincipalType    string
-	PrincipalRole    string
-	PrincipalName    string
-	ClientID         string
-	ClientType       string
-	ClientName       string
-	IssuedAt         time.Time
-	ExpiresAt        time.Time
-	LastValidatedAt  *time.Time
-	RevokedAt        *time.Time
-	RevocationReason string
+	SessionID                string
+	ProjectID                string
+	AuthRequestID            string
+	ApprovedPath             string
+	PrincipalID              string
+	PrincipalType            string
+	AuthRequestPrincipalType string
+	PrincipalRole            string
+	PrincipalName            string
+	ClientID                 string
+	ClientType               string
+	ClientName               string
+	IssuedAt                 time.Time
+	ExpiresAt                time.Time
+	LastValidatedAt          *time.Time
+	RevokedAt                *time.Time
+	RevocationReason         string
 }
 
 // IssuedAuthSession stores one newly issued auth-session bundle plus its secret.
@@ -95,13 +111,36 @@ type ClaimedAuthRequestResult struct {
 }
 
 // ApproveAuthRequestInput captures fields for approving one auth request.
+//
+// Approver-identity fields (Drop 4a Wave 3 W3.1):
+//
+//   - ApproverPrincipalID, ApproverAgentInstanceID, ApproverLeaseToken,
+//     ApproverSessionID together identify the orchestrator approving on
+//     behalf of the dev (the orch-self-approval cascade path). When ANY of
+//     the four is non-empty, ALL FOUR must be non-empty — partial input is
+//     rejected with domain.ErrInvalidID-wrapped error. ApproveAuthRequest
+//     loads the approver session via the configured AuthBackend and runs
+//     the role / self-approval / scope gate before delegating to the
+//     gateway.
+//   - All four empty = legacy dev-TUI / system path. Approver-identity gate
+//     is bypassed; ApprovedBy + ResolvedType identify the human approver.
+//     This is the path used by the till TUI today and by autentauth's own
+//     fixture tests; preserving it keeps the W3.1 change additive.
+//
+// Audit-trail surfacing of the populated approver-identity fields lands in
+// W3.3 (column adds + scanner + record fields). W3.1 plumbs the input shape
+// only.
 type ApproveAuthRequestInput struct {
-	RequestID      string
-	Path           string
-	SessionTTL     time.Duration
-	ResolvedBy     string
-	ResolvedType   domain.ActorType
-	ResolutionNote string
+	RequestID               string
+	Path                    string
+	SessionTTL              time.Duration
+	ResolvedBy              string
+	ResolvedType            domain.ActorType
+	ResolutionNote          string
+	ApproverPrincipalID     string
+	ApproverAgentInstanceID string
+	ApproverLeaseToken      string
+	ApproverSessionID       string
 }
 
 // CreateAuthRequestInput captures fields for creating one pre-session auth request.
@@ -160,13 +199,25 @@ type AuthRequestGateway interface {
 }
 
 // ApproveAuthRequestGatewayInput defines the gateway payload for approving one auth request.
+//
+// The four ApproverPrincipalID / ApproverAgentInstanceID / ApproverLeaseToken
+// / ApproverSessionID fields land in W3.1 to plumb orch-self-approval
+// approver identity through to the gateway. Audit-trail persistence lands
+// in W3.3 (column adds, scanner extension, record-mapping); W3.1 simply
+// forwards the four fields to the gateway unchanged. The gateway today
+// (autentauth.Service.ApproveAuthRequest) ignores them — that's intentional
+// and W3.3 will surface them on the auth_requests row.
 type ApproveAuthRequestGatewayInput struct {
-	RequestID      string
-	ResolvedBy     string
-	ResolvedType   domain.ActorType
-	ResolutionNote string
-	PathOverride   *domain.AuthRequestPath
-	TTLOverride    time.Duration
+	RequestID               string
+	ResolvedBy              string
+	ResolvedType            domain.ActorType
+	ResolutionNote          string
+	PathOverride            *domain.AuthRequestPath
+	TTLOverride             time.Duration
+	ApproverPrincipalID     string
+	ApproverAgentInstanceID string
+	ApproverLeaseToken      string
+	ApproverSessionID       string
 }
 
 // CreateAuthRequest creates one pending auth request and mirrors it into the attention surface.
@@ -267,6 +318,39 @@ func (s *Service) ListAuthRequests(ctx context.Context, filter domain.AuthReques
 }
 
 // ApproveAuthRequest approves one pending request and resolves its notification row.
+//
+// Approval paths (Drop 4a Wave 3 W3.1):
+//
+//   - Dev-TUI / system path: all four ApproverPrincipalID /
+//     ApproverAgentInstanceID / ApproverLeaseToken / ApproverSessionID
+//     fields empty. The orch-self-approval gate is bypassed; the dev's
+//     approval comes through the human-driven TUI flow with ResolvedBy +
+//     ResolvedType identifying the approver. This is the legacy path
+//     preserved across the W3.1 change.
+//
+//   - Orch-self-approval cascade path: all four approver-identity fields
+//     non-empty. The gate runs four checks in order:
+//     1. Approver session loads cleanly via the configured AuthBackend
+//     and the supplied ApproverSessionID maps to a session whose
+//     PrincipalRole == "orchestrator".
+//     2. Approver principal_id != request principal_id (no self-issue).
+//     3. Request principal_role != "orchestrator" (orch-on-orch stays
+//     dev-only).
+//     4. Approver's effective approved-path encompasses the request's
+//     path (path-within check). Cross-orch hardening: if the request
+//     was created by a different orchestrator, additionally require
+//     approver session principal_type == "steward" AND the request's
+//     path roots under an action_item ancestor with
+//     Metadata.Persistent=true && Metadata.Owner=="STEWARD".
+//
+// Required-non-empty rule: when ANY of the four approver-identity fields is
+// non-empty, ALL FOUR must be non-empty. Partial input is rejected with a
+// domain.ErrInvalidID-wrapped error before the gate even runs.
+//
+// Concurrent approve race: when two approvers race on the same request_id,
+// the second call hits ErrAuthRequestNotPending because the row already
+// transitioned pending → approved. No new race is introduced; this is the
+// same race the dev-TUI path has always exposed.
 func (s *Service) ApproveAuthRequest(ctx context.Context, in ApproveAuthRequestInput) (ApprovedAuthRequestResult, error) {
 	if s.authRequests == nil {
 		return ApprovedAuthRequestResult{}, fmt.Errorf("auth requests are not configured")
@@ -281,13 +365,32 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in ApproveAuthRequestI
 		}
 		pathOverride = &path
 	}
+
+	approverPrincipalID := strings.TrimSpace(in.ApproverPrincipalID)
+	approverAgentInstanceID := strings.TrimSpace(in.ApproverAgentInstanceID)
+	approverLeaseToken := strings.TrimSpace(in.ApproverLeaseToken)
+	approverSessionID := strings.TrimSpace(in.ApproverSessionID)
+	hasApproverIdentity := approverPrincipalID != "" || approverAgentInstanceID != "" || approverLeaseToken != "" || approverSessionID != ""
+	if hasApproverIdentity {
+		if approverPrincipalID == "" || approverAgentInstanceID == "" || approverLeaseToken == "" || approverSessionID == "" {
+			return ApprovedAuthRequestResult{}, fmt.Errorf("approver identity fields must be all non-empty or all empty: %w", domain.ErrInvalidID)
+		}
+		if err := s.checkOrchSelfApprovalGate(ctx, strings.TrimSpace(in.RequestID), approverPrincipalID, approverSessionID); err != nil {
+			return ApprovedAuthRequestResult{}, err
+		}
+	}
+
 	out, err := s.authRequests.ApproveAuthRequest(ctx, ApproveAuthRequestGatewayInput{
-		RequestID:      strings.TrimSpace(in.RequestID),
-		ResolvedBy:     resolvedBy,
-		ResolvedType:   resolvedType,
-		ResolutionNote: strings.TrimSpace(in.ResolutionNote),
-		PathOverride:   pathOverride,
-		TTLOverride:    in.SessionTTL,
+		RequestID:               strings.TrimSpace(in.RequestID),
+		ResolvedBy:              resolvedBy,
+		ResolvedType:            resolvedType,
+		ResolutionNote:          strings.TrimSpace(in.ResolutionNote),
+		PathOverride:            pathOverride,
+		TTLOverride:             in.SessionTTL,
+		ApproverPrincipalID:     approverPrincipalID,
+		ApproverAgentInstanceID: approverAgentInstanceID,
+		ApproverLeaseToken:      approverLeaseToken,
+		ApproverSessionID:       approverSessionID,
 	})
 	if err != nil {
 		return ApprovedAuthRequestResult{}, err
@@ -297,6 +400,140 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in ApproveAuthRequestI
 		return ApprovedAuthRequestResult{}, err
 	}
 	return out, nil
+}
+
+// checkOrchSelfApprovalGate runs the Drop 4a Wave 3 W3.1 self-approval gate:
+// validates the approver session, rejects orch-self-approval and orch-on-orch,
+// and enforces path-encompasses + STEWARD cross-subtree exception.
+func (s *Service) checkOrchSelfApprovalGate(ctx context.Context, requestID, approverPrincipalID, approverSessionID string) error {
+	if s.authBackend == nil {
+		return fmt.Errorf("auth backend is not configured for orch-self-approval gate: %w", domain.ErrInvalidID)
+	}
+	req, err := s.authRequests.GetAuthRequest(ctx, requestID)
+	if err != nil {
+		return err
+	}
+
+	// Reject 1: request principal_role IS orchestrator → stays dev-only.
+	if domain.NormalizeAuthRequestRole(domain.AuthRequestRole(req.PrincipalRole)) == domain.AuthRequestRoleOrchestrator {
+		return fmt.Errorf("orch cannot approve another orchestrator's auth request: %w", domain.ErrAuthorizationDenied)
+	}
+
+	// Reject 2: orch-self-approval (approver and requester share principal_id).
+	if strings.TrimSpace(req.PrincipalID) == approverPrincipalID {
+		return fmt.Errorf("orch cannot approve its own auth request (principal_id %q): %w", approverPrincipalID, domain.ErrAuthorizationDenied)
+	}
+
+	// Validate approver session via the configured backend. The transport
+	// layer is responsible for supplying acting_session_secret matching
+	// approverSessionID — see common.AppServiceAdapter.ApproveAuthRequest.
+	approverSession, err := s.authBackend.ListAuthSessions(ctx, AuthSessionFilter{SessionID: approverSessionID, Limit: 1})
+	if err != nil {
+		return fmt.Errorf("load approver session: %w", err)
+	}
+	if len(approverSession) == 0 {
+		return fmt.Errorf("approver session %q not found: %w", approverSessionID, domain.ErrAuthorizationDenied)
+	}
+	session := approverSession[0]
+
+	// Reject 3: approver session is not orchestrator-roled.
+	if strings.TrimSpace(session.PrincipalRole) != string(domain.AuthRequestRoleOrchestrator) {
+		return fmt.Errorf("approver session role %q is not orchestrator: %w", session.PrincipalRole, domain.ErrAuthorizationDenied)
+	}
+
+	// Reject 4: approver's session principal_id does not match the supplied
+	// ApproverPrincipalID (defense-in-depth — caller cannot lie about whose
+	// identity they're acting under).
+	if strings.TrimSpace(session.PrincipalID) != approverPrincipalID {
+		return fmt.Errorf("approver session principal_id %q does not match supplied ApproverPrincipalID %q: %w", session.PrincipalID, approverPrincipalID, domain.ErrAuthorizationDenied)
+	}
+
+	// Reject 5: approver path does not encompass request path.
+	approverPath, err := domain.ParseAuthRequestPath(strings.TrimSpace(session.ApprovedPath))
+	if err != nil {
+		// Fallback: project-only path derived from session.ProjectID.
+		if pid := strings.TrimSpace(session.ProjectID); pid != "" {
+			approverPath, err = domain.AuthRequestPath{ProjectID: pid}.Normalize()
+		}
+		if err != nil {
+			return fmt.Errorf("approver session has no usable approved path: %w", domain.ErrAuthorizationDenied)
+		}
+	}
+	requestPath, err := domain.ParseAuthRequestPath(req.Path)
+	if err != nil {
+		return fmt.Errorf("request path %q is invalid: %w", req.Path, err)
+	}
+	if !authRequestPathWithin(approverPath, requestPath) {
+		return fmt.Errorf("approver path %q does not encompass request path %q: %w", approverPath.String(), requestPath.String(), domain.ErrAuthorizationDenied)
+	}
+
+	// Cross-orch hardening (Drop 4a Wave 3 W3.1, falsification mitigations
+	// 1+5): path-encompasses is necessary but not sufficient — STEWARD's
+	// project-scoped lease encompasses every drop subtree, so a non-STEWARD
+	// orch with the right project lease could otherwise approve another
+	// orch's subagent. If the requesting actor is a different orchestrator,
+	// require the approver to be a STEWARD session AND require the request
+	// path to root under an action_item with Metadata.Persistent=true &&
+	// Metadata.Owner=="STEWARD".
+	requestedBy := strings.TrimSpace(req.RequestedByActor)
+	if requestedBy != "" && requestedBy != approverPrincipalID {
+		// Different orch created the request. STEWARD-only cross-subtree
+		// exception applies.
+		//
+		// Drop 4a droplet 4a.24 fix: read AuthRequestPrincipalType (the
+		// tillsyn-axis value preserved across the autent boundary's
+		// steward → agent collapse), NOT PrincipalType (always "agent" for
+		// steward principals because autent's closed enum lacks "steward").
+		// Reading PrincipalType made this branch ALWAYS reject — the
+		// STEWARD cross-subtree exception was non-functional.
+		if strings.TrimSpace(session.AuthRequestPrincipalType) != "steward" {
+			return fmt.Errorf("cross-orch approval requires steward approver (request requested_by %q, approver %q): %w", requestedBy, approverPrincipalID, domain.ErrAuthorizationDenied)
+		}
+		if err := s.requireStewardPersistentAncestor(ctx, requestPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// requireStewardPersistentAncestor walks the request's leaf action-item
+// ancestry looking for any node with Metadata.Persistent=true &&
+// Metadata.Owner=="STEWARD". Returns nil when found; ErrAuthorizationDenied
+// otherwise. The check is metadata-driven, not name-driven (Wave 3
+// falsification attack 5 mitigation — no hardcoded persistent-parent IDs).
+func (s *Service) requireStewardPersistentAncestor(ctx context.Context, path domain.AuthRequestPath) error {
+	leafID := strings.TrimSpace(path.ScopeID)
+	if leafID == "" || path.Kind != domain.AuthRequestPathKindProject {
+		// Project-scope-only path with no action_item resolution. Without an
+		// action item to walk, the cross-subtree exception cannot fire —
+		// the gate already verified approver is steward and path
+		// encompassed; reject here so a STEWARD with a project-wide lease
+		// cannot blanket-approve every subagent in the project without the
+		// request rooting under one of STEWARD's persistent parents.
+		if path.BranchID == "" && len(path.PhaseIDs) == 0 {
+			return fmt.Errorf("steward cross-subtree approval requires the request path to root under a persistent STEWARD-owned ancestor; project-scope-only paths do not qualify: %w", domain.ErrAuthorizationDenied)
+		}
+	}
+	cursorID := leafID
+	visited := make(map[string]struct{}, 8)
+	for cursorID != "" {
+		if _, seen := visited[cursorID]; seen {
+			return fmt.Errorf("action_item ancestry walk hit a cycle at %q: %w", cursorID, domain.ErrInvalidID)
+		}
+		visited[cursorID] = struct{}{}
+		ai, err := s.repo.GetActionItem(ctx, cursorID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				break
+			}
+			return fmt.Errorf("load action_item %q for steward ancestry walk: %w", cursorID, err)
+		}
+		if ai.Persistent && strings.EqualFold(strings.TrimSpace(ai.Owner), "STEWARD") {
+			return nil
+		}
+		cursorID = strings.TrimSpace(ai.ParentID)
+	}
+	return fmt.Errorf("request path does not root under a STEWARD-owned persistent ancestor: %w", domain.ErrAuthorizationDenied)
 }
 
 // ClaimAuthRequest returns one requester-visible auth request state and approved session secret when the continuation token matches.
@@ -474,6 +711,67 @@ func authRequestResumeTokenMatches(continuation map[string]any, want string) boo
 	}
 	got, _ := continuation["resume_token"].(string)
 	return strings.TrimSpace(got) == want
+}
+
+// authRequestPathWithin reports whether candidate is equal to or narrower
+// than requested. Mirrors the helper used by the autent gateway and the MCP
+// adapter (`internal/adapters/auth/autentauth/service.go:1135` and
+// `internal/adapters/server/common/app_service_adapter_mcp.go:477`); kept
+// app-private so the orch-self-approval gate (Drop 4a Wave 3 W3.1) can run
+// without crossing the import boundary into either adapter. Future
+// refinement: lift this to `domain.AuthRequestPath.Encompasses(other)` once
+// the three call sites are unified.
+func authRequestPathWithin(requested, candidate domain.AuthRequestPath) bool {
+	requested, err := requested.Normalize()
+	if err != nil {
+		return false
+	}
+	candidate, err = candidate.Normalize()
+	if err != nil {
+		return false
+	}
+	switch requested.Kind {
+	case domain.AuthRequestPathKindGlobal:
+		return true
+	case domain.AuthRequestPathKindProjects:
+		switch candidate.Kind {
+		case domain.AuthRequestPathKindGlobal:
+			return false
+		case domain.AuthRequestPathKindProjects:
+			for _, projectID := range candidate.ProjectIDs {
+				if !requested.MatchesProject(projectID) {
+					return false
+				}
+			}
+			return len(candidate.ProjectIDs) > 0
+		default:
+			return requested.MatchesProject(candidate.ProjectID)
+		}
+	case domain.AuthRequestPathKindProject:
+	default:
+		return false
+	}
+	if requested.ProjectID != candidate.ProjectID {
+		return false
+	}
+	if requested.BranchID == "" {
+		return true
+	}
+	if requested.BranchID != candidate.BranchID {
+		return false
+	}
+	if len(requested.PhaseIDs) == 0 {
+		return true
+	}
+	if len(candidate.PhaseIDs) < len(requested.PhaseIDs) {
+		return false
+	}
+	for idx, phaseID := range requested.PhaseIDs {
+		if candidate.PhaseIDs[idx] != phaseID {
+			return false
+		}
+	}
+	return true
 }
 
 // authRequestClaimIdentityMatches reports whether one claim request matches the requested child principal/client pair.

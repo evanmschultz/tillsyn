@@ -81,6 +81,7 @@ type stubAuthRequestService struct {
 	getResult           common.AuthRequestRecord
 	claimResult         common.AuthRequestClaimResult
 	cancelResult        common.AuthRequestRecord
+	approveResult       common.ApproveAuthRequestResult
 	sessionRows         []common.AuthSessionRecord
 	sessionResult       common.AuthSessionRecord
 	checkResult         common.AuthSessionGovernanceCheckResult
@@ -89,6 +90,7 @@ type stubAuthRequestService struct {
 	getErr              error
 	claimErr            error
 	cancelErr           error
+	approveErr          error
 	listSessionsErr     error
 	validateSessionErr  error
 	checkErr            error
@@ -98,6 +100,7 @@ type stubAuthRequestService struct {
 	lastGetID           string
 	lastClaim           common.ClaimAuthRequestRequest
 	lastCancel          common.CancelAuthRequestRequest
+	lastApprove         common.ApproveAuthRequestRequest
 	lastListSessions    common.ListAuthSessionsRequest
 	lastValidateSession common.ValidateAuthSessionRequest
 	lastCheckSession    common.CheckAuthSessionGovernanceRequest
@@ -202,6 +205,16 @@ func (s *stubAuthRequestService) CancelAuthRequest(_ context.Context, req common
 		return common.AuthRequestRecord{}, s.cancelErr
 	}
 	return s.cancelResult, nil
+}
+
+// ApproveAuthRequest records one approval request and returns one deterministic approved-auth-request result.
+// Drop 4a Wave 3 W3.1 — exercises the orch-self-approval cascade path.
+func (s *stubAuthRequestService) ApproveAuthRequest(_ context.Context, req common.ApproveAuthRequestRequest) (common.ApproveAuthRequestResult, error) {
+	s.lastApprove = req
+	if s.approveErr != nil {
+		return common.ApproveAuthRequestResult{}, s.approveErr
+	}
+	return s.approveResult, nil
 }
 
 // ListAuthSessions records session filters and returns deterministic auth-session rows.
@@ -1793,6 +1806,97 @@ func TestAuthRequestToolAuthContextHandles(t *testing.T) {
 	}
 	if got := capture.lastCheckSession.ActingSessionSecret; got != "secret-1" {
 		t.Fatalf("CheckAuthSessionGovernance() acting_session_secret = %q, want secret-1", got)
+	}
+}
+
+// TestAuthRequestApproveToolSchemaHasNoConfigurabilityKnobs verifies the
+// no-configurability constraint from Drop 4a Wave 3 W3.1: the till.auth_request
+// tool schema for operation=approve carries ONLY the documented arguments and
+// MUST NOT expose per-role thresholds, rate-limit knobs, or
+// "specific roles always go to dev" toggles. Negative-existence assertion.
+//
+// Acceptance per WAVE_3_PLAN.md §W3.1: "this droplet ships the binary
+// capability — no per-role threshold knobs, no rate limits, no 'specific
+// subagent roles always go to dev' config. Tool schema does NOT carry any
+// configurability parameters."
+func TestAuthRequestApproveToolSchemaHasNoConfigurabilityKnobs(t *testing.T) {
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	mcpSrv, cfg, err := NewServer(Config{EnableAuthContexts: true}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	streamable := mcpserver.NewStreamableHTTPServer(
+		mcpSrv,
+		mcpserver.WithEndpointPath(cfg.EndpointPath),
+		mcpserver.WithStateLess(true),
+	)
+	server := httptest.NewServer(streamable)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+	_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+	toolsRaw, ok := toolsResp.Result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+	}
+
+	// Operation enum must include "approve" but exclude any
+	// configurability vocabulary.
+	authSchema := findToolSchemaByName(t, toolsRaw, "till.auth_request")
+	enums := schemaPropertyEnumStrings(t, authSchema, "operation")
+	hasApprove := false
+	for _, value := range enums {
+		switch value {
+		case "approve":
+			hasApprove = true
+		case "auto_approve_threshold", "max_per_hour", "rate_limit", "specific_roles_to_dev":
+			t.Fatalf("operation enum carries forbidden configurability value %q: enum = %#v", value, enums)
+		}
+	}
+	if !hasApprove {
+		t.Fatalf("operation enum missing %q: enum = %#v", "approve", enums)
+	}
+
+	// Property list must NOT include any configurability knobs.
+	properties, ok := authSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("till.auth_request schema properties missing: %#v", authSchema)
+	}
+	forbidden := []string{
+		"auto_approve_threshold",
+		"max_per_hour",
+		"max_approvals_per_hour",
+		"rate_limit",
+		"approve_threshold",
+		"specific_roles_to_dev",
+		"roles_always_to_dev",
+		"per_role_policy",
+	}
+	for _, key := range forbidden {
+		if _, exists := properties[key]; exists {
+			t.Fatalf("till.auth_request schema carries forbidden configurability parameter %q", key)
+		}
+	}
+	// Required documented arguments for operation=approve must be present.
+	for _, key := range []string{"request_id", "acting_session_id", "acting_session_secret", "agent_instance_id", "lease_token"} {
+		if _, exists := properties[key]; !exists {
+			t.Fatalf("till.auth_request schema missing required approve argument %q", key)
+		}
+	}
+
+	// Tool description must mention the orch-self-approval rule.
+	authTool := findToolByName(t, toolsRaw, "till.auth_request")
+	desc := strings.ToLower(toolDescription(t, authTool))
+	if !strings.Contains(desc, "orchestrator cannot approve its own request") &&
+		!strings.Contains(desc, "approve its own request") {
+		t.Fatalf("auth_request description = %q, want orch-self-approval rule mention", desc)
 	}
 }
 

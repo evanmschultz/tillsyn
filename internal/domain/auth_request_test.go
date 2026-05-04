@@ -373,22 +373,22 @@ func TestNewAuthRequestAgentRoleDefaultsAndValidation(t *testing.T) {
 	}
 
 	req, err = NewAuthRequest(AuthRequestInput{
-		ID:                  "req-role-qa",
+		ID:                  "req-role-qa-proof",
 		Path:                AuthRequestPath{ProjectID: "p1"},
 		PrincipalID:         "qa-1",
 		PrincipalType:       "agent",
-		PrincipalRole:       "qa",
+		PrincipalRole:       "qa-proof",
 		ClientID:            "till-mcp-stdio",
 		ClientType:          "mcp-stdio",
 		RequestedSessionTTL: time.Hour,
-		Reason:              "needs qa scope",
+		Reason:              "needs qa-proof scope",
 		Timeout:             30 * time.Minute,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewAuthRequest(qa role) error = %v", err)
+		t.Fatalf("NewAuthRequest(qa-proof role) error = %v", err)
 	}
-	if req.PrincipalRole != string(AuthRequestRoleQA) {
-		t.Fatalf("NewAuthRequest(qa role) principal_role = %q, want qa", req.PrincipalRole)
+	if req.PrincipalRole != string(AuthRequestRoleQAProof) {
+		t.Fatalf("NewAuthRequest(qa-proof role) principal_role = %q, want qa-proof", req.PrincipalRole)
 	}
 
 	req, err = NewAuthRequest(AuthRequestInput{
@@ -514,20 +514,23 @@ func TestNewAuthRequestStewardPrincipalRoleValidation(t *testing.T) {
 		t.Fatalf("NewAuthRequest(steward + builder) error = %v, want ErrInvalidAuthRequestRole", err)
 	}
 
-	// Steward + qa role: REJECTED.
+	// Steward + qa-proof role: REJECTED. (Drop 4a Wave 3 W3.1 retired bare
+	// "qa" from the closed enum; this case uses the surviving qa-proof role
+	// to verify the steward principal-type still rejects every non-
+	// orchestrator role.)
 	if _, err := NewAuthRequest(AuthRequestInput{
 		ID:                  "req-steward-3",
 		Path:                AuthRequestPath{Kind: AuthRequestPathKindGlobal},
 		PrincipalID:         "STEWARD",
 		PrincipalType:       "steward",
-		PrincipalRole:       "qa",
+		PrincipalRole:       "qa-proof",
 		ClientID:            "till-mcp-stdio",
 		ClientType:          "mcp-stdio",
 		RequestedSessionTTL: time.Hour,
-		Reason:              "invalid steward + qa pairing",
+		Reason:              "invalid steward + qa-proof pairing",
 		Timeout:             30 * time.Minute,
 	}, now); !errors.Is(err, ErrInvalidAuthRequestRole) {
-		t.Fatalf("NewAuthRequest(steward + qa) error = %v, want ErrInvalidAuthRequestRole", err)
+		t.Fatalf("NewAuthRequest(steward + qa-proof) error = %v, want ErrInvalidAuthRequestRole", err)
 	}
 
 	// Steward + research role: REJECTED.
@@ -636,5 +639,138 @@ func TestAuthRequestLifecycleRejectsInvalidStates(t *testing.T) {
 	expired.ExpiresAt = now.Add(-time.Minute)
 	if err := expired.ensurePending(now); !errors.Is(err, ErrAuthRequestExpired) {
 		t.Fatalf("ensurePending() error = %v, want ErrAuthRequestExpired", err)
+	}
+}
+
+// TestAuthRequestRoleEnumExpansion verifies the closed AuthRequestRole enum
+// landed by Drop 4a Wave 3 W3.1 — 7 valid values (orchestrator, planner,
+// qa-proof, qa-falsification, builder, research, commit), bare "qa" rejected,
+// "subagent"/"worker" still resolve to builder.
+func TestAuthRequestRoleEnumExpansion(t *testing.T) {
+	t.Parallel()
+
+	validRoles := []AuthRequestRole{
+		AuthRequestRoleOrchestrator,
+		AuthRequestRolePlanner,
+		AuthRequestRoleQAProof,
+		AuthRequestRoleQAFalsification,
+		AuthRequestRoleBuilder,
+		AuthRequestRoleResearch,
+		AuthRequestRoleCommit,
+	}
+	for _, role := range validRoles {
+		role := role
+		t.Run(string(role), func(t *testing.T) {
+			t.Parallel()
+			if !IsValidAuthRequestRole(role) {
+				t.Fatalf("IsValidAuthRequestRole(%q) = false, want true", role)
+			}
+			if got := NormalizeAuthRequestRole(role); got != role {
+				t.Fatalf("NormalizeAuthRequestRole(%q) = %q, want %q", role, got, role)
+			}
+		})
+	}
+
+	// Bare "qa" (the deprecated alias constant) is REJECTED post-W3.1 —
+	// callers must pick qa-proof or qa-falsification explicitly.
+	if got := NormalizeAuthRequestRole(AuthRequestRoleQA); got != "" {
+		t.Fatalf("NormalizeAuthRequestRole(%q) = %q, want empty", AuthRequestRoleQA, got)
+	}
+	if IsValidAuthRequestRole(AuthRequestRoleQA) {
+		t.Fatalf("IsValidAuthRequestRole(%q) = true, want false (bare qa is no longer valid)", AuthRequestRoleQA)
+	}
+	if IsValidAuthRequestRole(AuthRequestRole(" QA ")) {
+		t.Fatal("IsValidAuthRequestRole(\" QA \") = true, want false (case-folded bare qa is invalid)")
+	}
+
+	// Legacy aliases for builder still resolve correctly.
+	if got := NormalizeAuthRequestRole(AuthRequestRole("subagent")); got != AuthRequestRoleBuilder {
+		t.Fatalf("NormalizeAuthRequestRole(subagent) = %q, want builder", got)
+	}
+	if got := NormalizeAuthRequestRole(AuthRequestRole("worker")); got != AuthRequestRoleBuilder {
+		t.Fatalf("NormalizeAuthRequestRole(worker) = %q, want builder", got)
+	}
+	if !IsValidAuthRequestRole(AuthRequestRoleSubagent) {
+		t.Fatal("IsValidAuthRequestRole(subagent alias) = false, want true")
+	}
+
+	// Mixed-case + whitespace round-trip via Normalize.
+	if got := NormalizeAuthRequestRole(AuthRequestRole(" QA-Proof ")); got != AuthRequestRoleQAProof {
+		t.Fatalf("NormalizeAuthRequestRole(\" QA-Proof \") = %q, want qa-proof", got)
+	}
+	if got := NormalizeAuthRequestRole(AuthRequestRole(" Commit ")); got != AuthRequestRoleCommit {
+		t.Fatalf("NormalizeAuthRequestRole(\" Commit \") = %q, want commit", got)
+	}
+}
+
+// TestNewAuthRequestPlannerOnNonProjectPathRejected verifies that planner /
+// qa-proof / qa-falsification / commit roles must reject global and
+// projects/<list> paths the same way builder/research did pre-W3.1 — only
+// orchestrator-role requests carry broader path shapes.
+func TestNewAuthRequestPlannerOnNonProjectPathRejected(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		role string
+		path AuthRequestPath
+		name string
+	}{
+		{role: "planner", path: AuthRequestPath{Kind: AuthRequestPathKindGlobal}, name: "planner_global"},
+		{role: "qa-proof", path: AuthRequestPath{Kind: AuthRequestPathKindGlobal}, name: "qa_proof_global"},
+		{role: "qa-falsification", path: AuthRequestPath{Kind: AuthRequestPathKindGlobal}, name: "qa_falsification_global"},
+		{role: "commit", path: AuthRequestPath{Kind: AuthRequestPathKindGlobal}, name: "commit_global"},
+		{role: "planner", path: AuthRequestPath{Kind: AuthRequestPathKindProjects, ProjectIDs: []string{"p1", "p2"}}, name: "planner_multi_project"},
+		{role: "qa-proof", path: AuthRequestPath{Kind: AuthRequestPathKindProjects, ProjectIDs: []string{"p1", "p2"}}, name: "qa_proof_multi_project"},
+		{role: "qa-falsification", path: AuthRequestPath{Kind: AuthRequestPathKindProjects, ProjectIDs: []string{"p1", "p2"}}, name: "qa_falsification_multi_project"},
+		{role: "commit", path: AuthRequestPath{Kind: AuthRequestPathKindProjects, ProjectIDs: []string{"p1", "p2"}}, name: "commit_multi_project"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewAuthRequest(AuthRequestInput{
+				ID:                  "req-" + tc.name,
+				Path:                tc.path,
+				PrincipalID:         "agent-" + tc.role,
+				PrincipalType:       "agent",
+				PrincipalRole:       tc.role,
+				ClientID:            "till-mcp-stdio",
+				ClientType:          "mcp-stdio",
+				RequestedSessionTTL: time.Hour,
+				Reason:              "non-orchestrator role on broader scope",
+				Timeout:             30 * time.Minute,
+			}, now)
+			if !errors.Is(err, ErrInvalidAuthRequestRole) {
+				t.Fatalf("NewAuthRequest(%s) error = %v, want ErrInvalidAuthRequestRole", tc.name, err)
+			}
+		})
+	}
+
+	// Counter-case: same roles SUCCEED on a single project/<id> path shape.
+	for _, role := range []string{"planner", "qa-proof", "qa-falsification", "commit"} {
+		role := role
+		t.Run("project_scope_"+role, func(t *testing.T) {
+			t.Parallel()
+			req, err := NewAuthRequest(AuthRequestInput{
+				ID:                  "req-project-" + role,
+				Path:                AuthRequestPath{ProjectID: "p1"},
+				PrincipalID:         "agent-" + role,
+				PrincipalType:       "agent",
+				PrincipalRole:       role,
+				ClientID:            "till-mcp-stdio",
+				ClientType:          "mcp-stdio",
+				RequestedSessionTTL: time.Hour,
+				Reason:              "single-project scope is valid for all roles",
+				Timeout:             30 * time.Minute,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewAuthRequest(%s, project scope) error = %v", role, err)
+			}
+			if req.PrincipalRole != role {
+				t.Fatalf("NewAuthRequest(%s) principal_role = %q, want %q", role, req.PrincipalRole, role)
+			}
+		})
 	}
 }

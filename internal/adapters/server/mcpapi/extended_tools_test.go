@@ -63,6 +63,7 @@ type stubExpandedService struct {
 	lastGetHandoffID             string
 	lastClaimAuthRequestReq      common.ClaimAuthRequestRequest
 	lastCancelAuthRequestReq     common.CancelAuthRequestRequest
+	lastApproveAuthRequestReq    common.ApproveAuthRequestRequest
 	lastListAuthSessionsReq      common.ListAuthSessionsRequest
 	lastValidateAuthSessionReq   common.ValidateAuthSessionRequest
 	lastCheckAuthSessionReq      common.CheckAuthSessionGovernanceRequest
@@ -244,6 +245,37 @@ func (s *stubExpandedService) CancelAuthRequest(_ context.Context, in common.Can
 		ResolutionNote:   strings.TrimSpace(in.ResolutionNote),
 		CreatedAt:        now,
 		ExpiresAt:        now.Add(30 * time.Minute),
+	}, nil
+}
+
+// ApproveAuthRequest returns one deterministic approved auth-request result.
+// Drop 4a Wave 3 W3.1 — exercises the orch-self-approval cascade path.
+func (s *stubExpandedService) ApproveAuthRequest(_ context.Context, in common.ApproveAuthRequestRequest) (common.ApproveAuthRequestResult, error) {
+	s.lastApproveAuthRequestReq = in
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(2 * time.Hour)
+	return common.ApproveAuthRequestResult{
+		Request: common.AuthRequestRecord{
+			ID:                     strings.TrimSpace(in.RequestID),
+			State:                  "approved",
+			Path:                   "project/p1",
+			ApprovedPath:           "project/p1",
+			ProjectID:              "p1",
+			ScopeType:              common.ScopeTypeProject,
+			ScopeID:                "p1",
+			PrincipalID:            "BUILDER_AGENT_99",
+			PrincipalType:          "agent",
+			PrincipalRole:          "builder",
+			ClientID:               "till-mcp-stdio-builder",
+			ClientType:             "mcp-stdio",
+			RequestedByActor:       "ORCH_INSTANCE_42",
+			RequestedByType:        "agent",
+			IssuedSessionID:        "sess-approved-1",
+			IssuedSessionExpiresAt: &expiresAt,
+			CreatedAt:              now,
+			ExpiresAt:              now.Add(30 * time.Minute),
+		},
+		SessionSecret: "secret-approved-1",
 	}, nil
 }
 

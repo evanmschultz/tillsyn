@@ -19,6 +19,7 @@ type authRequestServiceFixture struct {
 	svc     *app.Service
 	repo    *sqlite.Repository
 	project domain.Project
+	auth    *autentauth.Service
 }
 
 // newAuthRequestServiceFixture constructs one real app/auth/sqlite stack for lifecycle tests.
@@ -69,6 +70,7 @@ func newAuthRequestServiceFixture(t *testing.T) authRequestServiceFixture {
 		svc:     svc,
 		repo:    repo,
 		project: project,
+		auth:    auth,
 	}
 }
 
@@ -725,5 +727,628 @@ func TestServiceCreateAuthRequestStewardBuilderRejected(t *testing.T) {
 		Timeout:             10 * time.Minute,
 	}); !errors.Is(err, domain.ErrInvalidAuthRequestRole) {
 		t.Fatalf("CreateAuthRequest(steward + builder) error = %v, want ErrInvalidAuthRequestRole", err)
+	}
+}
+
+// orchSelfApprovalFixture extends the auth-request fixture with one issued
+// orchestrator session that the orch-self-approval gate (Drop 4a Wave 3
+// W3.1) can validate against. Created here rather than at top-level because
+// the existing fixture is the dev-TUI baseline and most tests do not need
+// an orch session.
+type orchSelfApprovalFixture struct {
+	authRequestServiceFixture
+	orchPrincipalID string
+	orchSessionID   string
+	orchSessionPath string
+	orchClientID    string
+	orchInstanceID  string
+	orchLeaseToken  string
+	subagentRequest domain.AuthRequest
+	subagentResume  string
+}
+
+// newOrchSelfApprovalFixture builds the standard arrangement: one project,
+// one issued orchestrator session scoped to project/<id>, one pending
+// subagent (builder) auth-request. Tests exercise the gate by supplying or
+// omitting the orchestrator's approver-identity fields.
+func newOrchSelfApprovalFixture(t *testing.T) orchSelfApprovalFixture {
+	t.Helper()
+	base := newAuthRequestServiceFixture(t)
+
+	// Issue an orchestrator-roled auth session for the gate to validate.
+	// Stamp principal_role + approved_path via session Metadata so
+	// mapSessionView surfaces them to the gate's ListAuthSessions query.
+	orchPrincipalID := "ORCH_INSTANCE_42"
+	orchClientID := "till-mcp-stdio-orch"
+	approvedPath := "project/" + base.project.ID
+	orchIssued, err := base.auth.IssueSession(context.Background(), autentauth.IssueSessionInput{
+		PrincipalID:   orchPrincipalID,
+		PrincipalType: "agent",
+		PrincipalName: "Drop Orchestrator",
+		ClientID:      orchClientID,
+		ClientType:    "mcp-stdio",
+		ClientName:    "Drop Orch MCP",
+		TTL:           2 * time.Hour,
+		Metadata: map[string]string{
+			"principal_role": "orchestrator",
+			"approved_path":  approvedPath,
+			"project_id":     base.project.ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("IssueSession(orch) error = %v", err)
+	}
+
+	// Create the subagent (builder) auth-request that the orchestrator
+	// will attempt to approve.
+	subagentRequest, err := base.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                approvedPath,
+		PrincipalID:         "BUILDER_AGENT_99",
+		PrincipalType:       "agent",
+		PrincipalRole:       "builder",
+		PrincipalName:       "Builder Subagent",
+		ClientID:            "till-mcp-stdio-builder",
+		ClientType:          "mcp-stdio",
+		ClientName:          "Builder MCP",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "drop-orch self-approval cascade",
+		Continuation:        map[string]any{"resume_token": "resume-orch-approve"},
+		RequestedBy:         orchPrincipalID,
+		RequestedType:       domain.ActorTypeAgent,
+		RequesterClientID:   orchClientID,
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(subagent) error = %v", err)
+	}
+
+	return orchSelfApprovalFixture{
+		authRequestServiceFixture: base,
+		orchPrincipalID:           orchPrincipalID,
+		orchSessionID:             orchIssued.Session.ID,
+		orchSessionPath:           approvedPath,
+		orchClientID:              orchClientID,
+		orchInstanceID:            "AGENT_INSTANCE_42",
+		orchLeaseToken:            "LEASE_TOKEN_42",
+		subagentRequest:           subagentRequest,
+		subagentResume:            "resume-orch-approve",
+	}
+}
+
+// TestApproveAuthRequestRejectsMissingApproverIdentity verifies the all-or-nothing
+// rule on the four approver-identity fields landed in Drop 4a Wave 3 W3.1.
+func TestApproveAuthRequestRejectsMissingApproverIdentity(t *testing.T) {
+	t.Parallel()
+	fixture := newOrchSelfApprovalFixture(t)
+	cases := []struct {
+		name string
+		in   app.ApproveAuthRequestInput
+	}{
+		{
+			name: "principal_id_empty",
+			in: app.ApproveAuthRequestInput{
+				ApproverPrincipalID:     "",
+				ApproverAgentInstanceID: fixture.orchInstanceID,
+				ApproverLeaseToken:      fixture.orchLeaseToken,
+				ApproverSessionID:       fixture.orchSessionID,
+			},
+		},
+		{
+			name: "agent_instance_id_empty",
+			in: app.ApproveAuthRequestInput{
+				ApproverPrincipalID:     fixture.orchPrincipalID,
+				ApproverAgentInstanceID: "",
+				ApproverLeaseToken:      fixture.orchLeaseToken,
+				ApproverSessionID:       fixture.orchSessionID,
+			},
+		},
+		{
+			name: "lease_token_empty",
+			in: app.ApproveAuthRequestInput{
+				ApproverPrincipalID:     fixture.orchPrincipalID,
+				ApproverAgentInstanceID: fixture.orchInstanceID,
+				ApproverLeaseToken:      "",
+				ApproverSessionID:       fixture.orchSessionID,
+			},
+		},
+		{
+			name: "session_id_empty",
+			in: app.ApproveAuthRequestInput{
+				ApproverPrincipalID:     fixture.orchPrincipalID,
+				ApproverAgentInstanceID: fixture.orchInstanceID,
+				ApproverLeaseToken:      fixture.orchLeaseToken,
+				ApproverSessionID:       "",
+			},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := tc.in
+			in.RequestID = fixture.subagentRequest.ID
+			in.ResolvedBy = "approver"
+			in.ResolvedType = domain.ActorTypeAgent
+			_, err := fixture.svc.ApproveAuthRequest(context.Background(), in)
+			if !errors.Is(err, domain.ErrInvalidID) {
+				t.Fatalf("ApproveAuthRequest() error = %v, want ErrInvalidID-wrapped", err)
+			}
+		})
+	}
+}
+
+// TestApproveAuthRequestRejectsNonOrchestratorApprover verifies the gate
+// rejects approvers whose session role is not "orchestrator".
+func TestApproveAuthRequestRejectsNonOrchestratorApprover(t *testing.T) {
+	t.Parallel()
+	fixture := newOrchSelfApprovalFixture(t)
+	// Issue a separate builder-roled session for the non-orchestrator
+	// approver scenario; the autent service does not expose an in-place
+	// role swap, so spin up a fresh session with the wrong role.
+	builderIssued, err := fixture.auth.IssueSession(context.Background(), autentauth.IssueSessionInput{
+		PrincipalID:   "BUILDER_APPROVER_55",
+		PrincipalType: "agent",
+		PrincipalName: "Builder Mistakenly Approving",
+		ClientID:      "till-mcp-stdio-bldr-approver",
+		ClientType:    "mcp-stdio",
+		ClientName:    "Builder Approver MCP",
+		TTL:           time.Hour,
+		Metadata: map[string]string{
+			"principal_role": "builder",
+			"approved_path":  fixture.orchSessionPath,
+			"project_id":     fixture.project.ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("IssueSession(builder approver) error = %v", err)
+	}
+	_, err = fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:               fixture.subagentRequest.ID,
+		ResolvedBy:              "approver",
+		ResolvedType:            domain.ActorTypeAgent,
+		ApproverPrincipalID:     "BUILDER_APPROVER_55",
+		ApproverAgentInstanceID: fixture.orchInstanceID,
+		ApproverLeaseToken:      fixture.orchLeaseToken,
+		ApproverSessionID:       builderIssued.Session.ID,
+	})
+	if !errors.Is(err, domain.ErrAuthorizationDenied) {
+		t.Fatalf("ApproveAuthRequest(non-orch approver) error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestApproveAuthRequestRejectsOrchSelfApproval verifies the gate rejects
+// approval when the approver and request principal_id match (orch cannot
+// approve its own request).
+func TestApproveAuthRequestRejectsOrchSelfApproval(t *testing.T) {
+	t.Parallel()
+	fixture := newOrchSelfApprovalFixture(t)
+	// Re-create the request with the same principal_id as the approver.
+	selfReq, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                fixture.orchSessionPath,
+		PrincipalID:         fixture.orchPrincipalID, // SAME as approver
+		PrincipalType:       "agent",
+		PrincipalRole:       "builder",
+		ClientID:            fixture.orchClientID,
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "orch attempts self-approval",
+		Continuation:        map[string]any{"resume_token": "resume-self"},
+		RequestedBy:         fixture.orchPrincipalID,
+		RequestedType:       domain.ActorTypeAgent,
+		RequesterClientID:   fixture.orchClientID,
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(self) error = %v", err)
+	}
+	_, err = fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:               selfReq.ID,
+		ResolvedBy:              "approver",
+		ResolvedType:            domain.ActorTypeAgent,
+		ApproverPrincipalID:     fixture.orchPrincipalID,
+		ApproverAgentInstanceID: fixture.orchInstanceID,
+		ApproverLeaseToken:      fixture.orchLeaseToken,
+		ApproverSessionID:       fixture.orchSessionID,
+	})
+	if !errors.Is(err, domain.ErrAuthorizationDenied) {
+		t.Fatalf("ApproveAuthRequest(self) error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestApproveAuthRequestRejectsApproveOfOrchestratorRequest verifies the gate
+// rejects when the request itself carries principal_role=orchestrator —
+// orch-on-orch approvals stay dev-only.
+func TestApproveAuthRequestRejectsApproveOfOrchestratorRequest(t *testing.T) {
+	t.Parallel()
+	fixture := newOrchSelfApprovalFixture(t)
+	orchOnOrchReq, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                fixture.orchSessionPath,
+		PrincipalID:         "OTHER_ORCH_77",
+		PrincipalType:       "agent",
+		PrincipalRole:       "orchestrator",
+		ClientID:            "till-mcp-stdio-other",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "orch-on-orch attempt",
+		Continuation:        map[string]any{"resume_token": "resume-orch-on-orch"},
+		RequestedBy:         "lane-user",
+		RequestedType:       domain.ActorTypeUser,
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(orch-target) error = %v", err)
+	}
+	_, err = fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:               orchOnOrchReq.ID,
+		ResolvedBy:              "approver",
+		ResolvedType:            domain.ActorTypeAgent,
+		ApproverPrincipalID:     fixture.orchPrincipalID,
+		ApproverAgentInstanceID: fixture.orchInstanceID,
+		ApproverLeaseToken:      fixture.orchLeaseToken,
+		ApproverSessionID:       fixture.orchSessionID,
+	})
+	if !errors.Is(err, domain.ErrAuthorizationDenied) {
+		t.Fatalf("ApproveAuthRequest(orch-target) error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestApproveAuthRequestRejectsOutOfSubtree verifies the gate rejects when
+// the approver's path does not encompass the request's path. A different
+// project_id is the simplest out-of-subtree case.
+func TestApproveAuthRequestRejectsOutOfSubtree(t *testing.T) {
+	t.Parallel()
+	fixture := newOrchSelfApprovalFixture(t)
+
+	// Create a second project and a request scoped to it.
+	otherProject, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Project Two"}, time.Now())
+	if err != nil {
+		t.Fatalf("NewProjectFromInput(p2) error = %v", err)
+	}
+	if err := fixture.repo.CreateProject(context.Background(), otherProject); err != nil {
+		t.Fatalf("CreateProject(p2) error = %v", err)
+	}
+	otherReq, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                "project/p2",
+		PrincipalID:         "BUILDER_FOR_P2",
+		PrincipalType:       "agent",
+		PrincipalRole:       "builder",
+		ClientID:            "till-mcp-stdio-p2",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "out-of-subtree attempt",
+		Continuation:        map[string]any{"resume_token": "resume-p2"},
+		RequestedBy:         fixture.orchPrincipalID,
+		RequestedType:       domain.ActorTypeAgent,
+		RequesterClientID:   fixture.orchClientID,
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(p2) error = %v", err)
+	}
+
+	// Approver session is scoped to p1; request is scoped to p2 → reject.
+	_, err = fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:               otherReq.ID,
+		ResolvedBy:              "approver",
+		ResolvedType:            domain.ActorTypeAgent,
+		ApproverPrincipalID:     fixture.orchPrincipalID,
+		ApproverAgentInstanceID: fixture.orchInstanceID,
+		ApproverLeaseToken:      fixture.orchLeaseToken,
+		ApproverSessionID:       fixture.orchSessionID,
+	})
+	if !errors.Is(err, domain.ErrAuthorizationDenied) {
+		t.Fatalf("ApproveAuthRequest(out-of-subtree) error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestApproveAuthRequestSucceedsForSameOrchSubagentInScope verifies the
+// happy-path: approver is orch, request is its own delegated subagent
+// (RequestedByActor == approver), within scope, non-orchestrator role —
+// approval succeeds and a session secret issues.
+func TestApproveAuthRequestSucceedsForSameOrchSubagentInScope(t *testing.T) {
+	t.Parallel()
+	fixture := newOrchSelfApprovalFixture(t)
+	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:               fixture.subagentRequest.ID,
+		ResolvedBy:              fixture.orchPrincipalID,
+		ResolvedType:            domain.ActorTypeAgent,
+		ResolutionNote:          "orch self-approval cascade",
+		ApproverPrincipalID:     fixture.orchPrincipalID,
+		ApproverAgentInstanceID: fixture.orchInstanceID,
+		ApproverLeaseToken:      fixture.orchLeaseToken,
+		ApproverSessionID:       fixture.orchSessionID,
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest(happy) error = %v", err)
+	}
+	if approved.Request.State != domain.AuthRequestStateApproved {
+		t.Fatalf("ApproveAuthRequest(happy) state = %q, want approved", approved.Request.State)
+	}
+	if approved.SessionSecret == "" {
+		t.Fatal("ApproveAuthRequest(happy) returned empty session secret")
+	}
+}
+
+// TestApproveAuthRequestRejectsCrossOrchWithoutSteward verifies the gate
+// rejects when the request was created by a different orchestrator AND the
+// approver is not a STEWARD session — falsification mitigation 1+5.
+func TestApproveAuthRequestRejectsCrossOrchWithoutSteward(t *testing.T) {
+	t.Parallel()
+	fixture := newOrchSelfApprovalFixture(t)
+	// Re-create the request with a DIFFERENT requested_by_actor.
+	otherOrchReq, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                fixture.orchSessionPath,
+		PrincipalID:         "BUILDER_FOR_OTHER",
+		PrincipalType:       "agent",
+		PrincipalRole:       "builder",
+		ClientID:            "till-mcp-stdio-builder-2",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "cross-orch attempt",
+		Continuation:        map[string]any{"resume_token": "resume-cross"},
+		RequestedBy:         "OTHER_ORCH_55", // DIFFERENT orch
+		RequestedType:       domain.ActorTypeAgent,
+		RequesterClientID:   "till-mcp-stdio-other",
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(cross-orch) error = %v", err)
+	}
+
+	_, err = fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:               otherOrchReq.ID,
+		ResolvedBy:              fixture.orchPrincipalID,
+		ResolvedType:            domain.ActorTypeAgent,
+		ApproverPrincipalID:     fixture.orchPrincipalID,
+		ApproverAgentInstanceID: fixture.orchInstanceID,
+		ApproverLeaseToken:      fixture.orchLeaseToken,
+		ApproverSessionID:       fixture.orchSessionID,
+	})
+	if !errors.Is(err, domain.ErrAuthorizationDenied) {
+		t.Fatalf("ApproveAuthRequest(cross-orch) error = %v, want ErrAuthorizationDenied (non-steward approver)", err)
+	}
+}
+
+// stewardCrossSubtreeFixture extends the orch-self-approval fixture with
+// (a) a STEWARD-typed orch session (autent collapses PrincipalType
+// "steward" → "agent" but preserves "steward" via session metadata key
+// "auth_request_principal_type"), and (b) one persistent STEWARD-owned
+// ancestor action_item under the project so the
+// requireStewardPersistentAncestor walk has a target. The cross-orch
+// trigger is wired by re-creating the subagent request with a different
+// RequestedBy, mirroring TestApproveAuthRequestRejectsCrossOrchWithoutSteward.
+//
+// Drop 4a droplet 4a.24 fix verification: with the gate now reading
+// AuthRequestPrincipalType (not PrincipalType), the STEWARD cross-subtree
+// exception actually fires for the first time. Pre-fix every approver was
+// rejected on the type check because PrincipalType was always "agent".
+type stewardCrossSubtreeFixture struct {
+	orchSelfApprovalFixture
+	stewardSessionID    string
+	stewardPrincipalID  string
+	persistentAncestor  string
+	subagentRequestPath string
+}
+
+// newStewardCrossSubtreeFixture issues a STEWARD-typed orch session,
+// creates one column + one persistent STEWARD-owned action_item under the
+// project, and re-creates a cross-orch subagent request whose path roots
+// under that ancestor. Returns the fixture so the test can drive
+// ApproveAuthRequest with whichever approver session it wants to verify.
+func newStewardCrossSubtreeFixture(t *testing.T) stewardCrossSubtreeFixture {
+	t.Helper()
+	base := newOrchSelfApprovalFixture(t)
+	ctx := context.Background()
+
+	// Issue a STEWARD-typed orch session. PrincipalType "steward" is the
+	// tillsyn-axis value; autent's IssueSession collapses it to "agent" at
+	// the autentdomain.PrincipalType layer but preserves "steward" via the
+	// "auth_request_principal_type" metadata key, which mapSessionView
+	// reads into AuthSession.AuthRequestPrincipalType.
+	stewardPrincipalID := "STEWARD"
+	stewardClientID := "till-mcp-stdio-steward"
+	stewardIssued, err := base.auth.IssueSession(ctx, autentauth.IssueSessionInput{
+		PrincipalID:   stewardPrincipalID,
+		PrincipalType: "steward",
+		PrincipalName: "STEWARD",
+		ClientID:      stewardClientID,
+		ClientType:    "mcp-stdio",
+		ClientName:    "STEWARD MCP",
+		TTL:           2 * time.Hour,
+		Metadata: map[string]string{
+			"principal_role": "orchestrator",
+			"approved_path":  "project/" + base.project.ID,
+			"project_id":     base.project.ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("IssueSession(steward) error = %v", err)
+	}
+
+	// Create a column so the persistent ancestor action_item validates.
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	column, err := domain.NewColumn("col-steward", base.project.ID, "Backlog", 0, 0, now)
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := base.repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	// Persistent STEWARD-owned ancestor — the ancestry walk's success target.
+	persistentID := "PERSISTENT_STEWARD_PARENT"
+	ancestor, err := domain.NewActionItemForTest(domain.ActionItemInput{
+		ID:         persistentID,
+		ProjectID:  base.project.ID,
+		Kind:       domain.KindRefinement,
+		ColumnID:   column.ID,
+		Title:      "STEWARD Persistent Refinement",
+		Owner:      "STEWARD",
+		Persistent: true,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewActionItemForTest(persistent) error = %v", err)
+	}
+	if err := base.repo.CreateActionItem(ctx, ancestor); err != nil {
+		t.Fatalf("CreateActionItem(persistent) error = %v", err)
+	}
+
+	// Path rooted under the persistent ancestor — branch path so
+	// path.ScopeID == persistentID and the walk hits Persistent+STEWARD on
+	// the first iteration.
+	subagentRequestPath := "project/" + base.project.ID + "/branch/" + persistentID
+
+	return stewardCrossSubtreeFixture{
+		orchSelfApprovalFixture: base,
+		stewardSessionID:        stewardIssued.Session.ID,
+		stewardPrincipalID:      stewardPrincipalID,
+		persistentAncestor:      persistentID,
+		subagentRequestPath:     subagentRequestPath,
+	}
+}
+
+// TestApproveAuthRequestStewardCrossSubtreeExceptionFires verifies the
+// STEWARD cross-subtree exception path approves when (a) approver is a
+// STEWARD-typed orch session, (b) the request was created by a different
+// orchestrator, and (c) the request path roots under a Persistent +
+// Owner=="STEWARD" action_item. This positive test would have failed
+// pre-4a.24-fix because the gate read session.PrincipalType (always
+// "agent" after autent collapse) and rejected every steward approver —
+// the exception was non-functional.
+func TestApproveAuthRequestStewardCrossSubtreeExceptionFires(t *testing.T) {
+	t.Parallel()
+	fixture := newStewardCrossSubtreeFixture(t)
+	ctx := context.Background()
+
+	// Cross-orch subagent request rooted under the persistent ancestor.
+	// Different RequestedBy than the steward principal triggers the
+	// cross-orch branch in checkOrchSelfApprovalGate.
+	crossOrchReq, err := fixture.svc.CreateAuthRequest(ctx, app.CreateAuthRequestInput{
+		Path:                fixture.subagentRequestPath,
+		PrincipalID:         "BUILDER_FROM_OTHER_ORCH",
+		PrincipalType:       "agent",
+		PrincipalRole:       "builder",
+		ClientID:            "till-mcp-stdio-builder-other",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "steward cross-subtree approval test",
+		Continuation:        map[string]any{"resume_token": "resume-steward-cross"},
+		RequestedBy:         "OTHER_ORCH_77",
+		RequestedType:       domain.ActorTypeAgent,
+		RequesterClientID:   "till-mcp-stdio-other-orch",
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(cross-orch under steward ancestor) error = %v", err)
+	}
+
+	approved, err := fixture.svc.ApproveAuthRequest(ctx, app.ApproveAuthRequestInput{
+		RequestID:               crossOrchReq.ID,
+		ResolvedBy:              fixture.stewardPrincipalID,
+		ResolvedType:            domain.ActorTypeAgent,
+		ResolutionNote:          "steward cross-subtree exception",
+		ApproverPrincipalID:     fixture.stewardPrincipalID,
+		ApproverAgentInstanceID: "STEWARD_INSTANCE",
+		ApproverLeaseToken:      "STEWARD_LEASE",
+		ApproverSessionID:       fixture.stewardSessionID,
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest(steward cross-subtree) error = %v, want success", err)
+	}
+	if approved.Request.State != domain.AuthRequestStateApproved {
+		t.Fatalf("ApproveAuthRequest(steward cross-subtree) state = %q, want approved", approved.Request.State)
+	}
+	if approved.SessionSecret == "" {
+		t.Fatal("ApproveAuthRequest(steward cross-subtree) returned empty session secret")
+	}
+}
+
+// TestApproveAuthRequestStewardCrossSubtreeExceptionRejectsNonStewardOrch
+// verifies the negative twin: the same persistent STEWARD-owned ancestor
+// exists, the request roots under it, but the approver is a NON-steward
+// orch (PrincipalType "agent" + AuthRequestPrincipalType "agent"). The
+// gate must reject because the cross-orch branch requires the approver's
+// AuthRequestPrincipalType to be "steward". This guards the
+// post-4a.24-fix gate against the trivial bug-where-everyone-passes
+// regression — the rejection must remain when the approver is not a
+// steward, even when the persistent ancestor exists.
+func TestApproveAuthRequestStewardCrossSubtreeExceptionRejectsNonStewardOrch(t *testing.T) {
+	t.Parallel()
+	fixture := newStewardCrossSubtreeFixture(t)
+	ctx := context.Background()
+
+	// Cross-orch subagent request rooted under the persistent ancestor.
+	crossOrchReq, err := fixture.svc.CreateAuthRequest(ctx, app.CreateAuthRequestInput{
+		Path:                fixture.subagentRequestPath,
+		PrincipalID:         "BUILDER_FROM_OTHER_ORCH",
+		PrincipalType:       "agent",
+		PrincipalRole:       "builder",
+		ClientID:            "till-mcp-stdio-builder-other-2",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "non-steward orch attempting cross-subtree approval",
+		Continuation:        map[string]any{"resume_token": "resume-non-steward-cross"},
+		RequestedBy:         "OTHER_ORCH_88",
+		RequestedType:       domain.ActorTypeAgent,
+		RequesterClientID:   "till-mcp-stdio-other-orch-2",
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(cross-orch under steward ancestor) error = %v", err)
+	}
+
+	// Use the NON-steward orch session from the embedded base fixture.
+	// Its PrincipalType is "agent" and AuthRequestPrincipalType is "agent"
+	// (no steward collapse), so the gate's
+	// AuthRequestPrincipalType == "steward" check must fail.
+	_, err = fixture.svc.ApproveAuthRequest(ctx, app.ApproveAuthRequestInput{
+		RequestID:               crossOrchReq.ID,
+		ResolvedBy:              fixture.orchPrincipalID,
+		ResolvedType:            domain.ActorTypeAgent,
+		ApproverPrincipalID:     fixture.orchPrincipalID,
+		ApproverAgentInstanceID: fixture.orchInstanceID,
+		ApproverLeaseToken:      fixture.orchLeaseToken,
+		ApproverSessionID:       fixture.orchSessionID,
+	})
+	if !errors.Is(err, domain.ErrAuthorizationDenied) {
+		t.Fatalf("ApproveAuthRequest(non-steward orch cross-subtree) error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestApproveAuthRequestDevTUIPathBypassesGate verifies the legacy
+// dev-TUI / system approval path (all four approver-identity fields empty)
+// still works post-W3.1 — the gate is bypassed.
+func TestApproveAuthRequestDevTUIPathBypassesGate(t *testing.T) {
+	t.Parallel()
+	fixture := newAuthRequestServiceFixture(t)
+	request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:                "project/" + fixture.project.ID,
+		PrincipalID:         "review-agent",
+		PrincipalType:       "agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "dev-TUI approval",
+		RequestedBy:         "lane-user",
+		RequestedType:       domain.ActorTypeUser,
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      request.ID,
+		ResolvedBy:     "approver-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved by dev",
+		// All four ApproverPrincipalID / ApproverAgentInstanceID /
+		// ApproverLeaseToken / ApproverSessionID empty → dev-TUI path,
+		// gate bypassed.
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest(dev-TUI) error = %v", err)
+	}
+	if approved.Request.State != domain.AuthRequestStateApproved {
+		t.Fatalf("ApproveAuthRequest(dev-TUI) state = %q, want approved", approved.Request.State)
 	}
 }

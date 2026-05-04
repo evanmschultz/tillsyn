@@ -95,8 +95,8 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 	srv.AddTool(
 		mcp.NewTool(
 			"till.auth_request",
-			mcp.WithDescription("Create, inspect, resume, or govern auth-request and approved-session lifecycle state. Use operation=create|list|get|claim|cancel|list_sessions|validate_session|check_session_governance|revoke_session. For operation=create with acting_session_id, different-principal child auth is orchestrator-only; non-orchestrators may request only their own session."),
-			mcp.WithString("operation", mcp.Required(), mcp.Description("Auth-request or auth-session operation"), mcp.Enum("create", "list", "get", "claim", "cancel", "list_sessions", "validate_session", "check_session_governance", "revoke_session")),
+			mcp.WithDescription("Create, inspect, resume, approve, or govern auth-request and approved-session lifecycle state. Use operation=create|list|get|claim|cancel|approve|list_sessions|validate_session|check_session_governance|revoke_session. For operation=create with acting_session_id, different-principal child auth is orchestrator-only; non-orchestrators may request only their own session. For operation=approve (Drop 4a Wave 3 W3.1 orch-self-approval cascade), the acting session must be an orchestrator-roled session that encompasses the request's path; an orchestrator cannot approve its own request, and orch-on-orch approvals stay dev-only — those still go through the TUI approval flow."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Auth-request or auth-session operation"), mcp.Enum("create", "list", "get", "claim", "cancel", "approve", "list_sessions", "validate_session", "check_session_governance", "revoke_session")),
 			mcp.WithString("project_id", mcp.Description("Optional project identifier filter for operation=list|list_sessions")),
 			mcp.WithString("state", mcp.Description("Optional request state filter for operation=list"), mcp.Enum("pending", "approved", "denied", "canceled", "expired")),
 			mcp.WithString("session_state", mcp.Description("Optional session state filter for operation=list_sessions"), mcp.Enum("active", "revoked", "expired")),
@@ -124,7 +124,9 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 			mcp.WithString("acting_auth_context_id", mcp.Description("Bound MCP auth context handle for the acting session, returned by till.auth_request claim/validate_session on stdio runtimes")),
 			mcp.WithString("resume_token", mcp.Description("Requester-owned resume token. Required for operation=claim|cancel. Use the token returned by operation=create when continuation_json was omitted.")),
 			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for human approval before returning the current request state, for example 30m")),
-			mcp.WithString("resolution_note", mcp.Description("Optional requester-visible note explaining why the pending request was withdrawn")),
+			mcp.WithString("resolution_note", mcp.Description("Optional requester-visible note explaining why the pending request was withdrawn or approved")),
+			mcp.WithString("agent_instance_id", mcp.Description("Approving orchestrator's agent instance identifier. Required for operation=approve.")),
+			mcp.WithString("lease_token", mcp.Description("Approving orchestrator's lease token. Required for operation=approve.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
@@ -158,6 +160,8 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				ResumeToken         string `json:"resume_token"`
 				WaitTimeout         string `json:"wait_timeout"`
 				ResolutionNote      string `json:"resolution_note"`
+				AgentInstanceID     string `json:"agent_instance_id"`
+				LeaseToken          string `json:"lease_token"`
 			}
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -312,6 +316,56 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				result, err := mcp.NewToolResultJSON(record)
 				if err != nil {
 					return nil, fmt.Errorf("encode auth_request cancel result: %w", err)
+				}
+				return result, nil
+			case "approve":
+				// Drop 4a Wave 3 W3.1 — orch-self-approval cascade path.
+				// Five required arguments: request_id, acting_session_id,
+				// acting_session_secret, agent_instance_id, lease_token.
+				// Optional: path (narrower-than-requested override),
+				// requested_ttl (≤ original requested), resolution_note.
+				// The acting session must be an orchestrator-roled session
+				// (enforced by the adapter); the service-layer gate
+				// enforces orch-self-approval / orch-on-orch / scope-encompasses
+				// rejection rules.
+				requestID := strings.TrimSpace(args.RequestID)
+				if requestID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "request_id" not found`), nil
+				}
+				actingSessionID, actingSessionSecret, err := resolveMCPActingSessionAuth(ctx, args.ActingSessionID, args.ActingSessionSecret)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				if actingSessionID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_id" not found`), nil
+				}
+				if actingSessionSecret == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
+				}
+				agentInstanceID := strings.TrimSpace(args.AgentInstanceID)
+				if agentInstanceID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "agent_instance_id" not found`), nil
+				}
+				leaseToken := strings.TrimSpace(args.LeaseToken)
+				if leaseToken == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "lease_token" not found`), nil
+				}
+				record, err := authRequests.ApproveAuthRequest(ctx, common.ApproveAuthRequestRequest{
+					RequestID:           requestID,
+					Path:                args.Path,
+					RequestedTTL:        args.RequestedTTL,
+					ResolutionNote:      args.ResolutionNote,
+					ActingSessionID:     actingSessionID,
+					ActingSessionSecret: actingSessionSecret,
+					AgentInstanceID:     agentInstanceID,
+					LeaseToken:          leaseToken,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(record)
+				if err != nil {
+					return nil, fmt.Errorf("encode auth_request approve result: %w", err)
 				}
 				return result, nil
 			case "list_sessions":

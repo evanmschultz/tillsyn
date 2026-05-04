@@ -1389,25 +1389,36 @@ func cloneJSONValue(value any) any {
 }
 
 // mapSessionView converts one autent session view into the app-facing session shape.
+//
+// Drop 4a droplet 4a.24 fix: also populates
+// AuthSession.AuthRequestPrincipalType from session metadata key
+// "auth_request_principal_type" so the orch-self-approval gate's STEWARD
+// cross-subtree exception (checkOrchSelfApprovalGate) can distinguish
+// steward orch sessions from non-steward orch sessions. The autent layer
+// collapses "steward" → "agent" at IssueSession; the tillsyn-axis value is
+// preserved on session metadata at issue time and read back here. Empty
+// when the metadata key is absent (legacy sessions issued before the
+// 4a.24 round-trip landed).
 func mapSessionView(view autent.SessionView, principalType, principalName, clientType, clientName string) app.AuthSession {
 	lastSeen := view.LastSeenAt.UTC()
 	session := app.AuthSession{
-		SessionID:        strings.TrimSpace(view.ID),
-		ProjectID:        sessionProjectID(view),
-		AuthRequestID:    strings.TrimSpace(view.Metadata["auth_request_id"]),
-		ApprovedPath:     strings.TrimSpace(view.Metadata["approved_path"]),
-		PrincipalID:      strings.TrimSpace(view.PrincipalID),
-		PrincipalType:    strings.TrimSpace(principalType),
-		PrincipalRole:    strings.TrimSpace(view.Metadata["principal_role"]),
-		PrincipalName:    strings.TrimSpace(principalName),
-		ClientID:         strings.TrimSpace(view.ClientID),
-		ClientType:       strings.TrimSpace(clientType),
-		ClientName:       strings.TrimSpace(clientName),
-		IssuedAt:         view.IssuedAt.UTC(),
-		ExpiresAt:        view.ExpiresAt.UTC(),
-		LastValidatedAt:  nil,
-		RevokedAt:        view.RevokedAt,
-		RevocationReason: strings.TrimSpace(view.RevocationReason),
+		SessionID:                strings.TrimSpace(view.ID),
+		ProjectID:                sessionProjectID(view),
+		AuthRequestID:            strings.TrimSpace(view.Metadata["auth_request_id"]),
+		ApprovedPath:             strings.TrimSpace(view.Metadata["approved_path"]),
+		PrincipalID:              strings.TrimSpace(view.PrincipalID),
+		PrincipalType:            strings.TrimSpace(principalType),
+		AuthRequestPrincipalType: strings.TrimSpace(view.Metadata["auth_request_principal_type"]),
+		PrincipalRole:            strings.TrimSpace(view.Metadata["principal_role"]),
+		PrincipalName:            strings.TrimSpace(principalName),
+		ClientID:                 strings.TrimSpace(view.ClientID),
+		ClientType:               strings.TrimSpace(clientType),
+		ClientName:               strings.TrimSpace(clientName),
+		IssuedAt:                 view.IssuedAt.UTC(),
+		ExpiresAt:                view.ExpiresAt.UTC(),
+		LastValidatedAt:          nil,
+		RevokedAt:                view.RevokedAt,
+		RevocationReason:         strings.TrimSpace(view.RevocationReason),
 	}
 	if !lastSeen.IsZero() {
 		session.LastValidatedAt = &lastSeen
