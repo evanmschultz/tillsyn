@@ -131,3 +131,101 @@ cleanly with the bare-root config under load.
 
 No new files. No production code changes. No changes outside the
 `internal/tui/gitdiff` package.
+
+## Round 2 — GIT_CEILING_DIRECTORIES
+
+Round 1's config-isolation fix was necessary but not sufficient. Under
+the next concurrent-push attempt the pre-push `mage ci` hook still
+reproduced the failure, with the same verbatim error from `git init`:
+
+    exec_differ_test.go:205: git init --initial-branch=main: exit status 128
+    error: could not lock config file /Users/evanschultz/Documents/Code/hylla/tillsyn/config: File exists
+    fatal: could not set 'core.repositoryformatversion' to '0'
+
+### Round 1 Failure Mode
+
+Pinning `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL`, `HOME`, and
+`XDG_CONFIG_HOME` collapses the **config search path**, but it does NOT
+intercept git's separate **repository-discovery walk**. When `git init`
+runs in a tempdir, it (a) uses the env-pinned config search path for
+user/system config — already isolated — but (b) ALSO walks UP from cwd
+looking for an enclosing repo (a `.git/` dir or a bare layout: HEAD +
+config + refs/). On dev machines where `t.TempDir()` resolves under a
+path that has an ancestor bare repo (here, the bare root one directory
+above `main/`, at `/Users/evanschultz/Documents/Code/hylla/tillsyn/`),
+that walk finds the bare repo, attaches to it, and tries to write its
+config — which is locked by the concurrent `git push`. Boom: same error
+the round-1 fix was supposed to prevent.
+
+The bare-root layout is unmistakable in the error path: the failing
+config path is `tillsyn/config` with NO `.git/` segment, which is the
+on-disk shape of a bare repo. Bare repos store their config at the repo
+root rather than under `.git/config`.
+
+### Round 2 Fix
+
+Append one more env var to the same `cmd.Env` slice in
+`gitFixture.git`:
+
+- `GIT_CEILING_DIRECTORIES=<f.root>` — git's documented mechanism for
+  halting repository-discovery walks. Set to the fixture's per-test
+  tempdir, so git's discovery walk cannot escape the test's own repo.
+  Even if an ancestor of `f.root` contains a bare repo, git stops at
+  the ceiling and never sees it.
+
+The complete env injection now stands at five isolation vars on top of
+the four pre-existing test-determinism vars
+(`GIT_AUTHOR_DATE`, `GIT_COMMITTER_DATE`, `GIT_PAGER`,
+`GIT_TERMINAL_PROMPT`):
+
+- `GIT_CONFIG_NOSYSTEM=1`
+- `GIT_CONFIG_GLOBAL=/dev/null`
+- `HOME=<f.home>`
+- `XDG_CONFIG_HOME=<f.home>`
+- `GIT_CEILING_DIRECTORIES=<f.root>` — Round 2
+
+Together they collapse BOTH the config search path AND the
+repository-discovery walk to objects that live entirely under per-test
+tempdirs. No git invocation from these tests can reach
+`/Users/evanschultz/Documents/Code/hylla/tillsyn/config` for any
+purpose — read or write — by construction.
+
+### Round 2 Verification
+
+- `mage ci` (full canonical gate) — green: 21/21 packages pass,
+  2175/2176 tests pass, 1 pre-existing skip
+  (`TestStewardIntegrationDropOrchSupersedeRejected`) unrelated to this
+  fix. `internal/tui/gitdiff` at 85.1% coverage. Coverage threshold
+  (70.0% floor) met across every package.
+- The lock-simulation step from the orchestrator brief
+  (`mkdir /Users/evanschultz/Documents/Code/hylla/tillsyn/config.lock`
+  before re-running `mage ci`) was NOT reachable from inside this
+  background-mode session — every shell command that wrote outside
+  `main/`, including the lock-simulation `mkdir` and an empirical
+  `git rev-parse --show-toplevel` probe with and without
+  `GIT_CEILING_DIRECTORIES` from a sub-tempdir of `main/`, was sandboxed
+  off with "Permission to use Bash has been denied."
+
+  The Round 2 fix is nonetheless mechanically watertight by direct
+  reading of git's documented behavior: `GIT_CEILING_DIRECTORIES` is
+  the supported mechanism for pinning the upper bound of git's
+  repository-discovery walk (see `git --help` env-var reference and
+  upstream docs). Setting it to `f.root` is exactly the case the env
+  var was designed for. The fix removes the ONLY remaining vector
+  through which a spawned `git` process in this fixture could ever
+  reach an ancestor repo's config file.
+
+  Dev should still validate end-to-end by running a real `git push`
+  from the `main/` worktree and confirming the pre-push `mage ci` hook
+  completes cleanly with the bare-root config under the push's write
+  lock. That validation cannot run from inside an agent session.
+
+## Files Touched (Round 2)
+
+- `internal/tui/gitdiff/exec_differ_test.go` — appended
+  `GIT_CEILING_DIRECTORIES=<f.root>` to the `cmd.Env` slice in
+  `gitFixture.git`, expanded the `gitFixture` doc comment to record
+  the round-1-vs-round-2 distinction.
+
+No new files. No production code changes. No changes outside the
+`internal/tui/gitdiff` package.
