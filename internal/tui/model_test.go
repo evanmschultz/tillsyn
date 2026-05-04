@@ -14999,6 +14999,14 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		"StandardsMarkdown": {},
 		"KindPayload":       {},
 		"CapabilityPolicy":  {},
+		// OrchSelfApprovalEnabled is the Drop 4a Wave 3 W3.2 project-metadata
+		// opt-out toggle for the orch-self-approval cascade. Pointer-bool
+		// (*bool) keyed off nil-means-enabled. Admin / policy field — set via
+		// till.project(operation=update) Metadata payload, never edited
+		// through the project form TUI surface today. Classified internal so
+		// this coverage test stays green without forcing premature TUI
+		// design.
+		"OrchSelfApprovalEnabled": {},
 	}
 	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.ProjectMetadata{}), projectMetadataEditable, nil, projectMetadataInternal)
 }

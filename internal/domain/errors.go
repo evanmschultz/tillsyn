@@ -69,4 +69,13 @@ var (
 	// so existing `errors.Is(err, common.ErrAuthorizationDenied)` checks
 	// still work.
 	ErrAuthorizationDenied = errors.New("authorization denied")
+	// ErrOrchSelfApprovalDisabled reports that the request's project has
+	// opted out of the orch-self-approval cascade via the project-metadata
+	// toggle Metadata.OrchSelfApprovalEnabled = *false (Drop 4a Wave 3 W3.2).
+	// The check fires BEFORE the role / path / cross-orch gate so the
+	// rejection is total — including the STEWARD cross-subtree exception.
+	// Distinct from ErrAuthorizationDenied to keep observability sharp:
+	// callers branching via errors.Is can surface the toggle status without
+	// confusing it with the role-gate's denials.
+	ErrOrchSelfApprovalDisabled = errors.New("orch self-approval disabled by project metadata")
 )

@@ -1128,3 +1128,134 @@ func TestAppServiceAdapterApproveAuthRequestRejectsMissingFields(t *testing.T) {
 		})
 	}
 }
+
+// TestAppServiceAdapterApproveAuthRequestHonorsProjectToggleDisabled
+// verifies the Drop 4a Wave 3 W3.2 project-metadata opt-out toggle
+// (Metadata.OrchSelfApprovalEnabled = *false) backstops the adapter-level
+// orch-self-approval cascade. The toggle rejection surfaces with
+// ErrOrchSelfApprovalDisabled BEFORE the role / path / cross-orch gate
+// runs — even when the approver session and request would otherwise
+// satisfy the W3.1 happy path.
+func TestAppServiceAdapterApproveAuthRequestHonorsProjectToggleDisabled(t *testing.T) {
+	adapter, repo := newAuthRequestAdapterForTest(t)
+
+	// Step 1: bootstrap orch session via legacy dev-TUI approve path —
+	// gate is bypassed because all four approver-identity fields are
+	// empty. Mirrors TestAppServiceAdapterApproveAuthRequestOrchSelfApproval.
+	orchApproved := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "ORCH_INSTANCE_42",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		PrincipalName:    "Drop Orchestrator",
+		ClientID:         "till-mcp-stdio-orch",
+		ClientType:       "mcp-stdio",
+		ClientName:       "Drop Orch MCP",
+		RequestedByActor: "lane-user",
+		RequestedByType:  "user",
+		Reason:           "drop-orch session for cascade approvals",
+	}, "")
+	if orchApproved.SessionSecret == "" {
+		t.Fatal("orchestrator session secret missing from dev-TUI approve")
+	}
+
+	// Step 2: flip the toggle on project p1 to *false via the repository.
+	// Production callers use till.project(operation=update) — Metadata
+	// flows through CreateProjectRequest / UpdateProjectRequest unchanged
+	// because the request struct embeds domain.ProjectMetadata directly.
+	// We bypass the mutation-guard context here so the test stays focused
+	// on the gate's read of the toggle, not on the mutation pipeline.
+	ctx := context.Background()
+	project, err := repo.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetProject(p1) error = %v", err)
+	}
+	disabled := false
+	project.Metadata.OrchSelfApprovalEnabled = &disabled
+	if err := repo.UpdateProject(ctx, project); err != nil {
+		t.Fatalf("UpdateProject(toggle=false) error = %v", err)
+	}
+
+	// Sanity check: re-read the project and confirm the toggle persisted.
+	reloaded, err := repo.GetProject(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetProject(p1, reload) error = %v", err)
+	}
+	if reloaded.Metadata.OrchSelfApprovalIsEnabled() {
+		t.Fatalf("toggle did not round-trip; OrchSelfApprovalIsEnabled() = true after UpdateProject(*false)")
+	}
+
+	// Step 3: orch creates a delegated builder request and attempts
+	// approval through the adapter. The toggle must reject before the
+	// role / path / cross-orch gate runs.
+	pendingBuilder, err := adapter.CreateAuthRequest(ctx, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "BUILDER_AGENT_99",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		PrincipalName:    "Builder Subagent",
+		ClientID:         "till-mcp-stdio-builder",
+		ClientType:       "mcp-stdio",
+		ClientName:       "Builder MCP",
+		RequestedByActor: "ORCH_INSTANCE_42",
+		RequestedByType:  "agent",
+		Reason:           "delegated builder for drop work",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(builder) error = %v", err)
+	}
+
+	_, err = adapter.ApproveAuthRequest(ctx, ApproveAuthRequestRequest{
+		RequestID:           pendingBuilder.ID,
+		ActingSessionID:     orchApproved.Request.IssuedSessionID,
+		ActingSessionSecret: orchApproved.SessionSecret,
+		AgentInstanceID:     "AGENT_INSTANCE_42",
+		LeaseToken:          "LEASE_TOKEN_42",
+		ResolutionNote:      "toggle-disabled cascade attempt",
+	})
+	if !errors.Is(err, domain.ErrOrchSelfApprovalDisabled) {
+		t.Fatalf("ApproveAuthRequest(toggle-disabled) error = %v, want ErrOrchSelfApprovalDisabled", err)
+	}
+
+	// Step 4: flip the toggle back to nil (or *true). The same approve
+	// call now succeeds — proving the toggle, not some unrelated gate
+	// drift, was the cause of the rejection.
+	reloaded.Metadata.OrchSelfApprovalEnabled = nil
+	if err := repo.UpdateProject(ctx, reloaded); err != nil {
+		t.Fatalf("UpdateProject(toggle=nil) error = %v", err)
+	}
+
+	// Re-create the request because the previous one is still pending but
+	// the gate fetches it again; using a fresh request keeps the assertion
+	// independent of any partial-state side effects from the rejected call.
+	pendingBuilder2, err := adapter.CreateAuthRequest(ctx, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "BUILDER_AGENT_99B",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		PrincipalName:    "Builder Subagent B",
+		ClientID:         "till-mcp-stdio-builder-b",
+		ClientType:       "mcp-stdio",
+		ClientName:       "Builder MCP B",
+		RequestedByActor: "ORCH_INSTANCE_42",
+		RequestedByType:  "agent",
+		Reason:           "post-toggle-reset cascade",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(builder-2) error = %v", err)
+	}
+	result, err := adapter.ApproveAuthRequest(ctx, ApproveAuthRequestRequest{
+		RequestID:           pendingBuilder2.ID,
+		ActingSessionID:     orchApproved.Request.IssuedSessionID,
+		ActingSessionSecret: orchApproved.SessionSecret,
+		AgentInstanceID:     "AGENT_INSTANCE_42",
+		LeaseToken:          "LEASE_TOKEN_42",
+		ResolutionNote:      "post-toggle-reset cascade",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest(post-toggle-reset) error = %v, want success", err)
+	}
+	if result.Request.State != "approved" {
+		t.Fatalf("ApproveAuthRequest(post-toggle-reset) state = %q, want approved", result.Request.State)
+	}
+}
