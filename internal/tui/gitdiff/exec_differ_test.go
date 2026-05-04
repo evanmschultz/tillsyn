@@ -17,15 +17,25 @@ import (
 // process working directory.
 //
 // home is a separate per-fixture tempdir reused as HOME / XDG_CONFIG_HOME for
-// every spawned git process. Together with GIT_CONFIG_NOSYSTEM=1 and
-// GIT_CONFIG_GLOBAL=/dev/null this fully isolates the fixture from the
-// developer's system / global / per-user git config — including any bare-root
-// or parent-repo config file that a concurrent git operation might be holding
-// a lock on. Without this isolation the tests are flaky under concurrent git
-// activity (e.g. a `git push` invoking the pre-push `mage ci` hook while the
-// bare-root config is locked) and fail with:
+// every spawned git process. Together with GIT_CONFIG_NOSYSTEM=1,
+// GIT_CONFIG_GLOBAL=/dev/null, and GIT_CEILING_DIRECTORIES=<root> this fully
+// isolates the fixture from the developer's system / global / per-user git
+// config — including any bare-root or parent-repo config file that a
+// concurrent git operation might be holding a lock on. Without this
+// isolation the tests are flaky under concurrent git activity (e.g. a
+// `git push` invoking the pre-push `mage ci` hook while the bare-root config
+// is locked) and fail with:
 //
 //	error: could not lock config file <bare-root>/config: File exists
+//
+// Round 1 (config isolation alone) wasn't enough on its own: even with the
+// config search path pinned, `git init` still performs repository discovery
+// that walks UP from cwd looking for an existing repo (`.git/` or a bare
+// layout: HEAD + config + refs/). On dev machines where the test tempdir
+// sits beneath a bare repo (here, the bare root one directory above main/),
+// that walk finds the bare repo and tries to lock its config. Round 2 adds
+// GIT_CEILING_DIRECTORIES=<root> so discovery halts at the fixture's own
+// repo dir and never reaches the bare root.
 //
 // The fix lives on cmd.Env rather than t.Setenv because every test in this
 // file uses t.Parallel(), and t.Setenv panics when called from a parallel
@@ -91,6 +101,18 @@ func (f *gitFixture) git(args ...string) string {
 		// $XDG_CONFIG_HOME/git/config when GIT_CONFIG_GLOBAL isn't set,
 		// and we want a consistent answer regardless of git version.
 		"XDG_CONFIG_HOME="+f.home,
+		// Isolation: stop git's repository-discovery walk at f.root so
+		// it never finds an enclosing repo (e.g. the bare root that
+		// contains main/). Without this, `git init` walks UP from cwd
+		// looking for a `.git/` or a bare layout, finds the bare repo
+		// at <bare-root>/, and tries to lock <bare-root>/config — which
+		// collides with a concurrent `git push` holding that lock and
+		// fails with:
+		//   error: could not lock config file <bare-root>/config: File exists
+		// GIT_CEILING_DIRECTORIES is a colon-separated list of dirs git's
+		// discovery walk will not cross; pinning it to the fixture root
+		// guarantees the walk never escapes the per-test tempdir.
+		"GIT_CEILING_DIRECTORIES="+f.root,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
