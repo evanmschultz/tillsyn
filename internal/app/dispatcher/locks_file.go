@@ -116,6 +116,38 @@ func (m *fileLockManager) Acquire(actionItemID string, paths []string) (acquired
 	return acquired, conflicts, nil
 }
 
+// WouldConflict reports — without acquiring or mutating any state — which
+// supplied paths would conflict with the manager's current holders if
+// actionItemID called Acquire(actionItemID, paths) right now. The returned
+// map mirrors the conflicts shape Acquire produces: path → holding
+// action-item ID. Same-holder paths (already held by actionItemID) are NOT
+// reported because Acquire treats those as idempotent successes.
+//
+// WouldConflict is the read-only seam consumed by PreviewSpawn (the
+// dispatcher's --dry-run entry point) so a dev can inspect spawn
+// reachability without contending with the live lock state. It takes the
+// same mutex Acquire takes — concurrent Acquire/Release on the same manager
+// will serialize WouldConflict's snapshot against them, but the returned
+// map is a snapshot only; the caller MUST NOT treat it as a reservation.
+func (m *fileLockManager) WouldConflict(actionItemID string, paths []string) map[string]string {
+	conflicts := make(map[string]string)
+	if len(paths) == 0 {
+		return conflicts
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.holders == nil {
+		return conflicts
+	}
+	for _, path := range paths {
+		holder, taken := m.holders[path]
+		if taken && holder != actionItemID {
+			conflicts[path] = holder
+		}
+	}
+	return conflicts
+}
+
 // Release frees every path currently held by actionItemID. Calling Release
 // for an action item that holds no paths (including an action item that has
 // never called Acquire, or an empty actionItemID) is a no-op.

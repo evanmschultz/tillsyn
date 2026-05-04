@@ -1387,6 +1387,23 @@ func (s *Service) ListProjects(ctx context.Context, includeArchived bool) ([]dom
 	return s.repo.ListProjects(ctx, includeArchived)
 }
 
+// GetProject returns one project by ID. Wave 2.10 (droplet 4a.23) needs
+// repo-level project lookup so the manual-trigger CLI can resolve the
+// dispatcher's spawn-time fields (RepoPrimaryWorktree, KindCatalogJSON,
+// HyllaArtifactRef) from an action item's ProjectID. Mirrors GetActionItem's
+// shape: trim, validate non-empty, delegate to repo, surface ErrInvalidID on
+// empty input.
+func (s *Service) GetProject(ctx context.Context, projectID string) (domain.Project, error) {
+	if s == nil || s.repo == nil {
+		return domain.Project{}, fmt.Errorf("service is not configured")
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return domain.Project{}, domain.ErrInvalidID
+	}
+	return s.repo.GetProject(ctx, projectID)
+}
+
 // ListColumns lists columns.
 func (s *Service) ListColumns(ctx context.Context, projectID string, includeArchived bool) ([]domain.Column, error) {
 	columns, err := s.repo.ListColumns(ctx, projectID, includeArchived)

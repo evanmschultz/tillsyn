@@ -131,6 +131,38 @@ func (m *packageLockManager) Acquire(actionItemID string, packages []string) (ac
 	return acquired, conflicts, nil
 }
 
+// WouldConflict reports — without acquiring or mutating any state — which
+// supplied packages would conflict with the manager's current holders if
+// actionItemID called Acquire(actionItemID, packages) right now. The
+// returned map mirrors the conflicts shape Acquire produces: package →
+// holding action-item ID. Same-holder packages (already held by
+// actionItemID) are NOT reported because Acquire treats those as
+// idempotent successes.
+//
+// WouldConflict is the read-only seam consumed by PreviewSpawn (the
+// dispatcher's --dry-run entry point) so a dev can inspect spawn
+// reachability without contending with the live lock state. The shape and
+// thread-safety contract mirror fileLockManager.WouldConflict — the
+// returned map is a snapshot only and MUST NOT be treated as a reservation.
+func (m *packageLockManager) WouldConflict(actionItemID string, packages []string) map[string]string {
+	conflicts := make(map[string]string)
+	if len(packages) == 0 {
+		return conflicts
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.holders == nil {
+		return conflicts
+	}
+	for _, pkg := range packages {
+		holder, taken := m.holders[pkg]
+		if taken && holder != actionItemID {
+			conflicts[pkg] = holder
+		}
+	}
+	return conflicts
+}
+
 // Release frees every package currently held by actionItemID. Calling Release
 // for an action item that holds no packages (including an action item that
 // has never called Acquire, or an empty actionItemID) is a no-op.
