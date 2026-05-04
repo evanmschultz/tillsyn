@@ -31,6 +31,8 @@ var Aliases = map[string]interface{}{
 	"test-pkg":           TestPkg,
 	"test-func":          TestFunc,
 	"fmt":                Format,
+	"format-path":        FormatPath,
+	"format-check":       FormatCheck,
 }
 
 // coverageThreshold is the minimum allowed statement coverage for each and all packages.
@@ -195,23 +197,36 @@ func verifySources() error {
 	return err
 }
 
-// Format rewrites Go sources with `go tool gofumpt -w`. With path == "." (or empty) it targets every tracked Go file; otherwise path is treated as a single file or directory to rewrite.
-func Format(path string) error {
+// Format rewrites every tracked Go file with `go tool gofumpt -w`. Use FormatPath for a single file or directory.
+func Format() error {
+	files, err := trackedGoFiles()
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	return runGofumptWrite(files)
+}
+
+// FormatPath rewrites one file or directory with `go tool gofumpt -w`. Use Format for the whole tracked tree.
+func FormatPath(path string) error {
 	path = strings.TrimSpace(path)
-	if path == "" || path == "." {
-		files, err := trackedGoFiles()
-		if err != nil {
-			return err
-		}
-		if len(files) == 0 {
-			return nil
-		}
-		return runGofumptWrite(files)
+	if path == "" {
+		return errors.New("path is required")
 	}
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("gofumpt path %q: %w", path, err)
 	}
 	return runGofumptWrite([]string{path})
+}
+
+// FormatCheck reports tracked Go files that still need gofumpt formatting.
+//
+// Public wrapper for the private formatCheck gate so .githooks/pre-commit can
+// invoke `mage format-check` without depending on internal helpers.
+func FormatCheck() error {
+	return formatCheck()
 }
 
 // formatCheck reports tracked Go files that still need gofumpt formatting.
