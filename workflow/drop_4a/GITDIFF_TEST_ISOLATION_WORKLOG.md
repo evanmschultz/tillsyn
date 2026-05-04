@@ -229,3 +229,138 @@ purpose — read or write — by construction.
 
 No new files. No production code changes. No changes outside the
 `internal/tui/gitdiff` package.
+
+## Round 3 — Filter Inherited GIT_* Env Vars
+
+Round 2's `GIT_CEILING_DIRECTORIES` fix was correct in isolation but
+still insufficient under the actual pre-push hook context. Re-running
+`mage ci` from inside a real `git push` pipeline reproduced the failure
+with TWO error modes — a different one for `git init` and for
+`git add`:
+
+    exec_differ_test.go:177: git init --initial-branch=main: exit status 128
+    error: could not lock config file /Users/evanschultz/Documents/Code/hylla/tillsyn/config: File exists
+    fatal: could not set 'core.repositoryformatversion' to '0'
+
+    exec_differ_test.go:291: git add hello.txt: exit status 128
+    fatal: Unable to create '/Users/evanschultz/Documents/Code/hylla/tillsyn/worktrees/main/index.lock': File exists.
+
+The second error mode is the load-bearing diagnostic: `git add` is
+trying to lock `tillsyn/worktrees/main/index.lock`, which is the bare
+repo's worktree-metadata directory for the `main/` worktree. There is
+exactly one way `git add` could ever target that path — `GIT_DIR`
+pointing at the bare repo, with the bare repo's worktree resolution
+selecting the `main/` worktree's index. That is precisely the env shape
+git itself sets when it invokes a hook from the bare-root push.
+
+### Round 1+2 Failure Mode (Why Append Wasn't Enough)
+
+Both prior rounds built the test command's env via:
+
+    cmd.Env = append(os.Environ(), <isolation vars>...)
+
+Under a normal interactive run, `os.Environ()` does not contain any
+`GIT_*` keys, so appending isolation vars worked. But when this test
+binary runs inside a `git push` **pre-push hook**, git itself populates
+the hook's process environment with:
+
+- `GIT_DIR` — pointed at the bare repo running the push.
+- `GIT_INDEX_FILE` — pointed at the bare repo's worktree index.
+- `GIT_WORK_TREE` — pointed at the active worktree.
+- `GIT_PREFIX`, `GIT_REFLOG_ACTION`, etc.
+
+These are inherited verbatim by `os.Environ()`. `GIT_DIR` overrides
+git's repository-discovery logic entirely — `GIT_CEILING_DIRECTORIES`
+caps the **discovery walk**, but if `GIT_DIR` is already set, no
+discovery walk happens at all. Git uses `GIT_DIR` directly. So the
+appended `GIT_CEILING_DIRECTORIES=<f.root>` did nothing under the hook,
+and `git init` / `git add` happily wrote to the bare-root config and
+the bare-root worktree index — the very paths the round-1+2 fixes were
+trying to keep out of reach.
+
+### Round 3 Fix
+
+Replace `append(os.Environ(), ...)` with `append(filteredEnv(), ...)`,
+where `filteredEnv()` is a new helper that returns `os.Environ()` with
+**every** `GIT_*=...` entry stripped:
+
+    func filteredEnv() []string {
+        src := os.Environ()
+        out := make([]string, 0, len(src))
+        for _, e := range src {
+            if strings.HasPrefix(e, "GIT_") {
+                continue
+            }
+            out = append(out, e)
+        }
+        return out
+    }
+
+After the strip, every isolation var the fixture wants set is appended
+explicitly — `GIT_AUTHOR_DATE`, `GIT_COMMITTER_DATE`, `GIT_PAGER`,
+`GIT_TERMINAL_PROMPT`, `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL`,
+`HOME`, `XDG_CONFIG_HOME`, `GIT_CEILING_DIRECTORIES`. No inherited
+`GIT_DIR` / `GIT_INDEX_FILE` / `GIT_WORK_TREE` / `GIT_PREFIX` /
+`GIT_REFLOG_ACTION` reaches the per-test git invocation. `git init`
+performs a fresh discovery walk (now actually run instead of bypassed),
+the walk halts at `f.root` per `GIT_CEILING_DIRECTORIES`, and the
+test's own `<tempdir>/.git/config` is the only config file in the
+read/write set.
+
+The `gitFixture.git` doc comment was rewritten to spell out the failure
+mode explicitly so the next contributor doesn't reintroduce
+`os.Environ()` as the base. The `filteredEnv` helper carries its own
+doc comment naming GIT_DIR specifically as the override that defeats
+`GIT_CEILING_DIRECTORIES`.
+
+### Why a `GIT_*` Prefix Strip (Not a Targeted Subset)
+
+Filtering only known offenders (e.g. `GIT_DIR`, `GIT_INDEX_FILE`,
+`GIT_WORK_TREE`) leaves the fix one new git env var away from breaking
+again. The stable contract is: the test fixture **owns** the GIT
+environment for its spawned commands, and any `GIT_*` key it cares
+about is appended explicitly afterward. Stripping the entire prefix
+makes the contract symmetrical and version-independent.
+
+The author identity for commits is set via the explicit
+`fx.git("config", "user.email", ...)` / `fx.git("config", "user.name", ...)`
+calls in `newGitFixture`, NOT via inherited `GIT_AUTHOR_NAME` /
+`GIT_COMMITTER_NAME` env vars. Stripping `GIT_AUTHOR_*` /
+`GIT_COMMITTER_*` from inherited env is therefore a no-op for the
+fixture's commit timeline. The deterministic timestamps
+(`GIT_AUTHOR_DATE` / `GIT_COMMITTER_DATE`) are re-added explicitly in
+the same env block, so test-driven date fixing is preserved.
+
+### Round 3 Verification
+
+- `mage formatCheck` — clean.
+- `mage ci` (full canonical gate) — green.
+- Lock-simulation under hook context is not reachable from this
+  background-mode session — writes outside `main/` are sandboxed off,
+  and the pre-push hook context can only be reproduced by running a
+  real `git push` from `main/`. The mechanical correctness argument
+  carries the verification: `filteredEnv()` cannot return any
+  `GIT_DIR=...` / `GIT_INDEX_FILE=...` / `GIT_WORK_TREE=...` entry,
+  because every such entry is unconditionally skipped before the slice
+  is returned. With those keys absent, git falls back to its standard
+  discovery walk, which is then capped by `GIT_CEILING_DIRECTORIES`.
+  The bare-root config at
+  `/Users/evanschultz/Documents/Code/hylla/tillsyn/config` and the
+  bare-root worktree index at
+  `/Users/evanschultz/Documents/Code/hylla/tillsyn/worktrees/main/index`
+  are both unreachable from any spawned `git` process in this fixture.
+
+  Dev validates end-to-end by running a real `git push` from `main/`
+  with the pre-push `mage ci` hook armed. That step is outside the
+  agent session.
+
+## Files Touched (Round 3)
+
+- `internal/tui/gitdiff/exec_differ_test.go` — added the `filteredEnv`
+  helper, switched `cmd.Env` construction in `gitFixture.git` from
+  `append(os.Environ(), …)` to `append(filteredEnv(), …)`, and rewrote
+  the `gitFixture.git` doc comment to record the Round-3 failure mode
+  + fix rationale.
+
+No new files. No production code changes. No changes outside the
+`internal/tui/gitdiff` package.
