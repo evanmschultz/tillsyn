@@ -1352,3 +1352,144 @@ func TestApproveAuthRequestDevTUIPathBypassesGate(t *testing.T) {
 		t.Fatalf("ApproveAuthRequest(dev-TUI) state = %q, want approved", approved.Request.State)
 	}
 }
+
+// setProjectOrchSelfApprovalEnabled writes the W3.2 toggle on a project row
+// directly via the repository. Test-only helper — production callers go
+// through the till.project update operation.
+func setProjectOrchSelfApprovalEnabled(t *testing.T, fixture authRequestServiceFixture, enabled bool) {
+	t.Helper()
+	ctx := context.Background()
+	project, err := fixture.repo.GetProject(ctx, fixture.project.ID)
+	if err != nil {
+		t.Fatalf("GetProject(toggle setup) error = %v", err)
+	}
+	val := enabled
+	project.Metadata.OrchSelfApprovalEnabled = &val
+	if err := fixture.repo.UpdateProject(ctx, project); err != nil {
+		t.Fatalf("UpdateProject(toggle setup) error = %v", err)
+	}
+}
+
+// TestApproveAuthRequestRejectsWhenProjectToggleDisabled verifies the Drop
+// 4a Wave 3 W3.2 project-metadata opt-out toggle rejects the orch-self-
+// approval cascade BEFORE the role / path / cross-orch gate runs. The
+// rejection is total — even the STEWARD cross-subtree path is backstopped.
+//
+// Two sub-cases share the same toggle-disabled state but exercise different
+// approver shapes:
+//
+//   - non_steward_orch — same-orch self-approval (the W3.1 happy path)
+//     rejects with ErrOrchSelfApprovalDisabled.
+//   - steward_cross_subtree — STEWARD approver under a Persistent +
+//     Owner=="STEWARD" ancestor (the W3.1 cross-subtree exception path)
+//     ALSO rejects, proving the toggle is a total backstop.
+func TestApproveAuthRequestRejectsWhenProjectToggleDisabled(t *testing.T) {
+	t.Run("non_steward_orch", func(t *testing.T) {
+		fixture := newOrchSelfApprovalFixture(t)
+		setProjectOrchSelfApprovalEnabled(t, fixture.authRequestServiceFixture, false)
+
+		_, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+			RequestID:               fixture.subagentRequest.ID,
+			ResolvedBy:              fixture.orchPrincipalID,
+			ResolvedType:            domain.ActorTypeAgent,
+			ResolutionNote:          "toggle-disabled non-steward attempt",
+			ApproverPrincipalID:     fixture.orchPrincipalID,
+			ApproverAgentInstanceID: fixture.orchInstanceID,
+			ApproverLeaseToken:      fixture.orchLeaseToken,
+			ApproverSessionID:       fixture.orchSessionID,
+		})
+		if !errors.Is(err, domain.ErrOrchSelfApprovalDisabled) {
+			t.Fatalf("ApproveAuthRequest(toggle-disabled, non-steward) error = %v, want ErrOrchSelfApprovalDisabled", err)
+		}
+		// Defense: must NOT also surface as ErrAuthorizationDenied (sentinel
+		// keeps observability sharp).
+		if errors.Is(err, domain.ErrAuthorizationDenied) {
+			t.Fatalf("ApproveAuthRequest(toggle-disabled) wrapped ErrAuthorizationDenied; want only ErrOrchSelfApprovalDisabled")
+		}
+	})
+
+	t.Run("steward_cross_subtree", func(t *testing.T) {
+		fixture := newStewardCrossSubtreeFixture(t)
+		setProjectOrchSelfApprovalEnabled(t, fixture.authRequestServiceFixture, false)
+		ctx := context.Background()
+
+		// Re-create a cross-orch subagent request rooted under the
+		// persistent STEWARD-owned ancestor (mirrors the cross-subtree
+		// happy-path test). With the toggle disabled this MUST still
+		// reject — total backstop.
+		crossOrchReq, err := fixture.svc.CreateAuthRequest(ctx, app.CreateAuthRequestInput{
+			Path:                fixture.subagentRequestPath,
+			PrincipalID:         "BUILDER_FROM_OTHER_ORCH",
+			PrincipalType:       "agent",
+			PrincipalRole:       "builder",
+			ClientID:            "till-mcp-stdio-builder-other-toggle",
+			ClientType:          "mcp-stdio",
+			RequestedSessionTTL: 2 * time.Hour,
+			Reason:              "toggle-disabled steward cross-subtree attempt",
+			Continuation:        map[string]any{"resume_token": "resume-toggle-cross"},
+			RequestedBy:         "OTHER_ORCH_77",
+			RequestedType:       domain.ActorTypeAgent,
+			RequesterClientID:   "till-mcp-stdio-other-orch-toggle",
+			Timeout:             10 * time.Minute,
+		})
+		if err != nil {
+			t.Fatalf("CreateAuthRequest(cross-orch under steward ancestor) error = %v", err)
+		}
+
+		_, err = fixture.svc.ApproveAuthRequest(ctx, app.ApproveAuthRequestInput{
+			RequestID:               crossOrchReq.ID,
+			ResolvedBy:              fixture.stewardPrincipalID,
+			ResolvedType:            domain.ActorTypeAgent,
+			ResolutionNote:          "toggle-disabled steward backstop",
+			ApproverPrincipalID:     fixture.stewardPrincipalID,
+			ApproverAgentInstanceID: "STEWARD_INSTANCE",
+			ApproverLeaseToken:      "STEWARD_LEASE",
+			ApproverSessionID:       fixture.stewardSessionID,
+		})
+		if !errors.Is(err, domain.ErrOrchSelfApprovalDisabled) {
+			t.Fatalf("ApproveAuthRequest(toggle-disabled, steward) error = %v, want ErrOrchSelfApprovalDisabled", err)
+		}
+	})
+}
+
+// TestApproveAuthRequestAllowedWhenProjectToggleNil verifies that a project
+// with no explicit toggle (nil OrchSelfApprovalEnabled) still grants the
+// orch-self-approval cascade — the W3.1 behavior must be preserved as the
+// default. Drop 4a Wave 3 W3.2.
+func TestApproveAuthRequestAllowedWhenProjectToggleNil(t *testing.T) {
+	t.Parallel()
+	fixture := newOrchSelfApprovalFixture(t)
+
+	// Sanity: fixture's freshly-created project has nil toggle by
+	// construction (NewProjectFromInput leaves Metadata zero-valued).
+	project, err := fixture.repo.GetProject(context.Background(), fixture.project.ID)
+	if err != nil {
+		t.Fatalf("GetProject() error = %v", err)
+	}
+	if project.Metadata.OrchSelfApprovalEnabled != nil {
+		t.Fatalf("freshly-created project has non-nil toggle pointer; want nil for default-enabled")
+	}
+	if !project.Metadata.OrchSelfApprovalIsEnabled() {
+		t.Fatalf("default ProjectMetadata.OrchSelfApprovalIsEnabled() = false; want true")
+	}
+
+	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:               fixture.subagentRequest.ID,
+		ResolvedBy:              fixture.orchPrincipalID,
+		ResolvedType:            domain.ActorTypeAgent,
+		ResolutionNote:          "default-enabled toggle still permits cascade",
+		ApproverPrincipalID:     fixture.orchPrincipalID,
+		ApproverAgentInstanceID: fixture.orchInstanceID,
+		ApproverLeaseToken:      fixture.orchLeaseToken,
+		ApproverSessionID:       fixture.orchSessionID,
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest(toggle-nil) error = %v, want success", err)
+	}
+	if approved.Request.State != domain.AuthRequestStateApproved {
+		t.Fatalf("ApproveAuthRequest(toggle-nil) state = %q, want approved", approved.Request.State)
+	}
+	if approved.SessionSecret == "" {
+		t.Fatal("ApproveAuthRequest(toggle-nil) returned empty session secret")
+	}
+}

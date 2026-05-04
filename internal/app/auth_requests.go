@@ -405,6 +405,14 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in ApproveAuthRequestI
 // checkOrchSelfApprovalGate runs the Drop 4a Wave 3 W3.1 self-approval gate:
 // validates the approver session, rejects orch-self-approval and orch-on-orch,
 // and enforces path-encompasses + STEWARD cross-subtree exception.
+//
+// W3.2 addition: when the request's project has set
+// Metadata.OrchSelfApprovalEnabled = *false, this gate rejects with
+// ErrOrchSelfApprovalDisabled BEFORE evaluating any role / path / cross-orch
+// rule. The toggle is a TOTAL backstop — including the STEWARD cross-subtree
+// exception — so a project explicitly opted out cannot have ANY orch session
+// (steward or otherwise) approve subagent requests. The legacy dev-TUI /
+// system path remains the only approval route.
 func (s *Service) checkOrchSelfApprovalGate(ctx context.Context, requestID, approverPrincipalID, approverSessionID string) error {
 	if s.authBackend == nil {
 		return fmt.Errorf("auth backend is not configured for orch-self-approval gate: %w", domain.ErrInvalidID)
@@ -412,6 +420,28 @@ func (s *Service) checkOrchSelfApprovalGate(ctx context.Context, requestID, appr
 	req, err := s.authRequests.GetAuthRequest(ctx, requestID)
 	if err != nil {
 		return err
+	}
+
+	// Reject 0 (W3.2): project-metadata opt-out toggle. Load the project
+	// the request belongs to and short-circuit if its metadata says
+	// OrchSelfApprovalEnabled is *false. nil and *true both pass through.
+	// Project-id resolution: prefer the request's stored ProjectID, fall
+	// back to the parsed path's project_id (the W3.1 gate uses the same
+	// fallback when session-side path resolution fails).
+	projectID := strings.TrimSpace(req.ProjectID)
+	if projectID == "" {
+		if path, perr := domain.ParseAuthRequestPath(req.Path); perr == nil {
+			projectID = strings.TrimSpace(path.ProjectID)
+		}
+	}
+	if projectID != "" && projectID != domain.AuthRequestGlobalProjectID {
+		project, perr := s.repo.GetProject(ctx, projectID)
+		if perr != nil {
+			return fmt.Errorf("load project %q for orch-self-approval toggle check: %w", projectID, perr)
+		}
+		if !project.Metadata.OrchSelfApprovalIsEnabled() {
+			return fmt.Errorf("project %q has opted out of orch self-approval: %w", projectID, domain.ErrOrchSelfApprovalDisabled)
+		}
 	}
 
 	// Reject 1: request principal_role IS orchestrator → stays dev-only.

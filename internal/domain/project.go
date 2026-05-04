@@ -96,15 +96,52 @@ type ProjectCapabilityPolicy struct {
 }
 
 // ProjectMetadata represents project metadata data used by this package.
+//
+// OrchSelfApprovalEnabled is the project-scoped opt-out toggle for the
+// orch-self-approval cascade gate (Drop 4a Wave 3 W3.2). Three states:
+//
+//   - nil (default / omitted) — orch self-approval is ENABLED.
+//     Projects without an explicit choice keep the post-W3.1 behavior.
+//   - *false — orch self-approval is DISABLED. Total opt-out:
+//     ApproveAuthRequest rejects with ErrOrchSelfApprovalDisabled BEFORE
+//     the role / path / cross-orch gate runs, including the STEWARD
+//     cross-subtree path. Dev-TUI / system approval (all four
+//     approver-identity fields empty) remains the only way to issue
+//     subagent sessions.
+//   - *true — orch self-approval is EXPLICITLY ENABLED. Behaviorally
+//     identical to nil; lets the dev affirmatively pin the toggle on
+//     when their project pre-MVP defaults could otherwise drift.
+//
+// Pointer-bool deliberate (W3.2 falsification attack 3 mitigation): a
+// plain bool's zero value `false` would silently disable self-approval
+// for every legacy project on first round-trip through JSON-decoded
+// metadata. The pointer keeps the absent-vs-explicit-false distinction.
 type ProjectMetadata struct {
-	Owner             string                  `json:"owner"`
-	Icon              string                  `json:"icon"`
-	Color             string                  `json:"color"`
-	Homepage          string                  `json:"homepage"`
-	Tags              []string                `json:"tags"`
-	StandardsMarkdown string                  `json:"standards_markdown"`
-	KindPayload       json.RawMessage         `json:"kind_payload,omitempty"`
-	CapabilityPolicy  ProjectCapabilityPolicy `json:"capability_policy"`
+	Owner                   string                  `json:"owner"`
+	Icon                    string                  `json:"icon"`
+	Color                   string                  `json:"color"`
+	Homepage                string                  `json:"homepage"`
+	Tags                    []string                `json:"tags"`
+	StandardsMarkdown       string                  `json:"standards_markdown"`
+	KindPayload             json.RawMessage         `json:"kind_payload,omitempty"`
+	CapabilityPolicy        ProjectCapabilityPolicy `json:"capability_policy"`
+	OrchSelfApprovalEnabled *bool                   `json:"orch_self_approval_enabled,omitempty"`
+}
+
+// OrchSelfApprovalIsEnabled reports whether orch-self-approval is currently
+// enabled for the project. A nil OrchSelfApprovalEnabled pointer means the
+// toggle has not been set explicitly and defaults to true (enabled). A
+// non-nil pointer returns its dereferenced value.
+//
+// Drop 4a Wave 3 W3.2: read by Service.ApproveAuthRequest before the
+// orch-self-approval gate. When this returns false the gate rejects with
+// ErrOrchSelfApprovalDisabled — total opt-out, including the STEWARD
+// cross-subtree path.
+func (m ProjectMetadata) OrchSelfApprovalIsEnabled() bool {
+	if m.OrchSelfApprovalEnabled == nil {
+		return true
+	}
+	return *m.OrchSelfApprovalEnabled
 }
 
 // ProjectInput holds input values for project constructor operations.
