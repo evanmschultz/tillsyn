@@ -595,18 +595,21 @@ func (t ActionItem) StartCriteriaUnmet() []string {
 	return incompleteChecklistItems(t.Metadata.CompletionContract.StartCriteria)
 }
 
-// CompletionCriteriaUnmet returns completion requirements that are not yet satisfied.
+// CompletionCriteriaUnmet returns completion requirements that are not yet
+// satisfied. The children-walk is unconditional (Drop 4a Wave 1.7 removed the
+// CompletionPolicy.RequireChildrenComplete bit): any non-archived child whose
+// normalized lifecycle state is not StateComplete blocks the parent close.
+// StateInProgress, StateTodo, and StateFailed all block; only StateComplete
+// and StateArchived allow parent close.
 func (t ActionItem) CompletionCriteriaUnmet(children []ActionItem) []string {
 	out := incompleteChecklistItems(t.Metadata.CompletionContract.CompletionCriteria)
 	out = append(out, incompleteChecklistItems(t.Metadata.CompletionContract.CompletionChecklist)...)
-	if t.Metadata.CompletionContract.Policy.RequireChildrenComplete {
-		for _, child := range children {
-			if child.ArchivedAt != nil {
-				continue
-			}
-			if normalizeLifecycleState(child.LifecycleState) != StateComplete {
-				out = append(out, fmt.Sprintf("child item %q is not complete", child.Title))
-			}
+	for _, child := range children {
+		if child.ArchivedAt != nil {
+			continue
+		}
+		if normalizeLifecycleState(child.LifecycleState) != StateComplete {
+			out = append(out, fmt.Sprintf("child item %q is not complete", child.Title))
 		}
 	}
 	return out

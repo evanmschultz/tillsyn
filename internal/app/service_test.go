@@ -3170,7 +3170,6 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 				CompletionChecklist: []domain.ChecklistItem{
 					{ID: "k1", Text: "docs updated", Complete: true},
 				},
-				Policy: domain.CompletionPolicy{RequireChildrenComplete: true},
 			},
 		},
 	}, now)
@@ -3201,8 +3200,10 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	}
 }
 
-// TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren verifies legacy require-children behavior remains intact.
-func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testing.T) {
+// TestMoveActionItemBlocksDoneWhenChildIncomplete verifies the always-on
+// parent-blocks-on-incomplete-child invariant (Drop 4a Wave 1.7): a parent
+// with a non-archived non-Complete child cannot move to StateComplete.
+func TestMoveActionItemBlocksDoneWhenChildIncomplete(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -3221,11 +3222,6 @@ func TestMoveActionItemBlocksDoneWhenCompletionContractRequiresChildren(t *testi
 		Title:          "parent",
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateInProgress,
-		Metadata: domain.ActionItemMetadata{
-			CompletionContract: domain.CompletionContract{
-				Policy: domain.CompletionPolicy{RequireChildrenComplete: true},
-			},
-		},
 	}, now)
 	child, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:           domain.KindPlan,
@@ -4757,7 +4753,6 @@ func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 		Metadata: domain.ActionItemMetadata{
 			CompletionContract: domain.CompletionContract{
 				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Complete: false}},
-				Policy:             domain.CompletionPolicy{RequireChildrenComplete: true},
 			},
 		},
 	}, now)

@@ -364,8 +364,9 @@ func TestStewardIntegrationRefinementsGateCloseSucceedsWhenAllBlockersClear(t *t
 
 	// Close the refinements-gate. SUCCEEDS because every direct child of
 	// the gate (none) and every gate.blocked_by entry has reached terminal
-	// state, OR because the gate has no RequireChildrenComplete policy and
-	// no live attention items.
+	// state — the always-on parent-blocks-on-incomplete-child invariant
+	// (Drop 4a Wave 1.7) finds no non-archived non-Complete children to
+	// block on.
 	gate, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
 		ActionItemID: fixture.gateID,
 		State:        string(domain.StateComplete),
@@ -398,10 +399,8 @@ func TestStewardIntegrationRefinementsGateCloseSucceedsWhenAllBlockersClear(t *t
 	}
 
 	// Close DROP_3 itself. SUCCEEDS — every direct child (the gate) is
-	// complete; the parent-blocks-on-incomplete-child invariant only fires
-	// when the parent metadata enables RequireChildrenComplete (per Drop
-	// 1's documented always-on rule), but even with the policy enabled the
-	// gate's terminal state would satisfy it.
+	// complete; the always-on parent-blocks-on-incomplete-child invariant
+	// (Drop 4a Wave 1.7) is satisfied by the gate's terminal state.
 	if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
 		ActionItemID: fixture.dropID,
 		State:        string(domain.StateComplete),
@@ -509,12 +508,11 @@ func TestStewardIntegrationDropOrchOwnerMutationRejected(t *testing.T) {
 //     warning the dev that drop_number=3 items remained non-terminal at
 //     gate-close.
 //
-// The invariant uses RequireChildrenComplete on the drop's metadata to
-// pin the parent-blocks rule deterministically — the drop seed does not
-// set this by default, so the test enables it explicitly to simulate the
-// "always-on" intent of Drop 1's rule (which lands the policy default in
-// a future drop). The safety-net surface is independent of that policy
-// and fires unconditionally when the gate closes with stragglers.
+// Drop 4a Wave 1.7 made the parent-blocks-on-incomplete-child invariant
+// unconditional (the CompletionPolicy.RequireChildrenComplete bit was
+// removed); no per-item opt-in is needed. The safety-net surface is
+// independent of the invariant and fires unconditionally when the gate
+// closes with stragglers.
 func TestStewardIntegrationRefinementsGateForgottenRegression(t *testing.T) {
 	fixture := newStewardIntegrationFixture(t)
 	ctx := context.Background()
@@ -627,20 +625,12 @@ func TestStewardIntegrationRefinementsGateForgottenRegression(t *testing.T) {
 
 	// Step 2(a): the underlying parent-blocks-on-incomplete-child
 	// invariant must reject DROP_3 close while the rogue child is still
-	// non-terminal. Pre-Drop-1 the policy is opt-in via metadata; the
-	// test enables it explicitly so the assertion pins the invariant
+	// non-terminal. Drop 4a Wave 1.7 made the invariant unconditional
+	// (the CompletionPolicy.RequireChildrenComplete bit was removed); no
+	// per-item opt-in is needed. The assertion pins the invariant
 	// independently of the safety-net warning (per QA falsification §1.5
 	// — the warning surface alone is insufficient evidence; the invariant
 	// must reject the close on its own merits).
-	dropItem, err := fixture.repo.GetActionItem(ctx, fixture.dropID)
-	if err != nil {
-		t.Fatalf("repo.GetActionItem(drop) error = %v", err)
-	}
-	dropItem.Metadata.CompletionContract.Policy.RequireChildrenComplete = true
-	if err := fixture.repo.UpdateActionItem(ctx, dropItem); err != nil {
-		t.Fatalf("repo.UpdateActionItem(set RequireChildrenComplete) error = %v", err)
-	}
-
 	if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
 		ActionItemID: fixture.dropID,
 		State:        string(domain.StateComplete),

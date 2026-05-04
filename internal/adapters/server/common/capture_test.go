@@ -123,7 +123,6 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 					CompletionCriteria: []domain.ChecklistItem{
 						{ID: "cc-1", Text: "capture review", Complete: false},
 					},
-					Policy: domain.CompletionPolicy{RequireChildrenComplete: true},
 				},
 			},
 		},
