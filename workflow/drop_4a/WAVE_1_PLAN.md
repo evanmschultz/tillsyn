@@ -67,8 +67,8 @@ Total: 9 droplets. Topological serialization within `action_item.go` chain; 1.8 
   - `internal/domain/action_item.go` — extend `ActionItem` struct (`:24-102`) with `Paths []string` after `DevGated bool` (`:81`); extend `ActionItemInput` struct (`:105-161`) with the same field after `DevGated` (`:146`); extend `NewActionItem` (`:176-327`) with normalization + validation block; thread into the returned `ActionItem` literal (`:297-326`).
   - `internal/domain/domain_test.go` — table-driven tests for `Paths`.
   - `internal/domain/errors.go` — new `ErrInvalidPaths` sentinel for whitespace-only / duplicate paths.
-  - `internal/app/service.go` — `CreateActionItemInput` struct (`:491-538`) gains `Paths []string`; `UpdateActionItemInput` struct (`:540+`) gains `Paths []string` (no pointer-sentinel — empty slice is the zero value and is meaningful); thread through service methods.
-  - `internal/adapters/server/common/mcp_surface.go` — `CreateActionItemRequest` (`:65-107`) gains `Paths []string`; `UpdateActionItemRequest` (`:110-158`) gains `Paths []string`.
+  - `internal/app/service.go` — `CreateActionItemInput` struct (`:491-538`) gains `Paths []string`; `UpdateActionItemInput` struct (`:540+`) gains `Paths *[]string` (**pointer-sentinel; locked post-4a.5 per Drop 3.21 precedent — nil preserves, non-nil applies; prevents description-only updates from silently clobbering planner-set Paths**); thread through service methods.
+  - `internal/adapters/server/common/mcp_surface.go` — `CreateActionItemRequest` (`:65-107`) gains `Paths []string`; `UpdateActionItemRequest` (`:110-158`) gains `Paths *[]string` (pointer-sentinel matches the service-layer Update shape).
   - `internal/adapters/server/common/app_service_adapter_mcp.go` — thread `Paths` through `CreateActionItem` (`:650-673`) and `UpdateActionItem` (`:717-734`).
   - `internal/adapters/server/mcpapi/extended_tools.go` — `mcp.WithArray("paths", ...)` schema attached to `till.action_item` create + update tool definitions; parse the array into `[]string`.
   - `internal/adapters/server/mcpapi/extended_tools_test.go` — round-trip test for `paths`.
@@ -104,6 +104,7 @@ Total: 9 droplets. Topological serialization within `action_item.go` chain; 1.8 
   - **Coverage strict-check deferred to Wave 2.** Strict path → package mapping (every file in `Paths` must resolve to an entry in `Packages`) requires gopls-aware path resolution that the domain layer doesn't have. Wave 2's lock manager performs the strict check at runtime when files exist; the domain rule today is the simpler "non-empty Packages when non-empty Paths" invariant.
   - Package format: any non-empty trimmed string. No format enforcement (`internal/domain`, `github.com/foo/bar`, both valid). Rationale: enforcement requires a Go-import-path validator; planner-set values matter more than a syntactic check.
   - Round-trip tests parallel Wave 1.1.
+  - **Update pointer-sentinel pattern (locked post-4a.5 per Drop 3.21 precedent):** `UpdateActionItemInput.Packages *[]string` and `UpdateActionItemRequest.Packages *[]string` — nil preserves, non-nil applies. Same rationale as 4a.5: prevents description-only updates from silently clobbering planner-set Packages. Same exposed-helper pattern as 4a.5 (`domain.NormalizeActionItemPackages` for shared create/update validation).
   - `mage test-pkg` for all touched packages green.
   - **DB action:** dev DELETEs `~/.tillsyn/tillsyn.db` BEFORE `mage ci`.
 - **Blocked by:** **Wave 1.1** (same-file compile lock on `action_item.go` + `mcp_surface.go` + `app_service_adapter_mcp.go` + `extended_tools.go` + `repo.go` + `snapshot.go`; coverage rule references `Paths` so 1.2 reads 1.1's field).
@@ -121,6 +122,7 @@ Total: 9 droplets. Topological serialization within `action_item.go` chain; 1.8 
   - **Disjoint-axis rule (domain-light):** `Files` and `Paths` are NOT cross-checked for overlap or disjointness. Rationale: `Paths` declares lock scope (write intent — what the build droplet may edit). `Files` declares reference attachments (read attention — files the agent should look at). The two axes overlap legitimately when an agent edits a file referenced as a viewer — that's the dominant case for Drop 4.5's TUI file-viewer pane. Forcing disjointness would require agents to choose which axis a file belongs to and would prohibit a read-then-edit workflow.
   - **Path-exists validation deferred to consumer.** Domain layer does NOT call `os.Stat` — paths often refer to soon-to-be-created files. Drop 4.5's file-viewer is the canonical consumer; today's minimal validation is `[]string` shape only.
   - Round-trip tests: empty / single / multi / overlap-with-`Paths` (legitimate) / whitespace-only rejected.
+  - **Update pointer-sentinel pattern (locked post-4a.5 per Drop 3.21 precedent):** `UpdateActionItemInput.Files *[]string` and `UpdateActionItemRequest.Files *[]string` — nil preserves, non-nil applies. Same rationale as 4a.5/4a.6.
   - `mage test-pkg` for all touched packages green.
   - **DB action:** dev DELETEs `~/.tillsyn/tillsyn.db` BEFORE `mage ci`.
 - **Blocked by:** **Wave 1.2** (same-file compile lock on the same six files).
@@ -138,6 +140,7 @@ Total: 9 droplets. Topological serialization within `action_item.go` chain; 1.8 
   - **Population timing decision: opaque domain field.** Domain layer holds the field opaquely as a string; it does NOT call `git rev-parse HEAD` or know about git at all. Rationale: domain → git would introduce a new external dependency; matches precedent (`Title`, `Description`, `Owner` are all caller-supplied opaque strings). The CALLER (orchestrator pre-cascade; dispatcher in Wave 2; commit-agent in Drop 4b) supplies `StartCommit` at creation time — typically the current `git rev-parse HEAD` of the bare-root or active worktree.
   - Empty `StartCommit` is valid (zero value — not yet captured / not applicable).
   - Round-trip tests: empty / 40-char SHA / 7-char short-SHA / whitespace-trimmed.
+  - **Update pointer-sentinel pattern (locked post-4a.5 per Drop 3.21 precedent):** `UpdateActionItemInput.StartCommit *string` and `UpdateActionItemRequest.StartCommit *string` — nil preserves, non-nil applies. Empty-string explicit-clear distinguishable from "not provided." Prevents description-only updates from silently clobbering dispatcher-set start commit hashes.
   - `mage test-pkg` for all touched packages green.
   - **DB action:** dev DELETEs `~/.tillsyn/tillsyn.db` BEFORE `mage ci`.
 - **Blocked by:** **Wave 1.3** (same-file compile lock on the same six files).
@@ -155,6 +158,7 @@ Total: 9 droplets. Topological serialization within `action_item.go` chain; 1.8 
   - **Population-timing hook:** `SetLifecycleState` (`internal/domain/action_item.go:387-415`) does NOT auto-populate `EndCommit`. Same opaque-domain reasoning as `StartCommit`. The CALLER (Wave 2 dispatcher) populates `EndCommit` AT the terminal-state transition by either: (a) calling `UpdateActionItem` with the dereferenced commit value before `MoveActionItemState`, or (b) extending `MoveActionItemStateRequest` with an optional `EndCommit string` field that propagates through to a service method. **Decision: option (a) — pure domain; minimal MCP surface change in Wave 1.5.** Wave 2's dispatcher takes care of the call ordering. Rationale: keeps MCP wire surface simple; domain field is just-a-field.
   - Empty `EndCommit` valid until terminal state. The pre-cascade orchestrator and Wave 2 dispatcher are responsible for populating it; domain doesn't enforce non-empty-on-terminal.
   - Round-trip tests parallel `StartCommit`.
+  - **Update pointer-sentinel pattern (locked post-4a.5 per Drop 3.21 precedent):** `UpdateActionItemInput.EndCommit *string` and `UpdateActionItemRequest.EndCommit *string` — same shape as `StartCommit` (nil preserves, non-nil applies, empty-string explicit-clear distinguishable).
   - `mage test-pkg` for all touched packages green.
   - **DB action:** dev DELETEs `~/.tillsyn/tillsyn.db` BEFORE `mage ci`.
 - **Blocked by:** **Wave 1.4** (same-file compile lock on the same six files).
