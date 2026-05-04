@@ -146,7 +146,7 @@ Treat these as defaults. If a level-1 drop genuinely has to be large and monolit
 Tillsyn has two primitives for "this comes after that":
 
 1. **Parent-child nesting** — a parent drop cannot move to `complete` while any child is incomplete. **This is what `depends_on` would be for.** You get it for free by nesting. Do not layer a `depends_on` field on top of nesting.
-2. **`blocked_by`** — the **only** sibling and cross-drop ordering primitive. Planners set `blocked_by` at creation time; the dispatcher adds runtime blockers when file/package locks conflict (Drop 4+).
+2. **`blocked_by`** — the **only** sibling and cross-drop ordering primitive. Planners set `blocked_by` at creation time; Wave 2 of Drop 4a delivered the dispatcher's lock manager and conflict detector — runtime `blocked_by` insertion fires on `in_progress` promotion when sibling locks conflict (file or package).
 
 **Rule of thumb:** if X should finish before Y and they're **siblings** (or in different subtrees), use `blocked_by`. If X should finish before Y and Y's completion genuinely depends on X's result, **make Y a child of X** instead of siblings-with-blocked_by, so the parent-child rule does the work.
 
@@ -167,7 +167,7 @@ External adopters: run QA even when you don't have `go-qa-*-agent` subagents —
 
 ## Build-QA-Commit Loop (Pre-Cascade)
 
-Until the cascade dispatcher ships (Drop 4+), the parent orchestrator session runs this loop manually:
+Until the gate runner ships in Drop 4b, the parent orchestrator session OR Drop-4a's manual-trigger dispatcher (`till dispatcher run --action-item <id>`) runs this loop. Loop body unchanged; the dispatcher merely automates the spawn + lock + auth-provision steps.
 
 1. **Plan** — `go-planning-agent` (or orchestrator + dev, for trivial drops) decomposes into atomic drops with `paths` / `packages` / acceptance criteria.
 2. **Build** — `go-builder-agent` subagent implements the increment. Builder moves its own drop to `in_progress` at start, commits evidence to `implementation_notes_agent` + `completion_notes`, moves to `complete` at end, and closes with a `## Hylla Feedback` section.
@@ -239,7 +239,7 @@ The dev only ever sees orchestrator auth requests in the TUI. Planner / QA / bui
 2. The request's `principal_role` is **not** `orchestrator`. Orch-spawning-orch is out of scope; orch chains require dev approval at every step.
 3. The orch claims the approval action through its own session tuple — no acting-on-behalf-of for approval.
 
-**Pre-fix vs post-fix state.** The capability to approve subagent auth from an orch session lands in the auth-approval-cascade drop (PLAN §19.1.6), scheduled between Drop 1.5 and Drop 2. Until that drop ships, orch-side approval may fail with a permission error — when it does, the orch surfaces the request_id to the dev in chat for manual TUI approval and files a level_2 `kind=refinement` node under REFINEMENTS so the auth-approval-cascade drop has a concrete repro to point at. Once §19.1.6 ships, orch-side approval is the canonical path; dev approval becomes the configurable fallback (a later refinement drop adds the configuration).
+**Capability landing.** Wave 3 of Drop 4a (Drop 1.6 absorbed) landed the orch-self-approves-non-orch-subagent capability. Orch-side approval is the canonical path; cross-orch and orch-spawning-orch still route through the dev TUI. Project-level `OrchSelfApprovalEnabled = *false` toggle is the total backstop (reverts ALL approves under that project — including STEWARD's cross-subtree path — to dev-TUI approval).
 
 **Auth handoff to the subagent.** After the orch creates and approves the request, the orch passes `request_id` + `resume_token` + `path` + `principal_id` + `client_id` to the subagent in the spawn prompt — **never** the orch's own session tuple. The subagent runs `till.auth_request(operation=claim)` itself and issues its own scope-appropriate lease.
 
