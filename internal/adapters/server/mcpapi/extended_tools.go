@@ -436,6 +436,12 @@ func registerProjectTools(
 			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithArray("kind_ids", mcp.Description("Allowed kind id list for operation=set_allowed_kinds."), mcp.WithStringItems()),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
+			mcp.WithString("hylla_artifact_ref", mcp.Description("Drop 4a L4 first-class field. Hylla ingest reference for the project (e.g. \"github.com/evanmschultz/tillsyn@main\"). Free-form trimmed string; Wave 2 dispatcher reads this so subagents know which artifact to query.")),
+			mcp.WithString("repo_bare_root", mcp.Description("Drop 4a L4 first-class field. Absolute filesystem path to the project's bare git repository (orchestration root, e.g. \"/Users/.../hylla/tillsyn/\"). Must be absolute or empty; relative paths reject with invalid_repo_path.")),
+			mcp.WithString("repo_primary_worktree", mcp.Description("Drop 4a L4 first-class field. Absolute filesystem path to the project's primary worktree (e.g. \"/Users/.../hylla/tillsyn/main/\"). Wave 2 dispatcher uses this as `cd` target when spawning subagents. Must be absolute or empty.")),
+			mcp.WithString("language", mcp.Description("Drop 4a L4 first-class field. Closed enum: \"\" | \"go\" | \"fe\". Wave 2 dispatcher reads this to pick the language-specific agent variant. Empty allowed for un-typed projects pre-bootstrap.")),
+			mcp.WithString("build_tool", mcp.Description("Drop 4a L4 first-class field. Free-form build-driver name (e.g. \"mage\", \"npm\", \"yarn\", \"pnpm\"). No closed enum — build tools proliferate. Empty allowed.")),
+			mcp.WithString("dev_mcp_server_name", mcp.Description("Drop 4a L4 first-class field. Per-project `claude mcp add` registration name for the dev MCP server. Each worktree gets a unique entry; this field carries the worktree-specific name.")),
 			mcp.WithString("session_id", mcp.Description("Required for mutating operations. "+mcpMutationSessionDescription)),
 			mcp.WithString("session_secret", mcp.Description("Required for mutating operations. "+mcpMutationSessionSecretDescription)),
 			mcp.WithString("auth_context_id", mcp.Description("Required for mutating operations when using a bound stdio auth handle. "+mcpMutationAuthContextDescription)),
@@ -446,19 +452,25 @@ func registerProjectTools(
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args struct {
-				Operation       string                 `json:"operation"`
-				ProjectID       string                 `json:"project_id"`
-				IncludeArchived bool                   `json:"include_archived"`
-				Limit           int                    `json:"limit"`
-				Name            string                 `json:"name"`
-				Description     string                 `json:"description"`
-				KindIDs         []string               `json:"kind_ids"`
-				Metadata        domain.ProjectMetadata `json:"metadata"`
-				SessionID       string                 `json:"session_id"`
-				SessionSecret   string                 `json:"session_secret"`
-				AgentInstanceID string                 `json:"agent_instance_id"`
-				LeaseToken      string                 `json:"lease_token"`
-				OverrideToken   string                 `json:"override_token"`
+				Operation           string                 `json:"operation"`
+				ProjectID           string                 `json:"project_id"`
+				IncludeArchived     bool                   `json:"include_archived"`
+				Limit               int                    `json:"limit"`
+				Name                string                 `json:"name"`
+				Description         string                 `json:"description"`
+				KindIDs             []string               `json:"kind_ids"`
+				Metadata            domain.ProjectMetadata `json:"metadata"`
+				HyllaArtifactRef    string                 `json:"hylla_artifact_ref"`
+				RepoBareRoot        string                 `json:"repo_bare_root"`
+				RepoPrimaryWorktree string                 `json:"repo_primary_worktree"`
+				Language            string                 `json:"language"`
+				BuildTool           string                 `json:"build_tool"`
+				DevMcpServerName    string                 `json:"dev_mcp_server_name"`
+				SessionID           string                 `json:"session_id"`
+				SessionSecret       string                 `json:"session_secret"`
+				AgentInstanceID     string                 `json:"agent_instance_id"`
+				LeaseToken          string                 `json:"lease_token"`
+				OverrideToken       string                 `json:"override_token"`
 			}
 			if err := req.BindArguments(&args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -512,10 +524,16 @@ func registerProjectTools(
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 				project, err := projects.CreateProject(ctx, common.CreateProjectRequest{
-					Name:        args.Name,
-					Description: args.Description,
-					Metadata:    args.Metadata,
-					Actor:       actor,
+					Name:                args.Name,
+					Description:         args.Description,
+					HyllaArtifactRef:    args.HyllaArtifactRef,
+					RepoBareRoot:        args.RepoBareRoot,
+					RepoPrimaryWorktree: args.RepoPrimaryWorktree,
+					Language:            args.Language,
+					BuildTool:           args.BuildTool,
+					DevMcpServerName:    args.DevMcpServerName,
+					Metadata:            args.Metadata,
+					Actor:               actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -560,11 +578,17 @@ func registerProjectTools(
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 				project, err := projects.UpdateProject(ctx, common.UpdateProjectRequest{
-					ProjectID:   args.ProjectID,
-					Name:        args.Name,
-					Description: args.Description,
-					Metadata:    args.Metadata,
-					Actor:       actor,
+					ProjectID:           args.ProjectID,
+					Name:                args.Name,
+					Description:         args.Description,
+					HyllaArtifactRef:    args.HyllaArtifactRef,
+					RepoBareRoot:        args.RepoBareRoot,
+					RepoPrimaryWorktree: args.RepoPrimaryWorktree,
+					Language:            args.Language,
+					BuildTool:           args.BuildTool,
+					DevMcpServerName:    args.DevMcpServerName,
+					Metadata:            args.Metadata,
+					Actor:               actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -691,157 +715,6 @@ func registerProjectTools(
 				result, err := mcp.NewToolResultJSON(map[string]any{"projects": rows})
 				if err != nil {
 					return nil, fmt.Errorf("encode list_projects result: %w", err)
-				}
-				return result, nil
-			},
-		)
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.create_project",
-				mcp.WithDescription("Create one project."),
-				mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
-				mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
-				mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
-				mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
-				mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				var args struct {
-					Name            string                 `json:"name"`
-					Description     string                 `json:"description"`
-					Metadata        domain.ProjectMetadata `json:"metadata"`
-					SessionID       string                 `json:"session_id"`
-					SessionSecret   string                 `json:"session_secret"`
-					AgentInstanceID string                 `json:"agent_instance_id"`
-					LeaseToken      string                 `json:"lease_token"`
-					OverrideToken   string                 `json:"override_token"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
-				if strings.TrimSpace(args.Name) == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "name" not found`), nil
-				}
-				namespace, authContext := buildProjectRootedMutationAuthScope("", map[string]string{
-					"name": strings.TrimSpace(args.Name),
-				})
-				caller, err := authorizeMCPMutation(
-					ctx,
-					pickMutationAuthorizer(projects),
-					mcpSessionAuthArgs{
-						SessionID:     args.SessionID,
-						SessionSecret: args.SessionSecret,
-					},
-					"create_project",
-					namespace,
-					"project",
-					"new",
-					authContext,
-				)
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
-					AgentInstanceID: args.AgentInstanceID,
-					LeaseToken:      args.LeaseToken,
-					OverrideToken:   args.OverrideToken,
-				}, false)
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				project, err := projects.CreateProject(ctx, common.CreateProjectRequest{
-					Name:        args.Name,
-					Description: args.Description,
-					Metadata:    args.Metadata,
-					Actor:       actor,
-				})
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(project)
-				if err != nil {
-					return nil, fmt.Errorf("encode create_project result: %w", err)
-				}
-				return result, nil
-			},
-		)
-
-		srv.AddTool(
-			mcp.NewTool(
-				"till.update_project",
-				mcp.WithDescription("Update one project."),
-				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-				mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
-				mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
-				mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
-				mcp.WithString("session_secret", mcp.Required(), mcp.Description(mcpMutationSessionSecretDescription)),
-				mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
-				mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
-				mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				var args struct {
-					ProjectID       string                 `json:"project_id"`
-					Name            string                 `json:"name"`
-					Description     string                 `json:"description"`
-					Metadata        domain.ProjectMetadata `json:"metadata"`
-					SessionID       string                 `json:"session_id"`
-					SessionSecret   string                 `json:"session_secret"`
-					AgentInstanceID string                 `json:"agent_instance_id"`
-					LeaseToken      string                 `json:"lease_token"`
-					OverrideToken   string                 `json:"override_token"`
-				}
-				if err := req.BindArguments(&args); err != nil {
-					return invalidRequestToolResult(err), nil
-				}
-				if strings.TrimSpace(args.ProjectID) == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
-				}
-				if strings.TrimSpace(args.Name) == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "name" not found`), nil
-				}
-				caller, err := authorizeMCPMutation(
-					ctx,
-					pickMutationAuthorizer(projects),
-					mcpSessionAuthArgs{
-						SessionID:     args.SessionID,
-						SessionSecret: args.SessionSecret,
-					},
-					"update_project",
-					"tillsyn",
-					"project",
-					args.ProjectID,
-					map[string]string{"project_id": strings.TrimSpace(args.ProjectID)},
-				)
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
-					AgentInstanceID: args.AgentInstanceID,
-					LeaseToken:      args.LeaseToken,
-					OverrideToken:   args.OverrideToken,
-				}, false)
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				project, err := projects.UpdateProject(ctx, common.UpdateProjectRequest{
-					ProjectID:   args.ProjectID,
-					Name:        args.Name,
-					Description: args.Description,
-					Metadata:    args.Metadata,
-					Actor:       actor,
-				})
-				if err != nil {
-					return toolResultFromError(err), nil
-				}
-				result, err := mcp.NewToolResultJSON(project)
-				if err != nil {
-					return nil, fmt.Errorf("encode update_project result: %w", err)
 				}
 				return result, nil
 			},

@@ -89,9 +89,9 @@ func TestRepository_ProjectColumnActionItemLifecycle(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Example", "desc", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Example", Description: "desc"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -187,9 +187,9 @@ func TestRepository_ActionItemEmbeddingsRoundTrip(t *testing.T) {
 	}
 
 	now := time.Date(2026, 3, 3, 14, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Example", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Example"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -279,9 +279,9 @@ func TestRepository_EmbeddingDocumentsRoundTripMixedSubjectFamilies(t *testing.T
 	}
 
 	now := time.Date(2026, 3, 29, 11, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Example", "Project description", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Example", Description: "Project description"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -421,9 +421,9 @@ func TestRepository_ListCommentTargets(t *testing.T) {
 	})
 
 	now := time.Date(2026, 3, 29, 11, 30, 0, 0, time.UTC)
-	project, err := domain.NewProject("p-comment-targets", "Comment Targets", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-comment-targets", Name: "Comment Targets"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -554,9 +554,9 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Example", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Example"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -767,7 +767,7 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Alpha", "desc", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Alpha", Description: "desc"}, now)
 	project.Metadata = domain.ProjectMetadata{
 		Owner: "owner-1",
 		Tags:  []string{"tillsyn"},
@@ -857,6 +857,89 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	}
 }
 
+// TestRepository_ProjectFirstClassFieldsRoundTrip verifies that the six
+// Drop 4a L4 first-class project-node fields (HyllaArtifactRef,
+// RepoBareRoot, RepoPrimaryWorktree, Language, BuildTool,
+// DevMcpServerName) survive INSERT → SELECT (single + list paths) and
+// UPDATE round-trips through the SQLite repository.
+func TestRepository_ProjectFirstClassFieldsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{
+		ID:                  "p1",
+		Name:                "Tillsyn",
+		Description:         "tracker",
+		HyllaArtifactRef:    "github.com/evanmschultz/tillsyn@main",
+		RepoBareRoot:        "/Users/evan/code/tillsyn",
+		RepoPrimaryWorktree: "/Users/evan/code/tillsyn/main",
+		Language:            "go",
+		BuildTool:           "mage",
+		DevMcpServerName:    "tillsyn-dev",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	loaded, err := repo.GetProject(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProject() error = %v", err)
+	}
+	if loaded.HyllaArtifactRef != "github.com/evanmschultz/tillsyn@main" {
+		t.Fatalf("HyllaArtifactRef = %q", loaded.HyllaArtifactRef)
+	}
+	if loaded.RepoBareRoot != "/Users/evan/code/tillsyn" {
+		t.Fatalf("RepoBareRoot = %q", loaded.RepoBareRoot)
+	}
+	if loaded.RepoPrimaryWorktree != "/Users/evan/code/tillsyn/main" {
+		t.Fatalf("RepoPrimaryWorktree = %q", loaded.RepoPrimaryWorktree)
+	}
+	if loaded.Language != "go" || loaded.BuildTool != "mage" || loaded.DevMcpServerName != "tillsyn-dev" {
+		t.Fatalf("scalar fields not persisted: %+v", loaded)
+	}
+
+	listed, err := repo.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("ListProjects len = %d, want 1", len(listed))
+	}
+	if listed[0].HyllaArtifactRef != "github.com/evanmschultz/tillsyn@main" || listed[0].Language != "go" {
+		t.Fatalf("ListProjects field decode missed: %+v", listed[0])
+	}
+
+	// Update path: change every first-class field, ensure persisted.
+	loaded.HyllaArtifactRef = "github.com/x/y@v1"
+	loaded.RepoBareRoot = "/abs/x"
+	loaded.RepoPrimaryWorktree = "/abs/x/main"
+	loaded.Language = "fe"
+	loaded.BuildTool = "npm"
+	loaded.DevMcpServerName = "x-dev"
+	if err := repo.UpdateProject(ctx, loaded); err != nil {
+		t.Fatalf("UpdateProject() error = %v", err)
+	}
+	reloaded, err := repo.GetProject(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProject(reload) error = %v", err)
+	}
+	if reloaded.HyllaArtifactRef != "github.com/x/y@v1" || reloaded.RepoBareRoot != "/abs/x" ||
+		reloaded.RepoPrimaryWorktree != "/abs/x/main" || reloaded.Language != "fe" ||
+		reloaded.BuildTool != "npm" || reloaded.DevMcpServerName != "x-dev" {
+		t.Fatalf("UpdateProject field round-trip failed: %+v", reloaded)
+	}
+}
+
 // TestRepository_ListProjectsExcludesGlobalAuthSentinel verifies the hidden global auth-routing project does not leak into user-facing project inventory.
 func TestRepository_ListProjectsExcludesGlobalAuthSentinel(t *testing.T) {
 	ctx := context.Background()
@@ -897,7 +980,7 @@ func TestRepository_DeleteProjectCascades(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Alpha", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Alpha"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -963,7 +1046,7 @@ func TestRepository_MigratesLegacyProjectsTable(t *testing.T) {
 		_ = repo.Close()
 	})
 
-	project, _ := domain.NewProject("p1", "Legacy", "", time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC))
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Legacy"}, time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC))
 	project.Metadata = domain.ProjectMetadata{Owner: "evan"}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -1234,7 +1317,7 @@ func TestRepositoryUpdateNotFound(t *testing.T) {
 	})
 
 	now := time.Now().UTC()
-	p, _ := domain.NewProject("missing", "nope", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "missing", Name: "nope"}, now)
 	if err := repo.UpdateProject(context.Background(), p); err != app.ErrNotFound {
 		t.Fatalf("expected app.ErrNotFound for UpdateProject, got %v", err)
 	}
@@ -1270,7 +1353,7 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Events", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Events"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -1422,7 +1505,7 @@ func TestRepository_ActionItemLifecyclePreservesMutationActorName(t *testing.T) 
 			})
 
 			now := time.Date(2026, 2, 25, 10, 0, 0, 0, time.UTC)
-			project, _ := domain.NewProject("p1", "Inbox", "", now)
+			project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 			if err := repo.CreateProject(baseCtx, project); err != nil {
 				t.Fatalf("CreateProject() error = %v", err)
 			}
@@ -1558,7 +1641,7 @@ func TestRepository_KindCatalogAndAllowlistRoundTrip(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-kind", "Kinds", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-kind", Name: "Kinds"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -1612,7 +1695,7 @@ func TestRepository_CapabilityLeaseRoundTrip(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-lease", "Leases", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-lease", Name: "Leases"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -1795,7 +1878,7 @@ func TestRepository_AttentionItemRoundTrip(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-attn", "Attention", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-attn", Name: "Attention"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -1901,7 +1984,7 @@ func TestRepository_AttentionItemValidationErrors(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-attn-validate", "Attention Validate", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-attn-validate", Name: "Attention Validate"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -2034,7 +2117,7 @@ func TestRepository_AttentionItemProjectWideRoleFilterAndUpsert(t *testing.T) {
 	})
 	ctx := context.Background()
 	now := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-inbox", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-inbox", Name: "Inbox"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -2137,7 +2220,7 @@ func TestRepository_PersistsProjectKindAndActionItemScope(t *testing.T) {
 	})
 
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-scope", "Scope", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-scope", Name: "Scope"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -2214,7 +2297,7 @@ func TestRepository_PersistsActionItemRole(t *testing.T) {
 	})
 
 	now := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-role", "Role", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-role", Name: "Role"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -2324,7 +2407,7 @@ func TestRepository_PersistsActionItemStructuralTypeAndIrreducible(t *testing.T)
 	})
 
 	now := time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-st", "StructuralType", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-st", Name: "StructuralType"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -2456,7 +2539,7 @@ func TestRepository_PersistsActionItemOwnerAndDropNumber(t *testing.T) {
 	})
 
 	now := time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-own", "Owner", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-own", Name: "Owner"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -2625,7 +2708,7 @@ func TestRepository_PersistsActionItemPaths(t *testing.T) {
 	})
 
 	now := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-paths", "Paths", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-paths", Name: "Paths"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -2788,7 +2871,7 @@ func TestRepository_PersistsActionItemPackages(t *testing.T) {
 	})
 
 	now := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-packages", "Packages", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-packages", Name: "Packages"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -2947,7 +3030,7 @@ func TestRepository_PersistsActionItemFiles(t *testing.T) {
 	})
 
 	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-files", "Files", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-files", Name: "Files"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -3100,7 +3183,7 @@ func TestRepository_PersistsActionItemStartCommit(t *testing.T) {
 	})
 
 	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-startcommit", "StartCommit", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-startcommit", Name: "StartCommit"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -3246,7 +3329,7 @@ func TestRepository_PersistsActionItemEndCommit(t *testing.T) {
 	})
 
 	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-endcommit", "EndCommit", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-endcommit", Name: "EndCommit"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -3388,7 +3471,7 @@ func TestRepository_IndexCoversDropNumberQuery(t *testing.T) {
 	})
 
 	now := time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-idx", "Index", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-idx", Name: "Index"}, now)
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -3470,9 +3553,9 @@ func TestRepositoryAuthRequestCRUD(t *testing.T) {
 	})
 
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Project One", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Project One"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -3570,9 +3653,9 @@ func TestRepositoryAuthRequestScanErrors(t *testing.T) {
 	})
 
 	now := time.Date(2026, 3, 20, 12, 5, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Project One", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Project One"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -3682,9 +3765,9 @@ func TestRepository_ListActionItemsByParent(t *testing.T) {
 
 	base := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 
-	projectA, err := domain.NewProject("proj-a", "Project A", "", base)
+	projectA, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "proj-a", Name: "Project A"}, base)
 	if err != nil {
-		t.Fatalf("NewProject(A) error = %v", err)
+		t.Fatalf("NewProjectFromInput(A) error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, projectA); err != nil {
 		t.Fatalf("CreateProject(A) error = %v", err)
@@ -3697,9 +3780,9 @@ func TestRepository_ListActionItemsByParent(t *testing.T) {
 		t.Fatalf("CreateColumn(A) error = %v", err)
 	}
 
-	projectB, err := domain.NewProject("proj-b", "Project B", "", base)
+	projectB, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "proj-b", Name: "Project B"}, base)
 	if err != nil {
-		t.Fatalf("NewProject(B) error = %v", err)
+		t.Fatalf("NewProjectFromInput(B) error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, projectB); err != nil {
 		t.Fatalf("CreateProject(B) error = %v", err)
@@ -3847,9 +3930,9 @@ func TestRepository_GetProjectBySlug(t *testing.T) {
 	})
 
 	base := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("proj-slug-test", "Slug Test", "", base)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "proj-slug-test", Name: "Slug Test"}, base)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	project.Slug = "tillsyn-slug-fixture"
 	if err := repo.CreateProject(ctx, project); err != nil {

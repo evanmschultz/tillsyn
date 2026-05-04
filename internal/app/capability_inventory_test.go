@@ -15,9 +15,9 @@ func TestServiceListCapabilityLeasesFiltersRevoked(t *testing.T) {
 
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 22, 9, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Project One", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Project One"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	repo.projects[project.ID] = project
 

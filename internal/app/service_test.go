@@ -361,9 +361,9 @@ func newSecondWaveEmbeddingService(t *testing.T, now time.Time, idGen func() str
 	t.Helper()
 
 	repo := newFakeRepo()
-	project, err := domain.NewProject("p-second-wave", "Second Wave", "Project description", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-second-wave", Name: "Second Wave", Description: "Project description"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	project.Metadata = domain.ProjectMetadata{
 		Tags:              []string{"embeddings", "docs"},
@@ -1399,7 +1399,7 @@ func TestUpdateActionItemAppliesMutationActorContext(t *testing.T) {
 func TestCreateActionItemCarriesHumanActorName(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 26, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
@@ -1515,7 +1515,7 @@ func TestUpdateActionItemPreservesPriorityWhenOmitted(t *testing.T) {
 func TestListAndSortHelpers(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Project", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Project"}, now)
 	repo.projects[p.ID] = p
 	c1, _ := domain.NewColumn("c1", p.ID, "First", 5, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Second", 1, 0, now)
@@ -1597,8 +1597,8 @@ func TestListAndSortHelpers(t *testing.T) {
 func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Client", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Client"}, now)
 	repo.projects[p1.ID] = p1
 	repo.projects[p2.ID] = p2
 
@@ -1677,7 +1677,7 @@ func TestSearchActionItemMatchesAcrossProjectsAndStates(t *testing.T) {
 func TestSearchActionItemMatchesFuzzyQuery(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[p1.ID] = p1
 
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
@@ -1762,7 +1762,7 @@ func TestSearchActionItemMatchesFuzzyQuery(t *testing.T) {
 func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 11, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 
 	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
@@ -1872,7 +1872,7 @@ func TestSearchActionItemMatchesExtendedFilters(t *testing.T) {
 func TestSearchActionItemMatchesLexicalMetadataFields(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 11, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
@@ -1928,7 +1928,7 @@ func TestSearchActionItemMatchesLexicalMetadataFields(t *testing.T) {
 func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
@@ -2073,7 +2073,7 @@ func TestSearchActionItemMatchesSortAndPagination(t *testing.T) {
 func TestSearchActionItemMatchesLimitDefaultsAndCaps(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
@@ -2178,7 +2178,7 @@ func TestSearchActionItemMatchesRejectsInvalidOptions(t *testing.T) {
 func TestServiceCreateAndUpdateActionItemEnqueueEmbeddingLifecycle(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
@@ -2271,7 +2271,7 @@ func TestServiceCreateAndUpdateActionItemEnqueueEmbeddingLifecycle(t *testing.T)
 func TestSearchActionItemMatchesSemanticModeUsesIndex(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
@@ -2346,7 +2346,7 @@ func TestSearchActionItemMatchesSemanticModeUsesIndex(t *testing.T) {
 func TestSearchActionItemMatchesSemanticFallsBackToKeyword(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 12, 15, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
@@ -2411,7 +2411,7 @@ func TestSearchActionItemMatchesSemanticFallsBackToKeyword(t *testing.T) {
 func TestSearchActionItemMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 12, 20, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
@@ -2474,7 +2474,7 @@ func TestSearchActionItemMatchesSemanticModeDuplicateRowsKeepMaxSimilarity(t *te
 func TestSearchActionItemMatchesHybridFallsBackToKeyword(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 3, 12, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
@@ -2526,7 +2526,7 @@ func TestSearchActionItemMatchesHybridFallsBackToKeyword(t *testing.T) {
 func TestEnsureDefaultProjectAlreadyExists(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Now()
-	p, _ := domain.NewProject("p1", "Existing", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Existing"}, now)
 	repo.projects[p.ID] = p
 
 	svc := NewService(repo, func() string { return "new-id" }, func() time.Time { return now }, ServiceConfig{})
@@ -2618,7 +2618,7 @@ func TestCreateProjectWithMetadataDefaultsOwnerFromResolvedUser(t *testing.T) {
 func TestUpdateProject(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "old desc", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox", Description: "old desc"}, now)
 	repo.projects[project.ID] = project
 
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
@@ -2975,7 +2975,7 @@ func TestCreateProjectWithMetadataCarriesActorName(t *testing.T) {
 func TestArchiveRestoreAndDeleteProject(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 24, 8, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "desc", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox", Description: "desc"}, now)
 	repo.projects[project.ID] = project
 
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
@@ -3114,7 +3114,7 @@ func TestEnsureDefaultProjectErrorPropagation(t *testing.T) {
 func TestMoveActionItemBlocksWhenStartCriteriaUnmet(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
@@ -3148,7 +3148,7 @@ func TestMoveActionItemBlocksWhenStartCriteriaUnmet(t *testing.T) {
 func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", project.ID, "Complete", 2, 0, now)
@@ -3206,7 +3206,7 @@ func TestMoveActionItemAllowsDoneWhenContractsSatisfied(t *testing.T) {
 func TestMoveActionItemBlocksDoneWhenChildIncomplete(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", project.ID, "Complete", 2, 0, now)
@@ -3251,7 +3251,7 @@ func TestMoveActionItemBlocksDoneWhenChildIncomplete(t *testing.T) {
 func TestReparentActionItemAndListChildActionItems(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
@@ -3297,7 +3297,7 @@ func TestReparentActionItemAndListChildActionItems(t *testing.T) {
 func TestGetProjectDependencyRollup(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	repo.columns[column.ID] = column
@@ -3364,7 +3364,7 @@ func TestGetProjectDependencyRollup(t *testing.T) {
 func TestListProjectChangeEvents(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	repo.changeEvents[project.ID] = []domain.ChangeEvent{
 		{ID: 3, ProjectID: project.ID, ActionItemID: "t1", Operation: domain.ChangeOperationUpdate},
@@ -3387,7 +3387,7 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
 	ids := []string{"comment-2", "comment-1"}
 	nextID := 0
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
@@ -3467,7 +3467,7 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 func TestListCommentsByTargetWaitsForLiveChange(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 4, 2, 10, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 
 	svc := NewService(repo, func() string { return "comment-live" }, func() time.Time { return now }, ServiceConfig{})
@@ -3524,7 +3524,7 @@ func TestListCommentsByTargetWaitsForLiveChange(t *testing.T) {
 func TestCreateCommentUsesContextActorNameFallback(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 26, 11, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
@@ -3565,7 +3565,7 @@ func TestCreateCommentUsesContextActorNameFallback(t *testing.T) {
 func TestCreateCommentCreatesMentionInboxAttention(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 26, 11, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
@@ -3620,7 +3620,7 @@ func TestCreateCommentCreatesMentionInboxAttention(t *testing.T) {
 func TestCreateCommentValidation(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
 		Kind:      domain.KindPlan,
@@ -4698,7 +4698,7 @@ func TestReparentActionItemRejectsCycle(t *testing.T) {
 func TestMoveActionItemToFailedUsesMarkFailedCapability(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
 	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
@@ -4734,7 +4734,7 @@ func TestMoveActionItemToFailedUsesMarkFailedCapability(t *testing.T) {
 func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
 	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
@@ -4784,7 +4784,7 @@ func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 func TestMoveActionItemFromFailedToTodoBlocked(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
@@ -4817,7 +4817,7 @@ func TestMoveActionItemFromFailedToTodoBlocked(t *testing.T) {
 func TestMoveActionItemFromDoneToTodoBlocked(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	done, _ := domain.NewColumn("c3", project.ID, "Complete", 2, 0, now)
@@ -4850,7 +4850,7 @@ func TestMoveActionItemFromDoneToTodoBlocked(t *testing.T) {
 func TestMoveActionItemFromFailedIdempotentAllowed(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	repo.projects[project.ID] = project
 	failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
 	repo.columns[failed.ID] = failed

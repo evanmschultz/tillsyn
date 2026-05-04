@@ -199,7 +199,7 @@ func TestFileViewer_GoCode_Golden(t *testing.T) {
 // a pointer to the Model's threadMarkdown field — not a separate renderer.
 func TestFileViewer_SharesThreadMarkdown(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, nil)
 	m := NewModel(svc)
@@ -218,7 +218,7 @@ func TestFileViewer_SharesThreadMarkdown(t *testing.T) {
 // board surface transitions the Model to modeFileViewer.
 func TestModel_V_EntersFileViewerMode(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",

@@ -555,9 +555,9 @@ func newCrossProcessAuthFixture(t *testing.T) crossProcessAuthFixture {
 		t.Fatalf("runtimeLiveWaitSecretPath(%q) error = %v", root, err)
 	}
 
-	project, err := domain.NewProject("p1", "Project One", "", time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC))
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Project One"}, time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC))
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := waitRepo.CreateProject(context.Background(), project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)

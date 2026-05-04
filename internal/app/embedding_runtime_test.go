@@ -13,9 +13,9 @@ import (
 func seedEmbeddingRuntimeScope(t *testing.T, repo *fakeRepo, now time.Time) (domain.Project, domain.Column, domain.ActionItem) {
 	t.Helper()
 
-	project, err := domain.NewProject("p-runtime", "Runtime", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-runtime", Name: "Runtime"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	column, err := domain.NewColumn("c-runtime", project.ID, "To Do", 0, 0, now)
 	if err != nil {

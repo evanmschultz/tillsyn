@@ -812,11 +812,22 @@ func (f *fakeService) ReindexEmbeddings(_ context.Context, in app.ReindexEmbeddi
 // CreateProjectWithMetadata creates project with metadata.
 func (f *fakeService) CreateProjectWithMetadata(_ context.Context, in app.CreateProjectInput) (domain.Project, error) {
 	f.lastCreateProject = in
-	project, err := domain.NewProject("p-new", in.Name, in.Description, time.Now().UTC())
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-new", Name: in.Name, Description: in.Description}, time.Now().UTC())
 	if err != nil {
 		return domain.Project{}, err
 	}
-	if err := project.UpdateDetails(project.Name, project.Description, in.Metadata, time.Now().UTC()); err != nil {
+	if err := project.UpdateDetails(
+		project.Name,
+		project.Description,
+		project.HyllaArtifactRef,
+		project.RepoBareRoot,
+		project.RepoPrimaryWorktree,
+		project.Language,
+		project.BuildTool,
+		project.DevMcpServerName,
+		in.Metadata,
+		time.Now().UTC(),
+	); err != nil {
 		return domain.Project{}, err
 	}
 	f.projects = append(f.projects, project)
@@ -840,7 +851,18 @@ func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput
 		if f.projects[idx].ID != in.ProjectID {
 			continue
 		}
-		if err := f.projects[idx].UpdateDetails(in.Name, in.Description, in.Metadata, time.Now().UTC()); err != nil {
+		if err := f.projects[idx].UpdateDetails(
+			in.Name,
+			in.Description,
+			in.HyllaArtifactRef,
+			in.RepoBareRoot,
+			in.RepoPrimaryWorktree,
+			in.Language,
+			in.BuildTool,
+			in.DevMcpServerName,
+			in.Metadata,
+			time.Now().UTC(),
+		); err != nil {
 			return domain.Project{}, err
 		}
 		return f.projects[idx], nil
@@ -1057,7 +1079,7 @@ func commentThreadKey(projectID string, targetType domain.CommentTargetType, tar
 // TestModelLoadAndNavigation verifies behavior for the covered scenario.
 func TestModelLoadAndNavigation(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
@@ -1096,7 +1118,7 @@ func TestModelLoadAndNavigation(t *testing.T) {
 // TestModelQuickAddMoveArchiveRestoreDelete verifies behavior for the covered scenario.
 func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
 	existing, _ := newActionItemForTest(domain.ActionItemInput{
@@ -1163,7 +1185,7 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 // TestModelCreateActionItemFocusesNewActionItem verifies that create-actionItem reload focuses the created row.
 func TestModelCreateActionItemFocusesNewActionItem(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	existing, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -1197,8 +1219,8 @@ func TestModelCreateActionItemFocusesNewActionItem(t *testing.T) {
 // TestModelProjectSwitchAndSearch verifies behavior for the covered scenario.
 func TestModelProjectSwitchAndSearch(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "A", "", now)
-	p2, _ := domain.NewProject("p2", "B", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "A"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "B"}, now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -1248,8 +1270,8 @@ func TestModelProjectSwitchAndSearch(t *testing.T) {
 // TestModelCrossProjectSearchResultsAndJump verifies behavior for the covered scenario.
 func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Client", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Client"}, now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -1339,7 +1361,7 @@ func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 // TestModelSearchSubmitKeepsResultsOverlayDuringAsyncLookup verifies the search modal stays visible while async lookup is in flight.
 func TestModelSearchSubmitKeepsResultsOverlayDuringAsyncLookup(t *testing.T) {
 	now := time.Date(2026, 3, 30, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-search-loading", "Search Loading", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-search-loading", Name: "Search Loading"}, now)
 	column, _ := domain.NewColumn("c-search-loading", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-search-loading",
@@ -1389,7 +1411,7 @@ func TestModelSearchSubmitKeepsResultsOverlayDuringAsyncLookup(t *testing.T) {
 // TestModelProjectSearchResultsEnterOpensActionItemInfoAndPreservesBoardContext verifies project-scoped semantic matches open the node and keep subtree focus on close.
 func TestModelProjectSearchResultsEnterOpensActionItemInfoAndPreservesBoardContext(t *testing.T) {
 	now := time.Date(2026, 3, 29, 23, 15, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-search-focus", "Search Focus", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-search-focus", Name: "Search Focus"}, now)
 	column, _ := domain.NewColumn("c-search-focus", project.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "branch-rollout",
@@ -1467,7 +1489,7 @@ func TestModelProjectSearchResultsEnterOpensActionItemInfoAndPreservesBoardConte
 // TestModelSearchCancelIgnoresLateResults verifies canceled async searches cannot reopen the results modal later.
 func TestModelSearchCancelIgnoresLateResults(t *testing.T) {
 	now := time.Date(2026, 3, 30, 9, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-search-cancel", "Search Cancel", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-search-cancel", Name: "Search Cancel"}, now)
 	column, _ := domain.NewColumn("c-search-cancel", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-search-cancel",
@@ -1506,7 +1528,7 @@ func TestModelSearchCancelIgnoresLateResults(t *testing.T) {
 // TestSearchModalAllowsChoosingExecutionMode verifies operators can switch between hybrid, keyword, and semantic before applying search.
 func TestSearchModalAllowsChoosingExecutionMode(t *testing.T) {
 	now := time.Date(2026, 3, 30, 0, 5, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-search-mode", "Search Mode", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-search-mode", Name: "Search Mode"}, now)
 	column, _ := domain.NewColumn("c-search-mode", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-search-mode",
@@ -1566,7 +1588,7 @@ func TestBoardStatusTextSuppressesTransientStatuses(t *testing.T) {
 // TestModelAddAndEditProject verifies behavior for the covered scenario.
 func TestModelAddAndEditProject(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	existing, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-existing",
@@ -1623,7 +1645,7 @@ func TestModelAddAndEditProject(t *testing.T) {
 // TestModelEditProjectRootPathTypingPreservesPrintableKeys verifies focused project text inputs keep printable characters instead of triggering form-level actions.
 func TestModelEditProjectRootPathTypingPreservesPrintableKeys(t *testing.T) {
 	now := time.Date(2026, 3, 14, 0, 5, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -1662,7 +1684,7 @@ func TestModelEditProjectRootPathTypingPreservesPrintableKeys(t *testing.T) {
 // TestModelCommandPaletteAndQuickActions verifies behavior for the covered scenario.
 func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -1731,7 +1753,7 @@ func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 // TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity verifies project-thread rendering and comment ownership attribution.
 func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "# Project Overview\n\n- keep momentum", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox", Description: "# Project Overview\n\n- keep momentum"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -1834,7 +1856,7 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 // TestModelThreadModeFromActionItemInfoAndBack verifies actionItem-info thread shortcut and back navigation.
 func TestModelThreadModeFromActionItemInfoAndBack(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	phase, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-phase",
@@ -1869,7 +1891,7 @@ func TestModelThreadModeFromActionItemInfoAndBack(t *testing.T) {
 // TestModelThreadTabAndShiftTabMoveInOppositeDirections verifies thread panel traversal reverses correctly on shift+tab.
 func TestModelThreadTabAndShiftTabMoveInOppositeDirections(t *testing.T) {
 	now := time.Date(2026, 3, 13, 19, 35, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -1909,7 +1931,7 @@ func TestModelThreadTabAndShiftTabMoveInOppositeDirections(t *testing.T) {
 // TestModelThreadCommentIdentityFallbacks verifies safe identity fallback behavior during comment creation.
 func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -1957,7 +1979,7 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 // TestModelThreadReadModeRequiresExplicitComposer verifies thread mode starts read-first and requires explicit composer activation to post.
 func TestModelThreadReadModeRequiresExplicitComposer(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 15, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -2002,7 +2024,7 @@ func TestModelThreadReadModeRequiresExplicitComposer(t *testing.T) {
 // TestModelThreadComposerAllowsTypingEditRune verifies composer input accepts plain 'e' text while active.
 func TestModelThreadComposerAllowsTypingEditRune(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 20, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -2036,7 +2058,7 @@ func TestModelThreadComposerAllowsTypingEditRune(t *testing.T) {
 // TestModelThreadReadModeEditShortcutStartsActionItemEditForm verifies read-mode details-first flow before actionItem edit.
 func TestModelThreadReadModeEditShortcutStartsActionItemEditForm(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 22, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -2071,7 +2093,7 @@ func TestModelThreadReadModeEditShortcutStartsActionItemEditForm(t *testing.T) {
 // TestModelThreadProjectReadModeEditShortcutStartsProjectEditForm verifies project-thread details-first flow before project edit.
 func TestModelThreadProjectReadModeEditShortcutStartsProjectEditForm(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 24, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "## Overview\n\n- read first", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox", Description: "## Overview\n\n- read first"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
@@ -2096,7 +2118,7 @@ func TestModelThreadProjectReadModeEditShortcutStartsProjectEditForm(t *testing.
 // TestModelThreadDetailsPanelEnterStartsActionItemEdit verifies enter on the focused details panel opens actionItem edit.
 func TestModelThreadDetailsPanelEnterStartsActionItemEdit(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -2128,7 +2150,7 @@ func TestModelThreadDetailsPanelEnterStartsActionItemEdit(t *testing.T) {
 // TestModelThreadDescriptionFallsBackToTargetDetails verifies notification-opened threads use backing entity details when no thread body is provided.
 func TestModelThreadDescriptionFallsBackToTargetDetails(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 15, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "## Project Details\n\n- keep this visible", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox", Description: "## Project Details\n\n- keep this visible"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
@@ -2155,7 +2177,7 @@ func TestModelThreadDescriptionFallsBackToTargetDetails(t *testing.T) {
 // TestModelActionItemInfoShowsCommentPreview verifies actionItem info renders recent markdown comments without requiring thread mode.
 func TestModelActionItemInfoShowsCommentPreview(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -2209,7 +2231,7 @@ func TestModelActionItemInfoShowsCommentPreview(t *testing.T) {
 // TestModelActionItemInfoShowsFullCommentsList verifies actionItem-info renders the full comments list with ownership metadata.
 func TestModelActionItemInfoShowsFullCommentsList(t *testing.T) {
 	now := time.Date(2026, 3, 4, 8, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -2266,7 +2288,7 @@ func TestModelActionItemInfoShowsFullCommentsList(t *testing.T) {
 // TestModelActionItemInfoShowsMarkdownDetailsWhenCardDescriptionsHidden verifies actionItem-info read mode still shows markdown details.
 func TestModelActionItemInfoShowsMarkdownDetailsWhenCardDescriptionsHidden(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 35, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -2300,7 +2322,7 @@ func TestModelActionItemInfoShowsMarkdownDetailsWhenCardDescriptionsHidden(t *te
 // TestModelActionItemInfoShowsStructuredMetadataSections verifies actionItem-info renders objective/acceptance/validation/risk markdown sections.
 func TestModelActionItemInfoShowsStructuredMetadataSections(t *testing.T) {
 	now := time.Date(2026, 3, 3, 10, 15, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -2343,7 +2365,7 @@ func TestModelActionItemInfoShowsStructuredMetadataSections(t *testing.T) {
 // TestModelEditActionItemMetadataFieldsPrefillAndSubmit verifies edit-actionItem prefill and save behavior for objective/acceptance/validation/risk metadata fields.
 func TestModelEditActionItemMetadataFieldsPrefillAndSubmit(t *testing.T) {
 	now := time.Date(2026, 3, 3, 10, 25, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -2407,7 +2429,7 @@ func TestModelEditActionItemMetadataFieldsPrefillAndSubmit(t *testing.T) {
 // TestModelEditActionItemMetadataEditorCtrlSSavesActionItem verifies editor-level ctrl+s persists existing actionItem metadata.
 func TestModelEditActionItemMetadataEditorCtrlSSavesActionItem(t *testing.T) {
 	now := time.Date(2026, 3, 3, 10, 40, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -2447,7 +2469,7 @@ func TestModelEditActionItemMetadataEditorCtrlSSavesActionItem(t *testing.T) {
 // TestModelActionItemInfoDetailsViewportScrolls verifies actionItem-info markdown details are bounded and scrollable.
 func TestModelActionItemInfoDetailsViewportScrolls(t *testing.T) {
 	now := time.Date(2026, 3, 3, 12, 45, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	lines := make([]string, 0, 240)
 	for i := range 240 {
@@ -2565,7 +2587,7 @@ func TestCommentTargetTypeForKind(t *testing.T) {
 // TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask verifies fuzzy abbreviations can target commands like new-subtask.
 func TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-parent",
@@ -2626,7 +2648,7 @@ func TestCommandPaletteInitialismScoringPrefersExpectedAbbreviations(t *testing.
 // TestModelCommandPaletteHighlightColorApplies verifies highlight-color command updates focused-row styling.
 func TestModelCommandPaletteHighlightColorApplies(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -2659,7 +2681,7 @@ func TestModelCommandPaletteHighlightColorApplies(t *testing.T) {
 // TestModelLabelsConfigCommandSave verifies labels-config command flow updates runtime labels and calls persistence callback.
 func TestModelLabelsConfigCommandSave(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
 
@@ -2747,7 +2769,7 @@ func TestModelLabelsConfigCommandSave(t *testing.T) {
 // TestModelLabelsConfigCommandSaveScopedBranchPhase verifies branch/phase labels persist through scoped labels-config saves.
 func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -2843,8 +2865,8 @@ func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
 // TestModelCommandPaletteProjectLifecycleActions verifies archive/restore/delete project command flows.
 func TestModelCommandPaletteProjectLifecycleActions(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Roadmap", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, nil)
@@ -2889,7 +2911,7 @@ func TestModelCommandPaletteProjectLifecycleActions(t *testing.T) {
 // TestModelProjectLifecycleConfirmBranches verifies confirm-mode branches for project lifecycle actions.
 func TestModelProjectLifecycleConfirmBranches(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
 	m := loadReadyModel(t, NewModel(svc))
@@ -2945,9 +2967,9 @@ func TestModelProjectLifecycleGuardsAndSelection(t *testing.T) {
 		t.Fatalf("expected no-project delete status, got %q", empty.status)
 	}
 
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Roadmap", "", now)
-	p3, _ := domain.NewProject("p3", "Ops", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now)
+	p3, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p3", Name: "Ops"}, now)
 	p2.Archive(now.Add(time.Minute))
 
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
@@ -2996,7 +3018,7 @@ func TestModelProjectLifecycleGuardsAndSelection(t *testing.T) {
 // TestModelCommandPaletteBranchLifecycleGuards verifies branch lifecycle commands require a selected branch.
 func TestModelCommandPaletteBranchLifecycleGuards(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -3043,7 +3065,7 @@ func TestModelCommandPaletteBranchLifecycleGuards(t *testing.T) {
 // "no branch selected" guard status and are deferred to Drop 4.5 polish.
 func TestModelCommandPaletteBranchLifecycleActions(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -3088,7 +3110,7 @@ func TestModelCommandPaletteBranchLifecycleActions(t *testing.T) {
 // TestModelCommandPaletteNewBranchWarnsWhenFocused verifies branch creation is blocked while subtree focus is active.
 func TestModelCommandPaletteNewBranchWarnsWhenFocused(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 35, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -3136,7 +3158,7 @@ func TestModelCommandPaletteNewBranchWarnsWhenFocused(t *testing.T) {
 // TestModelCommandPalettePhaseCreationDefaultsToProjectLevel verifies new-phase works without branch context.
 func TestModelCommandPalettePhaseCreationDefaultsToProjectLevel(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 45, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -3163,7 +3185,7 @@ func TestModelCommandPalettePhaseCreationDefaultsToProjectLevel(t *testing.T) {
 // TestModelCommandPaletteTypedNormalizedProjectPhaseCreation verifies the real palette update path opens project-level phase creation for normalized raw input.
 func TestModelCommandPaletteTypedNormalizedProjectPhaseCreation(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 50, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -3196,7 +3218,7 @@ func TestModelCommandPaletteTypedNormalizedProjectPhaseCreation(t *testing.T) {
 // Full pre-collapse defaults coverage deferred to Drop 4.5.
 func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -3259,7 +3281,7 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 // defaults, confirming normalization still reaches the new-phase handler.
 func TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 15, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -3288,7 +3310,7 @@ func TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs(t *testing.
 // TestModelCommandPalettePhaseCreationBlocksActionItemFocusedScreens verifies actionItem and subtask screens cannot parent phases.
 func TestModelCommandPalettePhaseCreationBlocksActionItemFocusedScreens(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 20, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -3451,7 +3473,7 @@ func TestScrubTextAreaTerminalArtifactsStripsProbeDuringEdit(t *testing.T) {
 // TestRenderOverviewPanelHeightMatchesRequestedHeight verifies stacked notifications panels do not exceed the requested board height.
 func TestRenderOverviewPanelHeightMatchesRequestedHeight(t *testing.T) {
 	now := time.Date(2026, 3, 3, 1, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -3472,7 +3494,7 @@ func TestRenderOverviewPanelHeightMatchesRequestedHeight(t *testing.T) {
 // TestModelActionItemDescriptionEditorFlow verifies actionItem-form description always routes through the markdown editor.
 func TestModelActionItemDescriptionEditorFlow(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
@@ -3509,7 +3531,7 @@ func TestModelActionItemDescriptionEditorFlow(t *testing.T) {
 // TestModelProjectDescriptionEditorSeedAndCancel verifies project-description editing opens full markdown editor on typed input.
 func TestModelProjectDescriptionEditorSeedAndCancel(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
@@ -3545,7 +3567,7 @@ func TestModelProjectDescriptionEditorSeedAndCancel(t *testing.T) {
 // TestModelDescriptionEditorEditModeQuestionMarkInsertsText verifies edit mode captures '?' as text instead of toggling help.
 func TestModelDescriptionEditorEditModeQuestionMarkInsertsText(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 5, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
@@ -3571,7 +3593,7 @@ func TestModelDescriptionEditorEditModeQuestionMarkInsertsText(t *testing.T) {
 // TestModelDescriptionEditorCtrlUndoRedo verifies ctrl+z / ctrl+shift+z text undo/redo in description editor edit mode.
 func TestModelDescriptionEditorCtrlUndoRedo(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 5, 30, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
@@ -3606,7 +3628,7 @@ func TestModelDescriptionEditorCtrlUndoRedo(t *testing.T) {
 // TestModelDescriptionEditorPreviewModeToggleAndScrollSync verifies preview mode toggle, heading text, and synced scroll offsets.
 func TestModelDescriptionEditorPreviewModeToggleAndScrollSync(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 6, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
@@ -3682,7 +3704,7 @@ func TestModelDescriptionEditorPreviewModeToggleAndScrollSync(t *testing.T) {
 // TestModelDescriptionEditorPreviewModeScrollsWrappedContent verifies preview mode scroll input works for wrapped markdown.
 func TestModelDescriptionEditorPreviewModeScrollsWrappedContent(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 7, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
@@ -3717,7 +3739,7 @@ func TestModelDescriptionEditorPreviewModeScrollsWrappedContent(t *testing.T) {
 // TestModelActionItemInfoDescriptionEditorOpensInPreviewMode verifies actionItem-info opens full-screen details in preview submode.
 func TestModelActionItemInfoDescriptionEditorOpensInPreviewMode(t *testing.T) {
 	now := time.Date(2026, 3, 3, 12, 55, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -3770,7 +3792,7 @@ func TestModelActionItemInfoDescriptionEditorOpensInPreviewMode(t *testing.T) {
 // TestModelDescriptionEditorLayoutRespectsNarrowViewport verifies editor layout stays within terminal bounds.
 func TestModelDescriptionEditorLayoutRespectsNarrowViewport(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 8, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 
@@ -3807,7 +3829,7 @@ func TestModelDescriptionEditorLayoutRespectsNarrowViewport(t *testing.T) {
 // TestModelFullPageNodeViewStaysWithinScreenBounds verifies full-page node screens keep their frame inside the terminal.
 func TestModelFullPageNodeViewStaysWithinScreenBounds(t *testing.T) {
 	now := time.Date(2026, 3, 13, 11, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -3847,7 +3869,7 @@ func TestModelFullPageNodeViewStaysWithinScreenBounds(t *testing.T) {
 // TestModelInputModeGlobalHelpAndSelectionToggles verifies '?' and selection-toggle keys work inside modal/input screens.
 func TestModelInputModeGlobalHelpAndSelectionToggles(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
 
@@ -3882,7 +3904,7 @@ func TestModelInputModeGlobalHelpAndSelectionToggles(t *testing.T) {
 // TestModelHelpOverlayModeSpecific verifies expanded help text changes by active screen.
 func TestModelHelpOverlayModeSpecific(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
 
@@ -3951,7 +3973,7 @@ func TestModelHelpOverlayModeSpecific(t *testing.T) {
 // TestModelAuthInventoryBottomHelpIncludesHistory verifies the coordination bottom help line surfaces the history toggle.
 func TestModelAuthInventoryBottomHelpIncludesHistory(t *testing.T) {
 	now := time.Date(2026, 3, 29, 8, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
 	m.mode = modeAuthInventory
@@ -3974,7 +3996,7 @@ func TestModelAuthInventoryBottomHelpIncludesHistory(t *testing.T) {
 // TestHelpOverlayScreenTitleAndLinesCoverage verifies each input mode resolves mode-scoped help lines.
 func TestHelpOverlayScreenTitleAndLinesCoverage(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
 
@@ -4032,11 +4054,22 @@ func TestHelpOverlayScreenTitleAndLinesCoverage(t *testing.T) {
 // TestModelProjectIconEmojiSupport verifies project icon rendering and emoji persistence through form submit.
 func TestModelProjectIconEmojiSupport(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	if err := p1.UpdateDetails(p1.Name, p1.Description, domain.ProjectMetadata{Icon: "🚀"}, now); err != nil {
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	if err := p1.UpdateDetails(
+		p1.Name,
+		p1.Description,
+		p1.HyllaArtifactRef,
+		p1.RepoBareRoot,
+		p1.RepoPrimaryWorktree,
+		p1.Language,
+		p1.BuildTool,
+		p1.DevMcpServerName,
+		domain.ProjectMetadata{Icon: "🚀"},
+		now,
+	); err != nil {
 		t.Fatalf("UpdateDetails() setup error = %v", err)
 	}
-	p2, _ := domain.NewProject("p2", "Roadmap", "", now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 
@@ -4077,7 +4110,7 @@ func TestModelProjectIconEmojiSupport(t *testing.T) {
 // TestModelCommandPaletteWindowedRendering verifies command selection stays visible past the first page.
 func TestModelCommandPaletteWindowedRendering(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
 	m := loadReadyModel(t, NewModel(svc))
@@ -4104,7 +4137,7 @@ func TestModelCommandPaletteWindowedRendering(t *testing.T) {
 // TestModelQuickActionsDisabledOrderingAndBlocking verifies disabled quick actions sort last and cannot execute.
 func TestModelQuickActionsDisabledOrderingAndBlocking(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
 	m := loadReadyModel(t, NewModel(svc))
@@ -4151,7 +4184,7 @@ func TestModelQuickActionsDisabledOrderingAndBlocking(t *testing.T) {
 // TestModelCommandPaletteReloadConfigAppliesRuntimeSettings verifies behavior for the covered scenario.
 func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -4304,7 +4337,7 @@ func TestModelWithRuntimeConfigAppliesIdentityAtStartup(t *testing.T) {
 // TestModelCommandPaletteReloadConfigError verifies behavior for the covered scenario.
 func TestModelCommandPaletteReloadConfigError(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -4329,7 +4362,7 @@ func TestModelCommandPaletteReloadConfigError(t *testing.T) {
 // TestModelPathsRootsModalSaveAndClear verifies behavior for the covered scenario.
 func TestModelPathsRootsModalSaveAndClear(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -4395,7 +4428,7 @@ func TestModelPathsRootsModalSaveAndClear(t *testing.T) {
 // TestModelPathsRootsModalValidationAndSaveError verifies behavior for the covered scenario.
 func TestModelPathsRootsModalValidationAndSaveError(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -4447,7 +4480,7 @@ func TestModelPathsRootsModalValidationAndSaveError(t *testing.T) {
 // TestModelResourcePickerFallsBackToBootstrapRootInActionItemInfo verifies project-root lookup falls back to bootstrap roots while actionItem-info remains read-only.
 func TestModelResourcePickerFallsBackToBootstrapRootInActionItemInfo(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -4476,7 +4509,7 @@ func TestModelResourcePickerFallsBackToBootstrapRootInActionItemInfo(t *testing.
 // TestModelMouseWheelAndClick verifies behavior for the covered scenario.
 func TestModelMouseWheelAndClick(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -4521,7 +4554,7 @@ func TestModelMouseWheelAndClick(t *testing.T) {
 // TestModelBoardHidesSubtasksAndShowsProgress verifies board rows hide subtask cards but show progress metadata.
 func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
@@ -4571,7 +4604,7 @@ func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
 // TestModelActionItemInfoShowsSubtasksAcrossColumns verifies actionItem-info modal subtask visibility independent of parent column.
 func TestModelActionItemInfoShowsSubtasksAcrossColumns(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 
@@ -4621,7 +4654,7 @@ func TestModelActionItemInfoShowsSubtasksAcrossColumns(t *testing.T) {
 // TestModelActionItemInfoBackspaceMovesToParent verifies backspace navigates from a child info view to its parent.
 func TestModelActionItemInfoBackspaceMovesToParent(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 
@@ -4665,7 +4698,7 @@ func TestModelActionItemInfoBackspaceMovesToParent(t *testing.T) {
 // TestModelActionItemInfoEscClosesCurrentView verifies esc closes the current actionItem-info view without subtask drill-in state.
 func TestModelActionItemInfoEscClosesCurrentView(t *testing.T) {
 	now := time.Date(2026, 3, 3, 12, 50, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	grand, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-grand",
@@ -4713,7 +4746,7 @@ func TestModelActionItemInfoEscClosesCurrentView(t *testing.T) {
 // TestModelActionItemInfoAllowsSubactionItemCreation verifies actionItem-info view can start a subtask form for the focused actionItem.
 func TestModelActionItemInfoAllowsSubactionItemCreation(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-parent",
@@ -4746,7 +4779,7 @@ func TestModelActionItemInfoAllowsSubactionItemCreation(t *testing.T) {
 // TestModelActionItemInfoEnterOpensFocusedSubtask verifies enter drills into the highlighted child actionItem.
 func TestModelActionItemInfoEnterOpensFocusedSubtask(t *testing.T) {
 	now := time.Date(2026, 3, 3, 15, 10, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "parent",
@@ -4784,7 +4817,7 @@ func TestModelActionItemInfoEnterOpensFocusedSubtask(t *testing.T) {
 // TestModelActionItemInfoMovesCurrentActionItemWithBrackets verifies actionItem-info mode supports moving the focused actionItem between columns.
 func TestModelActionItemInfoMovesCurrentActionItemWithBrackets(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 15, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 
@@ -4837,7 +4870,7 @@ func TestModelActionItemInfoMovesCurrentActionItemWithBrackets(t *testing.T) {
 // TestModelActionItemInfoSubactionItemChecklistToggleCompletion verifies actionItem-info checklist rendering and completion toggling.
 func TestModelActionItemInfoSubactionItemChecklistToggleCompletion(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 20, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	cDone, _ := domain.NewColumn("c3", p.ID, "Complete", 2, 0, now)
@@ -4904,7 +4937,7 @@ func TestModelActionItemInfoSubactionItemChecklistToggleCompletion(t *testing.T)
 // TestModelBoardScrollKeepsSelectedRowVisible verifies dynamic list scrolling for long columns.
 func TestModelBoardScrollKeepsSelectedRowVisible(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 
 	tasks := make([]domain.ActionItem, 0, 36)
@@ -4936,7 +4969,7 @@ func TestModelBoardScrollKeepsSelectedRowVisible(t *testing.T) {
 // TestModelFocusedAndSelectedStyling verifies focused rows use fuchsia and retain multi-select cues.
 func TestModelFocusedAndSelectedStyling(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -4965,7 +4998,7 @@ func TestModelFocusedAndSelectedStyling(t *testing.T) {
 // TestModelSelectionMarkerOnlyOnTitleLine verifies marker symbols are not repeated on secondary card lines.
 func TestModelSelectionMarkerOnlyOnTitleLine(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -4989,7 +5022,7 @@ func TestModelSelectionMarkerOnlyOnTitleLine(t *testing.T) {
 // TestModelEscClearsSubtreeFocus verifies esc returns to full-board view from subtree focus.
 func TestModelEscClearsSubtreeFocus(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-parent",
@@ -5044,7 +5077,7 @@ func TestModelViewStatesAndPrompts(t *testing.T) {
 	}
 
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
 	m = loadReadyModel(t, NewModel(svc))
@@ -5082,7 +5115,7 @@ func TestModelNoProjectsKeepsPickerAndCreationFlow(t *testing.T) {
 // TestModelLaunchStartsInProjectPicker verifies first launch opens the project picker before normal mode.
 func TestModelLaunchStartsInProjectPicker(t *testing.T) {
 	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
 
@@ -5099,7 +5132,7 @@ func TestModelLaunchStartsInProjectPicker(t *testing.T) {
 // TestModelStartupBootstrapPrecedesLaunchPicker verifies startup bootstrap modal ordering and completion.
 func TestModelStartupBootstrapPrecedesLaunchPicker(t *testing.T) {
 	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
 
@@ -5144,7 +5177,7 @@ func TestModelStartupBootstrapPrecedesLaunchPicker(t *testing.T) {
 // TestModelBootstrapSettingsCommandPaletteRootsEditing verifies command-palette bootstrap settings editing and fuzzy root add.
 func TestModelBootstrapSettingsCommandPaletteRootsEditing(t *testing.T) {
 	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -5244,7 +5277,7 @@ func TestModelBootstrapSettingsCommandPaletteRootsEditing(t *testing.T) {
 // TestModelInputModePaths verifies behavior for the covered scenario.
 func TestModelInputModePaths(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -5298,8 +5331,8 @@ func TestModelInputModePaths(t *testing.T) {
 // TestModelNormalModeExtraBranches verifies behavior for the covered scenario.
 func TestModelNormalModeExtraBranches(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "A", "", now)
-	p2, _ := domain.NewProject("p2", "B", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "A"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "B"}, now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -5353,7 +5386,7 @@ func TestModelNormalModeExtraBranches(t *testing.T) {
 // TestModelBulkMoveKeysUseSelection verifies that bracket move keys apply to the full multi-selection.
 func TestModelBulkMoveKeysUseSelection(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
 
@@ -5480,8 +5513,8 @@ func TestHelpersCoverage(t *testing.T) {
 // TestRenderProjectTabsAndLabels verifies project-tab rendering and label formatting helpers.
 func TestRenderProjectTabsAndLabels(t *testing.T) {
 	now := time.Date(2026, 2, 27, 12, 0, 0, 0, time.UTC)
-	inbox, _ := domain.NewProject("p1", "Inbox", "", now)
-	roadmap, _ := domain.NewProject("p2", "Roadmap", "", now)
+	inbox, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	roadmap, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now)
 	roadmap.Metadata.Icon = "+"
 	archivedAt := now
 	roadmap.ArchivedAt = &archivedAt
@@ -5580,8 +5613,8 @@ func TestActionItemEditParsing(t *testing.T) {
 // TestProjectPickerMouseAndWheel verifies behavior for the covered scenario.
 func TestProjectPickerMouseAndWheel(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "A", "", now)
-	p2, _ := domain.NewProject("p2", "B", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "A"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "B"}, now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, nil)
@@ -5601,7 +5634,7 @@ func TestProjectPickerMouseAndWheel(t *testing.T) {
 // TestActionItemFieldConfigAffectsRendering verifies behavior for the covered scenario.
 func TestActionItemFieldConfigAffectsRendering(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	due := now.Add(24 * time.Hour)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
@@ -5644,7 +5677,7 @@ func TestActionItemFieldConfigAffectsRendering(t *testing.T) {
 // TestDeleteUsesConfiguredDefaultMode verifies behavior for the covered scenario.
 func TestDeleteUsesConfiguredDefaultMode(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -5740,7 +5773,7 @@ func TestParseDueAndLabelsInput(t *testing.T) {
 // TestRenderModeOverlayAndIndexHelpers verifies behavior for the covered scenario.
 func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -6018,7 +6051,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 // TestModelFullPageNodeViewShowsHeaderAndBorder verifies full-page info/edit keep the TILLSYN header and node border.
 func TestModelFullPageNodeViewShowsHeaderAndBorder(t *testing.T) {
 	now := time.Date(2026, 3, 5, 8, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -6059,7 +6092,7 @@ func TestModelFullPageNodeViewShowsHeaderAndBorder(t *testing.T) {
 // TestActionItemDescriptionPreviewHeightMatchesBetweenInfoAndEdit verifies info/edit use the same description-preview sizing contract.
 func TestActionItemDescriptionPreviewHeightMatchesBetweenInfoAndEdit(t *testing.T) {
 	now := time.Date(2026, 3, 13, 19, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -6105,7 +6138,7 @@ func TestActionItemDescriptionPreviewHeightMatchesBetweenInfoAndEdit(t *testing.
 // TestFullPageSurfaceMetricsUseBoardMatchedOuterGaps verifies shared full-page surfaces do not reserve extra top/bottom spacer rows.
 func TestFullPageSurfaceMetricsUseBoardMatchedOuterGaps(t *testing.T) {
 	now := time.Date(2026, 3, 13, 19, 40, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -6135,7 +6168,7 @@ func TestFullPageSurfaceMetricsUseBoardMatchedOuterGaps(t *testing.T) {
 // TestModelFormValidationPaths verifies behavior for the covered scenario.
 func TestModelFormValidationPaths(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	existing, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -6186,7 +6219,7 @@ func TestModelFormValidationPaths(t *testing.T) {
 // TestActionItemInfoModeAndPriorityPicker verifies behavior for the covered scenario.
 func TestActionItemInfoModeAndPriorityPicker(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -6236,7 +6269,7 @@ func TestActionItemInfoModeAndPriorityPicker(t *testing.T) {
 // TestActionItemFormDependencyPlaceholdersUseCSVActionItem verifies dependency placeholders use `csv actionItem`.
 func TestActionItemFormDependencyPlaceholdersUseCSVActionItem(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -6274,7 +6307,7 @@ func TestActionItemFormDependencyPlaceholdersUseCSVActionItem(t *testing.T) {
 // TestModelEditActionItemKeyboardSaveAndPickerShortcuts verifies edit-mode save, picker/editor shortcuts, and wrap-around navigation.
 func TestModelEditActionItemKeyboardSaveAndPickerShortcuts(t *testing.T) {
 	now := time.Date(2026, 2, 25, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-1",
@@ -6450,7 +6483,7 @@ func TestModelEditActionItemKeyboardSaveAndPickerShortcuts(t *testing.T) {
 // TestModelEditActionItemFocusScrollUsesRenderedRows verifies edit-mode focus scrolling follows rendered wrapped rows.
 func TestModelEditActionItemFocusScrollUsesRenderedRows(t *testing.T) {
 	now := time.Date(2026, 3, 13, 17, 12, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	longMarkdown := strings.Repeat("wrapped markdown content for viewport scrolling\n", 20)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
@@ -6491,7 +6524,7 @@ func TestModelEditActionItemFocusScrollUsesRenderedRows(t *testing.T) {
 // TestModelEditActionItemSubactionItemAndResourceRowSelection verifies edit-mode row selection for subtasks/resources.
 func TestModelEditActionItemSubactionItemAndResourceRowSelection(t *testing.T) {
 	now := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-parent",
@@ -6569,7 +6602,7 @@ func TestModelEditActionItemSubactionItemAndResourceRowSelection(t *testing.T) {
 // TestModelAddActionItemActionRowsRequireSaveFirst verifies save-dependent rows stay explicit in the new-actionItem form.
 func TestModelAddActionItemActionRowsRequireSaveFirst(t *testing.T) {
 	now := time.Date(2026, 3, 17, 17, 5, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
 
@@ -6600,7 +6633,7 @@ func TestModelAddActionItemActionRowsRequireSaveFirst(t *testing.T) {
 // TestModelEditActionItemQuickActionsRespectFocusedResources verifies dot opens contextual quick actions for focused action rows.
 func TestModelEditActionItemQuickActionsRespectFocusedResources(t *testing.T) {
 	now := time.Date(2026, 3, 17, 17, 15, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -6658,7 +6691,7 @@ func TestModelCommentOwnerLabelUsesConfiguredIdentityFallback(t *testing.T) {
 // TestModelEditActionItemSubactionItemSubmitReturnsToParent verifies saving a child edit reopens the parent edit flow.
 func TestModelEditActionItemSubactionItemSubmitReturnsToParent(t *testing.T) {
 	now := time.Date(2026, 3, 17, 16, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-parent",
@@ -6714,7 +6747,7 @@ func TestModelEditActionItemSubactionItemSubmitReturnsToParent(t *testing.T) {
 // TestActionItemInfoEscFromDirectChildClosesWithoutAncestorJump verifies esc closes direct child actionItem-info without jumping to ancestors.
 func TestActionItemInfoEscFromDirectChildClosesWithoutAncestorJump(t *testing.T) {
 	now := time.Date(2026, 3, 3, 11, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-parent",
@@ -6752,7 +6785,7 @@ func TestActionItemInfoEscFromDirectChildClosesWithoutAncestorJump(t *testing.T)
 // TestActionItemFormDuePickerFlow verifies behavior for the covered scenario.
 func TestActionItemFormDuePickerFlow(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
 	m := loadReadyModel(t, NewModel(svc))
@@ -6798,7 +6831,7 @@ func TestActionItemFormDuePickerFlow(t *testing.T) {
 // TestDuePickerTypedInputAndFocusControls verifies typed date/time options and focus transitions.
 func TestDuePickerTypedInputAndFocusControls(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
 
@@ -6843,7 +6876,7 @@ func TestDuePickerTypedInputAndFocusControls(t *testing.T) {
 // TestActionItemFormLabelSuggestions verifies behavior for the covered scenario.
 func TestActionItemFormLabelSuggestions(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -6888,7 +6921,7 @@ func TestActionItemFormLabelSuggestions(t *testing.T) {
 // TestActionItemFormLabelPickerDoesNotAcceptInlineTyping verifies labels stay modal-only.
 func TestActionItemFormLabelPickerDoesNotAcceptInlineTyping(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -6912,7 +6945,7 @@ func TestActionItemFormLabelPickerDoesNotAcceptInlineTyping(t *testing.T) {
 // TestProjectFormSavesRootPathOnCreate verifies project-form root path callback wiring.
 func TestProjectFormSavesRootPathOnCreate(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	rootPath := t.TempDir()
 
@@ -6944,7 +6977,7 @@ func TestProjectFormSavesRootPathOnCreate(t *testing.T) {
 // TestSearchAndCommandPaletteFlow verifies behavior for the covered scenario.
 func TestSearchAndCommandPaletteFlow(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7027,7 +7060,7 @@ func TestSearchAndCommandPaletteFlow(t *testing.T) {
 // the results overlay visible while the async search command is still in flight.
 func TestApplySearchFilterShowsLoadingResultsModal(t *testing.T) {
 	now := time.Date(2026, 3, 30, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-loading", "Loading Search", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-loading", Name: "Loading Search"}, now)
 	column, _ := domain.NewColumn("c-loading", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-loading",
@@ -7077,7 +7110,7 @@ func TestApplySearchFilterShowsLoadingResultsModal(t *testing.T) {
 // search prevents a later async response from reopening the results overlay.
 func TestSearchResultsIgnoreLateResponseAfterCancel(t *testing.T) {
 	now := time.Date(2026, 3, 30, 9, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-stale-search", "Stale Search", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-stale-search", Name: "Stale Search"}, now)
 	column, _ := domain.NewColumn("c-stale-search", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-stale-search",
@@ -7170,7 +7203,7 @@ func TestDueHelpers(t *testing.T) {
 // TestModelMouseSelectionModeDisablesMouseCapture verifies selection mode disables TUI mouse handling.
 func TestModelMouseSelectionModeDisablesMouseCapture(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7211,7 +7244,7 @@ func TestModelMouseSelectionModeDisablesMouseCapture(t *testing.T) {
 // TestModelMultiSelectBulkMoveUndoRedo verifies behavior for the covered scenario.
 func TestModelMultiSelectBulkMoveUndoRedo(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p.ID, "Doing", 1, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -7275,7 +7308,7 @@ func TestModelMultiSelectBulkMoveUndoRedo(t *testing.T) {
 // TestModelActivityLogOverlay verifies behavior for the covered scenario.
 func TestModelActivityLogOverlay(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7325,7 +7358,7 @@ func TestModelActivityLogOverlay(t *testing.T) {
 // TestModelActivityLogOverlayLoadFailure verifies graceful degradation when persisted activity fetch fails.
 func TestModelActivityLogOverlayLoadFailure(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7357,7 +7390,7 @@ func TestModelActivityLogOverlayLoadFailure(t *testing.T) {
 // TestModelRecentActivityPanelShowsOwnerPrefix verifies notices activity rows use owner labels.
 func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7394,7 +7427,7 @@ func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
 // TestModelNoticesActivityDetailAndJump verifies notices focus, event detail modal, and jump-to-node flow.
 func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	first, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7457,7 +7490,7 @@ func TestModelNoticesActivityDetailAndJump(t *testing.T) {
 // TestModelNoticesSectionNavigationAndActionItemInfoAction verifies notices section-level traversal and actionItem-info enter actions.
 func TestModelNoticesSectionNavigationAndActionItemInfoAction(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 15, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7520,7 +7553,7 @@ func TestModelNoticesSectionNavigationAndActionItemInfoAction(t *testing.T) {
 // TestModelNoticesAttentionRowsOpenActionItemInfoWhenAssociated verifies attention-row enter actions when scoped to one actionItem.
 func TestModelNoticesAttentionRowsOpenActionItemInfoWhenAssociated(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 25, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7555,7 +7588,7 @@ func TestModelNoticesAttentionRowsOpenActionItemInfoWhenAssociated(t *testing.T)
 // TestModelProjectNotificationsCoordinationRowsOpenCoordination verifies project coordination count rows deep-link into the coordination screen.
 func TestModelProjectNotificationsCoordinationRowsOpenCoordination(t *testing.T) {
 	now := time.Date(2099, 3, 29, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-1",
@@ -7640,8 +7673,8 @@ func TestModelProjectNotificationsCoordinationRowsOpenCoordination(t *testing.T)
 // TestModelGlobalCoordinationRowsOpenRelatedProject verifies global coordination rows deep-link into the related project's coordination screen.
 func TestModelGlobalCoordinationRowsOpenRelatedProject(t *testing.T) {
 	now := time.Date(2099, 3, 29, 10, 30, 0, 0, time.UTC)
-	projectA, _ := domain.NewProject("p1", "Inbox", "", now)
-	projectB, _ := domain.NewProject("p2", "Review", "", now)
+	projectA, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	projectB, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Review"}, now)
 	columnA, _ := domain.NewColumn("c1", projectA.ID, "To Do", 0, 0, now)
 	columnB, _ := domain.NewColumn("c2", projectB.ID, "To Do", 0, 0, now)
 	actionItemB, _ := newActionItemForTest(domain.ActionItemInput{
@@ -7699,7 +7732,7 @@ func TestModelGlobalCoordinationRowsOpenRelatedProject(t *testing.T) {
 // TestModelBoardGlobalKeysRemainAvailableInNoticesFocus verifies board-global entrypoints still open from notices focus.
 func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
 	now := time.Date(2026, 3, 29, 10, 45, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-1",
@@ -7750,7 +7783,7 @@ func TestModelBoardGlobalKeysRemainAvailableInNoticesFocus(t *testing.T) {
 // TestRenderOverviewPanelScrollsProjectNoticesBody verifies focused lower notices sections stay visible on shorter boards.
 func TestRenderOverviewPanelScrollsProjectNoticesBody(t *testing.T) {
 	now := time.Date(2026, 3, 29, 11, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7782,7 +7815,7 @@ func TestRenderOverviewPanelScrollsProjectNoticesBody(t *testing.T) {
 // TestModelProjectNotificationsEnterOnNonActionItemAttentionRowOpensThread verifies project attention rows without actionItem ids route to thread mode.
 func TestModelProjectNotificationsEnterOnNonActionItemAttentionRowOpensThread(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7825,7 +7858,7 @@ func TestModelProjectNotificationsEnterOnNonActionItemAttentionRowOpensThread(t 
 // TestModelProjectNotificationsWarningRowsStayScopedAndOpenThreads verifies non-action warning rows remain notification-scoped and open threads when actionItem routing is not applicable.
 func TestModelProjectNotificationsWarningRowsStayScopedAndOpenThreads(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 5, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7886,7 +7919,7 @@ func TestModelProjectNotificationsWarningRowsStayScopedAndOpenThreads(t *testing
 // TestModelProjectNotificationsCommentsSectionFiltersViewerMentions verifies routed comment mentions render in the dedicated viewer-scoped comments section instead of warnings.
 func TestModelProjectNotificationsCommentsSectionFiltersViewerMentions(t *testing.T) {
 	now := time.Date(2026, 4, 2, 9, 15, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -7951,7 +7984,7 @@ func TestModelProjectNotificationsCommentsSectionFiltersViewerMentions(t *testin
 // TestModelProjectNotificationsCommentsCanClearOneRow verifies comment inbox rows resolve one at a time from the notices panel.
 func TestModelProjectNotificationsCommentsCanClearOneRow(t *testing.T) {
 	now := time.Date(2026, 4, 2, 9, 20, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8014,7 +8047,7 @@ func TestModelProjectNotificationsCommentsCanClearOneRow(t *testing.T) {
 // human action-required rows.
 func TestModelProjectNotificationsAgentHandoffsStayInWarnings(t *testing.T) {
 	now := time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8072,7 +8105,7 @@ func TestModelProjectNotificationsAgentHandoffsStayInWarnings(t *testing.T) {
 // comment thread fallback.
 func TestModelProjectNotificationHandoffRowOpensCoordinationDetail(t *testing.T) {
 	now := time.Date(2026, 4, 2, 10, 5, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-1",
@@ -8139,7 +8172,7 @@ func TestModelProjectNotificationHandoffRowOpensCoordinationDetail(t *testing.T)
 // TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction verifies Agent/User Action rows only include requires-user-action records.
 func TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 10, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8199,7 +8232,7 @@ func TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction
 // TestModelProjectNotificationsAuthRequestEnterOpensReview verifies auth-request rows open the review modal instead of a generic project thread.
 func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 12, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8308,8 +8341,8 @@ func TestModelProjectNotificationsAuthRequestApproveShortcut(t *testing.T) {
 // TestModelProjectNotificationsAuthRequestStaysOutOfGlobalPanel verifies focused-project requests do not duplicate into global notices.
 func TestModelProjectNotificationsAuthRequestStaysOutOfGlobalPanel(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 13, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	other, _ := domain.NewProject("p2", "Elsewhere", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	other, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Elsewhere"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8366,7 +8399,7 @@ func TestModelProjectNotificationsAuthRequestStaysOutOfGlobalPanel(t *testing.T)
 // opening the auth review surface and editing TTL before confirming — the parts that survived the collapse.
 func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 14, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	requested, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "requested",
@@ -8446,7 +8479,7 @@ func TestModelProjectNotificationsAuthRequestApproveForwardsConstraints(t *testi
 // TestModelAutoRefreshLoadsExternalAuthRequest verifies externally created auth requests appear without project-switch workarounds.
 func TestModelAutoRefreshLoadsExternalAuthRequest(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 16, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8503,7 +8536,7 @@ func TestModelAutoRefreshLoadsExternalAuthRequest(t *testing.T) {
 // TestModelAuthRequestApproveRejectsInvalidTTL verifies invalid approval TTL input keeps the auth review editor open.
 func TestModelAuthRequestApproveRejectsInvalidTTL(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 17, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8568,7 +8601,7 @@ func TestModelAuthRequestApproveRejectsInvalidTTL(t *testing.T) {
 // TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest verifies auth-request shortcuts fail closed when the selected notice cannot resolve a pending request.
 func TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8611,7 +8644,7 @@ func TestModelBeginSelectedAuthRequestDecisionRequiresPendingRequest(t *testing.
 // TestModelBeginSelectedAuthRequestDecisionDenyUsesEditableNote verifies deny review keeps the note field editable.
 func TestModelBeginSelectedAuthRequestDecisionDenyUsesButtonFocus(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8747,7 +8780,7 @@ func TestAuthRequestResolutionHelpers(t *testing.T) {
 // TestModelAuthConfirmHelpers verifies auth approval confirm helpers validate edits and render field-aware hints.
 func TestModelAuthConfirmHelpers(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 18, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8817,8 +8850,8 @@ func TestModelAuthConfirmHelpers(t *testing.T) {
 // TestModelAuthRequestPathDisplayUsesProjectName verifies auth review labels prefer user-facing project names over raw ids.
 func TestModelAuthRequestPathDisplayUsesProjectName(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 18, 30, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	other, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	other, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now.Add(time.Minute))
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -8846,7 +8879,7 @@ func TestModelAuthRequestPathDisplayUsesProjectName(t *testing.T) {
 // TestModelViewRendersAuthReviewDetails verifies the dedicated auth review renders subject, scope, and actions.
 func TestModelViewRendersAuthReviewDetails(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 19, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8917,7 +8950,7 @@ func TestModelViewRendersAuthReviewDetails(t *testing.T) {
 // TestModelViewRendersGenericConfirmHints verifies non-auth confirm modals keep generic confirmation hints.
 func TestModelViewRendersGenericConfirmHints(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 19, 30, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -8949,8 +8982,8 @@ func TestModelViewRendersGenericConfirmHints(t *testing.T) {
 // TestModelAuthInventoryLoadsProjectScope verifies the auth inventory opens in current-project scope and can enter auth review.
 func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	other, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	other, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now.Add(time.Minute))
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -9110,7 +9143,7 @@ func TestModelAuthInventoryLoadsProjectScope(t *testing.T) {
 // TestModelAuthInventoryEnterOnHandoffOpensDetail verifies non-request coordination rows open the typed detail modal and return to coordination.
 func TestModelAuthInventoryEnterOnHandoffOpensDetail(t *testing.T) {
 	now := time.Date(2026, 3, 29, 11, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-1",
@@ -9175,7 +9208,7 @@ func TestModelCoordinationDetailCanRevokeLease(t *testing.T) {
 	// Keep the lease far enough in the future that the live coordination view
 	// still treats it as active regardless of when CI executes this test.
 	now := time.Date(2030, 3, 29, 11, 15, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-1",
@@ -9236,7 +9269,7 @@ func TestModelCoordinationDetailCanRevokeLease(t *testing.T) {
 // TestModelCoordinationDetailCanUpdateHandoffStatus verifies handoff detail actions flow through confirm and update the handoff.
 func TestModelCoordinationDetailCanUpdateHandoffStatus(t *testing.T) {
 	now := time.Date(2026, 3, 29, 11, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-1",
@@ -9315,7 +9348,7 @@ func TestModelCoordinationDetailCanUpdateHandoffStatus(t *testing.T) {
 // TestAuthInventoryLabelsAddSecondaryIdentifiers verifies coordination labels keep ids secondary when names would collide.
 func TestAuthInventoryLabelsAddSecondaryIdentifiers(t *testing.T) {
 	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-1",
@@ -9342,7 +9375,7 @@ func TestAuthInventoryLabelsAddSecondaryIdentifiers(t *testing.T) {
 // TestAuthInventoryHandoffTargetLabelKeepsRoleOnlyTargets verifies role-only handoffs do not pretend to target the project.
 func TestAuthInventoryHandoffTargetLabelKeepsRoleOnlyTargets(t *testing.T) {
 	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	svc := newFakeService([]domain.Project{project}, nil, nil)
 	m := loadReadyModel(t, NewModel(svc))
 
@@ -9367,7 +9400,7 @@ func TestAuthInventoryHandoffTargetLabelKeepsRoleOnlyTargets(t *testing.T) {
 // TestAuthInventoryHandoffTargetLabelHandlesTrulyTargetlessRows verifies empty target metadata renders as a clean dash.
 func TestAuthInventoryHandoffTargetLabelHandlesTrulyTargetlessRows(t *testing.T) {
 	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	svc := newFakeService([]domain.Project{project}, nil, nil)
 	m := loadReadyModel(t, NewModel(svc))
 
@@ -9390,7 +9423,7 @@ func TestAuthInventoryHandoffTargetLabelHandlesTrulyTargetlessRows(t *testing.T)
 // TestModelAuthInventorySplitsPendingAndResolvedRequests verifies the inventory keeps pending requests selectable while still rendering resolved history.
 func TestModelAuthInventorySplitsPendingAndResolvedRequests(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 30, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -9477,7 +9510,7 @@ func TestModelAuthInventorySplitsPendingAndResolvedRequests(t *testing.T) {
 // can scroll into lower lease and handoff sections on shorter terminals.
 func TestAuthInventoryMouseWheelReachesLowerSections(t *testing.T) {
 	now := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "actionItem-1",
@@ -9633,7 +9666,7 @@ func TestAuthInventoryMouseWheelReachesLowerSections(t *testing.T) {
 // TestModelAuthInventoryApproveReturnsToInventory verifies project-scope review can approve and reopen the inventory list.
 func TestModelAuthInventoryApproveReturnsToInventory(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 45, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -9690,7 +9723,7 @@ func TestModelAuthInventoryApproveReturnsToInventory(t *testing.T) {
 // TestModelAuthInventoryDenyReturnsToInventory verifies deny-with-note returns to the inventory after applying the decision.
 func TestModelAuthInventoryDenyReturnsToInventory(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 50, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -9756,7 +9789,7 @@ func TestModelAuthInventoryDenyReturnsToInventory(t *testing.T) {
 // note entry simple and confirms on a single explicit enter action.
 func TestModelAuthReviewDenyUsesSingleConfirm(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 55, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -9822,8 +9855,8 @@ func TestModelAuthReviewDenyUsesSingleConfirm(t *testing.T) {
 // TestModelAuthInventoryCanToggleGlobalAndRevokeSession verifies project/global inventory toggling and TUI revocation.
 func TestModelAuthInventoryCanToggleGlobalAndRevokeSession(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 21, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
-	other, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	other, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now.Add(time.Minute))
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -9911,7 +9944,7 @@ func TestModelAuthInventoryCanToggleGlobalAndRevokeSession(t *testing.T) {
 // TestModelAuthInventoryEscapeReloadsBoard verifies exiting auth inventory can flush deferred board reloads after auth mutations.
 func TestModelAuthInventoryEscapeReloadsBoard(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 22, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	initial, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -9950,7 +9983,7 @@ func TestModelAuthInventoryEscapeReloadsBoard(t *testing.T) {
 // TestModelActionMsgOpenAuthAccessReloadsInventory verifies auth-access action messages reopen and reload the auth inventory screen.
 func TestModelActionMsgOpenAuthAccessReloadsInventory(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 23, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -9996,7 +10029,7 @@ func TestModelActionMsgOpenAuthAccessReloadsInventory(t *testing.T) {
 // TestModelProjectNotificationsEnterRecoversArchivedActionItem verifies project-notification Enter can reopen an archived hidden actionItem before falling back to a thread.
 func TestModelProjectNotificationsEnterRecoversArchivedActionItem(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 15, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	archivedBlocked, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-archived",
@@ -10049,7 +10082,7 @@ func TestModelProjectNotificationsEnterRecoversArchivedActionItem(t *testing.T) 
 // TestModelProjectNotificationsScopedRowsFallbackToProjectThread verifies scoped notices with malformed scope metadata still produce deterministic thread navigation.
 func TestModelProjectNotificationsScopedRowsFallbackToProjectThread(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 20, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -10089,7 +10122,7 @@ func TestModelProjectNotificationsScopedRowsFallbackToProjectThread(t *testing.T
 // TestModelPanelFocusTraversalIncludesGlobalNotifications verifies board/project/global panel focus traversal.
 func TestModelPanelFocusTraversalIncludesGlobalNotifications(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 28, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -10147,8 +10180,8 @@ func TestModelPanelFocusTraversalIncludesGlobalNotifications(t *testing.T) {
 // TestModelGlobalNotificationsEnterSwitchesProjectAndOpensActionItemInfo verifies global notifications Enter performs deterministic cross-project navigation.
 func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensActionItemInfo(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 29, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	base, _ := newActionItemForTest(domain.ActionItemInput{
@@ -10206,7 +10239,7 @@ func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensActionItemInfo(t *t
 // TestModelAuthReviewCanSwitchDecisionBeforeApply verifies review can branch from approve-default into deny flow.
 func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 29, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -10282,8 +10315,8 @@ func TestModelAuthReviewCanSwitchDecisionBeforeApply(t *testing.T) {
 // TestModelGlobalNotificationsAuthRequestDenyShortcut verifies global auth-request rows open the deny-note review stage.
 func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 33, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	task1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -10376,8 +10409,8 @@ func TestModelGlobalNotificationsAuthRequestDenyShortcut(t *testing.T) {
 // TestModelGlobalNotificationsEnterOpensAuthReview verifies enter on a global auth-request row opens the auth review surface.
 func TestModelGlobalNotificationsEnterOpensAuthReview(t *testing.T) {
 	now := time.Date(2026, 3, 2, 9, 25, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	task1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -10453,7 +10486,7 @@ func TestModelGlobalNotificationsEnterOpensAuthReview(t *testing.T) {
 // TestGlobalNoticesPanelItemFromAttentionCarriesStableIdentifiers verifies global-row mapping keeps stable row identifiers.
 func TestGlobalNoticesPanelItemFromAttentionCarriesStableIdentifiers(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	item := domain.AttentionItem{
 		ID:           "att-1",
 		ProjectID:    project.ID,
@@ -10489,7 +10522,7 @@ func TestGlobalNoticesPanelItemFromAttentionCarriesStableIdentifiers(t *testing.
 // TestModelGlobalNotificationsSelectionReanchorsByStableKey verifies global-row selection survives reload reorder by stable row key.
 func TestModelGlobalNotificationsSelectionReanchorsByStableKey(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 31, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -10548,8 +10581,8 @@ func TestModelGlobalNotificationsSelectionReanchorsByStableKey(t *testing.T) {
 // TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread verifies non-actionItem global rows open scoped comment threads.
 func TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 32, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -10616,7 +10649,7 @@ func TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread(t *testing.T
 // TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters verifies project-row enter recovery when the target actionItem is hidden by filters.
 func TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 33, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	active, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-active",
@@ -10693,8 +10726,8 @@ func TestModelProjectNotificationsEnterRecoversFromSearchAndArchivedFilters(t *t
 // TestModelGlobalNoticesAggregationDegradesOnNonActiveProjectFailures verifies non-active project notice failures do not abort board load.
 func TestModelGlobalNoticesAggregationDegradesOnNonActiveProjectFailures(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 34, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Roadmap"}, now.Add(time.Minute))
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
@@ -10747,7 +10780,7 @@ func TestModelGlobalNoticesAggregationDegradesOnNonActiveProjectFailures(t *test
 // TestModelNoticesRecentActivityScrollAndFallbackDetail verifies notices activity scrolling and detail fallback for non-node events.
 func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -10844,7 +10877,7 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 // TestModelActivityEventJumpLoadsArchivedActionItem verifies jump-to-node can recover archived nodes hidden by board filters.
 func TestModelActivityEventJumpLoadsArchivedActionItem(t *testing.T) {
 	now := time.Date(2026, 3, 1, 14, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	active, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -10902,7 +10935,7 @@ func TestModelActivityEventJumpLoadsArchivedActionItem(t *testing.T) {
 // TestModelActivityEventJumpFocusesNestedNode verifies jump-to-node focuses nested activity targets by scoping to parent.
 func TestModelActivityEventJumpFocusesNestedNode(t *testing.T) {
 	now := time.Date(2026, 3, 1, 15, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -10962,7 +10995,7 @@ func TestModelActivityEventJumpFocusesNestedNode(t *testing.T) {
 // TestModelActivityEventMetadataShowsColumnNames verifies move metadata renders column names instead of UUIDs.
 func TestModelActivityEventMetadataShowsColumnNames(t *testing.T) {
 	now := time.Date(2026, 3, 1, 16, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	doing, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
@@ -11055,7 +11088,7 @@ func TestModelDisplayActivityOwnerNormalizesActorLabels(t *testing.T) {
 // TestModelActivityEventTargetDetailsFallbackLabels verifies non-actionItem activity targets render human-facing node/path labels.
 func TestModelActivityEventTargetDetailsFallbackLabels(t *testing.T) {
 	now := time.Date(2026, 3, 1, 16, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	m := Model{
 		projects:        []domain.Project{project},
 		selectedProject: 0,
@@ -11086,7 +11119,7 @@ func TestModelActivityEventTargetDetailsFallbackLabels(t *testing.T) {
 // TestModelActivityEventInfoPathCollapsesMiddleSegments verifies activity-event path rendering preserves root + focused node in narrow overlays.
 func TestModelActivityEventInfoPathCollapsesMiddleSegments(t *testing.T) {
 	now := time.Date(2026, 3, 1, 17, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Project Atlas", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Project Atlas"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-branch",
@@ -11182,7 +11215,7 @@ func TestModelFormatActivityMetadataFriendlyFallbacks(t *testing.T) {
 // TestModelRecentActivityPanelRefreshesFromPersistedEvents verifies notices-panel activity follows persisted change events on auto-refresh.
 func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 	now := time.Date(2026, 2, 28, 13, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -11237,7 +11270,7 @@ func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 // TestModelGroupingByPriority verifies behavior for the covered scenario.
 func TestModelGroupingByPriority(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 1, now)
 	tLow, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -11275,7 +11308,7 @@ func TestModelGroupingByPriority(t *testing.T) {
 // TestWithKeyConfigOverrides verifies behavior for the covered scenario.
 func TestWithKeyConfigOverrides(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -11838,7 +11871,7 @@ func TestResourcePickerEntrySelectionAndParent(t *testing.T) {
 // TestModelResourcePickerAttachFromEdit verifies resource attachment flows from the modal-only edit row.
 func TestModelResourcePickerAttachFromEdit(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -11939,7 +11972,7 @@ func TestModelResourcePickerAttachFromEdit(t *testing.T) {
 // TestModelResourcePickerFallsBackToBootstrapRoot verifies actionItem attachment uses the bootstrap/search root when no project root is configured.
 func TestModelResourcePickerFallsBackToBootstrapRoot(t *testing.T) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -11974,7 +12007,7 @@ func TestModelResourcePickerFallsBackToBootstrapRoot(t *testing.T) {
 // TestModelEditActionItemCommentsRowOpensThread verifies edit-mode comments management stays accessible from the form.
 func TestModelEditActionItemCommentsRowOpensThread(t *testing.T) {
 	now := time.Date(2026, 3, 13, 11, 15, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -12038,7 +12071,7 @@ func TestModelEditActionItemCommentsRowOpensThread(t *testing.T) {
 // TestModelEditProjectCommentsRowOpensThread verifies edit-project keeps project comments reachable.
 func TestModelEditProjectCommentsRowOpensThread(t *testing.T) {
 	now := time.Date(2026, 4, 1, 16, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	project.Description = "Project details"
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, nil, nil)))
 
@@ -12078,7 +12111,7 @@ func TestModelEditProjectCommentsRowOpensThread(t *testing.T) {
 // TestModelActionItemInfoAndEditHideLabelInheritanceBlocks verifies info/edit hide inherited label blocks while keeping picker flows available.
 func TestModelActionItemInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	phase, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "phase-1",
@@ -12166,7 +12199,7 @@ func TestModelActionItemInfoAndEditHideLabelInheritanceBlocks(t *testing.T) {
 // TestModelProjectionFocusBreadcrumbMode verifies subtree focus mode and breadcrumb switching.
 func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-parent",
@@ -12242,7 +12275,7 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 // TestModelBoardPathLineCollapsesMiddleSegments verifies board header path uses middle ellipsis under constrained width.
 func TestModelBoardPathLineCollapsesMiddleSegments(t *testing.T) {
 	now := time.Date(2026, 2, 21, 13, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Roadmap Hub", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap Hub"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-branch",
@@ -12288,7 +12321,7 @@ func TestModelBoardPathLineCollapsesMiddleSegments(t *testing.T) {
 // TestModelFocusSubtreeRendersBoardForHierarchyLevels verifies branch/phase/nested-phase focus keeps project-board columns visible.
 func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 	now := time.Date(2026, 2, 24, 9, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap"}, now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
@@ -12391,7 +12424,7 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 // TestModelFocusActionItemScopeShowsSubtasks verifies actionItem-focused scope rendering includes direct subtasks.
 func TestModelFocusActionItemScopeShowsSubtasks(t *testing.T) {
 	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	done, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
@@ -12469,7 +12502,7 @@ func TestModelFocusActionItemScopeShowsSubtasks(t *testing.T) {
 // TestModelFocusScopeShowsDirectSubactionItemChildrenForLegacyParentKinds verifies focus works when direct children are subtasks.
 func TestModelFocusScopeShowsDirectSubactionItemChildrenForLegacyParentKinds(t *testing.T) {
 	now := time.Date(2026, 2, 25, 13, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -12519,7 +12552,7 @@ func TestModelFocusScopeShowsDirectSubactionItemChildrenForLegacyParentKinds(t *
 // TestModelNewActionItemFormDefaultsFollowFocusedScope verifies add-actionItem defaults follow active focus scope.
 func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 	now := time.Date(2026, 2, 25, 14, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap"}, now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -12628,7 +12661,7 @@ func TestModelNewActionItemFormDefaultsFollowFocusedScope(t *testing.T) {
 // TestModelCreateActionItemFromFocusedScopeUsesScopedParent verifies submitted create-actionItem calls carry focused defaults.
 func TestModelCreateActionItemFromFocusedScopeUsesScopedParent(t *testing.T) {
 	now := time.Date(2026, 2, 25, 14, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap"}, now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -12681,7 +12714,7 @@ func TestModelCreateActionItemFromFocusedScopeUsesScopedParent(t *testing.T) {
 // TestModelViewShowsSubtreeDiscoverabilityHint verifies hierarchy focus guidance in the board info line.
 func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 	now := time.Date(2026, 2, 24, 11, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -12731,7 +12764,7 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 // TestModelFocusSubtreeAllowsEmptyScope verifies pressing f on leaf nodes still enters focus mode.
 func TestModelFocusSubtreeAllowsEmptyScope(t *testing.T) {
 	now := time.Date(2026, 2, 25, 13, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "leaf-actionItem",
@@ -12764,7 +12797,7 @@ func TestModelFocusSubtreeAllowsEmptyScope(t *testing.T) {
 // TestModelViewShowsHierarchyMarkers verifies branch/phase markers in card metadata rows.
 func TestModelViewShowsHierarchyMarkers(t *testing.T) {
 	now := time.Date(2026, 2, 25, 10, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Roadmap"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "b1",
@@ -12808,7 +12841,7 @@ func TestModelViewShowsHierarchyMarkers(t *testing.T) {
 // TestModelViewShowsNoticesPanel verifies right-side notices panel rendering on wide layouts.
 func TestModelViewShowsNoticesPanel(t *testing.T) {
 	now := time.Date(2026, 2, 25, 11, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
@@ -12879,7 +12912,7 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 // TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible verifies the side panel always renders project/global notifications layout.
 func TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible(t *testing.T) {
 	now := time.Date(2026, 3, 2, 8, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -12920,7 +12953,7 @@ func TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible(t *testing.T) 
 // TestModelBoardHorizontalSpacingSymmetry verifies equal one-cell outer gutters and inter-panel gaps.
 func TestModelBoardHorizontalSpacingSymmetry(t *testing.T) {
 	now := time.Date(2026, 2, 27, 18, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
@@ -12982,7 +13015,7 @@ func TestModelBoardHorizontalSpacingSymmetry(t *testing.T) {
 // TestModelViewShowsAttentionMarkersAndSummary verifies unresolved-attention markers and compact scope totals in board view.
 func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
@@ -13052,7 +13085,7 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 // TestSearchLevelFiltering verifies level-scoped filtering for project, branch, phase, actionItem, and subtask.
 func TestSearchLevelFiltering(t *testing.T) {
 	now := time.Date(2026, 2, 24, 11, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Hierarchy", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Hierarchy"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	branch, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "l-branch",
@@ -13169,7 +13202,7 @@ func TestSearchLevelFiltering(t *testing.T) {
 // TestModelDependencyRollupAndActionItemInfoHints verifies rollup summary and actionItem dependency hints.
 func TestModelDependencyRollupAndActionItemInfoHints(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	done, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-done",
@@ -13218,7 +13251,7 @@ func TestModelDependencyRollupAndActionItemInfoHints(t *testing.T) {
 // TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits verifies dependency inspector linked-row pinning and edit-form apply flow.
 func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
 	cDone, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
@@ -13378,7 +13411,7 @@ func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
 // TestModelDependencyInspectorEnterFromActionItemForm verifies actionItem-form dependency rows open via enter and apply modal-only updates.
 func TestModelDependencyInspectorEnterFromActionItemForm(t *testing.T) {
 	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	owner, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-owner",
@@ -13432,7 +13465,7 @@ func TestModelDependencyInspectorEnterFromActionItemForm(t *testing.T) {
 // TestModelDependencyInspectorOverlayRendersMissingLinkedRefs verifies missing linked references stay inspectable in the dependency modal.
 func TestModelDependencyInspectorOverlayRendersMissingLinkedRefs(t *testing.T) {
 	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	owner, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-owner",
@@ -13487,7 +13520,7 @@ func TestModelDependencyInspectorOverlayRendersMissingLinkedRefs(t *testing.T) {
 // TestModelDependencyInspectorFormEnterDoesNotJump verifies enter-jump is blocked when opened from actionItem form context.
 func TestModelDependencyInspectorFormEnterDoesNotJump(t *testing.T) {
 	now := time.Date(2026, 2, 23, 13, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	owner, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-owner",
@@ -13600,7 +13633,7 @@ func TestNormalizeColumnStateIDStrictCanonicalRejectsLegacyLiterals(t *testing.T
 // TestModelDependencyInspectorFilterControls verifies dependency inspector control paths for query/filter toggles and cancel flow.
 func TestModelDependencyInspectorFilterControls(t *testing.T) {
 	now := time.Date(2026, 2, 23, 15, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	owner, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-owner",
@@ -13697,7 +13730,7 @@ func TestModelDependencyInspectorFilterControls(t *testing.T) {
 // TestModelDependencyInspectorInputAndListKeyRouting verifies that query input keeps text keys while list actions stay list-scoped.
 func TestModelDependencyInspectorInputAndListKeyRouting(t *testing.T) {
 	now := time.Date(2026, 2, 23, 16, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	owner, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t-owner",
@@ -13782,7 +13815,7 @@ func TestModelDependencyInspectorInputAndListKeyRouting(t *testing.T) {
 // TestModelSearchFocusNavigationWithJK verifies query typing and focus navigation in the search modal.
 func TestModelSearchFocusNavigationWithJK(t *testing.T) {
 	now := time.Date(2026, 2, 23, 16, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t1",
@@ -13832,7 +13865,7 @@ func TestModelSearchFocusNavigationWithJK(t *testing.T) {
 // TestModelAutoRefreshTickReloadsExternalMutationsInBoardMode verifies board-mode auto-refresh pulls externally written tasks.
 func TestModelAutoRefreshTickReloadsExternalMutationsInBoardMode(t *testing.T) {
 	now := time.Date(2026, 2, 28, 9, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	existing, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-existing",
@@ -13878,7 +13911,7 @@ func TestModelAutoRefreshTickReloadsExternalMutationsInBoardMode(t *testing.T) {
 // TestModelAutoRefreshTickSkipsInputModes verifies auto-refresh defers while text-entry modals are active.
 func TestModelAutoRefreshTickSkipsInputModes(t *testing.T) {
 	now := time.Date(2026, 2, 28, 10, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	existing, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-existing",
@@ -13931,7 +13964,7 @@ func TestModelAutoRefreshTickSkipsInputModes(t *testing.T) {
 // TestModelAutoRefreshTickPreservesFocusedSubtree verifies focused subtree projections refresh without losing focus.
 func TestModelAutoRefreshTickPreservesFocusedSubtree(t *testing.T) {
 	now := time.Date(2026, 2, 28, 11, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-parent",
@@ -14029,7 +14062,7 @@ func TestSortActionItemSlicePrefersCreationTime(t *testing.T) {
 // TestLoadDataPreservesSingleProjectSearchFallbackStatus verifies the primary board search flow retains semantic degradation metadata.
 func TestLoadDataPreservesSingleProjectSearchFallbackStatus(t *testing.T) {
 	now := time.Date(2026, 3, 29, 20, 30, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-search-status", "Search Status", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-search-status", Name: "Search Status"}, now)
 	column, _ := domain.NewColumn("c-search-status", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t-search-status",
@@ -14072,7 +14105,7 @@ func TestLoadDataPreservesSingleProjectSearchFallbackStatus(t *testing.T) {
 // TestEmbeddingsStatusModalLoadsAndReindexes verifies the TUI exposes lifecycle inventory plus a reindex action.
 func TestEmbeddingsStatusModalLoadsAndReindexes(t *testing.T) {
 	now := time.Date(2026, 3, 29, 20, 35, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-embeddings-modal", "Embeddings", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-embeddings-modal", Name: "Embeddings"}, now)
 	column, _ := domain.NewColumn("c-embeddings-modal", project.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t-embeddings-modal",
@@ -14189,7 +14222,7 @@ func TestEmbeddingsStatusModalLoadsAndReindexes(t *testing.T) {
 // TestEmbeddingsStatusModalShowsInFlightSpinnerState verifies the modal exposes an actively ticking progress indicator during a long-running reindex.
 func TestEmbeddingsStatusModalShowsInFlightSpinnerState(t *testing.T) {
 	now := time.Date(2026, 3, 29, 21, 5, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-embeddings-spinner", "Embeddings Spinner", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-embeddings-spinner", Name: "Embeddings Spinner"}, now)
 	column, _ := domain.NewColumn("c-embeddings-spinner", project.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-embeddings-spinner",
@@ -14234,8 +14267,8 @@ func TestEmbeddingsStatusModalShowsInFlightSpinnerState(t *testing.T) {
 // TestCommandPaletteEmbeddingsReindexPreservesGlobalScope verifies the command palette respects the currently visible embeddings inventory scope.
 func TestCommandPaletteEmbeddingsReindexPreservesGlobalScope(t *testing.T) {
 	now := time.Date(2026, 3, 29, 22, 5, 0, 0, time.UTC)
-	projectA, _ := domain.NewProject("p-embeddings-a", "Embeddings A", "", now)
-	projectB, _ := domain.NewProject("p-embeddings-b", "Embeddings B", "", now)
+	projectA, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-embeddings-a", Name: "Embeddings A"}, now)
+	projectB, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-embeddings-b", Name: "Embeddings B"}, now)
 	columnA, _ := domain.NewColumn("c-embeddings-a", projectA.ID, "To Do", 0, 0, now)
 	columnB, _ := domain.NewColumn("c-embeddings-b", projectB.ID, "To Do", 0, 0, now)
 	actionItemA, _ := newActionItemForTest(domain.ActionItemInput{
@@ -14292,7 +14325,7 @@ func TestCommandPaletteEmbeddingsReindexPreservesGlobalScope(t *testing.T) {
 // TestEmbeddingsStatusModalEnterOpensActionItemInfo verifies actionItem-backed lifecycle rows open the same actionItem-info flow as search results.
 func TestEmbeddingsStatusModalEnterOpensActionItemInfo(t *testing.T) {
 	now := time.Date(2026, 3, 29, 23, 40, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-embeddings-open", "Embeddings Open", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-embeddings-open", Name: "Embeddings Open"}, now)
 	column, _ := domain.NewColumn("c-embeddings-open", project.ID, "To Do", 0, 0, now)
 	parent, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "branch-embeddings-open",
@@ -14360,7 +14393,7 @@ func TestEmbeddingsStatusModalEnterOpensActionItemInfo(t *testing.T) {
 // TestEmbeddingsStatusModalProjectRowEnterOpensProjectThread verifies project-backed lifecycle rows open a project details surface.
 func TestEmbeddingsStatusModalProjectRowEnterOpensProjectThread(t *testing.T) {
 	now := time.Date(2026, 3, 29, 23, 50, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p-embeddings-project-thread", "Embeddings Project", "Project description", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-embeddings-project-thread", Name: "Embeddings Project", Description: "Project description"}, now)
 	column, _ := domain.NewColumn("c-embeddings-project-thread", project.ID, "To Do", 0, 0, now)
 	svc := newFakeService([]domain.Project{project}, []domain.Column{column}, nil)
 	svc.embeddingRows = []app.EmbeddingRecord{{
@@ -14728,7 +14761,7 @@ func TestNormalizeAttachmentPathWithinRoot(t *testing.T) {
 // TestActionItemInfoBodyLinesRenderSystemSection verifies actionItem info exposes structural/system fields intentionally.
 func TestActionItemInfoBodyLinesRenderSystemSection(t *testing.T) {
 	now := time.Date(2026, 3, 13, 9, 30, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t1",
@@ -14775,7 +14808,7 @@ func TestActionItemInfoBodyLinesRenderSystemSection(t *testing.T) {
 // TestActionItemInfoBodyLinesRenderSystemSectionUsesReadableActorNames verifies system ownership lines reuse activity display names.
 func TestActionItemInfoBodyLinesRenderSystemSectionUsesReadableActorNames(t *testing.T) {
 	now := time.Date(2026, 3, 17, 18, 34, 10, 0, time.FixedZone("PDT", -7*60*60))
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:             "t1",
@@ -14937,6 +14970,21 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		// neither user-editable through the TUI nor part of the read-only
 		// system surface — internal scaffolding the TUI does not render.
 		"KindCatalogJSON": {},
+		// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree / Language
+		// / BuildTool / DevMcpServerName are the Drop 4a droplet 4a.12
+		// (L4) project-node first-class fields. They are admin-driven
+		// config — set on project create or via till.project update — and
+		// consumed by the Wave 2 dispatcher when constructing agent-spawn
+		// invocations. The TUI does NOT render or edit them today;
+		// project-bootstrap UI is a future drop. Classified as internal
+		// scaffolding for now so TestProjectSchemaCoverageIsExplicit
+		// stays green without forcing premature TUI surface design.
+		"HyllaArtifactRef":    {},
+		"RepoBareRoot":        {},
+		"RepoPrimaryWorktree": {},
+		"Language":            {},
+		"BuildTool":           {},
+		"DevMcpServerName":    {},
 	}
 	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.Project{}), editable, readOnly, projectInternal)
 
@@ -14958,7 +15006,7 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 // TestProjectFormBodyLinesRenderSystemSectionWhenEditing verifies project edit surfaces expose structural read-only fields.
 func TestProjectFormBodyLinesRenderSystemSectionWhenEditing(t *testing.T) {
 	now := time.Date(2026, 3, 13, 10, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, nil, nil)))
 	_ = m.startProjectForm(&p)
 	lines, _ := m.projectFormBodyLines(72, lipgloss.NewStyle(), lipgloss.Color("62"))
@@ -14980,7 +15028,7 @@ func TestProjectFormBodyLinesRenderSystemSectionWhenEditing(t *testing.T) {
 // TestStartProjectFormDefaultsOwnerToIdentityName verifies local MVP project ownership starts from bootstrap identity.
 func TestStartProjectFormDefaultsOwnerToIdentityName(t *testing.T) {
 	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
-	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, nil, nil)))
 	m.identityDisplayName = "Evan"
 

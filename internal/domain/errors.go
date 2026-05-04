@@ -30,6 +30,8 @@ var (
 	ErrInvalidPaths                = errors.New("invalid paths")
 	ErrInvalidPackages             = errors.New("invalid packages")
 	ErrInvalidFiles                = errors.New("invalid files")
+	ErrInvalidLanguage             = errors.New("invalid language")
+	ErrInvalidRepoPath             = errors.New("invalid repo path")
 	ErrInvalidLifecycleState       = errors.New("invalid lifecycle state")
 	ErrInvalidActorType            = errors.New("invalid actor type")
 	ErrInvalidAttentionState       = errors.New("invalid attention state")

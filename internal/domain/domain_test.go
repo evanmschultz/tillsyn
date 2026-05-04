@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// TestNewProjectAndSlug verifies behavior for the covered scenario.
-func TestNewProjectAndSlug(t *testing.T) {
+// TestNewProjectFromInputAndSlug verifies behavior for the covered scenario.
+func TestNewProjectFromInputAndSlug(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, err := NewProject("p1", "  My Big Project!  ", " desc ", now)
+	p, err := NewProjectFromInput(ProjectInput{ID: "p1", Name: "  My Big Project!  ", Description: " desc "}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if p.Slug != "my-big-project" {
 		t.Fatalf("unexpected slug %q", p.Slug)
@@ -27,13 +27,13 @@ func TestNewProjectAndSlug(t *testing.T) {
 	}
 }
 
-// TestNewProjectValidation verifies behavior for the covered scenario.
-func TestNewProjectValidation(t *testing.T) {
+// TestNewProjectFromInputValidation verifies behavior for the covered scenario.
+func TestNewProjectFromInputValidation(t *testing.T) {
 	now := time.Now()
-	if _, err := NewProject("", "ok", "", now); err != ErrInvalidID {
+	if _, err := NewProjectFromInput(ProjectInput{ID: "", Name: "ok"}, now); err != ErrInvalidID {
 		t.Fatalf("expected ErrInvalidID, got %v", err)
 	}
-	if _, err := NewProject("id", "   ", "", now); err != ErrInvalidName {
+	if _, err := NewProjectFromInput(ProjectInput{ID: "id", Name: "   "}, now); err != ErrInvalidName {
 		t.Fatalf("expected ErrInvalidName, got %v", err)
 	}
 }
@@ -41,9 +41,9 @@ func TestNewProjectValidation(t *testing.T) {
 // TestProjectArchiveRestore verifies behavior for the covered scenario.
 func TestProjectArchiveRestore(t *testing.T) {
 	now := time.Now()
-	p, err := NewProject("p1", "test", "", now)
+	p, err := NewProjectFromInput(ProjectInput{ID: "p1", Name: "test"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	later := now.Add(time.Minute)
 	p.Archive(later)
@@ -59,18 +59,29 @@ func TestProjectArchiveRestore(t *testing.T) {
 // TestProjectUpdateDetailsWithMetadata verifies behavior for the covered scenario.
 func TestProjectUpdateDetailsWithMetadata(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, err := NewProject("p1", "Original", "desc", now)
+	p, err := NewProjectFromInput(ProjectInput{ID: "p1", Name: "Original", Description: "desc"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 
-	err = p.UpdateDetails("  Updated Name ", "  Updated Desc ", ProjectMetadata{
-		Owner:    "  Evan ",
-		Icon:     ":rocket:",
-		Color:    "62",
-		Homepage: " https://example.com ",
-		Tags:     []string{"Dev", "dev", "Roadmap"},
-	}, now.Add(time.Minute))
+	err = p.UpdateDetails(
+		"  Updated Name ",
+		"  Updated Desc ",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		ProjectMetadata{
+			Owner:    "  Evan ",
+			Icon:     ":rocket:",
+			Color:    "62",
+			Homepage: " https://example.com ",
+			Tags:     []string{"Dev", "dev", "Roadmap"},
+		},
+		now.Add(time.Minute),
+	)
 	if err != nil {
 		t.Fatalf("UpdateDetails() error = %v", err)
 	}
@@ -88,6 +99,230 @@ func TestProjectUpdateDetailsWithMetadata(t *testing.T) {
 	}
 	if len(p.Metadata.Tags) != 2 || p.Metadata.Tags[0] != "dev" || p.Metadata.Tags[1] != "roadmap" {
 		t.Fatalf("unexpected metadata tags %#v", p.Metadata.Tags)
+	}
+}
+
+// TestNewProjectFromInputFirstClassFields verifies the six Drop 4a L4
+// project-node first-class fields (HyllaArtifactRef, RepoBareRoot,
+// RepoPrimaryWorktree, Language, BuildTool, DevMcpServerName) round-trip
+// through NewProjectFromInput, applying field validation per
+// WAVE_1_PLAN.md §1.8: Language against the closed enum
+// ("" | "go" | "fe"); RepoBareRoot + RepoPrimaryWorktree as absolute
+// paths (empty allowed); other fields trim-only.
+func TestNewProjectFromInputFirstClassFields(t *testing.T) {
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name    string
+		input   ProjectInput
+		wantErr error
+		assert  func(t *testing.T, p Project)
+	}{
+		{
+			name: "all-six-populated-happy-path",
+			input: ProjectInput{
+				ID:                  "p1",
+				Name:                "Tillsyn",
+				Description:         "Project tracker",
+				HyllaArtifactRef:    "github.com/evanmschultz/tillsyn@main",
+				RepoBareRoot:        "/Users/evan/code/tillsyn",
+				RepoPrimaryWorktree: "/Users/evan/code/tillsyn/main",
+				Language:            "go",
+				BuildTool:           "mage",
+				DevMcpServerName:    "tillsyn-dev",
+			},
+			assert: func(t *testing.T, p Project) {
+				if p.HyllaArtifactRef != "github.com/evanmschultz/tillsyn@main" {
+					t.Fatalf("HyllaArtifactRef = %q", p.HyllaArtifactRef)
+				}
+				if p.RepoBareRoot != "/Users/evan/code/tillsyn" {
+					t.Fatalf("RepoBareRoot = %q", p.RepoBareRoot)
+				}
+				if p.RepoPrimaryWorktree != "/Users/evan/code/tillsyn/main" {
+					t.Fatalf("RepoPrimaryWorktree = %q", p.RepoPrimaryWorktree)
+				}
+				if p.Language != "go" {
+					t.Fatalf("Language = %q", p.Language)
+				}
+				if p.BuildTool != "mage" {
+					t.Fatalf("BuildTool = %q", p.BuildTool)
+				}
+				if p.DevMcpServerName != "tillsyn-dev" {
+					t.Fatalf("DevMcpServerName = %q", p.DevMcpServerName)
+				}
+			},
+		},
+		{
+			name: "all-empty-zero-value",
+			input: ProjectInput{
+				ID:   "p2",
+				Name: "Empty Fields",
+			},
+			assert: func(t *testing.T, p Project) {
+				if p.HyllaArtifactRef != "" || p.RepoBareRoot != "" || p.RepoPrimaryWorktree != "" ||
+					p.Language != "" || p.BuildTool != "" || p.DevMcpServerName != "" {
+					t.Fatalf("expected empty defaults, got %+v", p)
+				}
+			},
+		},
+		{
+			name: "language-fe-accepted",
+			input: ProjectInput{
+				ID:       "p3",
+				Name:     "FE",
+				Language: "fe",
+			},
+			assert: func(t *testing.T, p Project) {
+				if p.Language != "fe" {
+					t.Fatalf("Language = %q, want fe", p.Language)
+				}
+			},
+		},
+		{
+			name: "language-trim-and-validate",
+			input: ProjectInput{
+				ID:       "p4",
+				Name:     "Trim",
+				Language: "  go  ",
+			},
+			assert: func(t *testing.T, p Project) {
+				if p.Language != "go" {
+					t.Fatalf("Language = %q, want trimmed go", p.Language)
+				}
+			},
+		},
+		{
+			name: "language-invalid-rejected",
+			input: ProjectInput{
+				ID:       "p5",
+				Name:     "Bad Lang",
+				Language: "rust",
+			},
+			wantErr: ErrInvalidLanguage,
+		},
+		{
+			name: "repo-bare-root-relative-rejected",
+			input: ProjectInput{
+				ID:           "p6",
+				Name:         "Rel Root",
+				RepoBareRoot: "relative/path",
+			},
+			wantErr: ErrInvalidRepoPath,
+		},
+		{
+			name: "repo-primary-worktree-relative-rejected",
+			input: ProjectInput{
+				ID:                  "p7",
+				Name:                "Rel WT",
+				RepoPrimaryWorktree: "./main",
+			},
+			wantErr: ErrInvalidRepoPath,
+		},
+		{
+			name: "free-form-fields-trimmed",
+			input: ProjectInput{
+				ID:               "p8",
+				Name:             "Trim Fields",
+				HyllaArtifactRef: "  github.com/x/y@main  ",
+				BuildTool:        "  mage  ",
+				DevMcpServerName: "  tillsyn-dev  ",
+			},
+			assert: func(t *testing.T, p Project) {
+				if p.HyllaArtifactRef != "github.com/x/y@main" {
+					t.Fatalf("HyllaArtifactRef = %q", p.HyllaArtifactRef)
+				}
+				if p.BuildTool != "mage" {
+					t.Fatalf("BuildTool = %q", p.BuildTool)
+				}
+				if p.DevMcpServerName != "tillsyn-dev" {
+					t.Fatalf("DevMcpServerName = %q", p.DevMcpServerName)
+				}
+			},
+		},
+		{
+			name: "whitespace-only-language-collapses-to-empty",
+			input: ProjectInput{
+				ID:       "p9",
+				Name:     "WS Lang",
+				Language: "   ",
+			},
+			assert: func(t *testing.T, p Project) {
+				if p.Language != "" {
+					t.Fatalf("Language = %q, want empty after trim", p.Language)
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := NewProjectFromInput(tc.input, now)
+			if tc.wantErr != nil {
+				if err != tc.wantErr {
+					t.Fatalf("NewProjectFromInput() err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewProjectFromInput() error = %v", err)
+			}
+			if tc.assert != nil {
+				tc.assert(t, p)
+			}
+		})
+	}
+}
+
+// TestProjectUpdateDetailsFirstClassFields verifies UpdateDetails applies
+// the same Drop 4a L4 validation rules as NewProjectFromInput and updates
+// each first-class field on the project.
+func TestProjectUpdateDetailsFirstClassFields(t *testing.T) {
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	p, err := NewProjectFromInput(ProjectInput{
+		ID:   "p1",
+		Name: "Initial",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput() error = %v", err)
+	}
+
+	// Happy-path update sets all six fields.
+	if err := p.UpdateDetails(
+		"Renamed",
+		"new desc",
+		"github.com/x/y@main",
+		"/abs/bare",
+		"/abs/wt",
+		"go",
+		"mage",
+		"my-mcp",
+		ProjectMetadata{},
+		now.Add(time.Minute),
+	); err != nil {
+		t.Fatalf("UpdateDetails() error = %v", err)
+	}
+	if p.HyllaArtifactRef != "github.com/x/y@main" {
+		t.Fatalf("HyllaArtifactRef not updated: %q", p.HyllaArtifactRef)
+	}
+	if p.RepoBareRoot != "/abs/bare" || p.RepoPrimaryWorktree != "/abs/wt" {
+		t.Fatalf("repo paths not updated: bare=%q wt=%q", p.RepoBareRoot, p.RepoPrimaryWorktree)
+	}
+	if p.Language != "go" || p.BuildTool != "mage" || p.DevMcpServerName != "my-mcp" {
+		t.Fatalf("language/build/mcp not updated: %+v", p)
+	}
+
+	// Invalid language rejects.
+	err = p.UpdateDetails("Renamed", "", "", "", "", "rust", "", "", ProjectMetadata{}, now.Add(2*time.Minute))
+	if err != ErrInvalidLanguage {
+		t.Fatalf("UpdateDetails() language err = %v, want ErrInvalidLanguage", err)
+	}
+
+	// Relative repo paths reject.
+	err = p.UpdateDetails("Renamed", "", "", "relative/x", "", "", "", "", ProjectMetadata{}, now.Add(2*time.Minute))
+	if err != ErrInvalidRepoPath {
+		t.Fatalf("UpdateDetails() bare-root err = %v, want ErrInvalidRepoPath", err)
+	}
+	err = p.UpdateDetails("Renamed", "", "", "", "./wt", "", "", "", ProjectMetadata{}, now.Add(2*time.Minute))
+	if err != ErrInvalidRepoPath {
+		t.Fatalf("UpdateDetails() worktree err = %v, want ErrInvalidRepoPath", err)
 	}
 }
 

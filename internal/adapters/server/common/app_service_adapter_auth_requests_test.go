@@ -39,9 +39,9 @@ func newAuthRequestAdapterForTest(t *testing.T) (*AppServiceAdapter, *sqlite.Rep
 	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
 		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
 	}
-	project, err := domain.NewProject("p1", "Project One", "", authRequestTestNow)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Project One"}, authRequestTestNow)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(context.Background(), project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -62,9 +62,9 @@ func newAuthRequestAdapterForTest(t *testing.T) (*AppServiceAdapter, *sqlite.Rep
 func mustCreateProjectForAuthRequestTest(t *testing.T, repo *sqlite.Repository, id, name string) {
 	t.Helper()
 
-	project, err := domain.NewProject(id, name, "", authRequestTestNow)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: id, Name: name}, authRequestTestNow)
 	if err != nil {
-		t.Fatalf("NewProject(%q) error = %v", id, err)
+		t.Fatalf("NewProjectFromInput(%q) error = %v", id, err)
 	}
 	if err := repo.CreateProject(context.Background(), project); err != nil {
 		t.Fatalf("CreateProject(%q) error = %v", id, err)

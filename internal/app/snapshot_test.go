@@ -16,9 +16,9 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
 
-	p1, _ := domain.NewProject("p1", "Alpha", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Alpha"}, now)
 	p1.Metadata = domain.ProjectMetadata{Owner: "team-a", Tags: []string{"alpha"}}
-	p2, _ := domain.NewProject("p2", "Beta", "", now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Beta"}, now)
 	p2.Archive(now.Add(time.Minute))
 	repo.projects[p1.ID] = p1
 	repo.projects[p2.ID] = p2
@@ -180,7 +180,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
 
-	existingProject, _ := domain.NewProject("p1", "Old Name", "", now)
+	existingProject, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Old Name"}, now)
 	existingCol, _ := domain.NewColumn("c1", existingProject.ID, "Old Col", 0, 0, now)
 	existingActionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old ActionItem", Priority: domain.PriorityLow, Kind: domain.KindPlan}, now)
 
@@ -1257,5 +1257,80 @@ func TestSnapshotActionItemEndCommitLegacyFormatCompatibility(t *testing.T) {
 	hydrated := snap.toDomain()
 	if hydrated.EndCommit != "" {
 		t.Fatalf("legacy snapshot toDomain EndCommit = %q, want empty string", hydrated.EndCommit)
+	}
+}
+
+// TestSnapshotProjectFirstClassFieldsRoundTrip verifies the six Drop 4a L4
+// project-node first-class fields (HyllaArtifactRef, RepoBareRoot,
+// RepoPrimaryWorktree, Language, BuildTool, DevMcpServerName) survive the
+// domain → snapshot → domain round-trip. Each field carries an
+// `,omitempty` JSON tag so legacy pre-4a.12 snapshots without these
+// fields decode cleanly to empty strings.
+func TestSnapshotProjectFirstClassFieldsRoundTrip(t *testing.T) {
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	original, err := domain.NewProjectFromInput(domain.ProjectInput{
+		ID:                  "p1",
+		Name:                "Tillsyn",
+		Description:         "tracker",
+		HyllaArtifactRef:    "github.com/evanmschultz/tillsyn@main",
+		RepoBareRoot:        "/Users/evan/code/tillsyn",
+		RepoPrimaryWorktree: "/Users/evan/code/tillsyn/main",
+		Language:            "go",
+		BuildTool:           "mage",
+		DevMcpServerName:    "tillsyn-dev",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput() error = %v", err)
+	}
+
+	snap := snapshotProjectFromDomain(original)
+	if snap.HyllaArtifactRef != "github.com/evanmschultz/tillsyn@main" {
+		t.Fatalf("snapshot HyllaArtifactRef = %q", snap.HyllaArtifactRef)
+	}
+	if snap.RepoBareRoot != "/Users/evan/code/tillsyn" || snap.RepoPrimaryWorktree != "/Users/evan/code/tillsyn/main" {
+		t.Fatalf("snapshot repo paths missed: bare=%q wt=%q", snap.RepoBareRoot, snap.RepoPrimaryWorktree)
+	}
+	if snap.Language != "go" || snap.BuildTool != "mage" || snap.DevMcpServerName != "tillsyn-dev" {
+		t.Fatalf("snapshot scalar fields missed: %+v", snap)
+	}
+
+	hydrated := snap.toDomain()
+	if hydrated.HyllaArtifactRef != original.HyllaArtifactRef ||
+		hydrated.RepoBareRoot != original.RepoBareRoot ||
+		hydrated.RepoPrimaryWorktree != original.RepoPrimaryWorktree ||
+		hydrated.Language != original.Language ||
+		hydrated.BuildTool != original.BuildTool ||
+		hydrated.DevMcpServerName != original.DevMcpServerName {
+		t.Fatalf("hydrated round-trip drift: original=%+v hydrated=%+v", original, hydrated)
+	}
+}
+
+// TestSnapshotProjectFirstClassFieldsLegacyFormatCompatibility verifies a
+// pre-4a.12 snapshot whose JSON form OMITS the six first-class project-
+// node fields deserializes cleanly with empty defaults. The omitempty tag
+// is what keeps older snapshots forward-compatible without a
+// SnapshotVersion bump.
+func TestSnapshotProjectFirstClassFieldsLegacyFormatCompatibility(t *testing.T) {
+	legacyJSON := []byte(`{
+		"id": "p-legacy",
+		"slug": "p-legacy",
+		"name": "Legacy",
+		"description": "pre-4a.12",
+		"metadata": {},
+		"created_at": "2026-04-01T00:00:00Z",
+		"updated_at": "2026-04-01T00:00:00Z"
+	}`)
+	var snap SnapshotProject
+	if err := json.Unmarshal(legacyJSON, &snap); err != nil {
+		t.Fatalf("legacy snapshot unmarshal error = %v", err)
+	}
+	if snap.HyllaArtifactRef != "" || snap.RepoBareRoot != "" || snap.RepoPrimaryWorktree != "" ||
+		snap.Language != "" || snap.BuildTool != "" || snap.DevMcpServerName != "" {
+		t.Fatalf("legacy snapshot first-class fields not empty: %+v", snap)
+	}
+	hydrated := snap.toDomain()
+	if hydrated.HyllaArtifactRef != "" || hydrated.RepoBareRoot != "" || hydrated.RepoPrimaryWorktree != "" ||
+		hydrated.Language != "" || hydrated.BuildTool != "" || hydrated.DevMcpServerName != "" {
+		t.Fatalf("hydrated legacy snapshot fields not empty: %+v", hydrated)
 	}
 }

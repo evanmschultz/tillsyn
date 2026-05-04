@@ -115,9 +115,9 @@ func TestRepositoryHandoffRoundTrip(t *testing.T) {
 	})
 
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p-handoff", "Handoffs", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-handoff", Name: "Handoffs"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -276,9 +276,9 @@ func TestRepositoryHandoffValidationErrors(t *testing.T) {
 	})
 
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p-handoff-validate", "Handoffs Validate", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-handoff-validate", Name: "Handoffs Validate"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
