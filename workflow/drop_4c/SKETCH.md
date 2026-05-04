@@ -53,7 +53,7 @@ The list grows as Drops 4a + 4b run. Initial seed items:
 
 ## Tentative Wave / Item Structure
 
-~10–12 droplets. Loose theme grouping (subject to revision):
+~25–35 droplets (Theme F.7 spawn redesign adds 10–14). Loose theme grouping (subject to revision):
 
 ### Theme A — Silent-data-loss + agent-surface hardening (~4 droplets)
 
@@ -120,6 +120,40 @@ The big theme. Drop 3 landed the template foundation; Drop 4a's dispatcher consu
 
 **F.6 — Cleanup of legacy KindTemplate stub (~1 droplet).** `internal/app/kind_capability.go:1002` `mergeActionItemMetadataWithKindTemplate` is a no-op pass-through stub kept "during the transition." Drop 3.15 retired the legacy KindTemplate surface; this stub can fold into its caller (`internal/app/service.go:716`). Doc comment confirms: *"a future drop will fold it into the caller."* Drop 4c is that future drop.
 
+**F.7 — Spawn pipeline redesign (~10–14 droplets — primary Theme F focus, replaces 4a.19 stub wholesale).** Drop 4a's `internal/app/dispatcher/spawn.go` is a stub: hardcodes `hylla_artifact_ref` (Hylla is local-only, not part of Tillsyn's shipped cascade — must remove), emits `--mcp-config <stub-path>`, hand-rolls a prompt with no `--system-prompt-file` / `--settings` / `--plugin-dir` plumbing, no stream-json output capture. Drop 4c replaces it wholesale with the architecture canonized in `~/.claude/projects/-Users-evanschultz-Documents-Code-hylla-tillsyn/memory/project_drop_4c_spawn_architecture.md`. Itemized:
+
+- **F.7.1 — Per-spawn temp bundle lifecycle.** `os.MkdirTemp` per spawn (root chosen by `tillsyn.spawn_temp_root = "os_tmp" | "project"` TOML knob, default `os_tmp`). Bundle layout: `manifest.json` + `plugin/` (with `.claude-plugin/plugin.json` + `agents/<name>.md` + `.mcp.json` + `settings.json`) + `system-prompt.md` + optional `system-append.md` + `stream.jsonl` capture. `defer os.RemoveAll` on spawn exit; cleanup on terminal-state transition (complete/failed/archived).
+
+- **F.7.2 — TOML template schema widening.** Add `[agent_bindings.<kind>]` fields: `tools_allowed`, `tools_disallowed`, `system_prompt_template_path`, `[agent.sandbox.filesystem]` allowWrite/denyRead, `[agent.sandbox.network]` allowed_domains/denied_domains, optional `tools_engine_minimal` (renders to `--tools "..."` flag). Tool-gating render strategy: settings.json `permissions` deny rules are AUTHORITATIVE (Layer B); agent-file frontmatter `disallowedTools` mirrors B for human readability (Layer A); CLI `--allowed-tools`/`--disallowed-tools` flags SKIPPED for typical kinds (probe-grounded — agents route around removed tools via Bash, only deny patterns catch workarounds).
+
+- **F.7.3 — Headless argv emission.** Spawn.go emits per memory §3 recipe: `--bare`, `--plugin-dir <bundle>/plugin`, `--agent <name>`, `--system-prompt-file <bundle>/system-prompt.md`, `--settings <bundle>/plugin/settings.json`, `--setting-sources ""` (Tillsyn's settings is sole source — user/project/local ignored), `--strict-mcp-config`, `--permission-mode acceptEdits`, `--output-format stream-json`, `--verbose`, `--no-session-persistence`, `--exclude-dynamic-system-prompt-sections`, plus conditional `--max-budget-usd` / `--max-turns` / `--effort` / `--model` / `--append-system-prompt-file` / `--tools` (each emitted only when value resolves through CLI > MCP > TUI > TOML > absent priority cascade; spawn.go uses `*int` / `*float64` / `*string` types).
+
+- **F.7.4 — Stream-JSON monitor parser.** Parse `stream.jsonl` line-by-line per memory §6 taxonomy: `system/init` (verify tool list rendered correctly), `assistant` (text/thinking/tool_use blocks), `user` (tool_result with is_error mid-stream), `result` (terminal — `total_cost_usd`, `permission_denials[]`, `terminal_reason`, `errors[]`). Tillsyn writes per-spawn cost to action item `metadata.actual_cost_usd`. **Drop 4a 4a.21 process monitor stays minimal** (PID + exit watch); F.7.4 LAYERS the stream parser on top.
+
+- **F.7.5 — Permission-denial → TUI handshake.** On terminal `result` event, parse `permission_denials[]`. For each `{tool_name, tool_input}` pair, post a Tillsyn attention-item to dev's TUI: "Agent X for kind Y wants to call <tool> with <args>. Allow once / Allow always / Deny." Dev approves → SQLite `permission_grants(project_id, kind, rule, granted_by, granted_at)` row written. Next spawn of same kind reads grants, injects into per-spawn `settings.json`. Real-time mid-stream variant (watch `tool_result is_error: true`) is optional Drop 4c+.
+
+- **F.7.6 — Required system-plugin pre-flight check.** `till bootstrap` (or per-dispatch pre-flight) shells out to `claude plugin list --json`, parses installed-plugin set, fails hard if any project TOML `tillsyn.requires_plugins = [...]` entry is missing with clear instruction: `Run: claude plugin install <name>`. OSS-friendly team-standards enforcement.
+
+- **F.7.7 — Auto-add `.tillsyn/spawns/` to `.gitignore`** when `spawn_temp_root = "project"` mode AND project doesn't already have it ignored. Skipped in `os_tmp` default mode.
+
+- **F.7.8 — Crash-recovery / orphan scan.** On Tillsyn startup, enumerate every `in_progress` action item, read `<bundle>/manifest.json` → `claude_pid`, check PID liveness via `os.FindProcess` + signal 0 + cmdline match. Live → leave (re-monitor via SQLite state). Dead → move action item to `failed` with `metadata.failure_reason = "dispatcher_restart_orphan"` + cleanup bundle + dev decides re-dispatch.
+
+- **F.7.9 — Action-item metadata fields.** New: `metadata.spawn_bundle_path`, `metadata.spawn_history[]` (append-only audit trail of `{spawn_id, bundle_path, started_at, terminated_at, outcome, total_cost_usd}`), `metadata.actual_cost_usd`. Wire into `domain.ActionItem` if needed; otherwise metadata blob.
+
+- **F.7.10 — Drop `hylla_artifact_ref` from spawn.go's prompt body.** Hylla is dev-local, NOT part of Tillsyn's shipped cascade. Remove the hardcoded reference from `assemblePrompt` (it currently leaks Tillsyn-internal Hylla awareness into every spawn). Local Tillsyn template can include Hylla MCP server in its plugin bundle if dev opts in; shipped Tillsyn binary has zero Hylla awareness.
+
+- **F.7.11 — Documentation: write Tillsyn architecture docs** referencing memory `project_drop_4c_spawn_architecture.md` as canonical source. Cover: two plugin paths (system-installed vs --plugin-dir bundle), per-spawn temp file inventory, stream-json event taxonomy, settings.json authority, sandbox semantics, crash recovery, explicit non-goals (adversarial OS sandbox for Read/Edit/Write, real-time interactive prompts).
+
+**F.7 explicit non-goals** (carried forward from memory §11):
+- Adversarial OS-level sandbox for Read/Edit/Write tools (cooperative deny rules sufficient for non-adversarial subagents; if ever needed, wrap entire `claude` invocation in Docker/Firejail).
+- Real-time interactive permission prompts (Tillsyn's TUI cannot intercept Claude's stdin prompt; failure-loop handshake via terminal `permission_denials[]` is the design).
+- Inheritance of orchestrator's CLAUDE.md / output styles / hooks (--bare skips them by design; per-kind system prompt template subsumes role definitions).
+
+**F.7 dependencies + supersession:**
+- Supersedes 4a.19 spawn.go entirely. NITs from 4a.19 (R6 in `project_drop_4a_refinements_raised.md`) die naturally with the rewrite.
+- Builds on 4a.21 process monitor (PID watch) + 4a.22 cleanup hook (lock release on terminal state).
+- Pre-flight check (F.7.6) needs `claude plugin list --json` parsing — depends on the Tillsyn-side plugin-config schema landing in F.7.2.
+
 ### Theme G — Post-MVP marketplace evolution (NOT in Drop 4c scope; captured for persistence)
 
 Documented here so the design is preserved across compactions. **NONE of these land in Drop 4c.** They're post-MVP candidates.
@@ -151,7 +185,7 @@ Documented here so the design is preserved across compactions. **NONE of these l
 
 ## Approximate Size
 
-~25–30 droplets total (Themes A ~4 + B ~2 + C ~3 + D ~1–2 + F ~15–18; Theme E populated post-4a/4b). Larger than originally sketched once Theme F (template ergonomics) was added per dev decision (2026-05-03). Most items are 1–3 file edits each (audit-finding fixes are typically narrow); Theme F.4 marketplace CLI is the heaviest chunk at ~5 droplets. Full planning at post-4b-merge time will refine the count + the Theme E residue list. **If size becomes a planning concern, candidates for splitting into a separate Drop 4d:** F.4 (marketplace CLI) is the cleanest split point since it's largely additive new surface (CLI subcommand tree + git wrapper) with no cross-dependency on F.1–F.3 + F.5 + F.6.
+~35–45 droplets total (Themes A ~4 + B ~2 + C ~3 + D ~1–2 + F.1–F.6 ~15–18 + F.7 spawn redesign ~10–14; Theme E populated post-4a/4b). Larger than originally sketched once Theme F.7 (spawn pipeline redesign grounded in 2026-05-04 verbatim CLI probes) was added per dev directive. Most items are 1–3 file edits each (audit-finding fixes are typically narrow); Theme F.4 marketplace CLI is ~5 droplets; Theme F.7 spawn redesign is the heaviest chunk at ~10–14 droplets. Full planning at post-4b-merge time will refine the count + the Theme E residue list. **If size becomes a planning concern, candidates for splitting into a separate Drop 4d:** F.4 (marketplace CLI) is the cleanest split point since it's largely additive new surface; F.7 (spawn redesign) is the second-cleanest split since it touches a separate package (`internal/app/dispatcher/`) but it's a HARD prerequisite for Drop 5 dogfood — F.7 cannot defer past Drop 5.
 
 ## Hard Prerequisites
 
