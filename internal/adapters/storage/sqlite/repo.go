@@ -179,6 +179,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			persistent INTEGER NOT NULL DEFAULT 0,
 			dev_gated INTEGER NOT NULL DEFAULT 0,
 			paths_json TEXT NOT NULL DEFAULT '[]',
+			packages_json TEXT NOT NULL DEFAULT '[]',
 			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			column_id TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -1171,6 +1172,10 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 	if err != nil {
 		return err
 	}
+	packagesJSON, err := encodeActionItemPackagesJSON(t.Packages)
+	if err != nil {
+		return err
+	}
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
@@ -1189,10 +1194,10 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO action_items(
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		t.ID,
 		t.ProjectID,
@@ -1207,6 +1212,7 @@ func (r *Repository) CreateActionItem(ctx context.Context, t domain.ActionItem) 
 		boolToInt(t.Persistent),
 		boolToInt(t.DevGated),
 		pathsJSON,
+		packagesJSON,
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -1271,6 +1277,10 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 	if err != nil {
 		return err
 	}
+	packagesJSON, err := encodeActionItemPackagesJSON(t.Packages)
+	if err != nil {
+		return err
+	}
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
@@ -1294,7 +1304,7 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE action_items
-		SET parent_id = ?, kind = ?, scope = ?, role = ?, structural_type = ?, irreducible = ?, owner = ?, drop_number = ?, persistent = ?, dev_gated = ?, paths_json = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
+		SET parent_id = ?, kind = ?, scope = ?, role = ?, structural_type = ?, irreducible = ?, owner = ?, drop_number = ?, persistent = ?, dev_gated = ?, paths_json = ?, packages_json = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
 		    labels_json = ?, metadata_json = ?, updated_by_actor = ?, updated_by_name = ?, updated_by_type = ?, updated_at = ?, started_at = ?, completed_at = ?, archived_at = ?, canceled_at = ?
 		WHERE id = ?
 	`,
@@ -1309,6 +1319,7 @@ func (r *Repository) UpdateActionItem(ctx context.Context, t domain.ActionItem) 
 		boolToInt(t.Persistent),
 		boolToInt(t.DevGated),
 		pathsJSON,
+		packagesJSON,
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -1367,7 +1378,7 @@ func (r *Repository) GetActionItem(ctx context.Context, id string) (domain.Actio
 func (r *Repository) ListActionItems(ctx context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
 	query := `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ?
@@ -1405,7 +1416,7 @@ func (r *Repository) ListActionItems(ctx context.Context, projectID string, incl
 func (r *Repository) ListActionItemsByParent(ctx context.Context, projectID, parentID string) ([]domain.ActionItem, error) {
 	query := `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ? AND parent_id = ?
@@ -1439,7 +1450,7 @@ func (r *Repository) ListActionItemsByParent(ctx context.Context, projectID, par
 func (r *Repository) FindActionItemByOwnerAndTitle(ctx context.Context, projectID, owner, title string) (domain.ActionItem, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ? AND owner = ? AND title = ?
@@ -1460,7 +1471,7 @@ func (r *Repository) FindActionItemByOwnerAndTitle(ctx context.Context, projectI
 func (r *Repository) ListActionItemsByDropNumber(ctx context.Context, projectID string, dropNumber int) ([]domain.ActionItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE project_id = ? AND drop_number = ?
@@ -2501,7 +2512,7 @@ type queryRower interface {
 func getActionItemByID(ctx context.Context, q queryRower, id string) (domain.ActionItem, error) {
 	row := q.QueryRowContext(ctx, `
 		SELECT
-			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, role, structural_type, irreducible, owner, drop_number, persistent, dev_gated, paths_json, packages_json, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, created_by_name, updated_by_actor, updated_by_name, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM action_items
 		WHERE id = ?
@@ -2629,6 +2640,9 @@ func changedActionItemFields(prev, next domain.ActionItem) []string {
 	}
 	if !equalStringSlices(prev.Paths, next.Paths) {
 		changed = append(changed, "paths")
+	}
+	if !equalStringSlices(prev.Packages, next.Packages) {
+		changed = append(changed, "packages")
 	}
 	if !equalMetadata(prev.Metadata, next.Metadata) {
 		changed = append(changed, "metadata")
@@ -2818,6 +2832,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		persistentRaw     int
 		devGatedRaw       int
 		pathsRaw          string
+		packagesRaw       string
 		state             string
 		updatedType       string
 	)
@@ -2835,6 +2850,7 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		&persistentRaw,
 		&devGatedRaw,
 		&pathsRaw,
+		&packagesRaw,
 		&state,
 		&t.ColumnID,
 		&t.Position,
@@ -2876,6 +2892,11 @@ func scanActionItem(s scanner) (domain.ActionItem, error) {
 		return domain.ActionItem{}, err
 	}
 	t.Paths = paths
+	packages, err := decodeActionItemPackagesJSON(packagesRaw)
+	if err != nil {
+		return domain.ActionItem{}, err
+	}
+	t.Packages = packages
 	t.LifecycleState = domain.LifecycleState(state)
 	t.UpdatedByType = domain.ActorType(updatedType)
 	t.CreatedAt = parseTS(createdRaw)
@@ -3258,6 +3279,40 @@ func decodeActionItemPathsJSON(raw string) ([]string, error) {
 		return nil, fmt.Errorf("decode paths_json: %w", err)
 	}
 	return paths, nil
+}
+
+// encodeActionItemPackagesJSON serializes the Packages slice for storage in
+// the action_items.packages_json column. Nil/empty slice encodes to "[]" so
+// the schema's NOT NULL DEFAULT '[]' invariant is preserved on every write.
+// Per Drop 4a droplet 4a.6 the storage shape is JSON-encoded text, mirroring
+// the labels_json / paths_json precedent — packages is always read whole on
+// action-item reads, individual-package queries are dispatcher-side in-memory
+// after the read, so SQLite JSON1 functions are unnecessary.
+func encodeActionItemPackagesJSON(packages []string) (string, error) {
+	if len(packages) == 0 {
+		return "[]", nil
+	}
+	bytes, err := json.Marshal(packages)
+	if err != nil {
+		return "", fmt.Errorf("encode packages_json: %w", err)
+	}
+	return string(bytes), nil
+}
+
+// decodeActionItemPackagesJSON deserializes packages_json into []string.
+// Empty or whitespace-only raw payloads decode to nil (zero-value Packages)
+// so legacy rows or NULL-coerced reads do not surface as decode errors.
+// JSON null also decodes to nil.
+func decodeActionItemPackagesJSON(raw string) ([]string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	var packages []string
+	if err := json.Unmarshal([]byte(trimmed), &packages); err != nil {
+		return nil, fmt.Errorf("decode packages_json: %w", err)
+	}
+	return packages, nil
 }
 
 // boolToInt converts boolean values into sqlite-friendly numeric flags.
