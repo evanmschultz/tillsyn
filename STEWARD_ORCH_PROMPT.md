@@ -258,7 +258,7 @@ Report both the auth `request_id` (at create) and the `session_id` (at claim) to
 
 ### 8.1 Subagent Auth Provisioning (You Approve, Not The Dev)
 
-**Canonical flow (current rule, pre-§19.1.6 fix drop):** the dev approves orchestrator auth only. STEWARD provisions AND approves auth for every non-orch subagent it spawns (planner / QA proof / QA falsification / research / commit / future MD-helper subagents). The dev does NOT see subagent auth requests in the TUI for STEWARD's subtree.
+**Canonical flow:** the dev approves orchestrator auth only. STEWARD provisions AND approves auth for every non-orch subagent it spawns (planner / QA proof / QA falsification / research / commit / future MD-helper subagents). The dev does NOT see subagent auth requests in the TUI for STEWARD's subtree.
 
 This applies to subagents working on:
 
@@ -299,7 +299,7 @@ till_auth_request operation=approve
   agent_instance_id, lease_token               # STEWARD's project lease
 ```
 
-**S2 fallback (if approve is rejected today):** the orch-approves-subagent capability lands in §19.1.6 fix drop — pre-fix, the system may still gate subagent approval to dev. If the approve call returns a guardrail error, surface to the dev in chat with the request_id; dev approves in TUI; capture the approval and continue. Note the friction in `DROP_N_REFINEMENTS_RAISED` for that cycle so it feeds the §19.1.6 design.
+**S2 always succeeds.** Drop 4a Wave 3 (Drop 1.6 absorbed) landed the orch-self-approval gate; STEWARD's `till_auth_request operation=approve` call lands the approval directly with no dev-TUI hop. Cross-subtree exception is metadata-driven (any ancestor with `metadata.persistent=true && metadata.owner=STEWARD` qualifies). Project-level `OrchSelfApprovalEnabled = *false` toggle is the total backstop — if the dev opts out, all approve calls under that project (including STEWARD's cross-subtree path) revert to dev-TUI approval.
 
 S3. **Subagent claims its own session:** pass `request_id` + `resume_token` in the spawn prompt; the subagent runs `till_auth_request operation=claim` itself, then issues its own subagent-scoped lease via `till_capability_lease operation=issue` with the appropriate role + scope.
 
@@ -393,7 +393,7 @@ This prompt is a draft that the dev will refine. Expect edits to:
 
 - The first-tasks list (Section 5) as dev prioritizes.
 - The scope boundaries (Section 4) as Drop 1 lands and ownership becomes clearer.
-- The auth flow (Section 8 / 8.1) once `PLAN.md §19.1.6` (the orch-self-approval fix drop, scheduled between Drop 1.5 and Drop 2) ships — at that point the S2 dev-fallback in §8.1 disappears and subagent approval becomes deterministic.
+- Drop 4a Wave 3 (Drop 1.6 absorbed) landed the orch-self-approval gate. The §8.1 S2 dev-fallback paragraph is retired; STEWARD approves all non-orch subagent auth deterministically. Drop 4b adds auto-revoke on terminal state.
 - The auth flow (Section 8) once the Drop 1 auth-hook fix changes the cache path layout.
 - Section 12 (Agent Prompt Audit) shrinks as items get resolved or routed to Drop-10 refinements.
 
