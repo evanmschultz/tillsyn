@@ -15,9 +15,26 @@ import (
 // commit timeline driven by gitFixture.commit. The struct captures the repo
 // root so tests can build an execDiffer scoped to it without mutating the
 // process working directory.
+//
+// home is a separate per-fixture tempdir reused as HOME / XDG_CONFIG_HOME for
+// every spawned git process. Together with GIT_CONFIG_NOSYSTEM=1 and
+// GIT_CONFIG_GLOBAL=/dev/null this fully isolates the fixture from the
+// developer's system / global / per-user git config — including any bare-root
+// or parent-repo config file that a concurrent git operation might be holding
+// a lock on. Without this isolation the tests are flaky under concurrent git
+// activity (e.g. a `git push` invoking the pre-push `mage ci` hook while the
+// bare-root config is locked) and fail with:
+//
+//	error: could not lock config file <bare-root>/config: File exists
+//
+// The fix lives on cmd.Env rather than t.Setenv because every test in this
+// file uses t.Parallel(), and t.Setenv panics when called from a parallel
+// test. Threading isolation through cmd.Env keeps the fixture safe under
+// parallel execution.
 type gitFixture struct {
 	t    *testing.T
 	root string
+	home string
 }
 
 // newGitFixture initializes a fresh git repository in a tempdir, configures a
@@ -31,7 +48,8 @@ func newGitFixture(t *testing.T) *gitFixture {
 	}
 
 	root := t.TempDir()
-	fx := &gitFixture{t: t, root: root}
+	home := t.TempDir()
+	fx := &gitFixture{t: t, root: root, home: home}
 
 	fx.git("init", "--initial-branch=main")
 	fx.git("config", "user.email", "gitdiff-test@example.com")
@@ -44,6 +62,12 @@ func newGitFixture(t *testing.T) *gitFixture {
 
 // git runs a git subcommand inside the fixture, failing the test immediately
 // on any non-zero exit so setup errors surface where they happen.
+//
+// The command's environment is built fresh from os.Environ() with isolation
+// overrides appended. Later entries win in exec.Cmd's env handling, so the
+// HOME / XDG_CONFIG_HOME / GIT_CONFIG_NOSYSTEM / GIT_CONFIG_GLOBAL values
+// here override whatever the parent process exported. See the gitFixture doc
+// comment above for the full rationale.
 func (f *gitFixture) git(args ...string) string {
 	f.t.Helper()
 	cmd := exec.Command("git", args...)
@@ -53,6 +77,20 @@ func (f *gitFixture) git(args ...string) string {
 		"GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
 		"GIT_PAGER=cat",
 		"GIT_TERMINAL_PROMPT=0",
+		// Isolation: skip system config (/etc/gitconfig) entirely.
+		"GIT_CONFIG_NOSYSTEM=1",
+		// Isolation: pin the global config to /dev/null so git never
+		// reads or attempts to write the developer's ~/.gitconfig (or
+		// any bare-root config a concurrent git op may have locked).
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		// Isolation: redirect HOME to a per-fixture tempdir so any
+		// HOME-derived path (credential helpers, ~/.config/git, etc.)
+		// resolves under the fixture rather than the dev's real home.
+		"HOME="+f.home,
+		// Isolation: same idea for XDG — newer git versions consult
+		// $XDG_CONFIG_HOME/git/config when GIT_CONFIG_GLOBAL isn't set,
+		// and we want a consistent answer regardless of git version.
+		"XDG_CONFIG_HOME="+f.home,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
