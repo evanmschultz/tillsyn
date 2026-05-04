@@ -1289,3 +1289,48 @@ func TestNewActionItemFilesAllowsOverlapWithPaths(t *testing.T) {
 		t.Fatalf("Files = %#v, want [%q]", actionItem.Files, shared)
 	}
 }
+
+// TestNewActionItemStartCommitTrim covers the StartCommit string field added
+// in Drop 4a droplet 4a.8. StartCommit is a free-form opaque-domain string:
+// surrounding whitespace is trimmed; empty round-trips as the legitimate
+// zero value ("not yet captured"); short-SHAs (7-char), full-SHAs (40-char),
+// and any caller-supplied identifier round-trip without format enforcement.
+// No rejection path exists — there is no ErrInvalidStartCommit, matching
+// the Owner / Description / BlockedReason free-form-string precedent.
+func TestNewActionItemStartCommitTrim(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "empty round-trips empty", input: "", want: ""},
+		{name: "whitespace-only collapses to empty", input: "   ", want: ""},
+		{name: "short SHA round-trips", input: "0cf5194", want: "0cf5194"},
+		{name: "full SHA round-trips", input: "0cf5194d4cb6c8d4f9b9b1d7e1f9d3c2b4e5a6f7", want: "0cf5194d4cb6c8d4f9b9b1d7e1f9d3c2b4e5a6f7"},
+		{name: "surrounding whitespace trimmed", input: "  0cf5194  ", want: "0cf5194"},
+		{name: "non-SHA identifier round-trips", input: "branch/feature@head", want: "branch/feature@head"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-startcommit",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				StartCommit:    tc.input,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			if actionItem.StartCommit != tc.want {
+				t.Fatalf("StartCommit = %q, want %q", actionItem.StartCommit, tc.want)
+			}
+		})
+	}
+}

@@ -70,6 +70,7 @@ type SnapshotActionItem struct {
 	Paths          []string                  `json:"paths,omitempty"`
 	Packages       []string                  `json:"packages,omitempty"`
 	Files          []string                  `json:"files,omitempty"`
+	StartCommit    string                    `json:"start_commit,omitempty"`
 	LifecycleState domain.LifecycleState     `json:"lifecycle_state"`
 	ColumnID       string                    `json:"column_id"`
 	Position       int                       `json:"position"`
@@ -1087,6 +1088,7 @@ func snapshotActionItemFromDomain(t domain.ActionItem) SnapshotActionItem {
 		Paths:          append([]string(nil), t.Paths...),
 		Packages:       append([]string(nil), t.Packages...),
 		Files:          append([]string(nil), t.Files...),
+		StartCommit:    t.StartCommit,
 		LifecycleState: t.LifecycleState,
 		ColumnID:       t.ColumnID,
 		Position:       t.Position,
@@ -1363,7 +1365,13 @@ func (t SnapshotActionItem) toDomain() domain.ActionItem {
 		// Pre-droplet-4a.7 snapshots without this field deserialize to nil,
 		// which is the legitimate domain zero value. Legacy-format
 		// compatibility is covered by the json:"files,omitempty" tag.
-		Files:          append([]string(nil), t.Files...),
+		Files: append([]string(nil), t.Files...),
+		// StartCommit has no fallback — same rationale as Paths/Packages/
+		// Files above. Pre-droplet-4a.8 snapshots without this field
+		// deserialize to "", which is the legitimate domain zero value
+		// ("not yet captured"). Legacy-format compatibility is covered by
+		// the json:"start_commit,omitempty" tag.
+		StartCommit:    t.StartCommit,
 		LifecycleState: state,
 		ColumnID:       strings.TrimSpace(t.ColumnID),
 		Position:       t.Position,

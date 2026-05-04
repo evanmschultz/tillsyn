@@ -118,7 +118,22 @@ type ActionItem struct {
 	// (reference attachments), and legitimate overlap is permitted (e.g.
 	// an agent edits a file referenced as a viewer in a read-then-edit
 	// workflow). Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.3.
-	Files          []string
+	Files []string
+	// StartCommit optionally records the git commit hash captured at the
+	// moment work begins on this action item — typically the current
+	// `git rev-parse HEAD` of the bare-root or active worktree at
+	// in_progress transition time. Free-form trimmed string. Empty string
+	// is the meaningful zero value (not yet captured / not applicable).
+	// NewActionItem trims surrounding whitespace; no format check (short-
+	// SHA, full-SHA, or any caller-supplied identifier all round-trip).
+	// Opaque-domain field: the domain layer holds it opaquely and does
+	// NOT call `git rev-parse HEAD` itself — the caller (orchestrator
+	// pre-cascade; Wave 2 dispatcher; Drop 4b commit-agent) supplies the
+	// value. Disjoint-axis with EndCommit (the matching paired field
+	// arrives in droplet 4a.9). Domain primitive per Drop 4a L3 /
+	// WAVE_1_PLAN.md §1.4. Drop 4b commit-agent consumes this for diff
+	// context (`git diff <start_commit>..<end_commit>` baseline).
+	StartCommit    string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -208,7 +223,15 @@ type ActionItemInput struct {
 	// Files (read attention) and Paths (write intent / lock scope) may
 	// legitimately overlap, so no cross-axis check is performed. Domain
 	// primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.3.
-	Files          []string
+	Files []string
+	// StartCommit optionally seeds the action-item start-commit hash at
+	// creation time (free-form trimmed string). Empty string is the
+	// meaningful zero value (not yet captured / not applicable).
+	// NewActionItem trims surrounding whitespace; no format check applies.
+	// Opaque-domain field — the caller supplies the value (typically the
+	// current `git rev-parse HEAD` at in_progress transition). Domain
+	// primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
+	StartCommit    string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -386,6 +409,16 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		return ActionItem{}, err
 	}
 
+	// StartCommit is a free-form opaque-domain string. Trim surrounding
+	// whitespace; empty is the legitimate zero value ("not yet captured").
+	// No format check — git short-SHAs (7-char), full-SHAs (40-char), and
+	// caller-supplied identifiers all round-trip. The wrapper inline trim
+	// is kept here rather than behind a NormalizeActionItemStartCommit
+	// helper because a single TrimSpace call is too thin to warrant the
+	// indirection — matches Owner's inline-trim precedent (line 320 above).
+	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
+	in.StartCommit = strings.TrimSpace(in.StartCommit)
+
 	return ActionItem{
 		ID:             in.ID,
 		ProjectID:      in.ProjectID,
@@ -402,6 +435,7 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		Paths:          paths,
 		Packages:       packages,
 		Files:          files,
+		StartCommit:    in.StartCommit,
 		LifecycleState: in.LifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       in.Position,

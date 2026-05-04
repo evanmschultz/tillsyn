@@ -4237,3 +4237,132 @@ func TestActionItemMCPFilesRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+// TestActionItemMCPStartCommitRoundTrip verifies the StartCommit string field
+// added in Drop 4a droplet 4a.8 plumbs cleanly through the till.action_item
+// MCP tool on both create and update operations. StartCommit is a single-
+// value string (not a slice) with pointer-sentinel on update — nil
+// preserves the prior value, non-nil applies (empty dereferenced string
+// clears the prior commit hash). Mirrors TestActionItemMCPFilesRoundTrip's
+// shape but adapted to a single-string field rather than a slice.
+func TestActionItemMCPStartCommitRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*stubExpandedService, *httptest.Server) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return service, server
+	}
+
+	t.Run("create plumbs start_commit string through to request", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7600, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "StartCommit Set",
+			"start_commit":      "0cf5194",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if got, want := service.lastCreateActionItemReq.StartCommit, "0cf5194"; got != want {
+			t.Fatalf("CreateActionItemRequest.StartCommit = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("create without start_commit round-trips empty string", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7601, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "StartCommit Absent",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if got := service.lastCreateActionItemReq.StartCommit; got != "" {
+			t.Fatalf("CreateActionItemRequest.StartCommit = %q, want empty", got)
+		}
+	})
+
+	t.Run("update with start_commit plumbs as non-nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7602, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "StartCommit Updated",
+			"start_commit":      "0cf5194",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.StartCommit == nil {
+			t.Fatalf("UpdateActionItemRequest.StartCommit = nil, want non-nil pointer to %q", "0cf5194")
+		}
+		if got, want := *service.lastUpdateActionItemReq.StartCommit, "0cf5194"; got != want {
+			t.Fatalf("UpdateActionItemRequest.StartCommit = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("update with empty start_commit plumbs as non-nil pointer to empty string (explicit clear)", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7603, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "StartCommit Cleared",
+			"start_commit":      "",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.StartCommit == nil {
+			t.Fatalf("UpdateActionItemRequest.StartCommit = nil, want non-nil pointer to empty string (explicit clear)")
+		}
+		if got := *service.lastUpdateActionItemReq.StartCommit; got != "" {
+			t.Fatalf("UpdateActionItemRequest.StartCommit = %q, want empty string (explicit clear)", got)
+		}
+	})
+
+	t.Run("update without start_commit preserves prior via nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7604, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "StartCommit Preserved",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.StartCommit != nil {
+			t.Fatalf("UpdateActionItemRequest.StartCommit = %v, want nil (preserve)", service.lastUpdateActionItemReq.StartCommit)
+		}
+	})
+}
