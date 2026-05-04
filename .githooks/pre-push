@@ -1,0 +1,8 @@
+#!/bin/sh
+# Activated by 'mage install-hooks' (sets core.hooksPath = .githooks).
+set -eu
+
+if ! mage ci; then
+	printf '%s\n' "mage ci failed — fix locally before pushing, or '--no-verify' to bypass with explicit reason."
+	exit 1
+fi
