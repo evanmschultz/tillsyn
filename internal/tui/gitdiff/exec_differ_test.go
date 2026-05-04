@@ -73,16 +73,30 @@ func newGitFixture(t *testing.T) *gitFixture {
 // git runs a git subcommand inside the fixture, failing the test immediately
 // on any non-zero exit so setup errors surface where they happen.
 //
-// The command's environment is built fresh from os.Environ() with isolation
-// overrides appended. Later entries win in exec.Cmd's env handling, so the
-// HOME / XDG_CONFIG_HOME / GIT_CONFIG_NOSYSTEM / GIT_CONFIG_GLOBAL values
-// here override whatever the parent process exported. See the gitFixture doc
-// comment above for the full rationale.
+// The command's environment is built from filteredEnv() — os.Environ() with
+// every GIT_*=... entry stripped — and then isolation overrides are appended.
+// Filtering is critical: when this test binary runs inside a `git push`
+// pre-push hook, git itself sets GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE /
+// GIT_PREFIX / GIT_REFLOG_ACTION / etc. on the hook's environment, all
+// pointing at the bare-root repo that invoked the hook. If we let those leak
+// in via os.Environ(), git honors GIT_DIR over any discovery-walk logic,
+// completely bypassing GIT_CEILING_DIRECTORIES — and `git init` writes to
+// the bare-root config (which is locked by the in-flight push) instead of
+// the per-test tempdir. Round 1 (config isolation) and Round 2 (ceiling dir)
+// both appended to os.Environ() and so failed under the hook context with:
+//
+//	error: could not lock config file <bare-root>/config: File exists
+//	fatal: Unable to create '<bare-root>/worktrees/main/index.lock': File exists.
+//
+// Round 3 fixes that by filtering ALL GIT_* keys before appending isolation,
+// so no inherited GIT_DIR/GIT_INDEX_FILE/etc. can reach the per-test git
+// invocation. Later entries win in exec.Cmd's env handling, so the appended
+// isolation values are authoritative.
 func (f *gitFixture) git(args ...string) string {
 	f.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = f.root
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(filteredEnv(),
 		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z",
 		"GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
 		"GIT_PAGER=cat",
@@ -119,6 +133,32 @@ func (f *gitFixture) git(args ...string) string {
 		f.t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, string(out))
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// filteredEnv returns os.Environ() with every GIT_*=... entry removed.
+//
+// Stripping all GIT_* keys is what makes the fixture safe under a `git push`
+// pre-push hook: git sets GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE, GIT_PREFIX,
+// GIT_REFLOG_ACTION, etc. on the hook's environment, all pointing at the bare
+// repo running the push. GIT_DIR in particular overrides repository discovery
+// entirely — GIT_CEILING_DIRECTORIES does not undo it. Only by removing every
+// inherited GIT_* key and re-adding ONLY the isolation values explicitly can
+// we guarantee the per-test git invocation operates inside the fixture.
+//
+// Re-added GIT_* keys (GIT_AUTHOR_DATE, GIT_COMMITTER_DATE, GIT_PAGER,
+// GIT_TERMINAL_PROMPT, GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL,
+// GIT_CEILING_DIRECTORIES) are appended by the gitFixture.git env block and
+// take effect because exec.Cmd resolves duplicates as last-wins.
+func filteredEnv() []string {
+	src := os.Environ()
+	out := make([]string, 0, len(src))
+	for _, e := range src {
+		if strings.HasPrefix(e, "GIT_") {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // writeCommit writes contents to name (creating parent dirs), stages it, and
