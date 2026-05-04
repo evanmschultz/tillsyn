@@ -528,7 +528,15 @@ type CreateActionItemInput struct {
 	// domain.NewActionItem trims + dedupes; whitespace-only / backslash-
 	// bearing entries reject with ErrInvalidPaths. Domain primitive per
 	// Drop 4a L3.
-	Paths          []string
+	Paths []string
+	// Packages optionally enumerates the Go-package import paths covering
+	// Paths. Empty slice IS the meaningful zero value (no package scope) —
+	// no pointer-sentinel needed at the create boundary. domain.NewActionItem
+	// trims + dedupes; whitespace-only / empty entries reject with
+	// ErrInvalidPackages. Domain coverage invariant: non-empty Paths
+	// requires non-empty Packages (else ErrInvalidPackages). Domain
+	// primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
+	Packages       []string
 	ColumnID       string
 	Title          string
 	Description    string
@@ -589,7 +597,17 @@ type UpdateActionItemInput struct {
 	// silently clobber a planner-set Paths declaration. Domain primitive
 	// per Drop 4a L3; service trims/dedupes via domain.NewActionItem-style
 	// normalization at apply time.
-	Paths         *[]string
+	Paths *[]string
+	// Packages optionally updates the action-item Packages slice. nil
+	// preserves the existing value (no-op); non-nil replaces it. Same
+	// pointer-sentinel rationale as Paths above — a description-only update
+	// must NOT silently clobber a planner-set Packages declaration. Service
+	// applies via domain.NormalizeActionItemPackages so the create-time
+	// trim/dedupe rules apply equally on update; the coverage invariant
+	// (non-empty Paths requires non-empty Packages) is re-checked against
+	// the post-apply pair so paired Paths/Packages updates land atomically.
+	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
+	Packages      *[]string
 	Metadata      *domain.ActionItemMetadata
 	UpdatedBy     string
 	UpdatedByName string
@@ -767,6 +785,7 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 		Persistent:     in.Persistent,
 		DevGated:       in.DevGated,
 		Paths:          in.Paths,
+		Packages:       in.Packages,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,
@@ -1056,6 +1075,32 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 		}
 		actionItem.Paths = normalized
 		actionItem.UpdatedAt = s.clock().UTC()
+	}
+	// Packages update uses pointer-sentinel: nil preserves the existing
+	// slice; non-nil applies the dereferenced slice through
+	// domain.NormalizeActionItemPackages so the create-time trim/dedupe
+	// rules apply equally on update. Empty dereferenced slice clears all
+	// declared packages (explicit caller intent).
+	if in.Packages != nil {
+		normalized, err := domain.NormalizeActionItemPackages(*in.Packages)
+		if err != nil {
+			return domain.ActionItem{}, err
+		}
+		actionItem.Packages = normalized
+		actionItem.UpdatedAt = s.clock().UTC()
+	}
+	// Re-check the coverage invariant against the post-apply pair so that
+	// paired Paths / Packages updates land atomically: a caller may, for
+	// example, set Paths to a non-empty slice and Packages to nil within
+	// the same call (preserving prior Packages), or supply both together.
+	// The invariant is the same as in domain.NewActionItem: non-empty
+	// Paths requires non-empty Packages. Re-checking here (vs only inside
+	// the per-field branches above) catches the edge case where Paths is
+	// populated on update while existing Packages is empty, or where
+	// Packages is explicitly cleared while existing Paths remains
+	// populated. WAVE_1_PLAN.md §1.2.
+	if (in.Paths != nil || in.Packages != nil) && len(actionItem.Paths) > 0 && len(actionItem.Packages) == 0 {
+		return domain.ActionItem{}, domain.ErrInvalidPackages
 	}
 	if in.Metadata != nil {
 		var parent *domain.ActionItem

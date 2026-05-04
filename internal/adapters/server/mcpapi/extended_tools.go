@@ -874,6 +874,7 @@ func registerActionItemTools(
 				Persistent      *bool                      `json:"persistent"`
 				DevGated        *bool                      `json:"dev_gated"`
 				Paths           *[]string                  `json:"paths"`
+				Packages        *[]string                  `json:"packages"`
 				ColumnID        string                     `json:"column_id"`
 				Title           string                     `json:"title"`
 				Description     string                     `json:"description"`
@@ -1080,6 +1081,14 @@ func registerActionItemTools(
 				if args.Paths != nil {
 					createReq.Paths = append([]string(nil), (*args.Paths)...)
 				}
+				// Packages pointer-sentinel matches Paths above: nil = "not
+				// supplied" → leave empty-slice zero value; non-nil → copy
+				// supplied slice through. Domain enforces the coverage
+				// invariant (non-empty Paths requires non-empty Packages)
+				// at NewActionItem time.
+				if args.Packages != nil {
+					createReq.Packages = append([]string(nil), (*args.Packages)...)
+				}
 				actionItem, err := tasks.CreateActionItem(ctx, createReq)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1147,7 +1156,14 @@ func registerActionItemTools(
 					// preserves the existing slice at the service boundary;
 					// non-nil applies the dereferenced slice (empty
 					// dereferenced slice clears all declared paths).
-					Paths:    args.Paths,
+					Paths: args.Paths,
+					// Packages pointer-sentinel mirrors Paths: nil preserves
+					// the existing slice; non-nil applies the dereferenced
+					// slice (empty dereferenced slice clears all declared
+					// packages). Coverage invariant ("non-empty Paths
+					// requires non-empty Packages") is re-checked against
+					// the post-apply pair at the service boundary.
+					Packages: args.Packages,
 					Metadata: args.Metadata,
 					Actor:    actor,
 				})
@@ -1425,6 +1441,7 @@ func registerActionItemTools(
 				mcp.WithBoolean("persistent", mcp.Description("Optional Persistent flag for operation=create|update — long-lived umbrella / anchor / perpetual-tracking nodes. Default false. Domain primitive — not STEWARD-specific. On update, omit to preserve the existing value (a value-typed bool would silently clobber Persistent=true on STEWARD anchors).")),
 				mcp.WithBoolean("dev_gated", mcp.Description("Optional DevGated flag for operation=create|update — nodes whose terminal transition requires dev sign-off. Default false. Domain primitive — not STEWARD-specific. On update, omit to preserve the existing value.")),
 				mcp.WithArray("paths", mcp.Description("Optional Paths string-array for operation=create|update — declares the action item's write-scope file paths (forward-slash, repo-root-relative). Empty array on create = no path scope declared. On update, omit to preserve the existing slice; supplying any array (including empty) replaces the declared paths. Domain trims + dedupes; whitespace-only / backslash-bearing entries reject with invalid_request. Domain primitive — Drop 4a L3 lock-domain field consumed by the Wave 2 dispatcher's file-level lock manager."), mcp.WithStringItems()),
+				mcp.WithArray("packages", mcp.Description("Optional Packages string-array for operation=create|update — declares the Go-package import paths covering Paths. Empty array on create = no package scope declared. On update, omit to preserve the existing slice; supplying any array (including empty) replaces the declared packages. Domain trims + dedupes; whitespace-only / empty entries reject with invalid_request. Coverage invariant: non-empty Paths requires non-empty Packages — paired Paths/Packages updates are validated atomically against the post-apply pair. No Go-import-path format enforcement; planner-set values are what matter. Domain primitive — Drop 4a L3 / WAVE_1_PLAN.md §1.2 lock-domain field consumed by the Wave 2 dispatcher's package-level lock manager."), mcp.WithStringItems()),
 				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),

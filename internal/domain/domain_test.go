@@ -1056,6 +1056,15 @@ func TestNewActionItemPathsNormalization(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Supply a covering Packages entry whenever Paths is populated
+			// so the Drop 4a droplet 4a.6 coverage invariant ("non-empty
+			// Paths requires non-empty Packages") doesn't shadow the Paths
+			// normalization assertions this test cares about. The coverage
+			// invariant has its own dedicated test below.
+			var pkgs []string
+			if len(tc.input) > 0 {
+				pkgs = []string{"internal/domain"}
+			}
 			actionItem, err := NewActionItem(ActionItemInput{
 				ID:             "t-paths",
 				ProjectID:      "p1",
@@ -1065,6 +1074,7 @@ func TestNewActionItemPathsNormalization(t *testing.T) {
 				Kind:           KindBuild,
 				StructuralType: StructuralTypeDroplet,
 				Paths:          tc.input,
+				Packages:       pkgs,
 			}, now)
 			if err != tc.wantErr {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
@@ -1079,6 +1089,108 @@ func TestNewActionItemPathsNormalization(t *testing.T) {
 				if actionItem.Paths[i] != tc.wantPaths[i] {
 					t.Fatalf("Paths[%d] = %q, want %q (full = %#v)", i, actionItem.Paths[i], tc.wantPaths[i], actionItem.Paths)
 				}
+			}
+		})
+	}
+}
+
+// TestNewActionItemPackagesNormalization covers the Packages []string field
+// added in Drop 4a droplet 4a.6. Empty input round-trips as nil; single +
+// multi package inputs round-trip with insertion order preserved (the
+// dispatcher's lock manager reads the slice as ordered). Surrounding
+// whitespace is trimmed. Duplicates after trim are silently deduped to
+// match the Labels / Paths precedent. Whitespace-only / empty entries
+// reject with ErrInvalidPackages. No Go-import-path format enforcement is
+// applied at the domain layer — `internal/domain` and `github.com/foo/bar`
+// are both valid trimmed forms; planner-set values are what matter.
+func TestNewActionItemPackagesNormalization(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name         string
+		input        []string
+		wantPackages []string
+		wantErr      error
+	}{
+		{name: "nil round-trips empty", input: nil, wantPackages: nil, wantErr: nil},
+		{name: "empty slice round-trips empty", input: []string{}, wantPackages: nil, wantErr: nil},
+		{name: "single internal package round-trips", input: []string{"internal/domain"}, wantPackages: []string{"internal/domain"}, wantErr: nil},
+		{name: "single external import path round-trips", input: []string{"github.com/foo/bar"}, wantPackages: []string{"github.com/foo/bar"}, wantErr: nil},
+		{name: "multi package preserves insertion order", input: []string{"internal/domain", "internal/app"}, wantPackages: []string{"internal/domain", "internal/app"}, wantErr: nil},
+		{name: "surrounding whitespace trimmed", input: []string{"  internal/domain  ", "internal/app"}, wantPackages: []string{"internal/domain", "internal/app"}, wantErr: nil},
+		{name: "duplicates after trim dedupe", input: []string{"internal/domain", "internal/domain", "  internal/domain  ", "internal/app"}, wantPackages: []string{"internal/domain", "internal/app"}, wantErr: nil},
+		{name: "empty entry rejects", input: []string{"internal/domain", ""}, wantPackages: nil, wantErr: ErrInvalidPackages},
+		{name: "whitespace-only entry rejects", input: []string{"   ", "internal/domain"}, wantPackages: nil, wantErr: ErrInvalidPackages},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-packages",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				Packages:       tc.input,
+			}, now)
+			if err != tc.wantErr {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if len(actionItem.Packages) != len(tc.wantPackages) {
+				t.Fatalf("Packages length = %d (%#v), want %d (%#v)", len(actionItem.Packages), actionItem.Packages, len(tc.wantPackages), tc.wantPackages)
+			}
+			for i := range tc.wantPackages {
+				if actionItem.Packages[i] != tc.wantPackages[i] {
+					t.Fatalf("Packages[%d] = %q, want %q (full = %#v)", i, actionItem.Packages[i], tc.wantPackages[i], actionItem.Packages)
+				}
+			}
+		})
+	}
+}
+
+// TestNewActionItemPackagesCoverageInvariant covers the Drop 4a droplet 4a.6
+// coverage rule: when Paths is non-empty, Packages MUST also be non-empty.
+// Empty Packages while Paths is non-empty rejects with ErrInvalidPackages.
+// When Paths is empty, Packages may be empty (no coverage required —
+// nothing to cover). Strict path→package resolution is deferred to the
+// Wave 2 lock manager; the domain rule today is just "non-empty Packages
+// when non-empty Paths."
+func TestNewActionItemPackagesCoverageInvariant(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name     string
+		paths    []string
+		packages []string
+		wantErr  error
+	}{
+		{name: "empty paths empty packages ok", paths: nil, packages: nil, wantErr: nil},
+		{name: "empty paths populated packages ok", paths: nil, packages: []string{"internal/domain"}, wantErr: nil},
+		{name: "populated paths populated packages ok", paths: []string{"internal/domain/action_item.go"}, packages: []string{"internal/domain"}, wantErr: nil},
+		{name: "populated paths nil packages rejects", paths: []string{"internal/domain/action_item.go"}, packages: nil, wantErr: ErrInvalidPackages},
+		{name: "populated paths empty-slice packages rejects", paths: []string{"internal/domain/action_item.go"}, packages: []string{}, wantErr: ErrInvalidPackages},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewActionItem(ActionItemInput{
+				ID:             "t-coverage",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				Paths:          tc.paths,
+				Packages:       tc.packages,
+			}, now)
+			if err != tc.wantErr {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
 		})
 	}

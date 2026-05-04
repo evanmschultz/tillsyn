@@ -88,7 +88,20 @@ type ActionItem struct {
 	// Path-exists is NOT enforced at the domain layer — paths often refer to
 	// files the build droplet will create. Validation is consumer-side
 	// (Drop 4a Wave 2 lock manager). Domain primitive per Drop 4a L3.
-	Paths          []string
+	Paths []string
+	// Packages optionally enumerates the Go-package import paths that cover
+	// the entries in Paths. Used as the package-level lock domain by the
+	// Wave 2 dispatcher's lock manager — sibling action items sharing a
+	// package contend even when their Paths sets are disjoint within that
+	// package. Free-form non-empty trimmed strings (no Go-import-path format
+	// enforcement); planner-set values are what matter, not syntactic
+	// checks. NewActionItem trims, dedupes, and rejects whitespace-only /
+	// empty entries with ErrInvalidPackages. Coverage invariant: when Paths
+	// is non-empty, Packages MUST also be non-empty (rejected with
+	// ErrInvalidPackages, message "packages must cover paths"). Strict
+	// path→package resolution is deferred to the Wave 2 lock manager.
+	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
+	Packages       []string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -161,7 +174,15 @@ type ActionItemInput struct {
 	// ErrInvalidPaths. Path-exists is NOT enforced at this layer — paths may
 	// refer to files the build droplet will create. Domain primitive per
 	// Drop 4a L3.
-	Paths          []string
+	Paths []string
+	// Packages optionally enumerates the Go-package import paths that cover
+	// Paths. Empty slice is the meaningful zero value (no package scope).
+	// NewActionItem trims + dedupes; whitespace-only / empty entries reject
+	// with ErrInvalidPackages. Coverage invariant: non-empty Paths requires
+	// non-empty Packages (else ErrInvalidPackages "packages must cover
+	// paths"). Strict path→package resolution is deferred to the Wave 2
+	// lock manager. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
+	Packages       []string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -317,6 +338,19 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		return ActionItem{}, err
 	}
 
+	packages, err := normalizeActionItemPackages(in.Packages)
+	if err != nil {
+		return ActionItem{}, err
+	}
+	// Coverage invariant: non-empty Paths requires non-empty Packages so the
+	// Wave 2 lock manager always has a package-level lock domain to attach
+	// path-level locks to. Strict path→package resolution is deferred to
+	// the lock manager — this is the simpler "packages must cover paths"
+	// gate per WAVE_1_PLAN.md §1.2.
+	if len(paths) > 0 && len(packages) == 0 {
+		return ActionItem{}, ErrInvalidPackages
+	}
+
 	return ActionItem{
 		ID:             in.ID,
 		ProjectID:      in.ProjectID,
@@ -331,6 +365,7 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		Persistent:     in.Persistent,
 		DevGated:       in.DevGated,
 		Paths:          paths,
+		Packages:       packages,
 		LifecycleState: in.LifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       in.Position,
@@ -577,6 +612,55 @@ func normalizeActionItemPaths(paths []string) ([]string, error) {
 		}
 		seen[path] = struct{}{}
 		out = append(out, path)
+	}
+	return out, nil
+}
+
+// NormalizeActionItemPackages normalizes the Packages slice using the same
+// rules NewActionItem applies at construction time. Exposed so callers
+// that mutate ActionItem.Packages after construction (e.g.
+// Service.UpdateActionItem applying a pointer-sentinel update) reuse the
+// canonical trim/dedupe logic rather than reimplementing it.
+//
+// Behaviour: each entry is trimmed; whitespace-only / empty entries reject
+// with ErrInvalidPackages (rather than silently dropping — empty entries
+// almost always indicate a planner bug, not benign noise). No Go-import-
+// path format enforcement is applied — any non-empty trimmed string
+// round-trips, since planner-set values are what matter and a syntactic
+// validator would reject legitimate forms (`internal/domain`,
+// `github.com/foo/bar`, etc.). Duplicates after trim are silently deduped
+// to match the Labels / Paths precedent. Insertion order is preserved
+// (the dispatcher's lock manager reads the slice as ordered, so
+// deterministic ordering matters). Empty input (nil or len == 0) returns
+// nil.
+//
+// The coverage invariant — non-empty Paths requires non-empty Packages —
+// lives in NewActionItem (and Service.UpdateActionItem after applying the
+// update), not in this normalizer, so callers can normalize Packages in
+// isolation without forcing them to also know about Paths.
+func NormalizeActionItemPackages(packages []string) ([]string, error) {
+	return normalizeActionItemPackages(packages)
+}
+
+// normalizeActionItemPackages is the internal worker for
+// NormalizeActionItemPackages; see that function's doc for behaviour.
+// NewActionItem calls this directly to avoid the extra wrapper hop.
+func normalizeActionItemPackages(packages []string) ([]string, error) {
+	if len(packages) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(packages))
+	seen := map[string]struct{}{}
+	for _, raw := range packages {
+		pkg := strings.TrimSpace(raw)
+		if pkg == "" {
+			return nil, ErrInvalidPackages
+		}
+		if _, ok := seen[pkg]; ok {
+			continue
+		}
+		seen[pkg] = struct{}{}
+		out = append(out, pkg)
 	}
 	return out, nil
 }

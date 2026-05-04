@@ -101,7 +101,15 @@ type CreateActionItemRequest struct {
 	// meaningful zero value (no path scope) — no pointer-sentinel needed at
 	// the create boundary. Threaded through app.CreateActionItemInput →
 	// domain.NewActionItem in droplet 4a.5. Domain primitive per Drop 4a L3.
-	Paths       []string
+	Paths []string
+	// Packages optionally enumerates the Go-package import paths covering
+	// Paths. Empty slice IS the meaningful zero value (no package scope) —
+	// no pointer-sentinel needed at the create boundary. Threaded through
+	// app.CreateActionItemInput → domain.NewActionItem in droplet 4a.6.
+	// Domain coverage invariant ("non-empty Paths requires non-empty
+	// Packages") is enforced at the domain layer. Domain primitive per
+	// Drop 4a L3 / WAVE_1_PLAN.md §1.2.
+	Packages    []string
 	ColumnID    string
 	Title       string
 	Description string
@@ -168,7 +176,17 @@ type UpdateActionItemRequest struct {
 	// domain.NormalizeActionItemPaths so the create-time trim/dedupe/
 	// forward-slash rules apply equally on update. Domain primitive per
 	// Drop 4a L3.
-	Paths    *[]string
+	Paths *[]string
+	// Packages optionally updates the action-item Packages slice. Same
+	// pointer-sentinel rationale as Paths above — a description-only update
+	// must NOT silently clobber a planner-set Packages declaration.
+	// Threaded through app.UpdateActionItemInput; service applies via
+	// domain.NormalizeActionItemPackages so the create-time trim/dedupe
+	// rules apply equally on update. The coverage invariant (non-empty
+	// Paths requires non-empty Packages) is re-checked against the
+	// post-apply pair so paired Paths/Packages updates land atomically.
+	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
+	Packages *[]string
 	Metadata *domain.ActionItemMetadata
 	Actor    ActorLeaseTuple
 }

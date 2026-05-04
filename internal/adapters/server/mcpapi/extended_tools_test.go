@@ -3956,3 +3956,145 @@ func TestActionItemMCPPathsRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+// TestActionItemMCPPackagesRoundTrip verifies the Packages []string field
+// added in Drop 4a droplet 4a.6 plumbs cleanly through the till.action_item
+// MCP tool on both create and update operations. The field follows the
+// same pointer-sentinel pattern as Paths on update (nil = preserve, non-nil
+// = replace), with create collapsing to a value-type []string. Mirrors
+// TestActionItemMCPPathsRoundTrip so the JSON-RPC →
+// CreateActionItemRequest → service hop is exercised end-to-end. Each
+// populated case supplies a covering `paths` array so the domain coverage
+// invariant doesn't surface as an error at the service boundary; the
+// invariant itself has dedicated coverage in the domain test
+// TestNewActionItemPackagesCoverageInvariant.
+func TestActionItemMCPPackagesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*stubExpandedService, *httptest.Server) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return service, server
+	}
+
+	t.Run("create plumbs packages slice through to request", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7400, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "Packages One",
+			"paths":             []any{"internal/domain/action_item.go"},
+			"packages":          []any{"internal/domain", "internal/app"},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		got := service.lastCreateActionItemReq.Packages
+		want := []string{"internal/domain", "internal/app"}
+		if len(got) != len(want) {
+			t.Fatalf("CreateActionItemRequest.Packages = %#v, want %#v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("CreateActionItemRequest.Packages[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("create without packages round-trips empty slice", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7401, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "Packages None",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if len(service.lastCreateActionItemReq.Packages) != 0 {
+			t.Fatalf("CreateActionItemRequest.Packages = %#v, want empty", service.lastCreateActionItemReq.Packages)
+		}
+	})
+
+	t.Run("update with packages plumbs as non-nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7402, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "Packages Updated",
+			"packages":          []any{"internal/domain"},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Packages == nil {
+			t.Fatalf("UpdateActionItemRequest.Packages = nil, want non-nil pointer to [\"internal/domain\"]")
+		}
+		got := *service.lastUpdateActionItemReq.Packages
+		if len(got) != 1 || got[0] != "internal/domain" {
+			t.Fatalf("UpdateActionItemRequest.Packages = %#v, want [\"internal/domain\"]", got)
+		}
+	})
+
+	t.Run("update with empty packages array plumbs as non-nil pointer to empty slice (explicit clear)", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7403, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "Packages Cleared",
+			"packages":          []any{},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Packages == nil {
+			t.Fatalf("UpdateActionItemRequest.Packages = nil, want non-nil pointer to empty slice (explicit clear)")
+		}
+		if got := *service.lastUpdateActionItemReq.Packages; len(got) != 0 {
+			t.Fatalf("UpdateActionItemRequest.Packages = %#v, want empty slice (explicit clear)", got)
+		}
+	})
+
+	t.Run("update without packages preserves prior via nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7404, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "Packages Preserved",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Packages != nil {
+			t.Fatalf("UpdateActionItemRequest.Packages = %v, want nil (preserve)", service.lastUpdateActionItemReq.Packages)
+		}
+	})
+}

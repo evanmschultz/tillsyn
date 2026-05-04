@@ -2645,6 +2645,14 @@ func TestRepository_PersistsActionItemPaths(t *testing.T) {
 	}
 
 	for i, tc := range cases {
+		// Supply a covering Packages entry whenever Paths is populated so
+		// the Drop 4a droplet 4a.6 coverage invariant doesn't reject the
+		// constructor — this test exercises Paths persistence, not the
+		// coverage rule.
+		var pkgs []string
+		if len(tc.paths) > 0 {
+			pkgs = []string{"internal/domain"}
+		}
 		item, err := domain.NewActionItem(domain.ActionItemInput{
 			ID:             tc.id,
 			ProjectID:      project.ID,
@@ -2652,6 +2660,7 @@ func TestRepository_PersistsActionItemPaths(t *testing.T) {
 			Kind:           domain.KindBuild,
 			StructuralType: domain.StructuralTypeDroplet,
 			Paths:          tc.paths,
+			Packages:       pkgs,
 			Position:       i,
 			Title:          "paths " + tc.id,
 			Priority:       domain.PriorityMedium,
@@ -2753,6 +2762,166 @@ func assertPathsEqual(t *testing.T, label string, got, want []string) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("%s: Paths[%d] = %q, want %q (full = %#v)", label, i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestRepository_PersistsActionItemPackages verifies the packages_json column
+// added in Drop 4a droplet 4a.6 round-trips across create + get + list +
+// list-by-parent + update on an action item. Cases cover empty / single /
+// multi cases so the JSON encode/decode path exercises insertion-order
+// preservation, the empty-slice "[]" default, and explicit-clear via update.
+// Mirrors TestRepository_PersistsActionItemPaths so the SELECT/INSERT/UPDATE
+// column-ordinal alignment for the new column is asserted on every storage
+// path. Each populated test case supplies a covering Paths slice so the
+// domain coverage invariant ("non-empty Paths requires non-empty Packages",
+// applied in NewActionItem) doesn't reject the constructor — the empty
+// case sets neither.
+func TestRepository_PersistsActionItemPackages(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-packages", "Packages", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c-packages", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	cases := []struct {
+		id       string
+		paths    []string
+		packages []string
+		want     []string
+	}{
+		{id: "t-pkgs-empty", paths: nil, packages: nil, want: nil},
+		{id: "t-pkgs-single", paths: []string{"internal/domain/action_item.go"}, packages: []string{"internal/domain"}, want: []string{"internal/domain"}},
+		{id: "t-pkgs-multi", paths: []string{"a/b.go", "c/d.go"}, packages: []string{"internal/domain", "internal/app"}, want: []string{"internal/domain", "internal/app"}},
+	}
+
+	for i, tc := range cases {
+		item, err := domain.NewActionItem(domain.ActionItemInput{
+			ID:             tc.id,
+			ProjectID:      project.ID,
+			ColumnID:       column.ID,
+			Kind:           domain.KindBuild,
+			StructuralType: domain.StructuralTypeDroplet,
+			Paths:          tc.paths,
+			Packages:       tc.packages,
+			Position:       i,
+			Title:          "packages " + tc.id,
+			Priority:       domain.PriorityMedium,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewActionItem(%s) error = %v", tc.id, err)
+		}
+		if err := repo.CreateActionItem(ctx, item); err != nil {
+			t.Fatalf("CreateActionItem(%s) error = %v", tc.id, err)
+		}
+		loaded, err := repo.GetActionItem(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%s) error = %v", tc.id, err)
+		}
+		assertPackagesEqual(t, "GetActionItem("+tc.id+")", loaded.Packages, tc.want)
+	}
+
+	// ListActionItems exercises the second SELECT path.
+	listed, err := repo.ListActionItems(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	if len(listed) != len(cases) {
+		t.Fatalf("ListActionItems() length = %d, want %d", len(listed), len(cases))
+	}
+	byID := map[string]domain.ActionItem{}
+	for _, item := range listed {
+		byID[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItems() missing %q", tc.id)
+		}
+		assertPackagesEqual(t, "ListActionItems()["+tc.id+"]", got.Packages, tc.want)
+	}
+
+	// ListActionItemsByParent exercises the third SELECT path.
+	parentListed, err := repo.ListActionItemsByParent(ctx, project.ID, "")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent() error = %v", err)
+	}
+	byIDParent := map[string]domain.ActionItem{}
+	for _, item := range parentListed {
+		byIDParent[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byIDParent[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItemsByParent() missing %q", tc.id)
+		}
+		assertPackagesEqual(t, "ListActionItemsByParent()["+tc.id+"]", got.Packages, tc.want)
+	}
+
+	// Reassign on update: replace t-pkgs-empty's Packages with a populated
+	// slice, then clear t-pkgs-multi's Packages back to nil. Verifies the
+	// UPDATE SET clause writes both populated and empty payloads. The repo
+	// layer does not re-validate the domain coverage invariant on update
+	// (UpdateActionItem writes raw fields), so clearing Packages while
+	// Paths remains populated is permitted at the storage layer — domain
+	// invariant enforcement happens in Service.UpdateActionItem.
+	target, err := repo.GetActionItem(ctx, "t-pkgs-empty")
+	if err != nil {
+		t.Fatalf("GetActionItem(reassign source) error = %v", err)
+	}
+	target.Packages = []string{"github.com/foo/bar", "internal/app"}
+	target.UpdatedAt = now.Add(time.Hour)
+	if err := repo.UpdateActionItem(ctx, target); err != nil {
+		t.Fatalf("UpdateActionItem(populate packages) error = %v", err)
+	}
+	reloaded, err := repo.GetActionItem(ctx, target.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after populate) error = %v", err)
+	}
+	assertPackagesEqual(t, "after populate", reloaded.Packages, []string{"github.com/foo/bar", "internal/app"})
+
+	clearTarget, err := repo.GetActionItem(ctx, "t-pkgs-multi")
+	if err != nil {
+		t.Fatalf("GetActionItem(clear source) error = %v", err)
+	}
+	clearTarget.Packages = nil
+	clearTarget.UpdatedAt = now.Add(2 * time.Hour)
+	if err := repo.UpdateActionItem(ctx, clearTarget); err != nil {
+		t.Fatalf("UpdateActionItem(clear packages) error = %v", err)
+	}
+	clearReloaded, err := repo.GetActionItem(ctx, clearTarget.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after clear) error = %v", err)
+	}
+	if len(clearReloaded.Packages) != 0 {
+		t.Fatalf("after clear: Packages = %#v, want empty", clearReloaded.Packages)
+	}
+}
+
+// assertPackagesEqual fails the test when the actual and expected packages
+// slices disagree on length or insertion order. nil and len-0 slices are
+// treated as equal so callers may pass either form.
+func assertPackagesEqual(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s: Packages length = %d (%#v), want %d (%#v)", label, len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s: Packages[%d] = %q, want %q (full = %#v)", label, i, got[i], want[i], got)
 		}
 	}
 }

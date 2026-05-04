@@ -28,6 +28,7 @@ var (
 	ErrInvalidStructuralType       = errors.New("invalid structural type")
 	ErrInvalidDropNumber           = errors.New("invalid drop number")
 	ErrInvalidPaths                = errors.New("invalid paths")
+	ErrInvalidPackages             = errors.New("invalid packages")
 	ErrInvalidLifecycleState       = errors.New("invalid lifecycle state")
 	ErrInvalidActorType            = errors.New("invalid actor type")
 	ErrInvalidAttentionState       = errors.New("invalid attention state")
