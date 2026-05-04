@@ -2333,3 +2333,405 @@ func TestHandlerAttentionListForwardsWaitTimeout(t *testing.T) {
 		t.Fatalf("ListAttentionItems() wait_timeout = %q, want 20s", got)
 	}
 }
+
+// =============================================================================
+// Drop 4a Wave 3 W3.4 — MCP-LAYER GOLDEN TESTS — APPROVE-PATH CASES (a/b/c/e)
+// =============================================================================
+//
+// Cases (a)/(b)/(c)/(e) are unit-style: handler-level JSON-RPC over httptest
+// driving a stubAuthRequestService. The stub stages either a success
+// ApproveAuthRequestResult (case a) or a wrapped sentinel error (cases
+// b/c/e); the test asserts the JSON-RPC wire format carries the expected
+// state, audit fields, isError flag, and error-text fragments.
+//
+// Case (d) — STEWARD cross-subtree approval — is integration-style and lives
+// in handler_steward_integration_test.go because it requires a real
+// AppServiceAdapter wired to autent + sqlite to exercise the persistent-
+// parent ancestry walk through the live gate.
+//
+// The fixture-helper pair below (unitOrchSession,
+// stubPendingSubagentRequest) builds deterministic value tuples that the
+// stub-based cases share. They are NOT real session issuers — for cases
+// (a)/(b)/(c)/(e) the stub does not validate the caller's tuple, it merely
+// records what was passed in (lastApprove). The real session validation
+// path is covered by the adapter-layer + service-layer tests already.
+
+// orchSessionTuple captures the four-field acting-orchestrator identity that
+// the till.auth_request(operation=approve) MCP arguments carry. Returned by
+// unitOrchSession (unit cases) and the integration fixture's STEWARD session
+// builder in handler_steward_integration_test.go.
+type orchSessionTuple struct {
+	sessionID       string
+	sessionSecret   string
+	agentInstanceID string
+	leaseToken      string
+	principalID     string
+}
+
+// unitOrchSession returns one deterministic drop-orchestrator tuple for the
+// stub-driven approve-path cases. The stub records but does not validate the
+// session credentials — the values surface on lastApprove for assertion.
+func unitOrchSession(_ *testing.T, branchID string) orchSessionTuple {
+	_ = branchID // path is encoded in the request, not the tuple
+	return orchSessionTuple{
+		sessionID:       "sess-orch-w34-a",
+		sessionSecret:   "secret-orch-w34-a",
+		agentInstanceID: "AGENT_INSTANCE_W34_ORCH",
+		leaseToken:      "LEASE_TOKEN_W34_ORCH",
+		principalID:     "ORCH_INSTANCE_W34",
+	}
+}
+
+// stubPendingSubagentRequest produces one common.AuthRequestRecord shaped
+// like a pending subagent request the stub would have stored. Used to seed
+// the stub's getResult / requests rows. branchID is encoded into the path
+// the same way the production gate would.
+func stubPendingSubagentRequest(projectID, branchID, requestID, principalID, role string) common.AuthRequestRecord {
+	path := "project/" + projectID
+	scopeType := common.ScopeTypeProject
+	scopeID := projectID
+	if strings.TrimSpace(branchID) != "" {
+		path = path + "/branch/" + branchID
+		scopeType = common.ScopeTypeBranch
+		scopeID = branchID
+	}
+	return common.AuthRequestRecord{
+		ID:            requestID,
+		State:         "pending",
+		Path:          path,
+		ProjectID:     projectID,
+		BranchID:      branchID,
+		ScopeType:     scopeType,
+		ScopeID:       scopeID,
+		PrincipalID:   principalID,
+		PrincipalType: "agent",
+		PrincipalRole: role,
+		ClientID:      "till-mcp-stdio-" + role,
+		ClientType:    "mcp-stdio",
+	}
+}
+
+// approvedAuthRequestRecord turns one pending stubPendingSubagentRequest
+// into the corresponding approved-state record carrying the orch's audit
+// trail. Used by case (a) to populate the stub's approveResult — the
+// handler then re-emits this record on the JSON-RPC response.
+func approvedAuthRequestRecord(pending common.AuthRequestRecord, orch orchSessionTuple) common.AuthRequestRecord {
+	approved := pending
+	approved.State = "approved"
+	approved.ApprovedPath = pending.Path
+	approved.IssuedSessionID = "sess-issued-" + pending.PrincipalID
+	approved.ApprovingPrincipalID = orch.principalID
+	approved.ApprovingAgentInstanceID = orch.agentInstanceID
+	approved.ApprovingLeaseToken = orch.leaseToken
+	return approved
+}
+
+// approveArgs returns the JSON-RPC argument map for one approve call. Keeps
+// every case tightly aligned on the documented argument vocabulary (no
+// configurability knobs — see TestAuthRequestToolSchemaApproveAcceptsOnlyDocumentedArgs).
+func approveArgs(requestID string, orch orchSessionTuple) map[string]any {
+	return map[string]any{
+		"operation":             "approve",
+		"request_id":            requestID,
+		"acting_session_id":     orch.sessionID,
+		"acting_session_secret": orch.sessionSecret,
+		"agent_instance_id":     orch.agentInstanceID,
+		"lease_token":           orch.leaseToken,
+	}
+}
+
+// TestAuthRequestApproveOrchInSubtreeApprovesNonOrchSucceeds covers case (a):
+// drop-orch session at project/P/branch/B approves a pending qa-proof
+// subagent request rooted at project/P/branch/B. Asserts state=approved,
+// issued session secret non-empty, audit fields populated with the orch's
+// identity, and the stub's lastApprove records the orch's tuple.
+func TestAuthRequestApproveOrchInSubtreeApprovesNonOrchSucceeds(t *testing.T) {
+	t.Parallel()
+
+	orch := unitOrchSession(t, "B")
+	pending := stubPendingSubagentRequest("p1", "B", "req-w34-a", "QA_PROOF_AGENT_W34", "qa-proof")
+	approved := approvedAuthRequestRecord(pending, orch)
+
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		approveResult: common.ApproveAuthRequestResult{
+			Request:       approved,
+			SessionSecret: "issued-subagent-secret-w34-a",
+		},
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, approveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", approveArgs(pending.ID, orch)))
+	if isError, _ := approveResp.Result["isError"].(bool); isError {
+		t.Fatalf("case (a) isError = true, want false; result = %#v", approveResp.Result)
+	}
+
+	structured := toolResultStructured(t, approveResp.Result)
+	requestRaw, ok := structured["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("case (a) structured payload missing request: %#v", structured)
+	}
+	if got := requestRaw["state"].(string); got != "approved" {
+		t.Fatalf("case (a) state = %q, want approved", got)
+	}
+	if got := requestRaw["approving_principal_id"].(string); got != orch.principalID {
+		t.Fatalf("case (a) approving_principal_id = %q, want %q", got, orch.principalID)
+	}
+	if got := requestRaw["approving_agent_instance_id"].(string); got != orch.agentInstanceID {
+		t.Fatalf("case (a) approving_agent_instance_id = %q, want %q", got, orch.agentInstanceID)
+	}
+	if got := requestRaw["approving_lease_token"].(string); got != orch.leaseToken {
+		t.Fatalf("case (a) approving_lease_token = %q, want %q", got, orch.leaseToken)
+	}
+	if got, _ := structured["session_secret"].(string); got == "" {
+		t.Fatalf("case (a) session_secret = empty, want non-empty issued subagent secret")
+	}
+
+	if got := capture.lastApprove.RequestID; got != pending.ID {
+		t.Fatalf("case (a) lastApprove.RequestID = %q, want %q", got, pending.ID)
+	}
+	if got := capture.lastApprove.ActingSessionID; got != orch.sessionID {
+		t.Fatalf("case (a) lastApprove.ActingSessionID = %q, want %q", got, orch.sessionID)
+	}
+	if got := capture.lastApprove.ActingSessionSecret; got != orch.sessionSecret {
+		t.Fatalf("case (a) lastApprove.ActingSessionSecret = %q, want %q", got, orch.sessionSecret)
+	}
+	if got := capture.lastApprove.AgentInstanceID; got != orch.agentInstanceID {
+		t.Fatalf("case (a) lastApprove.AgentInstanceID = %q, want %q", got, orch.agentInstanceID)
+	}
+	if got := capture.lastApprove.LeaseToken; got != orch.leaseToken {
+		t.Fatalf("case (a) lastApprove.LeaseToken = %q, want %q", got, orch.leaseToken)
+	}
+}
+
+// TestAuthRequestApproveOrchOfOrchestratorRejected covers case (b): orch_A
+// session at project/P/branch/B attempts to approve a pending request whose
+// principal_role is "orchestrator". The service-layer gate returns
+// ErrAuthorizationDenied wrapped with "orch cannot approve another
+// orchestrator's auth request" — the handler's mapToolError surfaces it as
+// auth_denied. Assert isError=true + error text contains the role-mismatch
+// fragment + auth_denied prefix; the gate rejection means no approve-result
+// is emitted.
+func TestAuthRequestApproveOrchOfOrchestratorRejected(t *testing.T) {
+	t.Parallel()
+
+	orch := unitOrchSession(t, "B")
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		// Stub the service-layer rejection. The real gate path that fires here
+		// is auth_requests.go:449 — request principal_role==orchestrator.
+		approveErr: fmt.Errorf("orch cannot approve another orchestrator's auth request: %w", common.ErrAuthorizationDenied),
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, approveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", approveArgs("req-w34-b", orch)))
+	if isError, _ := approveResp.Result["isError"].(bool); !isError {
+		t.Fatalf("case (b) isError = false, want true; result = %#v", approveResp.Result)
+	}
+	text := toolResultText(t, approveResp.Result)
+	if !strings.HasPrefix(text, "auth_denied:") {
+		t.Fatalf("case (b) error text = %q, want auth_denied: prefix", text)
+	}
+	if !strings.Contains(text, "orch cannot approve another orchestrator") {
+		t.Fatalf("case (b) error text = %q, want role-mismatch fragment", text)
+	}
+}
+
+// TestAuthRequestApproveCrossOrchSubtreeRejected covers case (c): orch_A
+// approves a pending subagent request whose RequestedByActor is orch_B
+// (delegated by a different orchestrator). The cross-orch gate fires
+// regardless of orch_A's path-encompassing status because the rejection
+// triggers at auth_requests.go:520 — `cross-orch approval requires steward
+// approver`. Assert isError=true + error text contains the cross-orch
+// fragment + auth_denied prefix.
+//
+// Falsification-attack-1 mitigation pinned: this rejection fires when
+// requested_by_actor != approver.principal_id, even though orch_A has a
+// matching project/branch path. The stub's approveErr is the wrapped
+// sentinel that the real gate produces — the handler relays it intact.
+func TestAuthRequestApproveCrossOrchSubtreeRejected(t *testing.T) {
+	t.Parallel()
+
+	orchA := unitOrchSession(t, "A") // approver
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		// Stub the service-layer rejection. The real gate path that fires here
+		// is auth_requests.go:520 — cross-orch (RequestedByActor != approver)
+		// AND approver is not STEWARD.
+		approveErr: fmt.Errorf("cross-orch approval requires steward approver (request requested_by %q, approver %q): %w", "ORCH_B_W34", orchA.principalID, common.ErrAuthorizationDenied),
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, approveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", approveArgs("req-w34-c", orchA)))
+	if isError, _ := approveResp.Result["isError"].(bool); !isError {
+		t.Fatalf("case (c) isError = false, want true; result = %#v", approveResp.Result)
+	}
+	text := toolResultText(t, approveResp.Result)
+	if !strings.HasPrefix(text, "auth_denied:") {
+		t.Fatalf("case (c) error text = %q, want auth_denied: prefix", text)
+	}
+	if !strings.Contains(text, "cross-orch approval requires steward approver") {
+		t.Fatalf("case (c) error text = %q, want cross-orch fragment", text)
+	}
+	// Sanity: the stub recorded the approver's tuple; rejection happens after
+	// the request reached the service layer.
+	if got := capture.lastApprove.ActingSessionID; got != orchA.sessionID {
+		t.Fatalf("case (c) lastApprove.ActingSessionID = %q, want %q", got, orchA.sessionID)
+	}
+}
+
+// TestAuthRequestApproveProjectToggleDisabledRejected covers case (e —
+// bonus): the project metadata `OrchSelfApprovalEnabled = *false` opts the
+// project out of orch-self-approval. The service-layer gate rejects with
+// domain.ErrOrchSelfApprovalDisabled BEFORE evaluating role / path /
+// cross-orch. Assert isError=true + error text contains the toggle-disabled
+// sentinel message.
+//
+// Note (refinement candidate, raised as 4a Drop refinement): the handler's
+// mapToolError currently has no case for ErrOrchSelfApprovalDisabled, so the
+// response surfaces with the default `internal_error:` prefix. The error
+// message text still propagates faithfully — test asserts on the message
+// fragment, not the prefix. A future refinement should map this sentinel to
+// a sharper code (e.g. `auth_disabled` or extend `auth_denied`) for client
+// observability symmetry with the auth_denied path.
+func TestAuthRequestApproveProjectToggleDisabledRejected(t *testing.T) {
+	t.Parallel()
+
+	orch := unitOrchSession(t, "B")
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		// Stub the service-layer rejection. The real gate path that fires here
+		// is auth_requests.go:443 — project metadata opt-out.
+		approveErr: fmt.Errorf("project %q has opted out of orch self-approval: %w", "p1", domain.ErrOrchSelfApprovalDisabled),
+	}
+
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, approveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", approveArgs("req-w34-e", orch)))
+	if isError, _ := approveResp.Result["isError"].(bool); !isError {
+		t.Fatalf("case (e) isError = false, want true; result = %#v", approveResp.Result)
+	}
+	text := toolResultText(t, approveResp.Result)
+	if !strings.Contains(text, "orch self-approval disabled by project metadata") {
+		t.Fatalf("case (e) error text = %q, want ErrOrchSelfApprovalDisabled sentinel message", text)
+	}
+	if !strings.Contains(text, "opted out of orch self-approval") {
+		t.Fatalf("case (e) error text = %q, want toggle-opt-out wrap fragment", text)
+	}
+}
+
+// TestAuthRequestToolSchemaApproveAcceptsOnlyDocumentedArgs is the W3.4
+// brief's tool-schema assertion (falsification attack 11 placeholder). The
+// existing TestAuthRequestApproveToolSchemaHasNoConfigurabilityKnobs covers
+// the same surface with a slightly narrower vocabulary; this test extends
+// the negative-existence guard with the brief's literal forbidden list:
+// auto_approve_threshold, max_per_hour, auto_approve_roles, dev_required_roles.
+// Hard guard against future drift adding configurability without an
+// explicit refinement drop.
+func TestAuthRequestToolSchemaApproveAcceptsOnlyDocumentedArgs(t *testing.T) {
+	t.Parallel()
+
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	mcpSrv, cfg, err := NewServer(Config{EnableAuthContexts: true}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	streamable := mcpserver.NewStreamableHTTPServer(
+		mcpSrv,
+		mcpserver.WithEndpointPath(cfg.EndpointPath),
+		mcpserver.WithStateLess(true),
+	)
+	server := httptest.NewServer(streamable)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+	_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+	toolsRaw, ok := toolsResp.Result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+	}
+
+	authSchema := findToolSchemaByName(t, toolsRaw, "till.auth_request")
+	properties, ok := authSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("till.auth_request schema properties missing: %#v", authSchema)
+	}
+
+	// Brief item-7 verbatim forbidden vocabulary — assert none of these
+	// configurability knobs leak into the schema.
+	briefForbidden := []string{
+		"auto_approve_threshold",
+		"max_per_hour",
+		"auto_approve_roles",
+		"dev_required_roles",
+	}
+	for _, key := range briefForbidden {
+		if _, exists := properties[key]; exists {
+			t.Fatalf("till.auth_request schema carries brief-forbidden configurability parameter %q", key)
+		}
+	}
+
+	// Operation enum must include "approve" but NOT carry any of the
+	// configurability values either (defense-in-depth against an enum-only
+	// drift route — falsification attack 11).
+	enums := schemaPropertyEnumStrings(t, authSchema, "operation")
+	if !slices.Contains(enums, "approve") {
+		t.Fatalf("operation enum missing %q: enum = %#v", "approve", enums)
+	}
+	for _, value := range enums {
+		for _, forbidden := range briefForbidden {
+			if value == forbidden {
+				t.Fatalf("operation enum carries brief-forbidden configurability value %q: enum = %#v", value, enums)
+			}
+		}
+	}
+
+	// The five documented approve-path arguments must remain present.
+	for _, key := range []string{"request_id", "acting_session_id", "acting_session_secret", "agent_instance_id", "lease_token"} {
+		if _, exists := properties[key]; !exists {
+			t.Fatalf("till.auth_request schema missing documented approve argument %q", key)
+		}
+	}
+}

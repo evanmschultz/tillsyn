@@ -2,8 +2,10 @@ package mcpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -637,5 +639,360 @@ func TestStewardIntegrationRefinementsGateForgottenRegression(t *testing.T) {
 		Actor:        steward,
 	}); !errors.Is(err, domain.ErrTransitionBlocked) {
 		t.Fatalf("MoveActionItemState(STEWARD DROP_3 complete) error = %v, want ErrTransitionBlocked from parent-blocks-on-incomplete-child", err)
+	}
+}
+
+// =============================================================================
+// Drop 4a Wave 3 W3.4 — Case (d): STEWARD cross-subtree approval (integration)
+// =============================================================================
+//
+// Case (d) is integration-style — case (a)/(b)/(c)/(e) use stub services, but
+// case (d) requires the live gate's persistent-parent ancestry walk to fire.
+// We stand up a real sqlite + autent + app.Service + AppServiceAdapter,
+// create a persistent STEWARD-owned action_item, mint a STEWARD-typed orch
+// session via the autent IssueSession path, then drive an approve over
+// JSON-RPC against a real handler.
+//
+// The fixture below mirrors the stewardCrossSubtreeFixture pattern from
+// internal/app/auth_requests_test.go but extends it with the MCP handler
+// + httptest harness so the cross-subtree exception is exercised end-to-end
+// through the JSON-RPC wire format.
+
+// stewardApproveFixture wires the full stack for case (d): real adapter,
+// real STEWARD session, persistent STEWARD-owned ancestor, pending cross-orch
+// subagent request rooted under it, and a live MCP handler over httptest.
+type stewardApproveFixture struct {
+	adapter        *servercommon.AppServiceAdapter
+	repo           *sqlite.Repository
+	auth           *autentauth.Service
+	server         *httptest.Server
+	projectID      string
+	persistentID   string
+	stewardSession orchSessionTuple // re-uses helper struct from handler_test.go
+	pendingReq     domain.AuthRequest
+}
+
+// newStewardApproveFixture builds the case-(d) integration stack. Creates
+// one project, one Backlog column, one STEWARD-owned persistent action_item,
+// one STEWARD-typed auth session, and one pending cross-orch subagent
+// request whose path roots under the persistent ancestor. Returns the
+// fixture wired to a live httptest MCP handler.
+func newStewardApproveFixture(t *testing.T) stewardApproveFixture {
+	t.Helper()
+	ctx := context.Background()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	auth, err := autentauth.NewSharedDB(autentauth.Config{
+		DB:    repo.DB(),
+		Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(ctx); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+
+	projectID := "p-w34-d"
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: projectID, Name: "W3.4 case (d)"}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	column, err := domain.NewColumn("col-w34-d", projectID, "Backlog", 0, 0, now)
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	// Persistent STEWARD-owned ancestor — the requireStewardPersistentAncestor
+	// walk's success target. Owner=STEWARD + Persistent=true (case-insensitive
+	// owner match per auth_requests.go:561).
+	persistentID := "PERSISTENT_STEWARD_W34_D"
+	ancestor, err := domain.NewActionItemForTest(domain.ActionItemInput{
+		ID:         persistentID,
+		ProjectID:  projectID,
+		Kind:       domain.KindRefinement,
+		ColumnID:   column.ID,
+		Title:      "STEWARD persistent refinement (W3.4 case d)",
+		Owner:      "STEWARD",
+		Persistent: true,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewActionItemForTest(persistent) error = %v", err)
+	}
+	if err := repo.CreateActionItem(ctx, ancestor); err != nil {
+		t.Fatalf("CreateActionItem(persistent) error = %v", err)
+	}
+
+	// Mint a STEWARD-typed orch session. PrincipalType "steward" persists via
+	// the "auth_request_principal_type" metadata key — the gate reads it via
+	// AuthSession.AuthRequestPrincipalType (set by mapSessionView).
+	stewardPrincipalID := "STEWARD"
+	stewardClientID := "till-mcp-stdio-steward-w34"
+	stewardIssued, err := auth.IssueSession(ctx, autentauth.IssueSessionInput{
+		PrincipalID:   stewardPrincipalID,
+		PrincipalType: "steward",
+		PrincipalName: "STEWARD",
+		ClientID:      stewardClientID,
+		ClientType:    "mcp-stdio",
+		ClientName:    "STEWARD MCP",
+		TTL:           2 * time.Hour,
+		Metadata: map[string]string{
+			"principal_role": "orchestrator",
+			"approved_path":  "project/" + projectID,
+			"project_id":     projectID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("IssueSession(steward) error = %v", err)
+	}
+
+	// Wire app.Service + AppServiceAdapter for the MCP handler.
+	nextID := 0
+	idGen := func() string {
+		nextID++
+		return fmt.Sprintf("w34-d-id-%03d", nextID)
+	}
+	svc := app.NewService(repo, idGen, func() time.Time { return now }, app.ServiceConfig{
+		AuthRequests: auth,
+		AuthBackend:  auth,
+	})
+	adapter := servercommon.NewAppServiceAdapter(svc, auth)
+
+	// Create the cross-orch pending subagent request whose path roots under
+	// the persistent ancestor. RequestedBy is a DIFFERENT orchestrator —
+	// triggers the cross-orch branch in checkOrchSelfApprovalGate, which
+	// then dispatches to requireStewardPersistentAncestor.
+	requestPath := "project/" + projectID + "/branch/" + persistentID
+	pendingReq, err := svc.CreateAuthRequest(ctx, app.CreateAuthRequestInput{
+		Path:                requestPath,
+		PrincipalID:         "PLANNER_AGENT_W34",
+		PrincipalType:       "agent",
+		PrincipalRole:       "planner",
+		ClientID:            "till-mcp-stdio-planner",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "STEWARD cross-subtree approval test (W3.4 case d)",
+		Continuation:        map[string]any{"resume_token": "resume-w34-d"},
+		RequestedBy:         "OTHER_DROP_ORCH_W34",
+		RequestedType:       domain.ActorTypeAgent,
+		RequesterClientID:   "till-mcp-stdio-other-drop-orch",
+		Timeout:             10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(planner) error = %v", err)
+	}
+
+	handler, err := NewHandler(Config{}, adapter, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	// MCP initialize handshake — tools/list later requires it.
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	return stewardApproveFixture{
+		adapter:      adapter,
+		repo:         repo,
+		auth:         auth,
+		server:       server,
+		projectID:    projectID,
+		persistentID: persistentID,
+		stewardSession: orchSessionTuple{
+			sessionID:       stewardIssued.Session.ID,
+			sessionSecret:   stewardIssued.Secret,
+			agentInstanceID: "STEWARD_INSTANCE_W34_D",
+			leaseToken:      "STEWARD_LEASE_W34_D",
+			principalID:     stewardPrincipalID,
+		},
+		pendingReq: pendingReq,
+	}
+}
+
+// TestAuthRequestApproveStewardCrossSubtreeSucceedsForPersistentParent covers
+// case (d): STEWARD-typed orch session at project scope approves a pending
+// planner subagent request whose path roots under a persistent STEWARD-owned
+// action_item. The cross-subtree exception fires through metadata-driven
+// detection (Persistent + Owner=="STEWARD" — no hardcoded IDs). End-to-end
+// JSON-RPC: response carries state=approved, audit fields populated with
+// STEWARD's tuple, subagent session secret issued.
+func TestAuthRequestApproveStewardCrossSubtreeSucceedsForPersistentParent(t *testing.T) {
+	fixture := newStewardApproveFixture(t)
+
+	args := approveArgs(fixture.pendingReq.ID, fixture.stewardSession)
+	args["resolution_note"] = "STEWARD cross-subtree exception (W3.4 case d)"
+
+	_, approveResp := postJSONRPC(t, fixture.server.Client(), fixture.server.URL, callToolRequest(2, "till.auth_request", args))
+	if isError, _ := approveResp.Result["isError"].(bool); isError {
+		t.Fatalf("case (d) isError = true, want false; result = %#v", approveResp.Result)
+	}
+
+	structured := toolResultStructured(t, approveResp.Result)
+	requestRaw, ok := structured["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("case (d) structured payload missing request: %#v", structured)
+	}
+	if got := requestRaw["state"].(string); got != "approved" {
+		t.Fatalf("case (d) state = %q, want approved", got)
+	}
+	if got := requestRaw["approving_principal_id"].(string); got != fixture.stewardSession.principalID {
+		t.Fatalf("case (d) approving_principal_id = %q, want %q (STEWARD)", got, fixture.stewardSession.principalID)
+	}
+	if got := requestRaw["approving_agent_instance_id"].(string); got != fixture.stewardSession.agentInstanceID {
+		t.Fatalf("case (d) approving_agent_instance_id = %q, want %q", got, fixture.stewardSession.agentInstanceID)
+	}
+	if got := requestRaw["approving_lease_token"].(string); got != fixture.stewardSession.leaseToken {
+		t.Fatalf("case (d) approving_lease_token = %q, want %q", got, fixture.stewardSession.leaseToken)
+	}
+	secret, _ := structured["session_secret"].(string)
+	if secret == "" {
+		t.Fatal("case (d) session_secret = empty, want non-empty issued subagent secret")
+	}
+
+	// DB-level round-trip: GetAuthRequest on the freshly-approved row must
+	// return the same audit-trail values, proving the audit columns
+	// persisted (4a.26) AND the cross-subtree exception path (4a.24)
+	// landed them via the orch-self-approval cascade plumbing (W3.1).
+	persisted, err := fixture.adapter.GetAuthRequest(context.Background(), fixture.pendingReq.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest() error = %v", err)
+	}
+	if persisted.State != "approved" {
+		t.Fatalf("case (d) persisted state = %q, want approved", persisted.State)
+	}
+	if persisted.ApprovingPrincipalID != fixture.stewardSession.principalID {
+		t.Fatalf("case (d) persisted ApprovingPrincipalID = %q, want %q",
+			persisted.ApprovingPrincipalID, fixture.stewardSession.principalID)
+	}
+	if persisted.ApprovingAgentInstanceID != fixture.stewardSession.agentInstanceID {
+		t.Fatalf("case (d) persisted ApprovingAgentInstanceID = %q, want %q",
+			persisted.ApprovingAgentInstanceID, fixture.stewardSession.agentInstanceID)
+	}
+	if persisted.ApprovingLeaseToken != fixture.stewardSession.leaseToken {
+		t.Fatalf("case (d) persisted ApprovingLeaseToken = %q, want %q",
+			persisted.ApprovingLeaseToken, fixture.stewardSession.leaseToken)
+	}
+
+	// JSON-surface check: the persisted record's `approving_*` fields are
+	// emitted (omitempty does NOT elide populated values).
+	encoded, err := json.Marshal(persisted)
+	if err != nil {
+		t.Fatalf("json.Marshal(persisted) error = %v", err)
+	}
+	for _, key := range []string{
+		`"approving_principal_id":"STEWARD"`,
+		`"approving_agent_instance_id":"STEWARD_INSTANCE_W34_D"`,
+		`"approving_lease_token":"STEWARD_LEASE_W34_D"`,
+	} {
+		if !strings.Contains(string(encoded), key) {
+			t.Fatalf("case (d) persisted JSON = %s, want to contain %s", encoded, key)
+		}
+	}
+}
+
+// TestAuthRequestApproveProjectToggleDisabledRejectedIntegration is the
+// spec-faithful integration pair to the unit-style
+// TestAuthRequestApproveProjectToggleDisabledRejected (handler_test.go). The
+// unit test stubs approveErr to prove the wire-format-to-error mapping; this
+// integration test drives the real toggle gate end-to-end through the same
+// stack case (d) uses (sqlite + autent + AppServiceAdapter + httptest
+// handler).
+//
+// W3.4 plan spec (WAVE_3_PLAN.md:139) prescribes flipping
+// Metadata.OrchSelfApprovalEnabled = *false on the project. We reuse the
+// case-(d) STEWARD fixture and flip the toggle via repo.UpdateProject —
+// this is the same direct-repo path the service-layer test uses
+// (internal/app/auth_requests_test.go setProjectOrchSelfApprovalEnabled).
+// The till.project(operation=update) MCP wire format is exercised separately
+// by TestProjectMCPFirstClassFieldsRoundTrip (extended_tools_test.go); this
+// test owns the toggle-gate-to-handler integration, not the project-update
+// wire format.
+//
+// The toggle is a TOTAL backstop — it rejects even the STEWARD cross-subtree
+// path that case (d) proves works under default-enabled metadata. This
+// mirrors the service-layer steward_cross_subtree sub-case in
+// TestApproveAuthRequestRejectsWhenProjectToggleDisabled. Asserts:
+//   - HTTP-level: response carries isError=true.
+//   - Error-text: contains the ErrOrchSelfApprovalDisabled sentinel
+//     ("orch self-approval disabled by project metadata") and the wrap
+//     fragment ("opted out of orch self-approval"). Substring match (not
+//     prefix) so the test stays robust regardless of any future mapToolError
+//     refinement that sharpens the error code.
+//   - DB-level: persisted request state remains "pending" (toggle backstop
+//     prevented the approval from being committed).
+func TestAuthRequestApproveProjectToggleDisabledRejectedIntegration(t *testing.T) {
+	fixture := newStewardApproveFixture(t)
+	ctx := context.Background()
+
+	// Flip the project's OrchSelfApprovalEnabled toggle to *false via the
+	// repository directly (mirrors setProjectOrchSelfApprovalEnabled in
+	// internal/app/auth_requests_test.go). The MCP wire format for this
+	// update is exercised by TestProjectMCPFirstClassFieldsRoundTrip — this
+	// test owns the toggle-gate-to-handler integration, not the project-
+	// update wire format.
+	project, err := fixture.repo.GetProject(ctx, fixture.projectID)
+	if err != nil {
+		t.Fatalf("GetProject(toggle setup) error = %v", err)
+	}
+	disabled := false
+	project.Metadata.OrchSelfApprovalEnabled = &disabled
+	if err := fixture.repo.UpdateProject(ctx, project); err != nil {
+		t.Fatalf("UpdateProject(toggle=false) error = %v", err)
+	}
+
+	// Sanity: the toggle round-tripped to the persisted row.
+	reloaded, err := fixture.repo.GetProject(ctx, fixture.projectID)
+	if err != nil {
+		t.Fatalf("GetProject(toggle verify) error = %v", err)
+	}
+	if reloaded.Metadata.OrchSelfApprovalIsEnabled() {
+		t.Fatalf("toggle setup did not persist; OrchSelfApprovalIsEnabled() = true after UpdateProject(*false)")
+	}
+
+	args := approveArgs(fixture.pendingReq.ID, fixture.stewardSession)
+	args["resolution_note"] = "STEWARD attempt with toggle disabled (W3.4 case e integration)"
+
+	_, approveResp := postJSONRPC(t, fixture.server.Client(), fixture.server.URL, callToolRequest(2, "till.auth_request", args))
+	isError, _ := approveResp.Result["isError"].(bool)
+	if !isError {
+		t.Fatalf("toggle-disabled integration isError = false, want true; result = %#v", approveResp.Result)
+	}
+
+	text := toolResultText(t, approveResp.Result)
+	if !strings.Contains(text, "orch self-approval disabled by project metadata") {
+		t.Fatalf("toggle-disabled integration error text = %q, want ErrOrchSelfApprovalDisabled sentinel message", text)
+	}
+	if !strings.Contains(text, "opted out of orch self-approval") {
+		t.Fatalf("toggle-disabled integration error text = %q, want toggle-opt-out wrap fragment", text)
+	}
+
+	// DB-level backstop: the request must still be pending. The toggle
+	// gate fires BEFORE the approve mutation persists, so a failed
+	// approval leaves the row untouched. Catches the regression where a
+	// future refactor accidentally lands the approval state-change
+	// mid-gate.
+	persisted, err := fixture.adapter.GetAuthRequest(ctx, fixture.pendingReq.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest() error = %v", err)
+	}
+	if persisted.State != "pending" {
+		t.Fatalf("toggle-disabled integration persisted state = %q, want pending (toggle backstop must prevent approval persist)", persisted.State)
+	}
+	if persisted.ApprovingPrincipalID != "" {
+		t.Fatalf("toggle-disabled integration persisted ApprovingPrincipalID = %q, want empty (no audit trail on rejected approve)", persisted.ApprovingPrincipalID)
 	}
 }
