@@ -1,8 +1,11 @@
 #!/bin/sh
 # Activated by 'mage install-hooks' (sets core.hooksPath = .githooks).
+# Runs format-check only — full mage ci runs in CI on clean Docker.
+# Local mage ci has env-coupling risks (gitdiff tests collide with bare-root
+# config lock during concurrent push); CI has no parent repo to collide with.
 set -eu
 
-if ! mage ci; then
-	printf '%s\n' "mage ci failed — fix locally before pushing, or '--no-verify' to bypass with explicit reason."
+if ! mage format-check; then
+	printf '%s\n' "mage format-check failed — run 'mage format' to auto-fix, or '--no-verify' to bypass with explicit reason."
 	exit 1
 fi
