@@ -17,7 +17,7 @@ Cross-cutting decisions still park on a Tillsyn action item (description = conve
 
 ## Cascade Plan
 
-The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md` (lives in this directory). Cascade vocabulary canonical: `WIKI.md` § `Cascade Vocabulary` — never redefine here. That plan is the source of truth for cascade architecture, drop ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today.
+The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md` (lives in this directory). Cascade vocabulary canonical: `WIKI.md` § `Cascade Vocabulary` — never redefine here. That plan is the source of truth for cascade architecture, drop ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today. Drop 4a landed the manual-trigger dispatcher (`internal/app/dispatcher/` + `till dispatcher run`); orchestrator-IS-dispatcher remains the documented pre-cascade fallback while dogfooding ramps. Drop 4b adds gate execution + post-build pipeline.
 
 ## Cascade Tree Structure (Template Architecture)
 
@@ -104,6 +104,7 @@ project                                                    (table: projects)
 
 Pre-cascade: orchestrator spawns these manually via the `Agent` tool using Tillsyn auth credentials in the prompt.
 Post-Drop-3: the template binds kinds → agents; the dispatcher spawns them on `in_progress` transitions.
+Post-Drop-4a: Wave 2 delivered the dispatcher loop with manual-trigger CLI (`till dispatcher run --action-item <id>`); automatic dispatch on `in_progress` transitions lands in Drop 4b.
 
 | Kind                      | Agent                         | Model  | Role               | Edits Code? |
 | ------------------------- | ----------------------------- | ------ | ------------------ | ----------- |
@@ -121,7 +122,7 @@ Post-Drop-3: the template binds kinds → agents; the dispatcher spawns them on 
 
 After a `build` action item reports success, before its `build-qa-proof` / `build-qa-falsification` children become eligible, gates run programmatically. No LLM except the commit agent.
 
-1. **`mage ci`** — on fail, the `build` moves to `failed`, gate output posted as a comment.
+1. **`mage ci`** — on fail, the `build` moves to `failed`, gate output posted as a comment. Wave 0 of Drop 4a wired `mage ci` into `.githooks/pre-push`, so a clean push is itself the smoke check (dev runs `mage install-hooks` once per fresh clone).
 2. **Commit** — commit-agent (haiku) forms the message; system runs `git add` + `git commit`. Pre-cascade: orchestrator + dev do this manually (see Git Management (Pre-Cascade) below). Commit cadence follows the rule in "Commit Cadence" above — not every `build` generates a `commit` child.
 3. **Push** — `git push` when the template's `auto_push = true`. Pre-cascade: manual.
 4. **Hylla reingest** — NOT per-`build`. Drop-end only, orchestrator-run, after `gh run watch --exit-status` is green. See "Cascade Ledger + Hylla Feedback" + "Drop Closeout" below. Agents never call `hylla_ingest`.
@@ -130,13 +131,13 @@ Only after all gates pass do the `build`'s QA children fire.
 
 ### Blocker Semantics
 
-- **Parent-child** — a parent cannot move to `complete` while any child is incomplete or `failed`. Always-on parent-blocks-on-failed-child arrives in Drop 1.
-- **`blocked_by`** — the only sibling and cross-drop ordering primitive. Planner sets these at creation time; dispatcher adds runtime blockers when file/package locks conflict (Drop 4+).
+- **Parent-child** — a parent cannot move to `complete` while any child is incomplete or `failed`. Always-on invariant — Wave 1 of Drop 4a removed the `RequireChildrenComplete` policy bit; the rule is unconditional.
+- **`blocked_by`** — the only sibling and cross-drop ordering primitive. Planner sets these at creation time; Wave 2 of Drop 4a delivered the dispatcher's lock manager (file + package), and the conflict detector inserts runtime `blocked_by` on `in_progress` promotion when sibling locks conflict.
 - **File- and package-level blocking** — sibling `build` action items sharing a file in `paths` OR a package in `packages` MUST have an explicit `blocked_by` between them. Plan QA falsification attacks missing blockers. Package-level locking exists because a single Go package (e.g. `internal/domain` with ~25 files) shares one compile — editing different files in the same package still breaks the other agent's test run.
 
 ### State-Trigger Dispatch
 
-Moving an action item to `in_progress` is the dispatch trigger (Drop 4+). Pre-cascade, the orchestrator IS the dispatcher — it reads the kind, picks the binding above, moves the item to `in_progress`, and spawns the subagent via the `Agent` tool with Tillsyn auth credentials and Hylla artifact ref in the prompt.
+Moving an action item to `in_progress` is the dispatch trigger (Drop 4+). Pre-cascade, the orchestrator IS the dispatcher — it reads the kind, picks the binding above, moves the item to `in_progress`, and spawns the subagent via the `Agent` tool with Tillsyn auth credentials and Hylla artifact ref in the prompt. Drop 4a delivered the manual-trigger dispatcher: `till dispatcher run --action-item <id>` (`cmd/till`) reads the same template `agent_bindings`, acquires file/package locks via the lock manager (`internal/app/dispatcher/locks_file.go` + `locks_package.go`), spawns the subagent via `claude --agent <name>`, and provisions auth via Wave-3's orch-self-approval flow. Per-drop work currently dogfoods both paths until Drop 4b's gate runner ships.
 
 ## Tillsyn Project
 
@@ -252,24 +253,25 @@ Full contract — exact spawn-prompt fields, exact description fields, spawn-gat
 
 ## Action-Item Lifecycle (Current HEAD)
 
-Three terminal-reachable states today: `todo`, `in_progress`, `complete`. A fourth state `failed` lands in Drop 1 of the cascade plan. Until then:
+Four terminal-reachable states: `todo`, `in_progress`, `complete`, `failed` (Drop 1 landed `failed` as a real terminal state):
 
 - **Success**: set `metadata.outcome: "success"`, update `completion_contract.completion_notes`, move to `complete`.
-- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`. Currently the action item stays in `in_progress` with a failure-flavored outcome; Drop 1 adds the real `failed` transition.
+- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`, transition to `failed` (real terminal state since Drop 1).
 - **Blocked**: set `metadata.outcome: "blocked"` + `metadata.blocked_reason`, report to orchestrator, stop.
-- **Supersede** (post-Drop-1): human-only CLI `till action_item supersede <id> --reason "..."` unsticks `failed → complete`. Before Drop 1 this doesn't exist.
+- **Supersede** (post-Drop-1): human-only CLI `till action_item supersede <id> --reason "..."` unsticks `failed → complete`.
 
-No parent can move to terminal-success if any child is in a failure/blocked state — enforcement becomes always-on in Drop 1.
+No parent can move to terminal-success if any child is in `failed` or `blocked` state — always-on invariant (Wave 1 of Drop 4a removed the `RequireChildrenComplete` policy bit; the rule is unconditional).
 
-## Paths and Packages (Drop-1 Target)
+## Paths and Packages
 
-Today, builders and planners track affected code loosely in metadata. In Drop 1, `paths []string` and `packages []string` become first-class domain fields on every action item, set by the planner, readable by builder + QA, and required for the file- and package-level blocking the cascade relies on. Until Drop 1 ships, note affected paths in `completion_notes` — the cascade plan (`PLAN.md`, Section 5 + Section 17.1) is the contract.
+Wave 1 of Drop 4a landed `paths []string`, `packages []string`, `files []string`, `start_commit string`, and `end_commit string` as first-class fields on every `ActionItem` (`internal/domain/action_item.go`). Planners set `paths` + `packages` at creation; dispatcher's lock manager (Wave 2) reads `packages` for package-level locks and `paths` for file-level locks. Builders restrict edits to declared `paths`; reference-only material lives in `files`. `start_commit` / `end_commit` are opaque caller-populated strings (orchestrator pre-cascade; dispatcher post-Wave-2). Per-package compile collisions are blocked at `in_progress` promotion via runtime `blocked_by` insertion when a sibling holds the same package lock. Cross-reference: `WIKI.md § "Atomic Drop Granularity"` for the planner-side rule of thumb.
 
 ## Auth and Leases
 
 - One active auth session per scope level at a time.
 - Orchestrator cleans up all child auth sessions and leases at end of phase/run.
-- Auth auto-revoke on terminal state is a Drop-1 item; until then, the orchestrator manually revokes stale sessions.
+- Auth auto-revoke on terminal state lands in Drop 4b. Pre-Drop-4b, orchestrators (and STEWARD post-merge) manually revoke stale sessions via `till.auth_request operation=revoke`.
+- Orchestrators approve their own non-orch subagent auth requests scoped within their lease subtree (Wave 3 of Drop 4a). Cross-orch and orch-spawning-orch approvals still route through the dev TUI. Project-level `OrchSelfApprovalEnabled = *false` toggle is the total backstop (reverts ALL approves under that project to dev-TUI).
 - **Always report the auth session ID to the dev** when requesting or claiming auth. The dev needs visibility into active sessions.
 
 ## Coordination Surfaces
