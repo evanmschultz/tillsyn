@@ -23,6 +23,8 @@ mage ci
 - `mage run`: run from source
 - `mage dev`: run from source against the repo-local `./.tillsyn` dev runtime
 - `mage install`: install `till` into `~/.local/bin`
+- `mage format`, `mage format-path <path>`, `mage format-check`: gofumpt write (whole tree / scoped) and CI-parity format gate
+- `mage install-hooks`: one-time-per-clone activation of the tracked `.githooks/` scripts (`core.hooksPath = .githooks`)
 - `mage test-golden`, `mage test-golden-update`: focused TUI golden workflows
 
 ## Windows Note (Line Endings)
@@ -39,27 +41,37 @@ git add --renormalize .
 
 If line endings are still stale after renormalization, re-clone the repository.
 
-## Recommended Pre-Push Hook
+## Local Git Hooks
 
-Install a local hook so pushes fail fast if `mage ci` fails:
+This repo ships two POSIX `sh` hooks at `.githooks/` that gate every commit and push against the same `mage` targets CI runs. Activation is one-time-per-clone via a tracked mage target:
 
 ```bash
-hook_path="$(git rev-parse --git-path hooks/pre-push)"
-cat > "$hook_path" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-mage ci
-EOF
-chmod +x "$hook_path"
+mage install-hooks
 ```
 
-Use `git rev-parse --git-path ...` instead of hard-coding `.git/...` so the hook still lands in the right place when the repo uses a separate common git dir.
+That sets `core.hooksPath = .githooks` for this clone so the tracked scripts run on every `git commit` / `git push`. Sanity check:
 
-Install Mage locally with:
+```bash
+git config --get core.hooksPath
+# expected: .githooks
+```
+
+The two hooks:
+
+- `.githooks/pre-commit` runs `mage format-check` — catches gofumpt drift before the commit lands. On failure it suggests `mage format` to auto-fix.
+- `.githooks/pre-push` runs `mage ci` — mirrors what GitHub Actions runs, so a green pre-push run is a strong predictor of green CI.
+
+Bypass policy: `git commit --no-verify` and `git push --no-verify` are honored by git natively. Per dev discipline, never bypass without an explicit reason captured in the commit message or PR description.
+
+If you have local hooks in `.git/hooks/`, copy them into `.githooks/` before running `mage install-hooks` — `core.hooksPath` overrides the default lookup, so untracked local hooks would otherwise stop firing.
+
+Ensure `mage` is on your `PATH` so the hooks find it. Install Mage locally with:
 
 ```bash
 go install github.com/magefile/mage@v1.17.0
 ```
+
+For `mage -h <target>` help lookup use the canonical camelCase name (e.g. `mage -h format`); the kebab-case forms (`format-check`, `install-hooks`) work for invocation but Mage's help resolver doesn't follow aliases.
 
 ## GitHub Actions Model
 
