@@ -40,6 +40,7 @@ type stubExpandedService struct {
 	lastListChildArchived        bool
 	lastCreateActionItemReq      common.CreateActionItemRequest
 	lastUpdateActionItemReq      common.UpdateActionItemRequest
+	lastMoveActionItemReq        common.MoveActionItemRequest
 	lastMoveActionItemStateReq   common.MoveActionItemStateRequest
 	lastRestoreActionItemReq     common.RestoreActionItemRequest
 	lastIssueLeaseReq            common.IssueCapabilityLeaseRequest
@@ -505,8 +506,14 @@ func (s *stubExpandedService) UpdateActionItem(_ context.Context, in common.Upda
 	}, nil
 }
 
-// MoveActionItem returns one deterministic moved actionItem row.
-func (s *stubExpandedService) MoveActionItem(_ context.Context, _ common.MoveActionItemRequest) (domain.ActionItem, error) {
+// MoveActionItem returns one deterministic moved actionItem row. Drop 4a
+// droplet 4a.10 added request recording so tests can verify that state and
+// to_column_id thread through the handler verbatim — the rejection logic for
+// "specify exactly one" and "neither supplied" lives at the handler layer
+// (and at the adapter layer in production), so the stub itself accepts both
+// shapes without further validation.
+func (s *stubExpandedService) MoveActionItem(_ context.Context, in common.MoveActionItemRequest) (domain.ActionItem, error) {
+	s.lastMoveActionItemReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
 		ID:             "t1",
@@ -1304,6 +1311,235 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 	if got := service.lastIssueLeaseReq.Role; got != "research" {
 		t.Fatalf("issue capability lease role = %q, want research", got)
 	}
+}
+
+// TestHandlerActionItemCreateAcceptsStateOrColumnIDExclusively verifies the
+// Drop 4a droplet 4a.10 contract on the till.action_item create surface:
+// state and column_id are mutually exclusive — supplying exactly one
+// succeeds; supplying both rejects with "specify exactly one"; supplying
+// neither rejects with the loosened "column_id or state" required error.
+// The four create cases plus the four move cases below cover the full §1.6
+// acceptance matrix.
+func TestHandlerActionItemCreateAcceptsStateOrColumnIDExclusively(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*httptest.Server, *stubExpandedService) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return server, service
+	}
+
+	t.Run("state_only_succeeds_and_threads_through", func(t *testing.T) {
+		t.Parallel()
+		server, service := newServer(t)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"state":             "todo",
+			"title":             "ActionItem One",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(701, "till.action_item", args))
+		if isError, _ := callResp.Result["isError"].(bool); isError {
+			t.Fatalf("create state-only returned isError=true: %#v", callResp.Result)
+		}
+		if got := service.lastCreateActionItemReq.State; got != "todo" {
+			t.Fatalf("create state-only forwarded State = %q, want %q", got, "todo")
+		}
+		if got := service.lastCreateActionItemReq.ColumnID; got != "" {
+			t.Fatalf("create state-only forwarded ColumnID = %q, want empty (state path)", got)
+		}
+	})
+
+	t.Run("column_id_only_succeeds_and_threads_through", func(t *testing.T) {
+		t.Parallel()
+		server, service := newServer(t)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "ActionItem One",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(702, "till.action_item", args))
+		if isError, _ := callResp.Result["isError"].(bool); isError {
+			t.Fatalf("create column-only returned isError=true: %#v", callResp.Result)
+		}
+		if got := service.lastCreateActionItemReq.ColumnID; got != "c1" {
+			t.Fatalf("create column-only forwarded ColumnID = %q, want %q", got, "c1")
+		}
+		if got := service.lastCreateActionItemReq.State; got != "" {
+			t.Fatalf("create column-only forwarded State = %q, want empty (column path)", got)
+		}
+	})
+
+	t.Run("both_supplied_rejects_with_specify_exactly_one", func(t *testing.T) {
+		t.Parallel()
+		server, _ := newServer(t)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"state":             "todo",
+			"title":             "ActionItem One",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(703, "till.action_item", args))
+		if isError, _ := callResp.Result["isError"].(bool); !isError {
+			t.Fatalf("create both-supplied isError = %v, want true", callResp.Result["isError"])
+		}
+		text := toolResultText(t, callResp.Result)
+		if !strings.Contains(text, "specify exactly one") {
+			t.Fatalf("create both-supplied error = %q, want substring %q", text, "specify exactly one")
+		}
+	})
+
+	t.Run("neither_supplied_rejects_with_required", func(t *testing.T) {
+		t.Parallel()
+		server, _ := newServer(t)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"title":             "ActionItem One",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(704, "till.action_item", args))
+		if isError, _ := callResp.Result["isError"].(bool); !isError {
+			t.Fatalf("create neither-supplied isError = %v, want true", callResp.Result["isError"])
+		}
+		text := toolResultText(t, callResp.Result)
+		if !strings.Contains(text, `"column_id" or "state"`) {
+			t.Fatalf("create neither-supplied error = %q, want substring %q", text, `"column_id" or "state"`)
+		}
+	})
+}
+
+// TestHandlerActionItemMoveAcceptsStateOrColumnIDExclusively mirrors
+// TestHandlerActionItemCreateAcceptsStateOrColumnIDExclusively for the move
+// path: state and to_column_id are mutually exclusive, exactly-one rule with
+// a loosened "to_column_id or state" required message.
+func TestHandlerActionItemMoveAcceptsStateOrColumnIDExclusively(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*httptest.Server, *stubExpandedService) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return server, service
+	}
+
+	t.Run("state_only_succeeds_and_threads_through", func(t *testing.T) {
+		t.Parallel()
+		server, service := newServer(t)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "move",
+			"action_item_id":    testActionItemUUID,
+			"state":             "in_progress",
+			"position":          1,
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(801, "till.action_item", args))
+		if isError, _ := callResp.Result["isError"].(bool); isError {
+			t.Fatalf("move state-only returned isError=true: %#v", callResp.Result)
+		}
+		if got := service.lastMoveActionItemReq.State; got != "in_progress" {
+			t.Fatalf("move state-only forwarded State = %q, want %q", got, "in_progress")
+		}
+		if got := service.lastMoveActionItemReq.ToColumnID; got != "" {
+			t.Fatalf("move state-only forwarded ToColumnID = %q, want empty (state path)", got)
+		}
+	})
+
+	t.Run("to_column_id_only_succeeds_and_threads_through", func(t *testing.T) {
+		t.Parallel()
+		server, service := newServer(t)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "move",
+			"action_item_id":    testActionItemUUID,
+			"to_column_id":      "c2",
+			"position":          1,
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(802, "till.action_item", args))
+		if isError, _ := callResp.Result["isError"].(bool); isError {
+			t.Fatalf("move column-only returned isError=true: %#v", callResp.Result)
+		}
+		if got := service.lastMoveActionItemReq.ToColumnID; got != "c2" {
+			t.Fatalf("move column-only forwarded ToColumnID = %q, want %q", got, "c2")
+		}
+		if got := service.lastMoveActionItemReq.State; got != "" {
+			t.Fatalf("move column-only forwarded State = %q, want empty (column path)", got)
+		}
+	})
+
+	t.Run("both_supplied_rejects_with_specify_exactly_one", func(t *testing.T) {
+		t.Parallel()
+		server, _ := newServer(t)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "move",
+			"action_item_id":    testActionItemUUID,
+			"to_column_id":      "c2",
+			"state":             "in_progress",
+			"position":          1,
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(803, "till.action_item", args))
+		if isError, _ := callResp.Result["isError"].(bool); !isError {
+			t.Fatalf("move both-supplied isError = %v, want true", callResp.Result["isError"])
+		}
+		text := toolResultText(t, callResp.Result)
+		if !strings.Contains(text, "specify exactly one") {
+			t.Fatalf("move both-supplied error = %q, want substring %q", text, "specify exactly one")
+		}
+	})
+
+	t.Run("neither_supplied_rejects_with_required", func(t *testing.T) {
+		t.Parallel()
+		server, _ := newServer(t)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "move",
+			"action_item_id":    testActionItemUUID,
+			"position":          1,
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(804, "till.action_item", args))
+		if isError, _ := callResp.Result["isError"].(bool); !isError {
+			t.Fatalf("move neither-supplied isError = %v, want true", callResp.Result["isError"])
+		}
+		text := toolResultText(t, callResp.Result)
+		if !strings.Contains(text, `"to_column_id" or "state"`) {
+			t.Fatalf("move neither-supplied error = %q, want substring %q", text, `"to_column_id" or "state"`)
+		}
+	})
 }
 
 // TestHandlerExpandedLeaseToolVisibility verifies the reduced lease surface is default and legacy aliases are opt-in.

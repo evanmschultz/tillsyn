@@ -631,6 +631,16 @@ func (a *AppServiceAdapter) GetProjectBySlug(ctx context.Context, slug string) (
 }
 
 // CreateActionItem creates one level-scoped actionItem/work item.
+//
+// Drop 4a droplet 4a.10 (state vs column_id exclusivity): the create boundary
+// now accepts EITHER ColumnID OR State, not both. Both empty rejects with
+// ErrInvalidCaptureStateRequest (mirroring the historical "column_id is
+// required" path); both non-empty rejects with the "specify exactly one"
+// sentinel so silent precedence bugs don't leak through. When only State is
+// supplied, the adapter resolves it to the destination column via the
+// existing resolveActionItemColumnIDForState helper BEFORE calling
+// app.CreateActionItem — column_id stays in the DB / app-input shape; this
+// just lets agents address the start column by lifecycle vocabulary.
 func (a *AppServiceAdapter) CreateActionItem(ctx context.Context, in CreateActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
 		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
@@ -645,6 +655,24 @@ func (a *AppServiceAdapter) CreateActionItem(ctx context.Context, in CreateActio
 	}
 	if err := validateMetadataOutcome(&in.Metadata); err != nil {
 		return domain.ActionItem{}, err
+	}
+	columnID := strings.TrimSpace(in.ColumnID)
+	stateRaw := strings.TrimSpace(in.State)
+	switch {
+	case columnID == "" && stateRaw == "":
+		return domain.ActionItem{}, fmt.Errorf("column_id or state is required: %w", ErrInvalidCaptureStateRequest)
+	case columnID != "" && stateRaw != "":
+		return domain.ActionItem{}, fmt.Errorf("specify exactly one of column_id or state, not both: %w", ErrInvalidCaptureStateRequest)
+	case stateRaw != "":
+		state, err := normalizeActionItemStateInput(stateRaw)
+		if err != nil {
+			return domain.ActionItem{}, err
+		}
+		resolved, err := a.resolveActionItemColumnIDForState(ctx, strings.TrimSpace(in.ProjectID), state)
+		if err != nil {
+			return domain.ActionItem{}, err
+		}
+		columnID = resolved
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	actionItem, err := a.service.CreateActionItem(ctx, app.CreateActionItemInput{
@@ -663,7 +691,7 @@ func (a *AppServiceAdapter) CreateActionItem(ctx context.Context, in CreateActio
 		Files:          append([]string(nil), in.Files...),
 		StartCommit:    strings.TrimSpace(in.StartCommit),
 		EndCommit:      strings.TrimSpace(in.EndCommit),
-		ColumnID:       strings.TrimSpace(in.ColumnID),
+		ColumnID:       columnID,
 		Title:          strings.TrimSpace(in.Title),
 		Description:    strings.TrimSpace(in.Description),
 		Priority:       domain.Priority(strings.TrimSpace(strings.ToLower(in.Priority))),
@@ -757,6 +785,17 @@ func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActio
 // now adds an explicit GetActionItem call ahead of the gate. The double fetch
 // is intentional — skipping the gate just because the column-only path lacks
 // a pre-fetch would leave a silent gap in the lock (the cited finding).
+//
+// Drop 4a droplet 4a.10 (state vs to_column_id exclusivity): the move boundary
+// now accepts EITHER ToColumnID OR State, not both. Both empty rejects with
+// ErrInvalidCaptureStateRequest; both non-empty rejects with the "specify
+// exactly one" sentinel. When only State is supplied, the adapter resolves it
+// to the destination column via resolveActionItemColumnIDForState keyed on
+// the existing item's ProjectID — leveraging the same pre-fetch the steward
+// gate already performs. The pre-existing MoveActionItemState path (state-
+// only by design) is unchanged; this surfaces the same vocabulary on the
+// column-only move so agents see one consistent surface across all three
+// paths.
 func (a *AppServiceAdapter) MoveActionItem(ctx context.Context, in MoveActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
 		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
@@ -766,6 +805,14 @@ func (a *AppServiceAdapter) MoveActionItem(ctx context.Context, in MoveActionIte
 		return domain.ActionItem{}, err
 	}
 	actionItemID := strings.TrimSpace(in.ActionItemID)
+	toColumnID := strings.TrimSpace(in.ToColumnID)
+	stateRaw := strings.TrimSpace(in.State)
+	switch {
+	case toColumnID == "" && stateRaw == "":
+		return domain.ActionItem{}, fmt.Errorf("to_column_id or state is required: %w", ErrInvalidCaptureStateRequest)
+	case toColumnID != "" && stateRaw != "":
+		return domain.ActionItem{}, fmt.Errorf("specify exactly one of to_column_id or state, not both: %w", ErrInvalidCaptureStateRequest)
+	}
 	existing, err := a.service.GetActionItem(ctx, actionItemID)
 	if err != nil {
 		return domain.ActionItem{}, mapAppError("move actionItem", err)
@@ -773,7 +820,18 @@ func (a *AppServiceAdapter) MoveActionItem(ctx context.Context, in MoveActionIte
 	if err := assertOwnerStateGate(ctx, existing); err != nil {
 		return domain.ActionItem{}, err
 	}
-	actionItem, err := a.service.MoveActionItem(ctx, actionItemID, strings.TrimSpace(in.ToColumnID), in.Position)
+	if stateRaw != "" {
+		state, err := normalizeActionItemStateInput(stateRaw)
+		if err != nil {
+			return domain.ActionItem{}, err
+		}
+		resolved, err := a.resolveActionItemColumnIDForState(ctx, existing.ProjectID, state)
+		if err != nil {
+			return domain.ActionItem{}, err
+		}
+		toColumnID = resolved
+	}
+	actionItem, err := a.service.MoveActionItem(ctx, actionItemID, toColumnID, in.Position)
 	if err != nil {
 		return domain.ActionItem{}, mapAppError("move actionItem", err)
 	}

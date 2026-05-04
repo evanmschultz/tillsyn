@@ -139,8 +139,21 @@ type CreateActionItemRequest struct {
 	// transition); domain layer never calls git itself. Empty is valid
 	// until terminal state; domain does NOT enforce non-empty-on-
 	// terminal. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.5.
-	EndCommit   string
-	ColumnID    string
+	EndCommit string
+	ColumnID  string
+	// State optionally substitutes for ColumnID at create time — the adapter
+	// resolves the supplied lifecycle state (todo|in_progress|complete|failed)
+	// to the destination column whose name maps to that state via the existing
+	// resolveActionItemColumnIDForState helper. Use either State OR ColumnID,
+	// not both. Empty State + empty ColumnID rejects with
+	// ErrInvalidCaptureStateRequest at the adapter boundary; both non-empty
+	// rejects with the "specify exactly one of column_id or state, not both"
+	// sentinel so silent precedence bugs don't leak through. Droplet 4a.10
+	// added this so Wave 2 dispatcher agents can address the start column by
+	// lifecycle vocabulary instead of resolving column_id themselves; ColumnID
+	// stays in the request shape (and on the DB row) until Drop 4.5's
+	// columns-table retirement.
+	State       string
 	Title       string
 	Description string
 	Priority    string
@@ -257,8 +270,22 @@ type UpdateActionItemRequest struct {
 type MoveActionItemRequest struct {
 	ActionItemID string
 	ToColumnID   string
-	Position     int
-	Actor        ActorLeaseTuple
+	// State optionally substitutes for ToColumnID — the adapter resolves the
+	// supplied lifecycle state (todo|in_progress|complete|failed) to the
+	// destination column whose name maps to that state via the existing
+	// resolveActionItemColumnIDForState helper, keyed on the existing item's
+	// ProjectID. Use either State OR ToColumnID, not both. Empty State + empty
+	// ToColumnID rejects with ErrInvalidCaptureStateRequest at the adapter
+	// boundary; both non-empty rejects with the "specify exactly one of
+	// to_column_id or state, not both" sentinel. Droplet 4a.10 added this so
+	// Wave 2 dispatcher agents can move action items by lifecycle vocabulary
+	// without resolving column_id themselves. The pre-existing
+	// MoveActionItemState path (state-only by design) is unchanged — this
+	// field surfaces the same vocabulary on the column-only move path so
+	// agents see one consistent surface across create + move + move_state.
+	State    string
+	Position int
+	Actor    ActorLeaseTuple
 }
 
 // MoveActionItemStateRequest stores transport input for workflow-state transitions.

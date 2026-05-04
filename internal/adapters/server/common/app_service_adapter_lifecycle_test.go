@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -1007,5 +1008,200 @@ func TestMoveActionItemStateToFailed(t *testing.T) {
 	}
 	if actionItem.ColumnID != failed.ID {
 		t.Fatalf("MoveActionItemState(failed) column_id = %q, want %q", actionItem.ColumnID, failed.ID)
+	}
+}
+
+// TestCreateActionItemResolvesStateToColumn verifies the Drop 4a droplet 4a.10
+// CreateActionItem state-resolution path: when ColumnID is empty and State is
+// supplied, the adapter resolves State to the destination column whose name
+// maps to that lifecycle state via resolveActionItemColumnIDForState. Both-
+// empty rejects with the loosened "column_id or state is required" message;
+// both-non-empty rejects with the new "specify exactly one" sentinel.
+func TestCreateActionItemResolvesStateToColumn(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	actor := ActorLeaseTuple{
+		ActorID:   "user-1",
+		ActorName: "User One",
+		ActorType: string(domain.ActorTypeUser),
+	}
+
+	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
+		Name:        "CreateStateTest",
+		Description: "Test project for create-by-state resolution",
+		Actor:       actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	todo, err := fixture.svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn(To Do) error = %v", err)
+	}
+	if _, err := fixture.svc.CreateColumn(ctx, project.ID, "In Progress", 1, 0); err != nil {
+		t.Fatalf("CreateColumn(In Progress) error = %v", err)
+	}
+	if _, err := fixture.svc.CreateColumn(ctx, project.ID, "Complete", 2, 0); err != nil {
+		t.Fatalf("CreateColumn(Complete) error = %v", err)
+	}
+
+	// State-only succeeds: lands in the Todo column whose name maps to
+	// StateTodo via actionItemLifecycleStateForColumnName.
+	created, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
+		ProjectID:      project.ID,
+		State:          "todo",
+		Title:          "ActionItem by state",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
+	})
+	if err != nil {
+		t.Fatalf("CreateActionItem(state-only) error = %v", err)
+	}
+	if created.ColumnID != todo.ID {
+		t.Fatalf("CreateActionItem(state-only) column_id = %q, want %q (todo column)", created.ColumnID, todo.ID)
+	}
+	if created.LifecycleState != domain.StateTodo {
+		t.Fatalf("CreateActionItem(state-only) lifecycle_state = %q, want %q", created.LifecycleState, domain.StateTodo)
+	}
+
+	// Both-empty rejects with loosened "column_id or state is required".
+	_, err = fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
+		ProjectID:      project.ID,
+		Title:          "Neither supplied",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
+	})
+	if err == nil {
+		t.Fatal("CreateActionItem(both-empty) expected error, got nil")
+	}
+	if !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("CreateActionItem(both-empty) error = %v, want wrapped ErrInvalidCaptureStateRequest", err)
+	}
+	if !strings.Contains(err.Error(), "column_id or state is required") {
+		t.Fatalf("CreateActionItem(both-empty) error = %q, want substring %q", err.Error(), "column_id or state is required")
+	}
+
+	// Both-non-empty rejects with "specify exactly one".
+	_, err = fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		State:          "todo",
+		Title:          "Both supplied",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
+	})
+	if err == nil {
+		t.Fatal("CreateActionItem(both-non-empty) expected error, got nil")
+	}
+	if !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("CreateActionItem(both-non-empty) error = %v, want wrapped ErrInvalidCaptureStateRequest", err)
+	}
+	if !strings.Contains(err.Error(), "specify exactly one of column_id or state") {
+		t.Fatalf("CreateActionItem(both-non-empty) error = %q, want substring %q", err.Error(), "specify exactly one of column_id or state")
+	}
+}
+
+// TestMoveActionItemResolvesStateToColumn verifies the Drop 4a droplet 4a.10
+// MoveActionItem state-resolution path on the column-only-move surface (the
+// pre-existing MoveActionItemState path is unchanged): when ToColumnID is
+// empty and State is supplied, the adapter resolves State to the destination
+// column via resolveActionItemColumnIDForState keyed on the existing item's
+// ProjectID. Both-empty rejects; both-non-empty rejects.
+func TestMoveActionItemResolvesStateToColumn(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	actor := ActorLeaseTuple{
+		ActorID:   "user-1",
+		ActorName: "User One",
+		ActorType: string(domain.ActorTypeUser),
+	}
+
+	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
+		Name:        "MoveStateTest",
+		Description: "Test project for move-by-state resolution",
+		Actor:       actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	todo, err := fixture.svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn(To Do) error = %v", err)
+	}
+	inProgress, err := fixture.svc.CreateColumn(ctx, project.ID, "In Progress", 1, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn(In Progress) error = %v", err)
+	}
+
+	created, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		Title:          "ActionItem to move",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
+	})
+	if err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
+	}
+
+	// State-only move succeeds: lands in the In Progress column.
+	moved, err := fixture.adapter.MoveActionItem(ctx, MoveActionItemRequest{
+		ActionItemID: created.ID,
+		State:        "in_progress",
+		Position:     0,
+		Actor:        actor,
+	})
+	if err != nil {
+		t.Fatalf("MoveActionItem(state-only) error = %v", err)
+	}
+	if moved.ColumnID != inProgress.ID {
+		t.Fatalf("MoveActionItem(state-only) column_id = %q, want %q (in_progress column)", moved.ColumnID, inProgress.ID)
+	}
+	if moved.LifecycleState != domain.StateInProgress {
+		t.Fatalf("MoveActionItem(state-only) lifecycle_state = %q, want %q", moved.LifecycleState, domain.StateInProgress)
+	}
+
+	// Both-empty rejects with loosened "to_column_id or state is required".
+	_, err = fixture.adapter.MoveActionItem(ctx, MoveActionItemRequest{
+		ActionItemID: created.ID,
+		Position:     0,
+		Actor:        actor,
+	})
+	if err == nil {
+		t.Fatal("MoveActionItem(both-empty) expected error, got nil")
+	}
+	if !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("MoveActionItem(both-empty) error = %v, want wrapped ErrInvalidCaptureStateRequest", err)
+	}
+	if !strings.Contains(err.Error(), "to_column_id or state is required") {
+		t.Fatalf("MoveActionItem(both-empty) error = %q, want substring %q", err.Error(), "to_column_id or state is required")
+	}
+
+	// Both-non-empty rejects with "specify exactly one".
+	_, err = fixture.adapter.MoveActionItem(ctx, MoveActionItemRequest{
+		ActionItemID: created.ID,
+		ToColumnID:   inProgress.ID,
+		State:        "in_progress",
+		Position:     0,
+		Actor:        actor,
+	})
+	if err == nil {
+		t.Fatal("MoveActionItem(both-non-empty) expected error, got nil")
+	}
+	if !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("MoveActionItem(both-non-empty) error = %v, want wrapped ErrInvalidCaptureStateRequest", err)
+	}
+	if !strings.Contains(err.Error(), "specify exactly one of to_column_id or state") {
+		t.Fatalf("MoveActionItem(both-non-empty) error = %q, want substring %q", err.Error(), "specify exactly one of to_column_id or state")
 	}
 }

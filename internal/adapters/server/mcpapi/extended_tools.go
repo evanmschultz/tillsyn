@@ -1004,8 +1004,18 @@ func registerActionItemTools(
 					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 				}
 				columnID := strings.TrimSpace(args.ColumnID)
-				if columnID == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "column_id" not found`), nil
+				stateArg := strings.TrimSpace(args.State)
+				switch {
+				case columnID == "" && stateArg == "":
+					// Drop 4a droplet 4a.10: column_id was historically the
+					// only start-column field; state is now an accepted
+					// substitute. Reject when neither is present so the agent
+					// gets a fast invalid_request before auth.
+					return mcp.NewToolResultError(`invalid_request: required argument "column_id" or "state" not found`), nil
+				case columnID != "" && stateArg != "":
+					// Drop 4a droplet 4a.10: reject when BOTH are present so
+					// silent precedence bugs can't leak through.
+					return mcp.NewToolResultError(`invalid_request: specify exactly one of "column_id" or "state", not both`), nil
 				}
 				title := strings.TrimSpace(args.Title)
 				if title == "" {
@@ -1026,6 +1036,7 @@ func registerActionItemTools(
 						"project_id": projectID,
 						"parent_id":  strings.TrimSpace(args.ParentID),
 						"column_id":  columnID,
+						"state":      stateArg,
 						"scope":      strings.TrimSpace(args.Scope),
 					},
 				)
@@ -1052,13 +1063,19 @@ func registerActionItemTools(
 					Role:           args.Role,
 					StructuralType: args.StructuralType,
 					ColumnID:       args.ColumnID,
-					Title:          args.Title,
-					Description:    args.Description,
-					Priority:       args.Priority,
-					DueAt:          args.DueAt,
-					Labels:         append([]string(nil), args.Labels...),
-					Metadata:       metadata,
-					Actor:          actor,
+					// Drop 4a droplet 4a.10: thread State through verbatim
+					// (no trim — adapter trims). The adapter resolves State to
+					// a column id when ColumnID is empty; both-non-empty and
+					// both-empty rejects are enforced one layer up at the
+					// handler boundary.
+					State:       args.State,
+					Title:       args.Title,
+					Description: args.Description,
+					Priority:    args.Priority,
+					DueAt:       args.DueAt,
+					Labels:      append([]string(nil), args.Labels...),
+					Metadata:    metadata,
+					Actor:       actor,
 				}
 				// Owner / DropNumber / Persistent / DevGated are domain
 				// primitives (per L13). Pointer-sentinel inputs from the args
@@ -1235,8 +1252,18 @@ func registerActionItemTools(
 					return toolResultFromError(err), nil
 				}
 				toColumnID := strings.TrimSpace(args.ToColumnID)
-				if toColumnID == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "to_column_id" not found`), nil
+				stateArg := strings.TrimSpace(args.State)
+				switch {
+				case toColumnID == "" && stateArg == "":
+					// Drop 4a droplet 4a.10: state is now an accepted
+					// substitute for to_column_id. Reject when neither is
+					// present so the agent gets a fast invalid_request before
+					// auth.
+					return mcp.NewToolResultError(`invalid_request: required argument "to_column_id" or "state" not found`), nil
+				case toColumnID != "" && stateArg != "":
+					// Drop 4a droplet 4a.10: reject when BOTH are present so
+					// silent precedence bugs can't leak through.
+					return mcp.NewToolResultError(`invalid_request: specify exactly one of "to_column_id" or "state", not both`), nil
 				}
 				if args.Position == nil {
 					return mcp.NewToolResultError(`invalid_request: required argument "position" not found`), nil
@@ -1252,7 +1279,7 @@ func registerActionItemTools(
 					"tillsyn",
 					"actionItem",
 					actionItemID,
-					map[string]string{"action_item_id": actionItemID, "to_column_id": toColumnID},
+					map[string]string{"action_item_id": actionItemID, "to_column_id": toColumnID, "state": stateArg},
 				)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1265,9 +1292,14 @@ func registerActionItemTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
+				// Drop 4a droplet 4a.10: thread State through verbatim. The
+				// adapter resolves State to a destination column id when
+				// ToColumnID is empty; both-non-empty and both-empty rejects
+				// are enforced one layer up at the handler boundary.
 				actionItem, err := tasks.MoveActionItem(ctx, common.MoveActionItemRequest{
 					ActionItemID: actionItemID,
 					ToColumnID:   toColumnID,
+					State:        stateArg,
 					Position:     *args.Position,
 					Actor:        actor,
 				})
@@ -1477,10 +1509,10 @@ func registerActionItemTools(
 				mcp.WithString("operation", mcp.Required(), mcp.Description("Action-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent")),
 				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|create, optional for operation=search, and required for operation=get when action_item_id is a bare dotted address (omit when action_item_id is a UUID or carries a slug-prefix shorthand)")),
 				mcp.WithString("action_item_id", mcp.Description("Action-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent. operation=get accepts a UUID OR a dotted address (\"1.5.2\" or \"<slug>:1.5.2\"); mutations reject dotted form and require the UUID")),
-				mcp.WithString("column_id", mcp.Description("Column identifier. Required for operation=create")),
-				mcp.WithString("to_column_id", mcp.Description("Destination column identifier. Required for operation=move")),
+				mcp.WithString("column_id", mcp.Description("Column identifier for operation=create. Optional when state is supplied — supply exactly one of column_id or state, not both. Legacy; prefer state for new agent code (column_id stays in the DB row until Drop 4.5's columns-table retirement).")),
+				mcp.WithString("to_column_id", mcp.Description("Destination column identifier for operation=move. Optional when state is supplied — supply exactly one of to_column_id or state, not both. Legacy; prefer state for new agent code.")),
 				mcp.WithNumber("position", mcp.Description("Destination position. Required for operation=move")),
-				mcp.WithString("state", mcp.Description("Lifecycle state target for operation=move_state (for example: todo|in_progress|complete)")),
+				mcp.WithString("state", mcp.Description("Lifecycle state — todo|in_progress|complete|failed. Required for operation=move_state. Optional substitute for column_id on operation=create and for to_column_id on operation=move — supply exactly one of column_id/to_column_id or state, not both. The adapter resolves state to the destination column server-side, letting agents address columns by lifecycle vocabulary instead of resolving column_id themselves.")),
 				mcp.WithString("title", mcp.Description("Title. Required for operation=create|update")),
 				mcp.WithString("parent_id", mcp.Description("Optional parent action-item id for operation=create, new parent id for operation=reparent, or child root for operation=list")),
 				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),
