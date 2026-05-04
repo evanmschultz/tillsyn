@@ -623,6 +623,35 @@ type CancelAuthRequestRequest struct {
 	ResolutionNote string
 }
 
+// ApproveAuthRequestRequest stores transport input for the orch-self-approval
+// cascade path landed in Drop 4a Wave 3 W3.1. The MCP layer populates the
+// four ActingSessionID / ActingSessionSecret / AgentInstanceID / LeaseToken
+// fields from the calling orchestrator's authenticated session; the adapter
+// validates them via authorizeAuthSessionGovernance (which already enforces
+// principal_role==orchestrator) and forwards the four approver-identity
+// fields to app.Service.ApproveAuthRequest. Path is the optional narrower-
+// than-requested override; RequestedTTL must be ≤ the original requested
+// TTL when supplied.
+type ApproveAuthRequestRequest struct {
+	RequestID           string
+	Path                string
+	RequestedTTL        string
+	ResolutionNote      string
+	ActingSessionID     string
+	ActingSessionSecret string
+	AgentInstanceID     string
+	LeaseToken          string
+}
+
+// ApproveAuthRequestResult stores the approved auth-request record plus the
+// issued subagent session secret. SessionSecret mirrors the dev-TUI approval
+// shape (see ApprovedAuthRequestResult in the app layer); MCP clients use it
+// to bind the freshly-issued subagent session.
+type ApproveAuthRequestResult struct {
+	Request       AuthRequestRecord `json:"request"`
+	SessionSecret string            `json:"session_secret,omitempty"`
+}
+
 // AuthRequestRecord stores one transport-facing auth request row.
 type AuthRequestRecord struct {
 	ID                  string   `json:"id"`
@@ -840,6 +869,7 @@ type AuthRequestService interface {
 	GetAuthRequest(context.Context, string) (AuthRequestRecord, error)
 	ClaimAuthRequest(context.Context, ClaimAuthRequestRequest) (AuthRequestClaimResult, error)
 	CancelAuthRequest(context.Context, CancelAuthRequestRequest) (AuthRequestRecord, error)
+	ApproveAuthRequest(context.Context, ApproveAuthRequestRequest) (ApproveAuthRequestResult, error)
 	ListAuthSessions(context.Context, ListAuthSessionsRequest) ([]AuthSessionRecord, error)
 	ValidateAuthSession(context.Context, ValidateAuthSessionRequest) (AuthSessionRecord, error)
 	CheckAuthSessionGovernance(context.Context, CheckAuthSessionGovernanceRequest) (AuthSessionGovernanceCheckResult, error)

@@ -16,8 +16,13 @@ var ErrInvalidAuthentication = errors.New("invalid authentication")
 // ErrSessionExpired reports that one presented auth session is expired.
 var ErrSessionExpired = errors.New("session expired")
 
-// ErrAuthorizationDenied reports that a valid caller was denied by auth policy.
-var ErrAuthorizationDenied = errors.New("authorization denied")
+// ErrAuthorizationDenied reports that a valid caller was denied by auth
+// policy. Drop 4a Wave 3 W3.1 promoted the canonical sentinel into
+// `internal/domain/errors.go` so the app layer's orch-self-approval gate
+// can return it without crossing the adapter import boundary; this alias
+// preserves source compatibility for existing
+// `errors.Is(err, common.ErrAuthorizationDenied)` callers.
+var ErrAuthorizationDenied = domain.ErrAuthorizationDenied
 
 // ErrGrantRequired reports that a valid caller requires explicit grant approval before proceeding.
 var ErrGrantRequired = errors.New("grant required")

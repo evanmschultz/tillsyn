@@ -60,4 +60,13 @@ var (
 	ErrTransitionBlocked           = errors.New("transition blocked by completion contract")
 	ErrAuthRequestNotPending       = errors.New("auth request is not pending")
 	ErrAuthRequestExpired          = errors.New("auth request is expired")
+	// ErrAuthorizationDenied reports that a valid caller was denied by auth
+	// policy. Drop 4a Wave 3 W3.1 lifted this from the
+	// `internal/adapters/server/common` package into `domain` so the app
+	// layer's orch-self-approval gate can return it without crossing into
+	// the adapter import boundary. The `common.ErrAuthorizationDenied`
+	// alias is preserved for source compatibility — both values are equal,
+	// so existing `errors.Is(err, common.ErrAuthorizationDenied)` checks
+	// still work.
+	ErrAuthorizationDenied = errors.New("authorization denied")
 )

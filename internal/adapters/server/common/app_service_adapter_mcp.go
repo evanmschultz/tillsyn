@@ -214,6 +214,99 @@ func (a *AppServiceAdapter) ClaimAuthRequest(ctx context.Context, in ClaimAuthRe
 	}, nil
 }
 
+// ApproveAuthRequest approves one pending auth request via the orch-self-
+// approval cascade path (Drop 4a Wave 3 W3.1).
+//
+// Validation flow:
+//
+//  1. Required-field check: request_id + acting_session_id +
+//     acting_session_secret + agent_instance_id + lease_token are all
+//     mandatory. Empty values fail with ErrInvalidCaptureStateRequest.
+//  2. Acting session validation: authorizeAuthSessionGovernance loads and
+//     validates the acting session and surfaces its effective approved
+//     path. The helper already enforces that the acting session is fully
+//     valid; the adapter additionally requires
+//     authSessionRoleMayGovernOthers (principal_role==orchestrator) to
+//     keep non-orchestrator approvers from reaching the service-layer
+//     gate at all (defense-in-depth — service-layer does the same check).
+//  3. Optional path-override parse: when the caller supplied a narrower
+//     path it is parsed here so transport-layer errors surface as
+//     invalid-request, not authorization-denied.
+//  4. Optional requested_ttl parse: same surfacing rule as path-override.
+//  5. Service delegation: a.service.ApproveAuthRequest receives the four
+//     approver-identity fields populated from the validated session and
+//     the supplied agent_instance_id / lease_token; the service runs the
+//     full self-approval gate and either approves the request (issuing a
+//     subagent session) or returns ErrAuthorizationDenied.
+func (a *AppServiceAdapter) ApproveAuthRequest(ctx context.Context, in ApproveAuthRequestRequest) (ApproveAuthRequestResult, error) {
+	if a == nil || a.service == nil {
+		return ApproveAuthRequestResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	requestID := strings.TrimSpace(in.RequestID)
+	if requestID == "" {
+		return ApproveAuthRequestResult{}, fmt.Errorf("request_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	actingSessionID := strings.TrimSpace(in.ActingSessionID)
+	actingSessionSecret := strings.TrimSpace(in.ActingSessionSecret)
+	if actingSessionID == "" {
+		return ApproveAuthRequestResult{}, fmt.Errorf("acting_session_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	if actingSessionSecret == "" {
+		return ApproveAuthRequestResult{}, fmt.Errorf("acting_session_secret is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	agentInstanceID := strings.TrimSpace(in.AgentInstanceID)
+	leaseToken := strings.TrimSpace(in.LeaseToken)
+	if agentInstanceID == "" {
+		return ApproveAuthRequestResult{}, fmt.Errorf("agent_instance_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	if leaseToken == "" {
+		return ApproveAuthRequestResult{}, fmt.Errorf("lease_token is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	actingSession, _, err := a.authorizeAuthSessionGovernance(ctx, actingSessionID, actingSessionSecret)
+	if err != nil {
+		return ApproveAuthRequestResult{}, err
+	}
+	if !authSessionRoleMayGovernOthers(actingSession) {
+		return ApproveAuthRequestResult{}, fmt.Errorf("acting session role %q is not orchestrator: %w", actingSession.PrincipalRole, ErrAuthorizationDenied)
+	}
+	var pathOverride string
+	if trimmed := strings.TrimSpace(in.Path); trimmed != "" {
+		// Parse to surface transport-layer path errors as invalid-request
+		// rather than letting them bubble through the service-layer gate.
+		if _, err := domain.ParseAuthRequestPath(trimmed); err != nil {
+			return ApproveAuthRequestResult{}, err
+		}
+		pathOverride = trimmed
+	}
+	var ttlOverride time.Duration
+	if trimmed := strings.TrimSpace(in.RequestedTTL); trimmed != "" {
+		parsed, err := parseOptionalDurationString(trimmed, "requested_ttl")
+		if err != nil {
+			return ApproveAuthRequestResult{}, err
+		}
+		ttlOverride = parsed
+	}
+	result, err := a.service.ApproveAuthRequest(ctx, app.ApproveAuthRequestInput{
+		RequestID:               requestID,
+		Path:                    pathOverride,
+		SessionTTL:              ttlOverride,
+		ResolvedBy:              strings.TrimSpace(actingSession.PrincipalID),
+		ResolvedType:            domain.ActorTypeAgent,
+		ResolutionNote:          strings.TrimSpace(in.ResolutionNote),
+		ApproverPrincipalID:     strings.TrimSpace(actingSession.PrincipalID),
+		ApproverAgentInstanceID: agentInstanceID,
+		ApproverLeaseToken:      leaseToken,
+		ApproverSessionID:       strings.TrimSpace(actingSession.SessionID),
+	})
+	if err != nil {
+		return ApproveAuthRequestResult{}, mapAppError("approve auth request", err)
+	}
+	return ApproveAuthRequestResult{
+		Request:       mapAuthRequestRecord(result.Request),
+		SessionSecret: result.SessionSecret,
+	}, nil
+}
+
 // CancelAuthRequest cancels one pending auth request through app-level APIs.
 func (a *AppServiceAdapter) CancelAuthRequest(ctx context.Context, in CancelAuthRequestRequest) (AuthRequestRecord, error) {
 	if a == nil || a.service == nil {
