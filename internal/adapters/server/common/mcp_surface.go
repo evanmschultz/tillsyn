@@ -95,7 +95,13 @@ type CreateActionItemRequest struct {
 	// DevGated marks nodes whose terminal transition requires dev sign-off
 	// (refinement rollups, human-verify hold points). Default false.
 	// Domain primitive — not STEWARD-specific.
-	DevGated    bool
+	DevGated bool
+	// Paths optionally enumerates the new action item's write-scope file
+	// paths (forward-slash, repo-root-relative). Empty slice IS the
+	// meaningful zero value (no path scope) — no pointer-sentinel needed at
+	// the create boundary. Threaded through app.CreateActionItemInput →
+	// domain.NewActionItem in droplet 4a.5. Domain primitive per Drop 4a L3.
+	Paths       []string
 	ColumnID    string
 	Title       string
 	Description string
@@ -153,6 +159,16 @@ type UpdateActionItemRequest struct {
 	// DevGated optionally updates the DevGated flag. Same pointer-sentinel
 	// rationale as Persistent above.
 	DevGated *bool
+	// Paths optionally updates the action-item Paths slice. nil pointer =
+	// "preserve existing"; non-nil pointer = "replace with this slice"
+	// (empty dereferenced slice clears all declared paths). The pointer
+	// sentinel matters because a description-only update by an agent must
+	// NOT silently clobber a planner-set Paths declaration. Threaded
+	// through app.UpdateActionItemInput; service applies via
+	// domain.NormalizeActionItemPaths so the create-time trim/dedupe/
+	// forward-slash rules apply equally on update. Domain primitive per
+	// Drop 4a L3.
+	Paths    *[]string
 	Metadata *domain.ActionItemMetadata
 	Actor    ActorLeaseTuple
 }

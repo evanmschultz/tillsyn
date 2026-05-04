@@ -782,3 +782,96 @@ func TestSnapshotActionItemOwnerLegacyFormatCompatibility(t *testing.T) {
 			hydrated.Owner, hydrated.DropNumber, hydrated.Persistent, hydrated.DevGated)
 	}
 }
+
+// TestSnapshotActionItemPathsRoundTrip verifies that the Paths slice added
+// in Drop 4a droplet 4a.5 survives the domain → snapshot → domain round-
+// trip across the empty zero-value case and representative populated cases.
+// Insertion order must be preserved end-to-end (the dispatcher's lock
+// manager reads the slice as ordered). Legacy-format compatibility (pre-
+// 4a.5 snapshots without the field) is covered by the json:"paths,omitempty"
+// tag — missing field deserializes to nil, the legitimate zero value, with
+// no SnapshotVersion bump.
+func TestSnapshotActionItemPathsRoundTrip(t *testing.T) {
+	now := time.Date(2026, 5, 3, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name  string
+		paths []string
+		want  []string
+	}{
+		{name: "nil-zero-value", paths: nil, want: nil},
+		{name: "single-path", paths: []string{"internal/domain/action_item.go"}, want: []string{"internal/domain/action_item.go"}},
+		{name: "multi-path-order-preserved", paths: []string{"a/b/c.go", "d/e/f.go", "g.go"}, want: []string{"a/b/c.go", "d/e/f.go", "g.go"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			original, err := domain.NewActionItemForTest(domain.ActionItemInput{
+				ID:        "t-paths",
+				ProjectID: "p1",
+				ColumnID:  "c1",
+				Position:  0,
+				Title:     "Paths round-trip",
+				Priority:  domain.PriorityMedium,
+				Kind:      domain.KindBuild,
+				Paths:     tc.paths,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			snap := snapshotActionItemFromDomain(original)
+			if len(snap.Paths) != len(tc.want) {
+				t.Fatalf("snapshotActionItemFromDomain dropped paths: got %#v, want %#v", snap.Paths, tc.want)
+			}
+			for i := range tc.want {
+				if snap.Paths[i] != tc.want[i] {
+					t.Fatalf("snapshot Paths[%d] = %q, want %q", i, snap.Paths[i], tc.want[i])
+				}
+			}
+			hydrated := snap.toDomain()
+			if len(hydrated.Paths) != len(tc.want) {
+				t.Fatalf("toDomain dropped paths: got %#v, want %#v", hydrated.Paths, tc.want)
+			}
+			for i := range tc.want {
+				if hydrated.Paths[i] != tc.want[i] {
+					t.Fatalf("hydrated Paths[%d] = %q, want %q", i, hydrated.Paths[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestSnapshotActionItemPathsLegacyFormatCompatibility verifies that a
+// pre-droplet-4a.5 snapshot — one whose JSON wire form OMITS the paths
+// field entirely — deserializes cleanly with Paths=nil. The omitempty tag
+// keeps older snapshots forward-compatible without a SnapshotVersion bump.
+func TestSnapshotActionItemPathsLegacyFormatCompatibility(t *testing.T) {
+	legacyJSON := []byte(`{
+		"id": "t-legacy-paths",
+		"project_id": "p1",
+		"kind": "build",
+		"structural_type": "droplet",
+		"lifecycle_state": "todo",
+		"column_id": "c1",
+		"position": 0,
+		"title": "Legacy snapshot, no paths",
+		"description": "pre-4a.5 row",
+		"priority": "medium",
+		"labels": [],
+		"metadata": {},
+		"created_by_actor": "u1",
+		"updated_by_actor": "u1",
+		"updated_by_type": "user",
+		"created_at": "2026-04-01T00:00:00Z",
+		"updated_at": "2026-04-01T00:00:00Z"
+	}`)
+	var snap SnapshotActionItem
+	if err := json.Unmarshal(legacyJSON, &snap); err != nil {
+		t.Fatalf("legacy snapshot unmarshal error = %v", err)
+	}
+	if len(snap.Paths) != 0 {
+		t.Fatalf("legacy snapshot Paths = %#v, want nil", snap.Paths)
+	}
+	hydrated := snap.toDomain()
+	if len(hydrated.Paths) != 0 {
+		t.Fatalf("legacy snapshot toDomain Paths = %#v, want nil", hydrated.Paths)
+	}
+}

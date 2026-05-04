@@ -27,6 +27,7 @@ var (
 	ErrInvalidRole                 = errors.New("invalid role")
 	ErrInvalidStructuralType       = errors.New("invalid structural type")
 	ErrInvalidDropNumber           = errors.New("invalid drop number")
+	ErrInvalidPaths                = errors.New("invalid paths")
 	ErrInvalidLifecycleState       = errors.New("invalid lifecycle state")
 	ErrInvalidActorType            = errors.New("invalid actor type")
 	ErrInvalidAttentionState       = errors.New("invalid attention state")

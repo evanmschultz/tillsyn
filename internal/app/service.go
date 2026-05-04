@@ -521,7 +521,14 @@ type CreateActionItemInput struct {
 	// DevGated marks nodes whose terminal transition requires dev sign-off
 	// (refinement rollups, human-verify hold points). Default false. Domain
 	// primitive — not STEWARD-specific.
-	DevGated       bool
+	DevGated bool
+	// Paths optionally enumerates the action item's write-scope file paths
+	// (forward-slash, repo-root-relative). Empty slice IS the meaningful
+	// zero value (no path scope declared) — no pointer-sentinel needed.
+	// domain.NewActionItem trims + dedupes; whitespace-only / backslash-
+	// bearing entries reject with ErrInvalidPaths. Domain primitive per
+	// Drop 4a L3.
+	Paths          []string
 	ColumnID       string
 	Title          string
 	Description    string
@@ -574,7 +581,15 @@ type UpdateActionItemInput struct {
 	Persistent *bool
 	// DevGated optionally updates the action-item DevGated flag. Same
 	// pointer-sentinel rationale as Persistent above.
-	DevGated      *bool
+	DevGated *bool
+	// Paths optionally updates the action-item Paths slice. nil preserves
+	// the existing value (no-op); non-nil replaces it. Pointer-sentinel
+	// distinguishes "absent / preserve" from "explicit empty / clear all
+	// declared paths" — a description-only update by an agent must NOT
+	// silently clobber a planner-set Paths declaration. Domain primitive
+	// per Drop 4a L3; service trims/dedupes via domain.NewActionItem-style
+	// normalization at apply time.
+	Paths         *[]string
 	Metadata      *domain.ActionItemMetadata
 	UpdatedBy     string
 	UpdatedByName string
@@ -751,6 +766,7 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 		DropNumber:     in.DropNumber,
 		Persistent:     in.Persistent,
 		DevGated:       in.DevGated,
+		Paths:          in.Paths,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,
@@ -1026,6 +1042,19 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 	}
 	if in.DevGated != nil {
 		actionItem.DevGated = *in.DevGated
+		actionItem.UpdatedAt = s.clock().UTC()
+	}
+	// Paths update uses pointer-sentinel: nil preserves the existing slice
+	// (no-op); non-nil applies the dereferenced slice through the canonical
+	// domain.NormalizeActionItemPaths gate so the same trim/dedupe/forward-
+	// slash rules NewActionItem enforces apply equally on update. Empty
+	// dereferenced slice clears all declared paths (explicit caller intent).
+	if in.Paths != nil {
+		normalized, err := domain.NormalizeActionItemPaths(*in.Paths)
+		if err != nil {
+			return domain.ActionItem{}, err
+		}
+		actionItem.Paths = normalized
 		actionItem.UpdatedAt = s.clock().UTC()
 	}
 	if in.Metadata != nil {

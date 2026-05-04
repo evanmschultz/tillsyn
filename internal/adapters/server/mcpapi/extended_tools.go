@@ -873,6 +873,7 @@ func registerActionItemTools(
 				DropNumber      *int                       `json:"drop_number"`
 				Persistent      *bool                      `json:"persistent"`
 				DevGated        *bool                      `json:"dev_gated"`
+				Paths           *[]string                  `json:"paths"`
 				ColumnID        string                     `json:"column_id"`
 				Title           string                     `json:"title"`
 				Description     string                     `json:"description"`
@@ -1073,6 +1074,12 @@ func registerActionItemTools(
 				if args.DevGated != nil {
 					createReq.DevGated = *args.DevGated
 				}
+				// Paths pointer-sentinel: nil = "not supplied" → leave the
+				// request's empty-slice zero value (domain accepts as no
+				// path scope); non-nil → copy the supplied slice through.
+				if args.Paths != nil {
+					createReq.Paths = append([]string(nil), (*args.Paths)...)
+				}
 				actionItem, err := tasks.CreateActionItem(ctx, createReq)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1136,8 +1143,13 @@ func registerActionItemTools(
 					DropNumber: args.DropNumber,
 					Persistent: args.Persistent,
 					DevGated:   args.DevGated,
-					Metadata:   args.Metadata,
-					Actor:      actor,
+					// Paths pointer-sentinel passes through verbatim: nil
+					// preserves the existing slice at the service boundary;
+					// non-nil applies the dereferenced slice (empty
+					// dereferenced slice clears all declared paths).
+					Paths:    args.Paths,
+					Metadata: args.Metadata,
+					Actor:    actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1412,6 +1424,7 @@ func registerActionItemTools(
 				mcp.WithNumber("drop_number", mcp.Description("Optional cascade drop index for operation=create|update. Zero = \"not a numbered drop\"; positive values round-trip; negative values reject with invalid_request. On update, omit to preserve the existing value.")),
 				mcp.WithBoolean("persistent", mcp.Description("Optional Persistent flag for operation=create|update — long-lived umbrella / anchor / perpetual-tracking nodes. Default false. Domain primitive — not STEWARD-specific. On update, omit to preserve the existing value (a value-typed bool would silently clobber Persistent=true on STEWARD anchors).")),
 				mcp.WithBoolean("dev_gated", mcp.Description("Optional DevGated flag for operation=create|update — nodes whose terminal transition requires dev sign-off. Default false. Domain primitive — not STEWARD-specific. On update, omit to preserve the existing value.")),
+				mcp.WithArray("paths", mcp.Description("Optional Paths string-array for operation=create|update — declares the action item's write-scope file paths (forward-slash, repo-root-relative). Empty array on create = no path scope declared. On update, omit to preserve the existing slice; supplying any array (including empty) replaces the declared paths. Domain trims + dedupes; whitespace-only / backslash-bearing entries reject with invalid_request. Domain primitive — Drop 4a L3 lock-domain field consumed by the Wave 2 dispatcher's file-level lock manager."), mcp.WithStringItems()),
 				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),

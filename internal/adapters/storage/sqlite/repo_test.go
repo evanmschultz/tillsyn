@@ -2606,6 +2606,157 @@ func TestRepository_PersistsActionItemOwnerAndDropNumber(t *testing.T) {
 	}
 }
 
+// TestRepository_PersistsActionItemPaths verifies the paths_json column
+// added in Drop 4a droplet 4a.5 round-trips across create + get + list +
+// list-by-parent + update on an action item. Cases cover empty / single /
+// multi / repeated cases so the JSON encode/decode path exercises insertion-
+// order preservation, the empty-slice "[]" default, and explicit-clear via
+// update. The test mirrors TestRepository_PersistsActionItemOwnerAndDropNumber
+// so the SELECT/INSERT/UPDATE column-ordinal alignment for the new column is
+// asserted on every storage path.
+func TestRepository_PersistsActionItemPaths(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-paths", "Paths", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c-paths", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	cases := []struct {
+		id    string
+		paths []string
+		want  []string
+	}{
+		{id: "t-paths-empty", paths: nil, want: nil},
+		{id: "t-paths-single", paths: []string{"internal/domain/action_item.go"}, want: []string{"internal/domain/action_item.go"}},
+		{id: "t-paths-multi", paths: []string{"a/b/c.go", "d/e/f.go"}, want: []string{"a/b/c.go", "d/e/f.go"}},
+	}
+
+	for i, tc := range cases {
+		item, err := domain.NewActionItem(domain.ActionItemInput{
+			ID:             tc.id,
+			ProjectID:      project.ID,
+			ColumnID:       column.ID,
+			Kind:           domain.KindBuild,
+			StructuralType: domain.StructuralTypeDroplet,
+			Paths:          tc.paths,
+			Position:       i,
+			Title:          "paths " + tc.id,
+			Priority:       domain.PriorityMedium,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewActionItem(%s) error = %v", tc.id, err)
+		}
+		if err := repo.CreateActionItem(ctx, item); err != nil {
+			t.Fatalf("CreateActionItem(%s) error = %v", tc.id, err)
+		}
+		loaded, err := repo.GetActionItem(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%s) error = %v", tc.id, err)
+		}
+		assertPathsEqual(t, "GetActionItem("+tc.id+")", loaded.Paths, tc.want)
+	}
+
+	// ListActionItems exercises the second SELECT path.
+	listed, err := repo.ListActionItems(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	if len(listed) != len(cases) {
+		t.Fatalf("ListActionItems() length = %d, want %d", len(listed), len(cases))
+	}
+	byID := map[string]domain.ActionItem{}
+	for _, item := range listed {
+		byID[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItems() missing %q", tc.id)
+		}
+		assertPathsEqual(t, "ListActionItems()["+tc.id+"]", got.Paths, tc.want)
+	}
+
+	// ListActionItemsByParent exercises the third SELECT path.
+	parentListed, err := repo.ListActionItemsByParent(ctx, project.ID, "")
+	if err != nil {
+		t.Fatalf("ListActionItemsByParent() error = %v", err)
+	}
+	byIDParent := map[string]domain.ActionItem{}
+	for _, item := range parentListed {
+		byIDParent[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byIDParent[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItemsByParent() missing %q", tc.id)
+		}
+		assertPathsEqual(t, "ListActionItemsByParent()["+tc.id+"]", got.Paths, tc.want)
+	}
+
+	// Reassign on update: replace t-paths-empty's Paths with a populated
+	// slice, then clear t-paths-multi's Paths back to nil. Verifies the
+	// UPDATE SET clause writes both populated and empty payloads.
+	target, err := repo.GetActionItem(ctx, "t-paths-empty")
+	if err != nil {
+		t.Fatalf("GetActionItem(reassign source) error = %v", err)
+	}
+	target.Paths = []string{"x/y.go", "z.go"}
+	target.UpdatedAt = now.Add(time.Hour)
+	if err := repo.UpdateActionItem(ctx, target); err != nil {
+		t.Fatalf("UpdateActionItem(populate paths) error = %v", err)
+	}
+	reloaded, err := repo.GetActionItem(ctx, target.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after populate) error = %v", err)
+	}
+	assertPathsEqual(t, "after populate", reloaded.Paths, []string{"x/y.go", "z.go"})
+
+	clearTarget, err := repo.GetActionItem(ctx, "t-paths-multi")
+	if err != nil {
+		t.Fatalf("GetActionItem(clear source) error = %v", err)
+	}
+	clearTarget.Paths = nil
+	clearTarget.UpdatedAt = now.Add(2 * time.Hour)
+	if err := repo.UpdateActionItem(ctx, clearTarget); err != nil {
+		t.Fatalf("UpdateActionItem(clear paths) error = %v", err)
+	}
+	clearReloaded, err := repo.GetActionItem(ctx, clearTarget.ID)
+	if err != nil {
+		t.Fatalf("GetActionItem(after clear) error = %v", err)
+	}
+	if len(clearReloaded.Paths) != 0 {
+		t.Fatalf("after clear: Paths = %#v, want empty", clearReloaded.Paths)
+	}
+}
+
+// assertPathsEqual fails the test when the actual and expected paths slices
+// disagree on length or insertion order. nil and len-0 slices are treated as
+// equal so callers may pass either form.
+func assertPathsEqual(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s: Paths length = %d (%#v), want %d (%#v)", label, len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s: Paths[%d] = %q, want %q (full = %#v)", label, i, got[i], want[i], got)
+		}
+	}
+}
+
 // TestRepository_IndexCoversDropNumberQuery sanity-checks that querying by
 // (project_id, drop_number) returns the expected rows after the 3.18 schema
 // change. The query shape mirrors what the 3.20 auto-generator will issue;

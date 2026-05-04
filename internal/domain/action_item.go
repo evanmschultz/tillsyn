@@ -78,7 +78,17 @@ type ActionItem struct {
 	// Default false. The refinements gate is the dominant present-day
 	// consumer, but DevGated is a domain primitive — not STEWARD-specific.
 	// Semantics per `ta-docs/cascade-methodology.md` §11.2.
-	DevGated       bool
+	DevGated bool
+	// Paths optionally enumerates the relative-from-repo-root file paths the
+	// action item declares as its write scope (lock domain). Forward slashes
+	// only (matches `git ls-files` output convention). Empty slice is the
+	// meaningful zero value — no path scope declared. NewActionItem trims
+	// each entry, dedupes (matches Labels normalization), and rejects
+	// whitespace-only / backslash-bearing entries with ErrInvalidPaths.
+	// Path-exists is NOT enforced at the domain layer — paths often refer to
+	// files the build droplet will create. Validation is consumer-side
+	// (Drop 4a Wave 2 lock manager). Domain primitive per Drop 4a L3.
+	Paths          []string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -143,7 +153,15 @@ type ActionItemInput struct {
 	// (refinement rollups, human-verify hold points). Default false.
 	// Domain primitive — not STEWARD-specific. Semantics per
 	// `ta-docs/cascade-methodology.md` §11.2.
-	DevGated       bool
+	DevGated bool
+	// Paths optionally enumerates the action item's write-scope relative
+	// paths (forward-slash, repo-root-relative). Empty slice is the
+	// meaningful zero value (no path scope declared). NewActionItem trims +
+	// dedupes; whitespace-only / backslash-bearing entries reject with
+	// ErrInvalidPaths. Path-exists is NOT enforced at this layer — paths may
+	// refer to files the build droplet will create. Domain primitive per
+	// Drop 4a L3.
+	Paths          []string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -294,6 +312,11 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		return ActionItem{}, err
 	}
 
+	paths, err := normalizeActionItemPaths(in.Paths)
+	if err != nil {
+		return ActionItem{}, err
+	}
+
 	return ActionItem{
 		ID:             in.ID,
 		ProjectID:      in.ProjectID,
@@ -307,6 +330,7 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		DropNumber:     in.DropNumber,
 		Persistent:     in.Persistent,
 		DevGated:       in.DevGated,
+		Paths:          paths,
 		LifecycleState: in.LifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       in.Position,
@@ -506,4 +530,53 @@ func normalizeLabels(labels []string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// NormalizeActionItemPaths normalizes the Paths slice using the same rules
+// NewActionItem applies at construction time. Exposed so callers that
+// mutate ActionItem.Paths after construction (e.g. Service.UpdateActionItem
+// applying a pointer-sentinel update) reuse the canonical
+// trim/dedupe/forward-slash-check logic rather than reimplementing it.
+//
+// Behaviour: each entry is trimmed; whitespace-only / empty entries reject
+// with ErrInvalidPaths (rather than silently dropping — empty entries
+// almost always indicate a planner bug, not benign noise). Backslash-
+// bearing entries also reject with ErrInvalidPaths to enforce the forward-
+// slash / `git ls-files` convention. Duplicates after trim are silently
+// deduped to match the Labels precedent (path duplicates almost always
+// come from copy-paste in agent prompts; rejecting forces agent retries on
+// benign noise). Insertion order is preserved (the dispatcher's lock
+// manager reads the slice as ordered, so deterministic ordering matters).
+// Empty input (nil or len == 0) returns nil. Path-exists is intentionally
+// NOT enforced — paths often refer to files the build droplet will create.
+// Drop 4a Wave 2 lock manager performs runtime validation when locks are
+// acquired.
+func NormalizeActionItemPaths(paths []string) ([]string, error) {
+	return normalizeActionItemPaths(paths)
+}
+
+// normalizeActionItemPaths is the internal worker for NormalizeActionItemPaths;
+// see that function's doc for behaviour. NewActionItem calls this directly
+// to avoid the extra wrapper hop.
+func normalizeActionItemPaths(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(paths))
+	seen := map[string]struct{}{}
+	for _, raw := range paths {
+		path := strings.TrimSpace(raw)
+		if path == "" {
+			return nil, ErrInvalidPaths
+		}
+		if strings.ContainsRune(path, '\\') {
+			return nil, ErrInvalidPaths
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out, nil
 }

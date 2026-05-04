@@ -67,6 +67,7 @@ type SnapshotActionItem struct {
 	DropNumber     int                       `json:"drop_number,omitempty"`
 	Persistent     bool                      `json:"persistent,omitempty"`
 	DevGated       bool                      `json:"dev_gated,omitempty"`
+	Paths          []string                  `json:"paths,omitempty"`
 	LifecycleState domain.LifecycleState     `json:"lifecycle_state"`
 	ColumnID       string                    `json:"column_id"`
 	Position       int                       `json:"position"`
@@ -1081,6 +1082,7 @@ func snapshotActionItemFromDomain(t domain.ActionItem) SnapshotActionItem {
 		DropNumber:     t.DropNumber,
 		Persistent:     t.Persistent,
 		DevGated:       t.DevGated,
+		Paths:          append([]string(nil), t.Paths...),
 		LifecycleState: t.LifecycleState,
 		ColumnID:       t.ColumnID,
 		Position:       t.Position,
@@ -1339,10 +1341,15 @@ func (t SnapshotActionItem) toDomain() domain.ActionItem {
 		// / false), which are the legitimate domain defaults; legacy-format
 		// compatibility is covered by the json:",omitempty" tags. No
 		// SnapshotVersion bump required.
-		Owner:          t.Owner,
-		DropNumber:     t.DropNumber,
-		Persistent:     t.Persistent,
-		DevGated:       t.DevGated,
+		Owner:      t.Owner,
+		DropNumber: t.DropNumber,
+		Persistent: t.Persistent,
+		DevGated:   t.DevGated,
+		// Paths has no fallback — same rationale as the four primitives
+		// above. Pre-droplet-4a.5 snapshots without this field deserialize
+		// to nil, which is the legitimate domain zero value. Legacy-format
+		// compatibility is covered by the json:"paths,omitempty" tag.
+		Paths:          append([]string(nil), t.Paths...),
 		LifecycleState: state,
 		ColumnID:       strings.TrimSpace(t.ColumnID),
 		Position:       t.Position,

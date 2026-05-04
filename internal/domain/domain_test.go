@@ -1021,3 +1021,65 @@ func TestNewActionItemDevGatedRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// TestNewActionItemPathsNormalization covers the Paths []string field added
+// in Drop 4a droplet 4a.5. Empty input round-trips as nil; single + multi
+// path inputs round-trip with insertion order preserved (the dispatcher's
+// lock manager reads the slice as ordered). Surrounding whitespace is
+// trimmed. Duplicates after trim are silently deduped to match the Labels
+// precedent. Whitespace-only / empty entries reject with ErrInvalidPaths
+// (planner bug, not benign noise). Backslash-bearing entries reject with
+// ErrInvalidPaths to enforce the forward-slash / git-ls-files convention.
+// Path-exists is intentionally NOT enforced at the domain layer — paths
+// often refer to files the build droplet will create. Drop 4a Wave 2 lock
+// manager performs runtime validation.
+func TestNewActionItemPathsNormalization(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name      string
+		input     []string
+		wantPaths []string
+		wantErr   error
+	}{
+		{name: "nil round-trips empty", input: nil, wantPaths: nil, wantErr: nil},
+		{name: "empty slice round-trips empty", input: []string{}, wantPaths: nil, wantErr: nil},
+		{name: "single path round-trips", input: []string{"internal/domain/action_item.go"}, wantPaths: []string{"internal/domain/action_item.go"}, wantErr: nil},
+		{name: "multi path preserves insertion order", input: []string{"a/b/c.go", "d/e/f.go"}, wantPaths: []string{"a/b/c.go", "d/e/f.go"}, wantErr: nil},
+		{name: "surrounding whitespace trimmed", input: []string{"  a/b.go  ", "c.go"}, wantPaths: []string{"a/b.go", "c.go"}, wantErr: nil},
+		{name: "duplicates after trim dedupe", input: []string{"a.go", "a.go", "  a.go  ", "b.go"}, wantPaths: []string{"a.go", "b.go"}, wantErr: nil},
+		{name: "empty entry rejects", input: []string{"a.go", ""}, wantPaths: nil, wantErr: ErrInvalidPaths},
+		{name: "whitespace-only entry rejects", input: []string{"   ", "a.go"}, wantPaths: nil, wantErr: ErrInvalidPaths},
+		{name: "backslash rejects", input: []string{`internal\domain\action_item.go`}, wantPaths: nil, wantErr: ErrInvalidPaths},
+		{name: "mixed slashes rejects on first backslash", input: []string{"a/b.go", `c\d.go`}, wantPaths: nil, wantErr: ErrInvalidPaths},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-paths",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				Paths:          tc.input,
+			}, now)
+			if err != tc.wantErr {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if len(actionItem.Paths) != len(tc.wantPaths) {
+				t.Fatalf("Paths length = %d (%#v), want %d (%#v)", len(actionItem.Paths), actionItem.Paths, len(tc.wantPaths), tc.wantPaths)
+			}
+			for i := range tc.wantPaths {
+				if actionItem.Paths[i] != tc.wantPaths[i] {
+					t.Fatalf("Paths[%d] = %q, want %q (full = %#v)", i, actionItem.Paths[i], tc.wantPaths[i], actionItem.Paths)
+				}
+			}
+		})
+	}
+}
