@@ -328,9 +328,10 @@ func (s *Service) CreateAuthRequest(ctx context.Context, req domain.AuthRequest)
 			requested_session_ttl_seconds, approved_path, approved_session_ttl_seconds, reason, continuation_json,
 			state, requested_by_actor, requested_by_type, created_at, expires_at,
 			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
-			issued_session_id, issued_session_secret, issued_session_expires_at
+			issued_session_id, issued_session_secret, issued_session_expires_at,
+			approving_principal_id, approving_agent_instance_id, approving_lease_token
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		req.ID,
 		req.ProjectID,
@@ -363,6 +364,9 @@ func (s *Service) CreateAuthRequest(ctx context.Context, req domain.AuthRequest)
 		req.IssuedSessionID,
 		req.IssuedSessionSecret,
 		nullableTime(req.IssuedSessionExpiresAt),
+		req.ApprovingPrincipalID,
+		req.ApprovingAgentInstanceID,
+		req.ApprovingLeaseToken,
 	)
 	if err != nil {
 		return domain.AuthRequest{}, fmt.Errorf("insert auth request: %w", err)
@@ -399,7 +403,8 @@ func (s *Service) ListAuthRequests(ctx context.Context, filter domain.AuthReques
 			requested_session_ttl_seconds, approved_path, approved_session_ttl_seconds, reason, continuation_json,
 			state, requested_by_actor, requested_by_type, created_at, expires_at,
 			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
-			issued_session_id, issued_session_secret, issued_session_expires_at
+			issued_session_id, issued_session_secret, issued_session_expires_at,
+			approving_principal_id, approving_agent_instance_id, approving_lease_token
 		FROM auth_requests
 		WHERE 1 = 1
 	`
@@ -492,7 +497,18 @@ func (s *Service) ApproveAuthRequest(ctx context.Context, in app.ApproveAuthRequ
 	}
 	req.ApprovedPath = approvedPath.String()
 	req.ApprovedSessionTTL = approvedTTL
-	if err := req.Approve(strings.TrimSpace(in.ResolvedBy), in.ResolvedType, in.ResolutionNote, issued.Session.ID, issued.Secret, issued.Session.ExpiresAt, s.clock()); err != nil {
+	if err := req.Approve(
+		strings.TrimSpace(in.ResolvedBy),
+		in.ResolvedType,
+		in.ResolutionNote,
+		issued.Session.ID,
+		issued.Secret,
+		issued.Session.ExpiresAt,
+		s.clock(),
+		strings.TrimSpace(in.ApproverPrincipalID),
+		strings.TrimSpace(in.ApproverAgentInstanceID),
+		strings.TrimSpace(in.ApproverLeaseToken),
+	); err != nil {
 		return app.ApprovedAuthRequestResult{}, err
 	}
 	if err := s.retryAuthRequestWrite(ctx, func() error { return s.updateAuthRequest(ctx, req) }); err != nil {
@@ -912,6 +928,9 @@ func ensureAuthRequestSchema(db *sql.DB) error {
 		`ALTER TABLE auth_requests ADD COLUMN principal_role TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE auth_requests ADD COLUMN approved_path TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE auth_requests ADD COLUMN approved_session_ttl_seconds INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE auth_requests ADD COLUMN approving_principal_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE auth_requests ADD COLUMN approving_agent_instance_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE auth_requests ADD COLUMN approving_lease_token TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alterStatements {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumnErr(err) {
@@ -939,7 +958,8 @@ func (s *Service) getAuthRequest(ctx context.Context, requestID string) (domain.
 			requested_session_ttl_seconds, approved_path, approved_session_ttl_seconds, reason, continuation_json,
 			state, requested_by_actor, requested_by_type, created_at, expires_at,
 			resolved_by_actor, resolved_by_type, resolved_at, resolution_note,
-			issued_session_id, issued_session_secret, issued_session_expires_at
+			issued_session_id, issued_session_secret, issued_session_expires_at,
+			approving_principal_id, approving_agent_instance_id, approving_lease_token
 		FROM auth_requests
 		WHERE id = ?
 	`, strings.TrimSpace(requestID))
@@ -985,7 +1005,8 @@ func (s *Service) updateAuthRequest(ctx context.Context, req domain.AuthRequest)
 			requested_session_ttl_seconds = ?, approved_path = ?, approved_session_ttl_seconds = ?, reason = ?, continuation_json = ?,
 			state = ?, requested_by_actor = ?, requested_by_type = ?, created_at = ?, expires_at = ?,
 			resolved_by_actor = ?, resolved_by_type = ?, resolved_at = ?, resolution_note = ?,
-			issued_session_id = ?, issued_session_secret = ?, issued_session_expires_at = ?
+			issued_session_id = ?, issued_session_secret = ?, issued_session_expires_at = ?,
+			approving_principal_id = ?, approving_agent_instance_id = ?, approving_lease_token = ?
 		WHERE id = ?
 	`,
 		req.ProjectID,
@@ -1018,6 +1039,9 @@ func (s *Service) updateAuthRequest(ctx context.Context, req domain.AuthRequest)
 		req.IssuedSessionID,
 		req.IssuedSessionSecret,
 		nullableTime(req.IssuedSessionExpiresAt),
+		req.ApprovingPrincipalID,
+		req.ApprovingAgentInstanceID,
+		req.ApprovingLeaseToken,
 		req.ID,
 	)
 	if err != nil {
@@ -1073,6 +1097,9 @@ func scanAuthRequest(scanner interface{ Scan(...any) error }) (domain.AuthReques
 		&req.IssuedSessionID,
 		&req.IssuedSessionSecret,
 		&issuedSessionExpires,
+		&req.ApprovingPrincipalID,
+		&req.ApprovingAgentInstanceID,
+		&req.ApprovingLeaseToken,
 	); err != nil {
 		return domain.AuthRequest{}, err
 	}

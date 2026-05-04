@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -1257,5 +1258,150 @@ func TestAppServiceAdapterApproveAuthRequestHonorsProjectToggleDisabled(t *testi
 	}
 	if result.Request.State != "approved" {
 		t.Fatalf("ApproveAuthRequest(post-toggle-reset) state = %q, want approved", result.Request.State)
+	}
+}
+
+// TestAuthRequestRecordSurfacesApprovingOrchIdentity verifies the Drop 4a
+// Wave 3 W3.3 audit-trail surface: GetAuthRequest after an orch-self-approval
+// returns a record whose JSON encodes all three approving_* fields, and
+// after a dev-TUI approval the record encodes the omitempty-elided shape
+// (no approving_* keys present).
+func TestAuthRequestRecordSurfacesApprovingOrchIdentity(t *testing.T) {
+	adapter, _ := newAuthRequestAdapterForTest(t)
+	ctx := context.Background()
+
+	// Bootstrap an orchestrator session via the dev-TUI path.
+	orchApproved := mustCreateApprovedAuthSessionForTest(t, adapter, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "ORCH_INSTANCE_W33",
+		PrincipalType:    "agent",
+		PrincipalRole:    "orchestrator",
+		PrincipalName:    "Drop W3.3 Orchestrator",
+		ClientID:         "till-mcp-stdio-orch",
+		ClientType:       "mcp-stdio",
+		ClientName:       "Orch MCP",
+		RequestedByActor: "lane-user",
+		RequestedByType:  "user",
+		Reason:           "W3.3 audit-trail orch session",
+	}, "")
+	if orchApproved.SessionSecret == "" {
+		t.Fatal("orchestrator session secret missing from dev-TUI approve")
+	}
+
+	// Cascade orch-approves a pending builder request — populates audit
+	// fields end-to-end.
+	pendingBuilder, err := adapter.CreateAuthRequest(ctx, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "BUILDER_AGENT_W33",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		PrincipalName:    "Builder Subagent",
+		ClientID:         "till-mcp-stdio-builder",
+		ClientType:       "mcp-stdio",
+		ClientName:       "Builder MCP",
+		RequestedByActor: "ORCH_INSTANCE_W33",
+		RequestedByType:  "agent",
+		Reason:           "delegated builder for W3.3 audit-trail",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(builder) error = %v", err)
+	}
+	approveResult, err := adapter.ApproveAuthRequest(ctx, ApproveAuthRequestRequest{
+		RequestID:           pendingBuilder.ID,
+		ActingSessionID:     orchApproved.Request.IssuedSessionID,
+		ActingSessionSecret: orchApproved.SessionSecret,
+		AgentInstanceID:     "AGENT_INSTANCE_W33",
+		LeaseToken:          "LEASE_TOKEN_W33",
+		ResolutionNote:      "W3.3 audit-trail cascade",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+	if approveResult.Request.ApprovingPrincipalID != "ORCH_INSTANCE_W33" ||
+		approveResult.Request.ApprovingAgentInstanceID != "AGENT_INSTANCE_W33" ||
+		approveResult.Request.ApprovingLeaseToken != "LEASE_TOKEN_W33" {
+		t.Fatalf("ApproveAuthRequest() approving fields = %q/%q/%q, want orch identity round-trip",
+			approveResult.Request.ApprovingPrincipalID,
+			approveResult.Request.ApprovingAgentInstanceID,
+			approveResult.Request.ApprovingLeaseToken,
+		)
+	}
+
+	// Adapter GetAuthRequest round-trip: the persisted columns surface back
+	// onto the transport-facing record.
+	gotOrch, err := adapter.GetAuthRequest(ctx, pendingBuilder.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest(orch-approved) error = %v", err)
+	}
+	if gotOrch.ApprovingPrincipalID != "ORCH_INSTANCE_W33" ||
+		gotOrch.ApprovingAgentInstanceID != "AGENT_INSTANCE_W33" ||
+		gotOrch.ApprovingLeaseToken != "LEASE_TOKEN_W33" {
+		t.Fatalf("GetAuthRequest(orch-approved) approving fields = %q/%q/%q, want round-tripped",
+			gotOrch.ApprovingPrincipalID,
+			gotOrch.ApprovingAgentInstanceID,
+			gotOrch.ApprovingLeaseToken,
+		)
+	}
+
+	encodedOrch, err := json.Marshal(gotOrch)
+	if err != nil {
+		t.Fatalf("json.Marshal(orch-approved) error = %v", err)
+	}
+	for _, key := range []string{
+		`"approving_principal_id":"ORCH_INSTANCE_W33"`,
+		`"approving_agent_instance_id":"AGENT_INSTANCE_W33"`,
+		`"approving_lease_token":"LEASE_TOKEN_W33"`,
+	} {
+		if !strings.Contains(string(encodedOrch), key) {
+			t.Fatalf("json(orch-approved) = %s, want to contain %s", encodedOrch, key)
+		}
+	}
+
+	// Counter-case: dev-TUI approval emits omitempty-elided JSON shape.
+	pendingTUI, err := adapter.CreateAuthRequest(ctx, CreateAuthRequestRequest{
+		Path:             "project/p1",
+		PrincipalID:      "BUILDER_AGENT_TUI",
+		PrincipalType:    "agent",
+		PrincipalRole:    "builder",
+		ClientID:         "till-mcp-stdio-tui",
+		ClientType:       "mcp-stdio",
+		RequestedByActor: "lane-user",
+		RequestedByType:  "user",
+		Reason:           "dev-TUI counter-case",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest(tui) error = %v", err)
+	}
+	if _, err := adapter.service.ApproveAuthRequest(ctx, app.ApproveAuthRequestInput{
+		RequestID:      pendingTUI.ID,
+		ResolvedBy:     "operator-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "dev TUI",
+	}); err != nil {
+		t.Fatalf("ApproveAuthRequest(tui) error = %v", err)
+	}
+	gotTUI, err := adapter.GetAuthRequest(ctx, pendingTUI.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest(tui) error = %v", err)
+	}
+	if gotTUI.ApprovingPrincipalID != "" || gotTUI.ApprovingAgentInstanceID != "" || gotTUI.ApprovingLeaseToken != "" {
+		t.Fatalf("GetAuthRequest(tui) approving fields = %q/%q/%q, want all empty",
+			gotTUI.ApprovingPrincipalID,
+			gotTUI.ApprovingAgentInstanceID,
+			gotTUI.ApprovingLeaseToken,
+		)
+	}
+	encodedTUI, err := json.Marshal(gotTUI)
+	if err != nil {
+		t.Fatalf("json.Marshal(tui) error = %v", err)
+	}
+	for _, key := range []string{
+		`approving_principal_id`,
+		`approving_agent_instance_id`,
+		`approving_lease_token`,
+	} {
+		if strings.Contains(string(encodedTUI), key) {
+			t.Fatalf("json(tui) = %s, want omitempty to elide %s", encodedTUI, key)
+		}
 	}
 }

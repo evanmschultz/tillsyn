@@ -138,6 +138,12 @@ type AuthRequest struct {
 	IssuedSessionID        string
 	IssuedSessionSecret    string
 	IssuedSessionExpiresAt *time.Time
+	// Audit-trail fields populated only when transitioned `pending → approved`
+	// via orch-self-approval (Drop 4a Wave 3). Empty when approval came
+	// through dev-TUI or in any non-`approved` state.
+	ApprovingPrincipalID     string
+	ApprovingAgentInstanceID string
+	ApprovingLeaseToken      string
 }
 
 // AuthRequestInput holds write-time values for creating one auth request.
@@ -565,7 +571,16 @@ func (r AuthRequest) IsExpired(now time.Time) bool {
 }
 
 // Approve transitions one pending auth request into the approved state.
-func (r *AuthRequest) Approve(resolvedBy string, resolvedByType ActorType, note, sessionID, sessionSecret string, sessionExpiresAt time.Time, now time.Time) error {
+//
+// Approver-identity fields (Drop 4a Wave 3 W3.3 audit-trail): the trailing
+// approvingPrincipalID / approvingAgentInstanceID / approvingLeaseToken
+// arguments populate the persisted audit-trail fields on AuthRequest. They
+// are required (all-three non-empty) when resolvedByType == ActorTypeAgent —
+// the orch-self-approval cascade path. They MUST be empty when
+// resolvedByType == ActorTypeUser — the dev-TUI / system path. Any other
+// resolvedByType (system) accepts empty values; the gate-side W3.1 plumbing
+// guards which transport flows reach this method.
+func (r *AuthRequest) Approve(resolvedBy string, resolvedByType ActorType, note, sessionID, sessionSecret string, sessionExpiresAt time.Time, now time.Time, approvingPrincipalID, approvingAgentInstanceID, approvingLeaseToken string) error {
 	if r == nil {
 		return ErrInvalidID
 	}
@@ -581,6 +596,20 @@ func (r *AuthRequest) Approve(resolvedBy string, resolvedByType ActorType, note,
 	if !isValidActorType(resolvedByType) {
 		return ErrInvalidActorType
 	}
+	approvingPrincipalID = strings.TrimSpace(approvingPrincipalID)
+	approvingAgentInstanceID = strings.TrimSpace(approvingAgentInstanceID)
+	approvingLeaseToken = strings.TrimSpace(approvingLeaseToken)
+	// Defense-in-depth domain assertion (Drop 4a Wave 3 W3.3): when an agent
+	// approves on behalf of the dev (orch-self-approval cascade path), every
+	// audit-trail field MUST be present. Empty values for an agent approval
+	// indicate a coding bug in the gate / adapter plumbing — fail closed.
+	// User approvals (dev-TUI) are exempt because audit-trail fields are
+	// meaningful only when the approver is itself an agent session.
+	if resolvedByType == ActorTypeAgent {
+		if approvingPrincipalID == "" || approvingAgentInstanceID == "" || approvingLeaseToken == "" {
+			return fmt.Errorf("approving-orch identity must be fully populated for agent approvals: %w", ErrInvalidID)
+		}
+	}
 	ts := now.UTC()
 	r.State = AuthRequestStateApproved
 	r.ResolvedByActor = strings.TrimSpace(resolvedBy)
@@ -591,6 +620,9 @@ func (r *AuthRequest) Approve(resolvedBy string, resolvedByType ActorType, note,
 	r.IssuedSessionSecret = sessionSecret
 	exp := sessionExpiresAt.UTC()
 	r.IssuedSessionExpiresAt = &exp
+	r.ApprovingPrincipalID = approvingPrincipalID
+	r.ApprovingAgentInstanceID = approvingAgentInstanceID
+	r.ApprovingLeaseToken = approvingLeaseToken
 	return nil
 }
 
