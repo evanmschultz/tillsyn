@@ -3818,3 +3818,141 @@ func TestActionItemMCPOwnerDropNumberPersistentDevGatedRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+// TestActionItemMCPPathsRoundTrip verifies the Paths []string field added
+// in Drop 4a droplet 4a.5 plumbs cleanly through the till.action_item MCP
+// tool on both create and update operations. The field follows the same
+// pointer-sentinel pattern as Owner/DropNumber/Persistent/DevGated on
+// update (nil = preserve, non-nil = replace), with create collapsing to a
+// value-type []string ([]string{} or nil zero-value). The test mirrors
+// TestActionItemMCPOwnerDropNumberPersistentDevGatedRoundTrip so the
+// JSON-RPC → CreateActionItemRequest → service hop is exercised end-to-end.
+func TestActionItemMCPPathsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*stubExpandedService, *httptest.Server) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return service, server
+	}
+
+	t.Run("create plumbs paths slice through to request", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7300, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "Paths One",
+			"paths":             []any{"internal/domain/action_item.go", "internal/domain/errors.go"},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		got := service.lastCreateActionItemReq.Paths
+		want := []string{"internal/domain/action_item.go", "internal/domain/errors.go"}
+		if len(got) != len(want) {
+			t.Fatalf("CreateActionItemRequest.Paths = %#v, want %#v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("CreateActionItemRequest.Paths[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("create without paths round-trips empty slice", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7301, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "Paths None",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if len(service.lastCreateActionItemReq.Paths) != 0 {
+			t.Fatalf("CreateActionItemRequest.Paths = %#v, want empty", service.lastCreateActionItemReq.Paths)
+		}
+	})
+
+	t.Run("update with paths plumbs as non-nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7302, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "Paths Updated",
+			"paths":             []any{"a/b.go"},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Paths == nil {
+			t.Fatalf("UpdateActionItemRequest.Paths = nil, want non-nil pointer to [\"a/b.go\"]")
+		}
+		got := *service.lastUpdateActionItemReq.Paths
+		if len(got) != 1 || got[0] != "a/b.go" {
+			t.Fatalf("UpdateActionItemRequest.Paths = %#v, want [\"a/b.go\"]", got)
+		}
+	})
+
+	t.Run("update with empty paths array plumbs as non-nil pointer to empty slice (explicit clear)", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7303, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "Paths Cleared",
+			"paths":             []any{},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Paths == nil {
+			t.Fatalf("UpdateActionItemRequest.Paths = nil, want non-nil pointer to empty slice (explicit clear)")
+		}
+		if got := *service.lastUpdateActionItemReq.Paths; len(got) != 0 {
+			t.Fatalf("UpdateActionItemRequest.Paths = %#v, want empty slice (explicit clear)", got)
+		}
+	})
+
+	t.Run("update without paths preserves prior via nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7304, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "Paths Preserved",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Paths != nil {
+			t.Fatalf("UpdateActionItemRequest.Paths = %v, want nil (preserve)", service.lastUpdateActionItemReq.Paths)
+		}
+	})
+}

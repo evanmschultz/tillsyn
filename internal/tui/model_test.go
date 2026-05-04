@@ -14863,6 +14863,7 @@ func TestActionItemSchemaCoverageIsExplicit(t *testing.T) {
 		"DropNumber":     {},
 		"Persistent":     {},
 		"DevGated":       {},
+		"Paths":          {},
 		"LifecycleState": {},
 		"ColumnID":       {},
 		"Position":       {},
