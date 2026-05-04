@@ -58,6 +58,25 @@ func (s *Service) publishAttentionChanged(projectID string) {
 	})
 }
 
+// publishActionItemChanged wakes live waiters interested in project-scoped
+// action-item changes. Drop 4a Wave 2.2 wires the cascade dispatcher's broker
+// subscriber against this event; the wait key is the owning project ID so a
+// single wakeup fans out across every dispatcher walking that project's tree.
+func (s *Service) publishActionItemChanged(projectID string) {
+	if s == nil || s.liveWait == nil {
+		return
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return
+	}
+	s.liveWait.Publish(LiveWaitEvent{
+		Type:  LiveWaitEventActionItemChanged,
+		Key:   projectID,
+		Value: projectID,
+	})
+}
+
 // publishHandoffChanged wakes live waiters interested in project-scoped handoff changes.
 func (s *Service) publishHandoffChanged(projectID string) {
 	if s == nil || s.liveWait == nil {
