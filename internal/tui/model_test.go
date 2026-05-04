@@ -9465,7 +9465,7 @@ func TestModelAuthInventorySplitsPendingAndResolvedRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest(approved) error = %v", err)
 	}
-	if err := approved.Approve("approver-1", domain.ActorTypeUser, "approved", "sess-1", "secret-1", now.Add(2*time.Hour), now.Add(time.Minute)); err != nil {
+	if err := approved.Approve("approver-1", domain.ActorTypeUser, "approved", "sess-1", "secret-1", now.Add(2*time.Hour), now.Add(time.Minute), "", "", ""); err != nil {
 		t.Fatalf("Approve() error = %v", err)
 	}
 

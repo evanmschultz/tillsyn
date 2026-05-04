@@ -262,7 +262,7 @@ func TestAuthRequestLifecycleTransitions(t *testing.T) {
 		// sanity branch only
 	}
 
-	if err := req.Approve("approver-1", ActorTypeUser, "approved", "sess-1", "secret-1", now.Add(time.Hour), now); err != nil {
+	if err := req.Approve("approver-1", ActorTypeUser, "approved", "sess-1", "secret-1", now.Add(time.Hour), now, "", "", ""); err != nil {
 		t.Fatalf("Approve() error = %v", err)
 	}
 	if req.State != AuthRequestStateApproved || req.IssuedSessionID != "sess-1" {
@@ -624,7 +624,7 @@ func TestAuthRequestLifecycleRejectsInvalidStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthRequest() error = %v", err)
 	}
-	if err := req.Approve("approver", ActorType("robot"), "note", "sess", "secret", now.Add(time.Hour), now); !errors.Is(err, ErrInvalidActorType) {
+	if err := req.Approve("approver", ActorType("robot"), "note", "sess", "secret", now.Add(time.Hour), now, "", "", ""); !errors.Is(err, ErrInvalidActorType) {
 		t.Fatalf("Approve() error = %v, want ErrInvalidActorType", err)
 	}
 	if err := req.Deny("approver", ActorType("robot"), "note", now); !errors.Is(err, ErrInvalidActorType) {
@@ -770,6 +770,112 @@ func TestNewAuthRequestPlannerOnNonProjectPathRejected(t *testing.T) {
 			}
 			if req.PrincipalRole != role {
 				t.Fatalf("NewAuthRequest(%s) principal_role = %q, want %q", role, req.PrincipalRole, role)
+			}
+		})
+	}
+}
+
+// TestApproveRejectsAgentApprovalWithEmptyAuditFields verifies the Drop 4a
+// Wave 3 W3.3 defense-in-depth assertion: agent (orch-self-approval cascade)
+// approvals MUST carry all three approving-orch identity fields. User
+// (dev-TUI) approvals stay exempt.
+func TestApproveRejectsAgentApprovalWithEmptyAuditFields(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	mkPending := func() AuthRequest {
+		req, err := NewAuthRequest(AuthRequestInput{
+			ID:                  "req-1",
+			Path:                AuthRequestPath{ProjectID: "p1"},
+			PrincipalID:         "agent-1",
+			PrincipalType:       "agent",
+			ClientID:            "till-mcp-stdio",
+			ClientType:          "mcp-stdio",
+			RequestedSessionTTL: time.Hour,
+			Reason:              "fixture",
+			Timeout:             30 * time.Minute,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewAuthRequest() error = %v", err)
+		}
+		return req
+	}
+
+	tests := []struct {
+		name       string
+		actorType  ActorType
+		approving1 string
+		approving2 string
+		approving3 string
+		wantErr    bool
+	}{
+		{
+			name:      "agent approval all empty rejected",
+			actorType: ActorTypeAgent,
+			wantErr:   true,
+		},
+		{
+			name:       "agent approval missing instance id rejected",
+			actorType:  ActorTypeAgent,
+			approving1: "orch-1",
+			approving2: "",
+			approving3: "lease-1",
+			wantErr:    true,
+		},
+		{
+			name:       "agent approval missing lease rejected",
+			actorType:  ActorTypeAgent,
+			approving1: "orch-1",
+			approving2: "agent-instance-1",
+			approving3: "",
+			wantErr:    true,
+		},
+		{
+			name:       "agent approval all populated accepted",
+			actorType:  ActorTypeAgent,
+			approving1: "orch-1",
+			approving2: "agent-instance-1",
+			approving3: "lease-1",
+			wantErr:    false,
+		},
+		{
+			name:      "user approval empty audit accepted",
+			actorType: ActorTypeUser,
+			wantErr:   false,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := mkPending()
+			err := req.Approve(
+				"approver-1",
+				tc.actorType,
+				"note",
+				"sess-1",
+				"secret-1",
+				now.Add(time.Hour),
+				now,
+				tc.approving1,
+				tc.approving2,
+				tc.approving3,
+			)
+			if tc.wantErr {
+				if !errors.Is(err, ErrInvalidID) {
+					t.Fatalf("Approve(%s) error = %v, want ErrInvalidID", tc.name, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Approve(%s) error = %v, want nil", tc.name, err)
+			}
+			if req.ApprovingPrincipalID != tc.approving1 || req.ApprovingAgentInstanceID != tc.approving2 || req.ApprovingLeaseToken != tc.approving3 {
+				t.Fatalf("Approve(%s) audit fields = %q/%q/%q, want %q/%q/%q",
+					tc.name,
+					req.ApprovingPrincipalID, req.ApprovingAgentInstanceID, req.ApprovingLeaseToken,
+					tc.approving1, tc.approving2, tc.approving3,
+				)
 			}
 		})
 	}

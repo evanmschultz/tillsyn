@@ -1395,3 +1395,199 @@ func TestAuthorizeNonStewardCallerHasEmptyOrAgentAuthRequestPrincipalType(t *tes
 		t.Fatalf("Authorize(agent) caller.AuthRequestPrincipalType = %q, want agent", result.Caller.AuthRequestPrincipalType)
 	}
 }
+
+// newAuthRequestServiceForTest spins up one Service backed by a fresh sqlite
+// repo. Returns the service plus the open repo so the caller can issue extra
+// operations (e.g. asserting ALTER idempotency on a freshly-created DB) and
+// register cleanup.
+func newAuthRequestServiceForTest(t *testing.T, dbPath string, now time.Time) *Service {
+	t.Helper()
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", dbPath, err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	auth, err := NewSharedDB(Config{
+		DB:    repo.DB(),
+		Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Project One"}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput() error = %v", err)
+	}
+	if err := repo.CreateProject(context.Background(), project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	return auth
+}
+
+// TestApproveAuthRequestPersistsApprovingOrchAudit verifies the Drop 4a Wave 3
+// W3.3 audit-trail columns persist and round-trip through GetAuthRequest when
+// an orch self-approval populates ApproverPrincipalID /
+// ApproverAgentInstanceID / ApproverLeaseToken.
+func TestApproveAuthRequestPersistsApprovingOrchAudit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	auth := newAuthRequestServiceForTest(t, filepath.Join(t.TempDir(), "tillsyn.db"), now)
+
+	created, err := auth.CreateAuthRequest(ctx, domain.AuthRequest{
+		ID:                  "req-audit-1",
+		Path:                "project/p1",
+		ProjectID:           "p1",
+		ScopeType:           domain.ScopeLevelProject,
+		ScopeID:             "p1",
+		PrincipalID:         "agent-1",
+		PrincipalType:       "agent",
+		PrincipalRole:       "builder",
+		PrincipalName:       "Builder Agent",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: 2 * time.Hour,
+		Reason:              "audit-trail fixture",
+		Continuation:        map[string]any{"resume_token": "resume-1"},
+		State:               domain.AuthRequestStatePending,
+		RequestedByActor:    "orch-requesting",
+		RequestedByType:     domain.ActorTypeAgent,
+		CreatedAt:           now,
+		ExpiresAt:           now.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+
+	approved, err := auth.ApproveAuthRequest(ctx, app.ApproveAuthRequestGatewayInput{
+		RequestID:               created.ID,
+		ResolvedBy:              "orch-approving",
+		ResolvedType:            domain.ActorTypeAgent,
+		ResolutionNote:          "orch self-approval cascade",
+		ApproverPrincipalID:     "orch-approving",
+		ApproverAgentInstanceID: "orch-approving::instance-7",
+		ApproverLeaseToken:      "lease-token-xyz",
+		ApproverSessionID:       "approver-session-id",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+	if approved.Request.ApprovingPrincipalID != "orch-approving" ||
+		approved.Request.ApprovingAgentInstanceID != "orch-approving::instance-7" ||
+		approved.Request.ApprovingLeaseToken != "lease-token-xyz" {
+		t.Fatalf("ApproveAuthRequest() audit fields = %q/%q/%q, want orch-approving/instance-7/lease-token-xyz",
+			approved.Request.ApprovingPrincipalID,
+			approved.Request.ApprovingAgentInstanceID,
+			approved.Request.ApprovingLeaseToken,
+		)
+	}
+
+	// Round-trip via GetAuthRequest — verifies INSERT-then-UPDATE plumbing
+	// and the scanner all read the new columns from the SQLite row.
+	loaded, err := auth.GetAuthRequest(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest() error = %v", err)
+	}
+	if loaded.ApprovingPrincipalID != "orch-approving" ||
+		loaded.ApprovingAgentInstanceID != "orch-approving::instance-7" ||
+		loaded.ApprovingLeaseToken != "lease-token-xyz" {
+		t.Fatalf("GetAuthRequest() audit fields = %q/%q/%q, want round-tripped orch-approving identity",
+			loaded.ApprovingPrincipalID,
+			loaded.ApprovingAgentInstanceID,
+			loaded.ApprovingLeaseToken,
+		)
+	}
+	if loaded.State != domain.AuthRequestStateApproved {
+		t.Fatalf("GetAuthRequest() state = %q, want approved", loaded.State)
+	}
+}
+
+// TestApproveAuthRequestDevTUIPathLeavesAuditEmpty verifies the legacy
+// dev-TUI / system path leaves the W3.3 audit-trail columns at the schema
+// default ” AND verifies the ALTER block is idempotent across re-runs of
+// ensureAuthRequestSchema (covers the freshly-created-DB case AND the
+// re-run-on-existing-table case).
+func TestApproveAuthRequestDevTUIPathLeavesAuditEmpty(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	dbPath := filepath.Join(t.TempDir(), "tillsyn.db")
+	auth := newAuthRequestServiceForTest(t, dbPath, now)
+
+	// Dev-TUI approval path: ResolvedType=user, all four approver-identity
+	// fields empty.
+	created, err := auth.CreateAuthRequest(ctx, domain.AuthRequest{
+		ID:                  "req-tui-1",
+		Path:                "project/p1",
+		ProjectID:           "p1",
+		ScopeType:           domain.ScopeLevelProject,
+		ScopeID:             "p1",
+		PrincipalID:         "agent-2",
+		PrincipalType:       "agent",
+		PrincipalRole:       "builder",
+		ClientID:            "till-mcp-stdio",
+		ClientType:          "mcp-stdio",
+		RequestedSessionTTL: time.Hour,
+		Reason:              "dev TUI path fixture",
+		Continuation:        map[string]any{"resume_token": "resume-2"},
+		State:               domain.AuthRequestStatePending,
+		RequestedByActor:    "lane-user",
+		RequestedByType:     domain.ActorTypeUser,
+		CreatedAt:           now,
+		ExpiresAt:           now.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	approved, err := auth.ApproveAuthRequest(ctx, app.ApproveAuthRequestGatewayInput{
+		RequestID:      created.ID,
+		ResolvedBy:     "user-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "dev TUI approval",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+	if approved.Request.ApprovingPrincipalID != "" || approved.Request.ApprovingAgentInstanceID != "" || approved.Request.ApprovingLeaseToken != "" {
+		t.Fatalf("ApproveAuthRequest(dev TUI) audit fields = %q/%q/%q, want all empty",
+			approved.Request.ApprovingPrincipalID,
+			approved.Request.ApprovingAgentInstanceID,
+			approved.Request.ApprovingLeaseToken,
+		)
+	}
+
+	// Re-run ensureAuthRequestSchema on the existing DB. The
+	// isDuplicateColumnErr skip-on-already-exists pattern covers the W3.3
+	// columns the same way it covers the W3.1 / pre-W3 columns. A second
+	// invocation must be a no-op.
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("re-Open(%q) error = %v", dbPath, err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := ensureAuthRequestSchema(repo.DB()); err != nil {
+		t.Fatalf("ensureAuthRequestSchema(re-run) error = %v, want nil (idempotent)", err)
+	}
+
+	// Round-trip the persisted row through GetAuthRequest after the re-run
+	// to verify the scanner still reads the empty audit columns cleanly.
+	loaded, err := auth.GetAuthRequest(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest() error = %v", err)
+	}
+	if loaded.ApprovingPrincipalID != "" || loaded.ApprovingAgentInstanceID != "" || loaded.ApprovingLeaseToken != "" {
+		t.Fatalf("GetAuthRequest(after re-run) audit fields = %q/%q/%q, want all empty",
+			loaded.ApprovingPrincipalID,
+			loaded.ApprovingAgentInstanceID,
+			loaded.ApprovingLeaseToken,
+		)
+	}
+	if loaded.State != domain.AuthRequestStateApproved {
+		t.Fatalf("GetAuthRequest() state = %q, want approved", loaded.State)
+	}
+}

@@ -686,6 +686,13 @@ type AuthRequestRecord struct {
 	ResolutionNote         string         `json:"resolution_note,omitempty"`
 	IssuedSessionID        string         `json:"issued_session_id,omitempty"`
 	IssuedSessionExpiresAt *time.Time     `json:"issued_session_expires_at,omitempty"`
+	// Audit-trail surface for orch-self-approval (Drop 4a Wave 3 W3.3).
+	// Empty when the approval came through dev-TUI / system path or when the
+	// request is in any non-`approved` state. JSON `omitempty` keeps the
+	// dev-TUI surface unchanged.
+	ApprovingPrincipalID     string `json:"approving_principal_id,omitempty"`
+	ApprovingAgentInstanceID string `json:"approving_agent_instance_id,omitempty"`
+	ApprovingLeaseToken      string `json:"approving_lease_token,omitempty"`
 }
 
 // AuthRequestClaimResult stores one requester-visible auth request state plus approved session secret material.
