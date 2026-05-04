@@ -69,6 +69,7 @@ type SnapshotActionItem struct {
 	DevGated       bool                      `json:"dev_gated,omitempty"`
 	Paths          []string                  `json:"paths,omitempty"`
 	Packages       []string                  `json:"packages,omitempty"`
+	Files          []string                  `json:"files,omitempty"`
 	LifecycleState domain.LifecycleState     `json:"lifecycle_state"`
 	ColumnID       string                    `json:"column_id"`
 	Position       int                       `json:"position"`
@@ -1085,6 +1086,7 @@ func snapshotActionItemFromDomain(t domain.ActionItem) SnapshotActionItem {
 		DevGated:       t.DevGated,
 		Paths:          append([]string(nil), t.Paths...),
 		Packages:       append([]string(nil), t.Packages...),
+		Files:          append([]string(nil), t.Files...),
 		LifecycleState: t.LifecycleState,
 		ColumnID:       t.ColumnID,
 		Position:       t.Position,
@@ -1356,7 +1358,12 @@ func (t SnapshotActionItem) toDomain() domain.ActionItem {
 		// Pre-droplet-4a.6 snapshots without this field deserialize to nil,
 		// which is the legitimate domain zero value. Legacy-format
 		// compatibility is covered by the json:"packages,omitempty" tag.
-		Packages:       append([]string(nil), t.Packages...),
+		Packages: append([]string(nil), t.Packages...),
+		// Files has no fallback — same rationale as Paths/Packages above.
+		// Pre-droplet-4a.7 snapshots without this field deserialize to nil,
+		// which is the legitimate domain zero value. Legacy-format
+		// compatibility is covered by the json:"files,omitempty" tag.
+		Files:          append([]string(nil), t.Files...),
 		LifecycleState: state,
 		ColumnID:       strings.TrimSpace(t.ColumnID),
 		Position:       t.Position,

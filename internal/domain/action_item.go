@@ -101,7 +101,24 @@ type ActionItem struct {
 	// ErrInvalidPackages, message "packages must cover paths"). Strict
 	// path→package resolution is deferred to the Wave 2 lock manager.
 	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
-	Packages       []string
+	Packages []string
+	// Files optionally enumerates relative-from-repo-root file paths the
+	// action item attaches as reference material — files the agent should
+	// read or look at while doing the work, distinct from Paths (which
+	// declares write-scope / lock domain). Forward slashes only (matches
+	// `git ls-files` convention). Empty slice is the meaningful zero value
+	// — no reference files attached. NewActionItem trims each entry,
+	// dedupes (matches Labels / Paths normalization), and rejects
+	// whitespace-only / backslash-bearing entries with ErrInvalidFiles.
+	// Path-exists is NOT enforced at the domain layer — the canonical
+	// consumer is the Drop 4.5 TUI file-viewer pane, which validates path
+	// existence at view time. Disjoint-axis with Paths: Files and Paths
+	// are NOT cross-checked for overlap or disjointness — Paths declares
+	// write intent (lock scope) while Files declares read attention
+	// (reference attachments), and legitimate overlap is permitted (e.g.
+	// an agent edits a file referenced as a viewer in a read-then-edit
+	// workflow). Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.3.
+	Files          []string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -182,7 +199,16 @@ type ActionItemInput struct {
 	// non-empty Packages (else ErrInvalidPackages "packages must cover
 	// paths"). Strict path→package resolution is deferred to the Wave 2
 	// lock manager. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
-	Packages       []string
+	Packages []string
+	// Files optionally enumerates the action item's reference-material
+	// relative paths (forward-slash, repo-root-relative). Empty slice is
+	// the meaningful zero value (no reference files attached).
+	// NewActionItem trims + dedupes; whitespace-only / backslash-bearing
+	// entries reject with ErrInvalidFiles. Disjoint-axis with Paths —
+	// Files (read attention) and Paths (write intent / lock scope) may
+	// legitimately overlap, so no cross-axis check is performed. Domain
+	// primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.3.
+	Files          []string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -351,6 +377,15 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		return ActionItem{}, ErrInvalidPackages
 	}
 
+	// Files is the reference-attachment slice (read attention). Normalized
+	// independently of Paths/Packages — disjoint-axis rule per
+	// WAVE_1_PLAN.md §1.3 means legitimate overlap with Paths is permitted
+	// and no cross-axis coverage check applies.
+	files, err := normalizeActionItemFiles(in.Files)
+	if err != nil {
+		return ActionItem{}, err
+	}
+
 	return ActionItem{
 		ID:             in.ID,
 		ProjectID:      in.ProjectID,
@@ -366,6 +401,7 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		DevGated:       in.DevGated,
 		Paths:          paths,
 		Packages:       packages,
+		Files:          files,
 		LifecycleState: in.LifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       in.Position,
@@ -661,6 +697,58 @@ func normalizeActionItemPackages(packages []string) ([]string, error) {
 		}
 		seen[pkg] = struct{}{}
 		out = append(out, pkg)
+	}
+	return out, nil
+}
+
+// NormalizeActionItemFiles normalizes the Files slice using the same rules
+// NewActionItem applies at construction time. Exposed so callers that
+// mutate ActionItem.Files after construction (e.g. Service.UpdateActionItem
+// applying a pointer-sentinel update) reuse the canonical
+// trim/dedupe/forward-slash-check logic rather than reimplementing it.
+//
+// Behaviour: each entry is trimmed; whitespace-only / empty entries reject
+// with ErrInvalidFiles (rather than silently dropping — empty entries
+// almost always indicate a planner bug, not benign noise). Backslash-
+// bearing entries also reject with ErrInvalidFiles to enforce the
+// forward-slash / `git ls-files` convention. Duplicates after trim are
+// silently deduped to match the Labels / Paths precedent. Insertion order
+// is preserved (the canonical consumer is the Drop 4.5 TUI file-viewer
+// pane, which reads the slice as ordered). Empty input (nil or len == 0)
+// returns nil. Path-exists is intentionally NOT enforced — paths often
+// refer to files the build droplet will create, and consumer-side
+// validation (Drop 4.5 file-viewer) handles existence at view time.
+//
+// Disjoint-axis with Paths: Files is NOT cross-checked against Paths for
+// overlap or disjointness, since legitimate overlap is permitted —
+// e.g. an agent may edit a file referenced as a viewer in a read-then-
+// edit workflow.
+func NormalizeActionItemFiles(files []string) ([]string, error) {
+	return normalizeActionItemFiles(files)
+}
+
+// normalizeActionItemFiles is the internal worker for
+// NormalizeActionItemFiles; see that function's doc for behaviour.
+// NewActionItem calls this directly to avoid the extra wrapper hop.
+func normalizeActionItemFiles(files []string) ([]string, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(files))
+	seen := map[string]struct{}{}
+	for _, raw := range files {
+		file := strings.TrimSpace(raw)
+		if file == "" {
+			return nil, ErrInvalidFiles
+		}
+		if strings.ContainsRune(file, '\\') {
+			return nil, ErrInvalidFiles
+		}
+		if _, ok := seen[file]; ok {
+			continue
+		}
+		seen[file] = struct{}{}
+		out = append(out, file)
 	}
 	return out, nil
 }

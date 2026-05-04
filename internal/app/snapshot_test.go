@@ -982,3 +982,106 @@ func TestSnapshotActionItemPackagesLegacyFormatCompatibility(t *testing.T) {
 		t.Fatalf("legacy snapshot toDomain Packages = %#v, want nil", hydrated.Packages)
 	}
 }
+
+// TestSnapshotActionItemFilesRoundTrip verifies that the Files slice added
+// in Drop 4a droplet 4a.7 survives the domain → snapshot → domain round-
+// trip across the empty zero-value case and representative populated
+// cases. Insertion order must be preserved end-to-end (the Drop 4.5
+// file-viewer pane reads the slice as ordered). Legacy-format
+// compatibility (pre-4a.7 snapshots without the field) is covered by the
+// json:"files,omitempty" tag — missing field deserializes to nil, the
+// legitimate zero value, with no SnapshotVersion bump. Files is disjoint-
+// axis with Paths so the populated cases also exercise legitimate
+// overlap with Paths to assert no cross-axis check rejects the round-
+// trip; the covering Packages entry is supplied so the Paths/Packages
+// coverage invariant doesn't shadow the Files-round-trip assertion.
+func TestSnapshotActionItemFilesRoundTrip(t *testing.T) {
+	now := time.Date(2026, 5, 3, 11, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name     string
+		paths    []string
+		packages []string
+		files    []string
+		want     []string
+	}{
+		{name: "nil-zero-value", paths: nil, packages: nil, files: nil, want: nil},
+		{name: "single-file", paths: nil, packages: nil, files: []string{"docs/README.md"}, want: []string{"docs/README.md"}},
+		{name: "multi-file-order-preserved", paths: nil, packages: nil, files: []string{"docs/A.md", "docs/B.md", "docs/C.md"}, want: []string{"docs/A.md", "docs/B.md", "docs/C.md"}},
+		{name: "files-overlap-with-paths-allowed", paths: []string{"internal/domain/action_item.go"}, packages: []string{"internal/domain"}, files: []string{"internal/domain/action_item.go"}, want: []string{"internal/domain/action_item.go"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			original, err := domain.NewActionItemForTest(domain.ActionItemInput{
+				ID:        "t-files",
+				ProjectID: "p1",
+				ColumnID:  "c1",
+				Position:  0,
+				Title:     "Files round-trip",
+				Priority:  domain.PriorityMedium,
+				Kind:      domain.KindBuild,
+				Paths:     tc.paths,
+				Packages:  tc.packages,
+				Files:     tc.files,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			snap := snapshotActionItemFromDomain(original)
+			if len(snap.Files) != len(tc.want) {
+				t.Fatalf("snapshotActionItemFromDomain dropped files: got %#v, want %#v", snap.Files, tc.want)
+			}
+			for i := range tc.want {
+				if snap.Files[i] != tc.want[i] {
+					t.Fatalf("snapshot Files[%d] = %q, want %q", i, snap.Files[i], tc.want[i])
+				}
+			}
+			hydrated := snap.toDomain()
+			if len(hydrated.Files) != len(tc.want) {
+				t.Fatalf("toDomain dropped files: got %#v, want %#v", hydrated.Files, tc.want)
+			}
+			for i := range tc.want {
+				if hydrated.Files[i] != tc.want[i] {
+					t.Fatalf("hydrated Files[%d] = %q, want %q", i, hydrated.Files[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestSnapshotActionItemFilesLegacyFormatCompatibility verifies that a
+// pre-droplet-4a.7 snapshot — one whose JSON wire form OMITS the files
+// field entirely — deserializes cleanly with Files=nil. The omitempty
+// tag keeps older snapshots forward-compatible without a SnapshotVersion
+// bump.
+func TestSnapshotActionItemFilesLegacyFormatCompatibility(t *testing.T) {
+	legacyJSON := []byte(`{
+		"id": "t-legacy-files",
+		"project_id": "p1",
+		"kind": "build",
+		"structural_type": "droplet",
+		"lifecycle_state": "todo",
+		"column_id": "c1",
+		"position": 0,
+		"title": "Legacy snapshot, no files",
+		"description": "pre-4a.7 row",
+		"priority": "medium",
+		"labels": [],
+		"metadata": {},
+		"created_by_actor": "u1",
+		"updated_by_actor": "u1",
+		"updated_by_type": "user",
+		"created_at": "2026-04-01T00:00:00Z",
+		"updated_at": "2026-04-01T00:00:00Z"
+	}`)
+	var snap SnapshotActionItem
+	if err := json.Unmarshal(legacyJSON, &snap); err != nil {
+		t.Fatalf("legacy snapshot unmarshal error = %v", err)
+	}
+	if len(snap.Files) != 0 {
+		t.Fatalf("legacy snapshot Files = %#v, want nil", snap.Files)
+	}
+	hydrated := snap.toDomain()
+	if len(hydrated.Files) != 0 {
+		t.Fatalf("legacy snapshot toDomain Files = %#v, want nil", hydrated.Files)
+	}
+}

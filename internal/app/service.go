@@ -536,7 +536,17 @@ type CreateActionItemInput struct {
 	// ErrInvalidPackages. Domain coverage invariant: non-empty Paths
 	// requires non-empty Packages (else ErrInvalidPackages). Domain
 	// primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
-	Packages       []string
+	Packages []string
+	// Files optionally enumerates the action item's reference-material file
+	// paths (forward-slash, repo-root-relative). Empty slice IS the
+	// meaningful zero value (no reference files attached) — no pointer-
+	// sentinel needed at the create boundary. domain.NewActionItem trims +
+	// dedupes; whitespace-only / backslash-bearing entries reject with
+	// ErrInvalidFiles. Disjoint-axis with Paths — Files (read attention)
+	// and Paths (write intent / lock scope) may legitimately overlap, so
+	// no cross-axis check is performed. Domain primitive per Drop 4a L3 /
+	// WAVE_1_PLAN.md §1.3.
+	Files          []string
 	ColumnID       string
 	Title          string
 	Description    string
@@ -607,7 +617,17 @@ type UpdateActionItemInput struct {
 	// (non-empty Paths requires non-empty Packages) is re-checked against
 	// the post-apply pair so paired Paths/Packages updates land atomically.
 	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.2.
-	Packages      *[]string
+	Packages *[]string
+	// Files optionally updates the action-item Files slice. nil preserves
+	// the existing value (no-op); non-nil replaces it. Same pointer-
+	// sentinel rationale as Paths/Packages above — a description-only
+	// update must NOT silently clobber a planner-set Files declaration.
+	// Service applies via domain.NormalizeActionItemFiles so the create-
+	// time trim/dedupe / forward-slash-check rules apply equally on
+	// update. Disjoint-axis: no coverage / overlap check against Paths —
+	// Files and Paths are independent (read attention vs write intent).
+	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.3.
+	Files         *[]string
 	Metadata      *domain.ActionItemMetadata
 	UpdatedBy     string
 	UpdatedByName string
@@ -786,6 +806,7 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 		DevGated:       in.DevGated,
 		Paths:          in.Paths,
 		Packages:       in.Packages,
+		Files:          in.Files,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,
@@ -1101,6 +1122,20 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 	// populated. WAVE_1_PLAN.md §1.2.
 	if (in.Paths != nil || in.Packages != nil) && len(actionItem.Paths) > 0 && len(actionItem.Packages) == 0 {
 		return domain.ActionItem{}, domain.ErrInvalidPackages
+	}
+	// Files update uses pointer-sentinel: nil preserves the existing slice;
+	// non-nil applies the dereferenced slice through
+	// domain.NormalizeActionItemFiles so the create-time trim/dedupe /
+	// forward-slash-check rules apply equally on update. Empty dereferenced
+	// slice clears all declared files (explicit caller intent). Disjoint-
+	// axis with Paths — no coverage / overlap re-check applies.
+	if in.Files != nil {
+		normalized, err := domain.NormalizeActionItemFiles(*in.Files)
+		if err != nil {
+			return domain.ActionItem{}, err
+		}
+		actionItem.Files = normalized
+		actionItem.UpdatedAt = s.clock().UTC()
 	}
 	if in.Metadata != nil {
 		var parent *domain.ActionItem

@@ -4098,3 +4098,142 @@ func TestActionItemMCPPackagesRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+// TestActionItemMCPFilesRoundTrip verifies the Files []string field added in
+// Drop 4a droplet 4a.7 plumbs cleanly through the till.action_item MCP tool
+// on both create and update operations. The field follows the same
+// pointer-sentinel pattern as Paths/Packages on update (nil = preserve,
+// non-nil = replace), with create collapsing to a value-type []string.
+// Mirrors TestActionItemMCPPathsRoundTrip / TestActionItemMCPPackagesRoundTrip
+// so the JSON-RPC → CreateActionItemRequest → service hop is exercised end-
+// to-end. Files is disjoint-axis with Paths so populated cases need not
+// supply a covering Paths/Packages pair — Files is independent.
+func TestActionItemMCPFilesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*stubExpandedService, *httptest.Server) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return service, server
+	}
+
+	t.Run("create plumbs files slice through to request", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7500, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "Files One",
+			"files":             []any{"docs/A.md", "docs/B.md"},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		got := service.lastCreateActionItemReq.Files
+		want := []string{"docs/A.md", "docs/B.md"}
+		if len(got) != len(want) {
+			t.Fatalf("CreateActionItemRequest.Files = %#v, want %#v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("CreateActionItemRequest.Files[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("create without files round-trips empty slice", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7501, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "Files None",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if len(service.lastCreateActionItemReq.Files) != 0 {
+			t.Fatalf("CreateActionItemRequest.Files = %#v, want empty", service.lastCreateActionItemReq.Files)
+		}
+	})
+
+	t.Run("update with files plumbs as non-nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7502, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "Files Updated",
+			"files":             []any{"docs/A.md"},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Files == nil {
+			t.Fatalf("UpdateActionItemRequest.Files = nil, want non-nil pointer to [\"docs/A.md\"]")
+		}
+		got := *service.lastUpdateActionItemReq.Files
+		if len(got) != 1 || got[0] != "docs/A.md" {
+			t.Fatalf("UpdateActionItemRequest.Files = %#v, want [\"docs/A.md\"]", got)
+		}
+	})
+
+	t.Run("update with empty files array plumbs as non-nil pointer to empty slice (explicit clear)", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7503, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "Files Cleared",
+			"files":             []any{},
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Files == nil {
+			t.Fatalf("UpdateActionItemRequest.Files = nil, want non-nil pointer to empty slice (explicit clear)")
+		}
+		if got := *service.lastUpdateActionItemReq.Files; len(got) != 0 {
+			t.Fatalf("UpdateActionItemRequest.Files = %#v, want empty slice (explicit clear)", got)
+		}
+	})
+
+	t.Run("update without files preserves prior via nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7504, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "Files Preserved",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.Files != nil {
+			t.Fatalf("UpdateActionItemRequest.Files = %v, want nil (preserve)", service.lastUpdateActionItemReq.Files)
+		}
+	})
+}
