@@ -877,6 +877,7 @@ func registerActionItemTools(
 				Packages        *[]string                  `json:"packages"`
 				Files           *[]string                  `json:"files"`
 				StartCommit     *string                    `json:"start_commit"`
+				EndCommit       *string                    `json:"end_commit"`
 				ColumnID        string                     `json:"column_id"`
 				Title           string                     `json:"title"`
 				Description     string                     `json:"description"`
@@ -1108,6 +1109,15 @@ func registerActionItemTools(
 				if args.StartCommit != nil {
 					createReq.StartCommit = *args.StartCommit
 				}
+				// EndCommit pointer-sentinel mirrors StartCommit above:
+				// nil = "not supplied" → leave the request's empty-string
+				// zero value (domain accepts as "not yet captured");
+				// non-nil → set to the dereferenced string (domain trims
+				// surrounding whitespace at NewActionItem time). Free-form
+				// opaque-domain field — no format check applies.
+				if args.EndCommit != nil {
+					createReq.EndCommit = *args.EndCommit
+				}
 				actionItem, err := tasks.CreateActionItem(ctx, createReq)
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1197,8 +1207,16 @@ func registerActionItemTools(
 					// hash). Service applies inline strings.TrimSpace so
 					// the create-time trim rule applies equally on update.
 					StartCommit: args.StartCommit,
-					Metadata:    args.Metadata,
-					Actor:       actor,
+					// EndCommit pointer-sentinel mirrors StartCommit: nil
+					// preserves the existing value; non-nil applies the
+					// dereferenced string (empty dereferenced string clears
+					// the prior commit hash). Wave 2 dispatcher populates
+					// this BEFORE MoveActionItemState. Service applies
+					// inline strings.TrimSpace so the create-time trim
+					// rule applies equally on update.
+					EndCommit: args.EndCommit,
+					Metadata:  args.Metadata,
+					Actor:     actor,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil
@@ -1477,6 +1495,7 @@ func registerActionItemTools(
 				mcp.WithArray("packages", mcp.Description("Optional Packages string-array for operation=create|update — declares the Go-package import paths covering Paths. Empty array on create = no package scope declared. On update, omit to preserve the existing slice; supplying any array (including empty) replaces the declared packages. Domain trims + dedupes; whitespace-only / empty entries reject with invalid_request. Coverage invariant: non-empty Paths requires non-empty Packages — paired Paths/Packages updates are validated atomically against the post-apply pair. No Go-import-path format enforcement; planner-set values are what matter. Domain primitive — Drop 4a L3 / WAVE_1_PLAN.md §1.2 lock-domain field consumed by the Wave 2 dispatcher's package-level lock manager."), mcp.WithStringItems()),
 				mcp.WithArray("files", mcp.Description("Optional Files string-array for operation=create|update — declares reference-material file paths the agent should read (forward-slash, repo-root-relative). Distinct from Paths, which declares write-scope / lock domain. Empty array on create = no reference files attached. On update, omit to preserve the existing slice; supplying any array (including empty) replaces the declared files. Domain trims + dedupes; whitespace-only / backslash-bearing entries reject with invalid_request. Disjoint-axis with Paths — Files (read attention) and Paths (write intent) may legitimately overlap (e.g. read-then-edit workflows), so no cross-axis coverage check applies. Path-exists is NOT enforced at the domain layer — the canonical consumer is the Drop 4.5 TUI file-viewer pane, which validates existence at view time. Domain primitive — Drop 4a L3 / WAVE_1_PLAN.md §1.3."), mcp.WithStringItems()),
 				mcp.WithString("start_commit", mcp.Description("Optional StartCommit free-form string for operation=create|update — records the git commit hash captured at the moment work begins on this action item, typically the current `git rev-parse HEAD` of the bare-root or active worktree at in_progress transition time. Empty string is the meaningful zero value (\"not yet captured\"). On update, omit to preserve the existing value; supplying any string (including empty) replaces it. Domain trims surrounding whitespace; no format check applies — short-SHAs (7-char), full-SHAs (40-char), and any caller-supplied identifier all round-trip. Opaque-domain field: the domain layer holds the value opaquely and never calls git itself — the caller (orchestrator pre-cascade; Wave 2 dispatcher; Drop 4b commit-agent) supplies it. Domain primitive — Drop 4a L3 / WAVE_1_PLAN.md §1.4. Drop 4b commit-agent consumes this for diff context (`git diff <start_commit>..<end_commit>` baseline).")),
+				mcp.WithString("end_commit", mcp.Description("Optional EndCommit free-form string for operation=create|update — records the git commit hash captured at the moment work completes on this action item, typically the current `git rev-parse HEAD` of the bare-root or active worktree captured just before the terminal state transition (caller populates via update BEFORE move_state). Empty string is the meaningful zero value (\"not yet captured\") and is valid until terminal state — domain does NOT enforce non-empty-on-terminal (Drop 4b dispatcher concern). On update, omit to preserve the existing value; supplying any string (including empty) replaces it. Domain trims surrounding whitespace; no format check applies — short-SHAs (7-char), full-SHAs (40-char), and any caller-supplied identifier all round-trip. Opaque-domain field: the domain layer holds the value opaquely and never calls git itself — the caller (orchestrator pre-cascade; Wave 2 dispatcher; Drop 4b commit-agent) supplies it. No chronology check against StartCommit. Domain primitive — Drop 4a L3 / WAVE_1_PLAN.md §1.5. Drop 4b commit-agent consumes this for diff context (`git diff <start_commit>..<end_commit>` baseline).")),
 				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),

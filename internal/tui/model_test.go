@@ -14867,6 +14867,7 @@ func TestActionItemSchemaCoverageIsExplicit(t *testing.T) {
 		"Packages":       {},
 		"Files":          {},
 		"StartCommit":    {},
+		"EndCommit":      {},
 		"LifecycleState": {},
 		"ColumnID":       {},
 		"Position":       {},

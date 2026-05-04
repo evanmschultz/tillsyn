@@ -1334,3 +1334,50 @@ func TestNewActionItemStartCommitTrim(t *testing.T) {
 		})
 	}
 }
+
+// TestNewActionItemEndCommitTrim covers the EndCommit string field added in
+// Drop 4a droplet 4a.9. EndCommit mirrors StartCommit's opaque-domain
+// semantics: surrounding whitespace is trimmed; empty round-trips as the
+// legitimate zero value ("not yet captured"); short-SHAs, full-SHAs, and
+// caller-supplied identifiers round-trip without format enforcement. No
+// rejection path exists — there is no ErrInvalidEndCommit. Empty is valid
+// until terminal state; domain does NOT enforce non-empty-on-terminal
+// (that's a Drop 4b dispatcher concern). No chronology check against
+// StartCommit.
+func TestNewActionItemEndCommitTrim(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "empty round-trips empty", input: "", want: ""},
+		{name: "whitespace-only collapses to empty", input: "   ", want: ""},
+		{name: "short SHA round-trips", input: "0cf5194", want: "0cf5194"},
+		{name: "full SHA round-trips", input: "0cf5194d4cb6c8d4f9b9b1d7e1f9d3c2b4e5a6f7", want: "0cf5194d4cb6c8d4f9b9b1d7e1f9d3c2b4e5a6f7"},
+		{name: "surrounding whitespace trimmed", input: "  0cf5194  ", want: "0cf5194"},
+		{name: "non-SHA identifier round-trips", input: "branch/feature@head", want: "branch/feature@head"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actionItem, err := NewActionItem(ActionItemInput{
+				ID:             "t-endcommit",
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Position:       0,
+				Title:          "x",
+				Kind:           KindBuild,
+				StructuralType: StructuralTypeDroplet,
+				EndCommit:      tc.input,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			if actionItem.EndCommit != tc.want {
+				t.Fatalf("EndCommit = %q, want %q", actionItem.EndCommit, tc.want)
+			}
+		})
+	}
+}
