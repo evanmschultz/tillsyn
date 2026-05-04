@@ -150,6 +150,12 @@ func (r *Repository) migrate(ctx context.Context) error {
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			metadata_json TEXT NOT NULL DEFAULT '{}',
+			hylla_artifact_ref TEXT NOT NULL DEFAULT '',
+			repo_bare_root TEXT NOT NULL DEFAULT '',
+			repo_primary_worktree TEXT NOT NULL DEFAULT '',
+			language TEXT NOT NULL DEFAULT '',
+			build_tool TEXT NOT NULL DEFAULT '',
+			dev_mcp_server_name TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			archived_at TEXT
@@ -469,6 +475,23 @@ func (r *Repository) migrate(ctx context.Context) error {
 	}
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add projects.metadata_json: %w", err)
+	}
+	// Drop 4a droplet 4a.12 — first-class project-node fields. Legacy
+	// schemas predate these columns; use the same ALTER TABLE ADD COLUMN
+	// idempotent precedent as projects.metadata_json above. New databases
+	// pick the columns up via the CREATE TABLE IF NOT EXISTS path.
+	projectsAlterStatements := []string{
+		`ALTER TABLE projects ADD COLUMN hylla_artifact_ref TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE projects ADD COLUMN repo_bare_root TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE projects ADD COLUMN repo_primary_worktree TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE projects ADD COLUMN language TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE projects ADD COLUMN build_tool TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE projects ADD COLUMN dev_mcp_server_name TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range projectsAlterStatements {
+		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
+			return fmt.Errorf("migrate sqlite projects: %w", err)
+		}
 	}
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE attention_items ADD COLUMN target_role TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add attention_items.target_role: %w", err)
@@ -816,9 +839,17 @@ func (r *Repository) CreateProject(ctx context.Context, p domain.Project) error 
 		return fmt.Errorf("encode project metadata: %w", err)
 	}
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO projects(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, p.ID, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt))
+		INSERT INTO projects(
+			id, slug, name, description, metadata_json,
+			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, language, build_tool, dev_mcp_server_name,
+			created_at, updated_at, archived_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		p.ID, p.Slug, p.Name, p.Description, string(metaJSON),
+		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, p.Language, p.BuildTool, p.DevMcpServerName,
+		ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt),
+	)
 	return err
 }
 
@@ -830,9 +861,15 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE projects
-		SET slug = ?, name = ?, description = ?, metadata_json = ?, updated_at = ?, archived_at = ?
+		SET slug = ?, name = ?, description = ?, metadata_json = ?,
+			hylla_artifact_ref = ?, repo_bare_root = ?, repo_primary_worktree = ?, language = ?, build_tool = ?, dev_mcp_server_name = ?,
+			updated_at = ?, archived_at = ?
 		WHERE id = ?
-	`, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID)
+	`,
+		p.Slug, p.Name, p.Description, string(metaJSON),
+		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, p.Language, p.BuildTool, p.DevMcpServerName,
+		ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID,
+	)
 	if err != nil {
 		return err
 	}
@@ -854,7 +891,9 @@ func (r *Repository) DeleteProject(ctx context.Context, id string) error {
 // GetProject returns project.
 func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, metadata_json,
+			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, language, build_tool, dev_mcp_server_name,
+			created_at, updated_at, archived_at
 		FROM projects
 		WHERE id = ?
 	`, id)
@@ -868,7 +907,9 @@ func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project,
 // cannot resolve it through this surface.
 func (r *Repository) GetProjectBySlug(ctx context.Context, slug string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, metadata_json,
+			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, language, build_tool, dev_mcp_server_name,
+			created_at, updated_at, archived_at
 		FROM projects
 		WHERE slug = ? AND id != ?
 	`, slug, domain.AuthRequestGlobalProjectID)
@@ -878,7 +919,9 @@ func (r *Repository) GetProjectBySlug(ctx context.Context, slug string) (domain.
 // ListProjects lists projects.
 func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error) {
 	query := `
-		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, metadata_json,
+			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, language, build_tool, dev_mcp_server_name,
+			created_at, updated_at, archived_at
 		FROM projects
 	`
 	if !includeArchived {
@@ -896,25 +939,10 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 
 	out := []domain.Project{}
 	for rows.Next() {
-		var (
-			p           domain.Project
-			metadataRaw string
-			createdRaw  string
-			updatedRaw  string
-			archived    sql.NullString
-		)
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
+		p, err := scanProject(rows)
+		if err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(metadataRaw) == "" {
-			metadataRaw = "{}"
-		}
-		if err := json.Unmarshal([]byte(metadataRaw), &p.Metadata); err != nil {
-			return nil, fmt.Errorf("decode project metadata_json: %w", err)
-		}
-		p.CreatedAt = parseTS(createdRaw)
-		p.UpdatedAt = parseTS(updatedRaw)
-		p.ArchivedAt = parseNullTS(archived)
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -2816,7 +2844,11 @@ func scanProject(s scanner) (domain.Project, error) {
 		updatedRaw  string
 		archived    sql.NullString
 	)
-	if err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
+	if err := s.Scan(
+		&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw,
+		&p.HyllaArtifactRef, &p.RepoBareRoot, &p.RepoPrimaryWorktree, &p.Language, &p.BuildTool, &p.DevMcpServerName,
+		&createdRaw, &updatedRaw, &archived,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Project{}, app.ErrNotFound
 		}

@@ -664,9 +664,9 @@ func TestRepositoryEmbeddingJobMixedSubjectFamilies(t *testing.T) {
 func mustSeedEmbeddingScope(t *testing.T, repo *Repository, now time.Time, projectID string) (domain.Project, domain.Column) {
 	t.Helper()
 
-	project, err := domain.NewProject(projectID, "Embeddings "+projectID, "Embeddings test project", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: projectID, Name: "Embeddings " + projectID, Description: "Embeddings test project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(context.Background(), project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)

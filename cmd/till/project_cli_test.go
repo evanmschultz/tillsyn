@@ -65,9 +65,9 @@ func TestWriteProjectListEmptyArchivedHint(t *testing.T) {
 // TestWriteProjectDetail renders the primary name/id-first detail block.
 func TestWriteProjectDetail(t *testing.T) {
 	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Alpha", "First project", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Alpha", Description: "First project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	project.Metadata.Owner = "team-a"
 	project.Metadata.Tags = []string{"go", "cli"}
@@ -87,9 +87,9 @@ func TestWriteProjectDetail(t *testing.T) {
 // TestWriteProjectReadiness renders the collaboration bridge and next-step guidance.
 func TestWriteProjectReadiness(t *testing.T) {
 	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Alpha", "First project", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Alpha", Description: "First project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	project.Metadata.Owner = "team-a"
 	sessions := []app.AuthSession{

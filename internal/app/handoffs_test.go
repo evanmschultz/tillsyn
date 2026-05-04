@@ -13,9 +13,9 @@ import (
 func TestServiceHandoffLifecycle(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("project-1", "Project", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "project-1", Name: "Project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	repo.projects[project.ID] = project
 
@@ -83,9 +83,9 @@ func TestServiceHandoffLifecycle(t *testing.T) {
 func TestServiceHandoffLifecycleSyncsInboxAttention(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 21, 13, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("project-1", "Project", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "project-1", Name: "Project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	repo.projects[project.ID] = project
 
@@ -147,9 +147,9 @@ func TestServiceHandoffLifecycleSyncsInboxAttention(t *testing.T) {
 func TestServiceListHandoffsWaitsForLiveChange(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 4, 2, 10, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("project-1", "Project", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "project-1", Name: "Project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	repo.projects[project.ID] = project
 
@@ -204,9 +204,9 @@ func TestServiceListHandoffsWaitsForLiveChange(t *testing.T) {
 func TestServiceCreateHandoffUsesResolvedMutationActor(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("project-1", "Project", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "project-1", Name: "Project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	repo.projects[project.ID] = project
 
@@ -273,9 +273,9 @@ func TestServiceCreateHandoffRequiresValidScope(t *testing.T) {
 func TestServiceListHandoffsRequiresExistingScope(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("project-1", "Project", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "project-1", Name: "Project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	repo.projects[project.ID] = project
 
@@ -292,9 +292,9 @@ func TestServiceListHandoffsRequiresExistingScope(t *testing.T) {
 func TestServiceUpdateHandoffClearsOptionalFields(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("project-1", "Project", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "project-1", Name: "Project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	repo.projects[project.ID] = project
 

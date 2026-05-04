@@ -538,12 +538,18 @@ func (a *AppServiceAdapter) CreateProject(ctx context.Context, in CreateProjectR
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	project, err := a.service.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
-		Name:          strings.TrimSpace(in.Name),
-		Description:   strings.TrimSpace(in.Description),
-		Metadata:      in.Metadata,
-		UpdatedBy:     actorID,
-		UpdatedByName: actorName,
-		UpdatedType:   actorType,
+		Name:                strings.TrimSpace(in.Name),
+		Description:         strings.TrimSpace(in.Description),
+		Metadata:            in.Metadata,
+		HyllaArtifactRef:    strings.TrimSpace(in.HyllaArtifactRef),
+		RepoBareRoot:        strings.TrimSpace(in.RepoBareRoot),
+		RepoPrimaryWorktree: strings.TrimSpace(in.RepoPrimaryWorktree),
+		Language:            strings.TrimSpace(in.Language),
+		BuildTool:           strings.TrimSpace(in.BuildTool),
+		DevMcpServerName:    strings.TrimSpace(in.DevMcpServerName),
+		UpdatedBy:           actorID,
+		UpdatedByName:       actorName,
+		UpdatedType:         actorType,
 	})
 	if err != nil {
 		return domain.Project{}, mapAppError("create project", err)
@@ -562,13 +568,19 @@ func (a *AppServiceAdapter) UpdateProject(ctx context.Context, in UpdateProjectR
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	project, err := a.service.UpdateProject(ctx, app.UpdateProjectInput{
-		ProjectID:     strings.TrimSpace(in.ProjectID),
-		Name:          strings.TrimSpace(in.Name),
-		Description:   strings.TrimSpace(in.Description),
-		Metadata:      in.Metadata,
-		UpdatedBy:     actorID,
-		UpdatedByName: actorName,
-		UpdatedType:   actorType,
+		ProjectID:           strings.TrimSpace(in.ProjectID),
+		Name:                strings.TrimSpace(in.Name),
+		Description:         strings.TrimSpace(in.Description),
+		Metadata:            in.Metadata,
+		HyllaArtifactRef:    strings.TrimSpace(in.HyllaArtifactRef),
+		RepoBareRoot:        strings.TrimSpace(in.RepoBareRoot),
+		RepoPrimaryWorktree: strings.TrimSpace(in.RepoPrimaryWorktree),
+		Language:            strings.TrimSpace(in.Language),
+		BuildTool:           strings.TrimSpace(in.BuildTool),
+		DevMcpServerName:    strings.TrimSpace(in.DevMcpServerName),
+		UpdatedBy:           actorID,
+		UpdatedByName:       actorName,
+		UpdatedType:         actorType,
 	})
 	if err != nil {
 		return domain.Project{}, mapAppError("update project", err)

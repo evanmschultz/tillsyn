@@ -15,7 +15,7 @@ import (
 // TestModelWithTeatest verifies behavior for the covered scenario.
 func TestModelWithTeatest(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -47,8 +47,8 @@ func TestModelWithTeatest(t *testing.T) {
 // TestModelWithTeatestHelpAndProjectPicker verifies behavior for the covered scenario.
 func TestModelWithTeatestHelpAndProjectPicker(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p1, _ := domain.NewProject("p1", "Inbox", "", now)
-	p2, _ := domain.NewProject("p2", "Side", "", now)
+	p1, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	p2, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p2", Name: "Side"}, now)
 	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
 	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
 
@@ -89,7 +89,7 @@ func TestModelWithTeatestHelpAndProjectPicker(t *testing.T) {
 // TestModelGoldenBoardOutput verifies behavior for the covered scenario.
 func TestModelGoldenBoardOutput(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:          "t1",
@@ -116,7 +116,7 @@ func TestModelGoldenBoardOutput(t *testing.T) {
 // TestModelGoldenHelpExpandedOutput verifies behavior for the covered scenario.
 func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -142,7 +142,7 @@ func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 // TestModelGoldenEmbeddingsStatusOutput verifies the embeddings inventory modal renders mixed subject families.
 func TestModelGoldenEmbeddingsStatusOutput(t *testing.T) {
 	now := time.Date(2026, 3, 29, 20, 45, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -206,7 +206,7 @@ func TestModelGoldenEmbeddingsStatusOutput(t *testing.T) {
 // TestModelGoldenSearchResultsEmptyOutput verifies zero-result searches stay in the explicit results overlay.
 func TestModelGoldenSearchResultsEmptyOutput(t *testing.T) {
 	now := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p-search-empty", "Search Empty", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-search-empty", Name: "Search Empty"}, now)
 	c1, _ := domain.NewColumn("c-search-empty", p.ID, "To Do", 0, 0, now)
 	actionItem, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t-search-empty",
@@ -235,7 +235,7 @@ func TestModelGoldenSearchResultsEmptyOutput(t *testing.T) {
 // TestModelWithTeatestWIPWarning verifies behavior for the covered scenario.
 func TestModelWithTeatestWIPWarning(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 1, now)
 	t1, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",

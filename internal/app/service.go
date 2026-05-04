@@ -225,7 +225,11 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 	}
 
 	now := s.clock()
-	project, err := domain.NewProject(s.idGen(), "Inbox", "Default project", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{
+		ID:          s.idGen(),
+		Name:        "Inbox",
+		Description: "Default project",
+	}, now)
 	if err != nil {
 		return domain.Project{}, err
 	}
@@ -253,14 +257,27 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 }
 
 // CreateProjectInput holds input values for create project operations.
+//
+// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree / Language /
+// BuildTool / DevMcpServerName are the six Drop 4a L4 first-class
+// project-node fields. They round-trip through Service.CreateProject →
+// domain.NewProjectFromInput → repo.CreateProject. Empty strings are the
+// meaningful zero value (project not yet bootstrapped) and round-trip
+// untouched.
 type CreateProjectInput struct {
-	Name          string
-	Description   string
-	Kind          domain.KindID
-	Metadata      domain.ProjectMetadata
-	UpdatedBy     string
-	UpdatedByName string
-	UpdatedType   domain.ActorType
+	Name                string
+	Description         string
+	Kind                domain.KindID
+	Metadata            domain.ProjectMetadata
+	HyllaArtifactRef    string
+	RepoBareRoot        string
+	RepoPrimaryWorktree string
+	Language            string
+	BuildTool           string
+	DevMcpServerName    string
+	UpdatedBy           string
+	UpdatedByName       string
+	UpdatedType         domain.ActorType
 }
 
 // CreateProject creates project.
@@ -275,7 +292,17 @@ func (s *Service) CreateProject(ctx context.Context, name, description string) (
 func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjectInput) (domain.Project, error) {
 	ctx, resolvedActor, hasResolvedActor := withResolvedMutationActor(ctx, in.UpdatedBy, in.UpdatedByName, in.UpdatedType)
 	now := s.clock()
-	project, err := domain.NewProject(s.idGen(), in.Name, in.Description, now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{
+		ID:                  s.idGen(),
+		Name:                in.Name,
+		Description:         in.Description,
+		HyllaArtifactRef:    in.HyllaArtifactRef,
+		RepoBareRoot:        in.RepoBareRoot,
+		RepoPrimaryWorktree: in.RepoPrimaryWorktree,
+		Language:            in.Language,
+		BuildTool:           in.BuildTool,
+		DevMcpServerName:    in.DevMcpServerName,
+	}, now)
 	if err != nil {
 		return domain.Project{}, err
 	}
@@ -286,7 +313,18 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	if hasResolvedActor && resolvedActor.ActorType == domain.ActorTypeUser && strings.TrimSpace(mergedMetadata.Owner) == "" {
 		mergedMetadata.Owner = strings.TrimSpace(resolvedActor.ActorName)
 	}
-	if err := project.UpdateDetails(project.Name, project.Description, mergedMetadata, now); err != nil {
+	if err := project.UpdateDetails(
+		project.Name,
+		project.Description,
+		project.HyllaArtifactRef,
+		project.RepoBareRoot,
+		project.RepoPrimaryWorktree,
+		project.Language,
+		project.BuildTool,
+		project.DevMcpServerName,
+		mergedMetadata,
+		now,
+	); err != nil {
 		return domain.Project{}, err
 	}
 	if err := bakeProjectKindCatalog(&project); err != nil {
@@ -375,15 +413,27 @@ func loadProjectTemplate() (templates.Template, bool, error) {
 }
 
 // UpdateProjectInput holds input values for update project operations.
+//
+// Six Drop 4a L4 first-class fields ride alongside Name / Description.
+// Per WAVE_1_PLAN.md §1.8 the Project surface is admin-driven, so the
+// fields are value-typed (no pointer-sentinels). Callers that want to
+// preserve existing values must read the project first and pass them
+// through unchanged.
 type UpdateProjectInput struct {
-	ProjectID     string
-	Name          string
-	Description   string
-	Kind          domain.KindID
-	Metadata      domain.ProjectMetadata
-	UpdatedBy     string
-	UpdatedByName string
-	UpdatedType   domain.ActorType
+	ProjectID           string
+	Name                string
+	Description         string
+	Kind                domain.KindID
+	Metadata            domain.ProjectMetadata
+	HyllaArtifactRef    string
+	RepoBareRoot        string
+	RepoPrimaryWorktree string
+	Language            string
+	BuildTool           string
+	DevMcpServerName    string
+	UpdatedBy           string
+	UpdatedByName       string
+	UpdatedType         domain.ActorType
 }
 
 // UpdateProject updates state for the requested operation.
@@ -400,7 +450,18 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (dom
 	if err := s.enforceMutationGuard(ctx, project.ID, actorType, domain.CapabilityScopeProject, project.ID, domain.CapabilityActionEditNode); err != nil {
 		return domain.Project{}, err
 	}
-	if err := project.UpdateDetails(in.Name, in.Description, in.Metadata, s.clock()); err != nil {
+	if err := project.UpdateDetails(
+		in.Name,
+		in.Description,
+		in.HyllaArtifactRef,
+		in.RepoBareRoot,
+		in.RepoPrimaryWorktree,
+		in.Language,
+		in.BuildTool,
+		in.DevMcpServerName,
+		in.Metadata,
+		s.clock(),
+	); err != nil {
 		return domain.Project{}, err
 	}
 	if err := s.repo.UpdateProject(ctx, project); err != nil {

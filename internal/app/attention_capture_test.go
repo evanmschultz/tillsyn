@@ -255,7 +255,7 @@ func TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 	now := time.Date(2026, 2, 24, 13, 0, 0, 0, time.UTC)
 	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
 
-	project, _ := domain.NewProject("p1", "Guardrails", "", now)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Guardrails"}, now)
 	repo.projects[project.ID] = project
 	progress, _ := domain.NewColumn("c-progress", project.ID, "In Progress", 0, 0, now)
 	done, _ := domain.NewColumn("c-done", project.ID, "Complete", 1, 0, now)

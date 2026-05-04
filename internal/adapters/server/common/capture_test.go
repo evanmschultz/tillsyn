@@ -83,9 +83,9 @@ func TestCaptureStateServiceCaptureStateBuildsSummary(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 20, 19, 4, 5, 987000000, time.UTC)
-	project, err := domain.NewProject("p1", "Inbox", "Dogfood project", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox", Description: "Dogfood project"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 
 	columns := []domain.Column{
@@ -219,9 +219,9 @@ func TestCaptureStateServiceErrorAndHelperPaths(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 20, 19, 5, 0, 0, time.UTC)
-	project, err := domain.NewProject("p1", "Inbox", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 
 	t.Run("unconfigured service", func(t *testing.T) {

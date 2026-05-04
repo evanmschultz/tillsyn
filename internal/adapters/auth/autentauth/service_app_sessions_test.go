@@ -119,9 +119,9 @@ func TestServiceAppFacingSessionListMatchesProjectForBroaderScopes(t *testing.T)
 		{id: "p1", name: "Project One"},
 		{id: "p2", name: "Project Two"},
 	} {
-		row, err := domain.NewProject(project.id, project.name, "", now)
+		row, err := domain.NewProjectFromInput(domain.ProjectInput{ID: project.id, Name: project.name}, now)
 		if err != nil {
-			t.Fatalf("NewProject(%q) error = %v", project.id, err)
+			t.Fatalf("NewProjectFromInput(%q) error = %v", project.id, err)
 		}
 		if err := repo.CreateProject(ctx, row); err != nil {
 			t.Fatalf("CreateProject(%q) error = %v", project.id, err)

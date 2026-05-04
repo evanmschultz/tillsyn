@@ -174,9 +174,9 @@ func newActionItemCLIServiceForTest(t *testing.T) (*app.Service, string, string,
 	})
 
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p-actionitem-cli", "Tillsyn CLI Test", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-actionitem-cli", Name: "Tillsyn CLI Test"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	// Override the slug to a known value the tests assert against.
 	project.Slug = "tillsyn-cli"

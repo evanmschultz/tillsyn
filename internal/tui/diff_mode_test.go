@@ -232,7 +232,7 @@ func TestKeymap_CtrlD_NoCollision(t *testing.T) {
 // board surface transitions the Model to modeDiff.
 func TestModel_CtrlD_EntersDiffMode(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -264,7 +264,7 @@ func TestModel_CtrlD_EntersDiffMode(t *testing.T) {
 // mode captured on entry (not unconditionally modeNone).
 func TestModel_EscFromDiff_RestoresPrior(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -300,7 +300,7 @@ func TestModel_EscFromDiff_RestoresPrior(t *testing.T) {
 // the board without mutating the task.
 func TestDiffMode_Teatest_E2E(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -346,7 +346,7 @@ func TestDiffMode_Teatest_E2E(t *testing.T) {
 func newDiffTestTask(t *testing.T, refs []domain.ResourceRef) domain.ActionItem {
 	t.Helper()
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
-	p, err := domain.NewProject("p1", "Inbox", "", now)
+	p, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	if err != nil {
 		t.Fatalf("NewProject: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestResolveDiffPaths_EmptyTagsSkipped(t *testing.T) {
 // resolved path list into the next Differ.Diff invocation via enterDiffMode.
 func TestDiffMode_SetItem_PassesResolvedPaths(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",
@@ -607,7 +607,7 @@ func TestDiffMode_SetItem_PassesResolvedPaths(t *testing.T) {
 // updated path list (i.e. paths are not cached across enterDiffMode sessions).
 func TestDiffMode_RecomputesOnItemChange(t *testing.T) {
 	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
-	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	p, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
 	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
 	task, _ := newActionItemForTest(domain.ActionItemInput{
 		ID:        "t1",

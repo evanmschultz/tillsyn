@@ -209,9 +209,9 @@ func newEmbeddingsCLIServiceForTest(t *testing.T) (*app.Service, string, *sqlite
 	})
 
 	now := time.Date(2026, 3, 29, 18, 0, 0, 0, time.UTC)
-	project, err := domain.NewProject("p-embeddings-cli", "Inbox", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-embeddings-cli", Name: "Inbox"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(context.Background(), project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)

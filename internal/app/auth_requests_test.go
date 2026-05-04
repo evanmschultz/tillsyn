@@ -53,9 +53,9 @@ func newAuthRequestServiceFixture(t *testing.T) authRequestServiceFixture {
 		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
 	}
 
-	project, err := domain.NewProject("p1", "Project One", "", now)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Project One"}, now)
 	if err != nil {
-		t.Fatalf("NewProject() error = %v", err)
+		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 	if err := repo.CreateProject(context.Background(), project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)

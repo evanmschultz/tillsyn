@@ -31,6 +31,7 @@ type stubExpandedService struct {
 	stubCaptureStateReader
 	stubMutationAuthorizer
 	lastCreateProjectReq         common.CreateProjectRequest
+	lastUpdateProjectReq         common.UpdateProjectRequest
 	lastListProjectsArchived     bool
 	lastGetActionItemID          string
 	lastListActionItemsProjectID string
@@ -119,7 +120,8 @@ func (s *stubExpandedService) CreateProject(_ context.Context, in common.CreateP
 }
 
 // UpdateProject returns one deterministic updated project row.
-func (s *stubExpandedService) UpdateProject(_ context.Context, _ common.UpdateProjectRequest) (domain.Project, error) {
+func (s *stubExpandedService) UpdateProject(_ context.Context, in common.UpdateProjectRequest) (domain.Project, error) {
+	s.lastUpdateProjectReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.Project{ID: "p1", Slug: "proj-1", Name: "Project One Updated", CreatedAt: now, UpdatedAt: now}, nil
 }
@@ -1740,13 +1742,24 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 	}
 	for _, legacy := range []string{
 		"till.list_projects",
-		"till.create_project",
-		"till.update_project",
 		"till.list_kind_definitions",
 		"till.set_project_allowed_kinds",
 	} {
 		if slices.Contains(defaultTools, legacy) {
 			t.Fatalf("unexpected legacy project tool %q in default surface: %#v", legacy, defaultTools)
+		}
+	}
+	// till.create_project and till.update_project were deleted in Drop 4a
+	// droplet 4a.13: the legacy shims silently clobbered the six Drop 4a L4
+	// first-class Project fields by forwarding empty strings into
+	// UpdateProjectRequest with value-typed (non-pointer-sentinel)
+	// write-through semantics. Confirm they are absent from EITHER surface.
+	for _, deleted := range []string{
+		"till.create_project",
+		"till.update_project",
+	} {
+		if slices.Contains(defaultTools, deleted) {
+			t.Fatalf("deleted legacy project tool %q unexpectedly registered in default surface: %#v", deleted, defaultTools)
 		}
 	}
 	// Per Drop 3 droplet 3.15 till.upsert_kind_definition was deleted; it
@@ -1759,8 +1772,6 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 	for _, required := range []string{
 		"till.project",
 		"till.list_projects",
-		"till.create_project",
-		"till.update_project",
 		"till.list_kind_definitions",
 		"till.set_project_allowed_kinds",
 	} {
@@ -1770,6 +1781,14 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 	}
 	if slices.Contains(legacyTools, "till.upsert_kind_definition") {
 		t.Fatalf("till.upsert_kind_definition unexpectedly registered in legacy surface (deleted in droplet 3.15): %#v", legacyTools)
+	}
+	for _, deleted := range []string{
+		"till.create_project",
+		"till.update_project",
+	} {
+		if slices.Contains(legacyTools, deleted) {
+			t.Fatalf("deleted legacy project tool %q unexpectedly registered in legacy surface (Drop 4a droplet 4a.13): %#v", deleted, legacyTools)
+		}
 	}
 }
 
@@ -1953,7 +1972,13 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 	}
 }
 
-// TestHandlerExpandedLegacyProjectMutationAliases verifies the legacy project-root mutation aliases still execute when enabled.
+// TestHandlerExpandedLegacyProjectMutationAliases verifies the remaining legacy
+// project-root mutation alias still executes when enabled. till.create_project
+// and till.update_project were deleted in Drop 4a droplet 4a.13 (clobber bug:
+// legacy shim args carried no Drop 4a L4 first-class fields, so empty-string
+// forwards into UpdateProjectRequest write-through-cleared existing project
+// state via Project.UpdateDetails value-typed semantics). Only
+// till.set_project_allowed_kinds remains as a legacy mutation alias.
 func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 	t.Parallel()
 
@@ -1985,25 +2010,6 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 		args map[string]any
 	}{
 		{
-			name: "create_project",
-			tool: "till.create_project",
-			args: mergeArgs(validSessionArgs(), map[string]any{
-				"name":              "Project One",
-				"agent_instance_id": "inst-1",
-				"lease_token":       "tok-1",
-			}),
-		},
-		{
-			name: "update_project",
-			tool: "till.update_project",
-			args: mergeArgs(validSessionArgs(), map[string]any{
-				"project_id":        "p1",
-				"name":              "Project One Updated",
-				"agent_instance_id": "inst-1",
-				"lease_token":       "tok-1",
-			}),
-		},
-		{
 			name: "set_project_allowed_kinds",
 			tool: "till.set_project_allowed_kinds",
 			args: mergeArgs(validSessionArgs(), map[string]any{
@@ -2018,10 +2024,6 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 		if isError, _ := callResp.Result["isError"].(bool); isError {
 			t.Fatalf("%s returned isError=true: %#v", tc.name, callResp.Result)
 		}
-	}
-
-	if got := service.lastCreateProjectReq.Name; got != "Project One" {
-		t.Fatalf("legacy create_project name = %q, want Project One", got)
 	}
 }
 
@@ -4729,6 +4731,120 @@ func TestActionItemMCPEndCommitRoundTrip(t *testing.T) {
 		}
 		if service.lastUpdateActionItemReq.EndCommit != nil {
 			t.Fatalf("UpdateActionItemRequest.EndCommit = %v, want nil (preserve)", service.lastUpdateActionItemReq.EndCommit)
+		}
+	})
+}
+
+// TestProjectMCPFirstClassFieldsRoundTrip verifies the six Drop 4a L4
+// project-node first-class fields (HyllaArtifactRef, RepoBareRoot,
+// RepoPrimaryWorktree, Language, BuildTool, DevMcpServerName) plumb
+// cleanly through the till.project MCP tool on both create and update
+// operations. Each field is asserted on the CreateProjectRequest /
+// UpdateProjectRequest the boundary forwards to the service stub, so the
+// JSON-RPC → CreateProjectRequest → service hop is exercised end-to-end
+// without a full app-service stack.
+//
+// Per WAVE_1_PLAN.md §1.8 the Project surface uses value-typed (not
+// pointer-sentineled) update fields because admin-driven mutations rarely
+// need to express explicit-empty-vs-omitted intent. Both create and
+// update assertions therefore read the request fields as plain strings.
+func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*stubExpandedService, *httptest.Server) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return service, server
+	}
+
+	t.Run("create plumbs all six first-class fields", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7800, "till.project", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":             "create",
+			"name":                  "Tillsyn",
+			"description":           "tracker",
+			"hylla_artifact_ref":    "github.com/evanmschultz/tillsyn@main",
+			"repo_bare_root":        "/Users/evan/code/tillsyn",
+			"repo_primary_worktree": "/Users/evan/code/tillsyn/main",
+			"language":              "go",
+			"build_tool":            "mage",
+			"dev_mcp_server_name":   "tillsyn-dev",
+			"agent_instance_id":     "inst-1",
+			"lease_token":           "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("project create returned isError=true: %#v", createResp.Result)
+		}
+		got := service.lastCreateProjectReq
+		if got.HyllaArtifactRef != "github.com/evanmschultz/tillsyn@main" {
+			t.Fatalf("HyllaArtifactRef = %q", got.HyllaArtifactRef)
+		}
+		if got.RepoBareRoot != "/Users/evan/code/tillsyn" {
+			t.Fatalf("RepoBareRoot = %q", got.RepoBareRoot)
+		}
+		if got.RepoPrimaryWorktree != "/Users/evan/code/tillsyn/main" {
+			t.Fatalf("RepoPrimaryWorktree = %q", got.RepoPrimaryWorktree)
+		}
+		if got.Language != "go" || got.BuildTool != "mage" || got.DevMcpServerName != "tillsyn-dev" {
+			t.Fatalf("scalar fields not plumbed: %+v", got)
+		}
+	})
+
+	t.Run("create without first-class fields round-trips empty values", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7801, "till.project", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"name":              "Plain",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("project create returned isError=true: %#v", createResp.Result)
+		}
+		got := service.lastCreateProjectReq
+		if got.HyllaArtifactRef != "" || got.RepoBareRoot != "" || got.RepoPrimaryWorktree != "" ||
+			got.Language != "" || got.BuildTool != "" || got.DevMcpServerName != "" {
+			t.Fatalf("expected empty defaults, got %+v", got)
+		}
+	})
+
+	t.Run("update plumbs all six first-class fields as value-typed strings", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7802, "till.project", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":             "update",
+			"project_id":            "p1",
+			"name":                  "Tillsyn Updated",
+			"hylla_artifact_ref":    "github.com/x/y@v2",
+			"repo_bare_root":        "/abs/x",
+			"repo_primary_worktree": "/abs/x/main",
+			"language":              "fe",
+			"build_tool":            "npm",
+			"dev_mcp_server_name":   "x-dev",
+			"agent_instance_id":     "inst-1",
+			"lease_token":           "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("project update returned isError=true: %#v", updateResp.Result)
+		}
+		got := service.lastUpdateProjectReq
+		if got.HyllaArtifactRef != "github.com/x/y@v2" || got.RepoBareRoot != "/abs/x" ||
+			got.RepoPrimaryWorktree != "/abs/x/main" || got.Language != "fe" ||
+			got.BuildTool != "npm" || got.DevMcpServerName != "x-dev" {
+			t.Fatalf("UpdateProjectRequest first-class fields not plumbed: %+v", got)
 		}
 	})
 }

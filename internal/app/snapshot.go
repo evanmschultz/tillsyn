@@ -30,15 +30,27 @@ type Snapshot struct {
 }
 
 // SnapshotProject represents snapshot project data used by this package.
+//
+// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree / Language /
+// BuildTool / DevMcpServerName are the six Drop 4a L4 first-class
+// project-node fields. Each carries the `,omitempty` JSON tag so legacy
+// snapshots (pre-4a.12) without these fields decode cleanly with empty
+// defaults — no SnapshotVersion bump required.
 type SnapshotProject struct {
-	ID          string                 `json:"id"`
-	Slug        string                 `json:"slug"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Metadata    domain.ProjectMetadata `json:"metadata"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
-	ArchivedAt  *time.Time             `json:"archived_at,omitempty"`
+	ID                  string                 `json:"id"`
+	Slug                string                 `json:"slug"`
+	Name                string                 `json:"name"`
+	Description         string                 `json:"description"`
+	HyllaArtifactRef    string                 `json:"hylla_artifact_ref,omitempty"`
+	RepoBareRoot        string                 `json:"repo_bare_root,omitempty"`
+	RepoPrimaryWorktree string                 `json:"repo_primary_worktree,omitempty"`
+	Language            string                 `json:"language,omitempty"`
+	BuildTool           string                 `json:"build_tool,omitempty"`
+	DevMcpServerName    string                 `json:"dev_mcp_server_name,omitempty"`
+	Metadata            domain.ProjectMetadata `json:"metadata"`
+	CreatedAt           time.Time              `json:"created_at"`
+	UpdatedAt           time.Time              `json:"updated_at"`
+	ArchivedAt          *time.Time             `json:"archived_at,omitempty"`
 }
 
 // SnapshotColumn represents snapshot column data used by this package.
@@ -1046,14 +1058,20 @@ func (s *Snapshot) sort() {
 // snapshotProjectFromDomain handles snapshot project from domain.
 func snapshotProjectFromDomain(p domain.Project) SnapshotProject {
 	return SnapshotProject{
-		ID:          p.ID,
-		Slug:        p.Slug,
-		Name:        p.Name,
-		Description: p.Description,
-		Metadata:    p.Metadata,
-		CreatedAt:   p.CreatedAt.UTC(),
-		UpdatedAt:   p.UpdatedAt.UTC(),
-		ArchivedAt:  copyTimePtr(p.ArchivedAt),
+		ID:                  p.ID,
+		Slug:                p.Slug,
+		Name:                p.Name,
+		Description:         p.Description,
+		HyllaArtifactRef:    p.HyllaArtifactRef,
+		RepoBareRoot:        p.RepoBareRoot,
+		RepoPrimaryWorktree: p.RepoPrimaryWorktree,
+		Language:            p.Language,
+		BuildTool:           p.BuildTool,
+		DevMcpServerName:    p.DevMcpServerName,
+		Metadata:            p.Metadata,
+		CreatedAt:           p.CreatedAt.UTC(),
+		UpdatedAt:           p.UpdatedAt.UTC(),
+		ArchivedAt:          copyTimePtr(p.ArchivedAt),
 	}
 }
 
@@ -1262,14 +1280,20 @@ func (p SnapshotProject) toDomain() domain.Project {
 		slug = fallbackSlug(p.Name)
 	}
 	return domain.Project{
-		ID:          strings.TrimSpace(p.ID),
-		Slug:        slug,
-		Name:        strings.TrimSpace(p.Name),
-		Description: strings.TrimSpace(p.Description),
-		Metadata:    p.Metadata,
-		CreatedAt:   p.CreatedAt.UTC(),
-		UpdatedAt:   p.UpdatedAt.UTC(),
-		ArchivedAt:  copyTimePtr(p.ArchivedAt),
+		ID:                  strings.TrimSpace(p.ID),
+		Slug:                slug,
+		Name:                strings.TrimSpace(p.Name),
+		Description:         strings.TrimSpace(p.Description),
+		HyllaArtifactRef:    strings.TrimSpace(p.HyllaArtifactRef),
+		RepoBareRoot:        strings.TrimSpace(p.RepoBareRoot),
+		RepoPrimaryWorktree: strings.TrimSpace(p.RepoPrimaryWorktree),
+		Language:            strings.TrimSpace(p.Language),
+		BuildTool:           strings.TrimSpace(p.BuildTool),
+		DevMcpServerName:    strings.TrimSpace(p.DevMcpServerName),
+		Metadata:            p.Metadata,
+		CreatedAt:           p.CreatedAt.UTC(),
+		UpdatedAt:           p.UpdatedAt.UTC(),
+		ArchivedAt:          copyTimePtr(p.ArchivedAt),
 	}
 }
 
