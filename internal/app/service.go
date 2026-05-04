@@ -959,6 +959,7 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 			return domain.ActionItem{}, err
 		}
 	}
+	s.publishActionItemChanged(actionItem.ProjectID)
 	return actionItem, nil
 }
 
@@ -1045,6 +1046,7 @@ func (s *Service) MoveActionItem(ctx context.Context, actionItemID, toColumnID s
 			return domain.ActionItem{}, err
 		}
 	}
+	s.publishActionItemChanged(actionItem.ProjectID)
 	return actionItem, nil
 }
 
@@ -1303,6 +1305,7 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 	}, false, "task_updated"); err != nil && !errors.Is(err, ErrNotFound) {
 		return domain.ActionItem{}, err
 	}
+	s.publishActionItemChanged(actionItem.ProjectID)
 	return actionItem, nil
 }
 

@@ -15,6 +15,12 @@ const (
 	LiveWaitEventAttentionChanged    LiveWaitEventType = "attention_changed"
 	LiveWaitEventHandoffChanged      LiveWaitEventType = "handoff_changed"
 	LiveWaitEventCommentChanged      LiveWaitEventType = "comment_changed"
+	// LiveWaitEventActionItemChanged wakes subscribers on every successful
+	// action-item Create / Move / Update repo write. The wait Key is the
+	// owning project ID, mirroring LiveWaitEventAttentionChanged's
+	// project-scoped fan-out so the cascade dispatcher (Drop 4a Wave 2.2)
+	// receives one wakeup per project regardless of which item changed.
+	LiveWaitEventActionItemChanged LiveWaitEventType = "action_item_changed"
 )
 
 // LiveWaitEvent carries one in-process wakeup payload for waiting callers.
