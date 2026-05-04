@@ -43,7 +43,7 @@ If line endings are still stale after renormalization, re-clone the repository.
 
 ## Local Git Hooks
 
-This repo ships two POSIX `sh` hooks at `.githooks/` that gate every commit and push against the same `mage` targets CI runs. Activation is one-time-per-clone via a tracked mage target:
+This repo ships two POSIX `sh` hooks at `.githooks/` that gate gofumpt drift on every commit and push. Full test runs (`mage ci`) live in GitHub Actions only — local hook context has env-coupling risks (gitdiff tests collide with bare-root config lock during concurrent push), and CI runs the same `mage ci` in clean Docker with no parent repo. Activation is one-time-per-clone via a tracked mage target:
 
 ```bash
 mage install-hooks
@@ -59,7 +59,7 @@ git config --get core.hooksPath
 The two hooks:
 
 - `.githooks/pre-commit` runs `mage format-check` — catches gofumpt drift before the commit lands. On failure it suggests `mage format` to auto-fix.
-- `.githooks/pre-push` runs `mage ci` — mirrors what GitHub Actions runs, so a green pre-push run is a strong predictor of green CI.
+- `.githooks/pre-push` runs `mage format-check` — same fast format gate before push. The full `mage ci` (tests + coverage + build) runs in GitHub Actions on every push.
 
 Bypass policy: `git commit --no-verify` and `git push --no-verify` are honored by git natively. Per dev discipline, never bypass without an explicit reason captured in the commit message or PR description.
 
