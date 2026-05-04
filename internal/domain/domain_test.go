@@ -3,6 +3,7 @@ package domain
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -591,7 +592,6 @@ func TestActionItemContractUnmetChecks(t *testing.T) {
 				CompletionChecklist: []ChecklistItem{
 					{ID: "k1", Text: "docs updated", Complete: false},
 				},
-				Policy: CompletionPolicy{RequireChildrenComplete: true},
 			},
 		},
 	}, now)
@@ -608,6 +608,99 @@ func TestActionItemContractUnmetChecks(t *testing.T) {
 	doneUnmet := actionItem.CompletionCriteriaUnmet(children)
 	if len(doneUnmet) < 3 {
 		t.Fatalf("expected unmet completion checks, got %#v", doneUnmet)
+	}
+}
+
+// TestCompletionCriteriaUnmetAlwaysOnChildrenWalk pins the Drop 4a Wave 1.7
+// always-on parent-blocks-on-incomplete-child invariant: the children-walk
+// runs unconditionally (no CompletionPolicy.RequireChildrenComplete bit), and
+// only StateComplete plus archived children are non-blocking. StateInProgress,
+// StateTodo, and StateFailed all block; StateArchived skips.
+func TestCompletionCriteriaUnmetAlwaysOnChildrenWalk(t *testing.T) {
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	parent, err := NewActionItemForTest(ActionItemInput{
+		ID:        "t-parent",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "parent",
+		Kind:      KindPlan,
+		Priority:  PriorityMedium,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewActionItem() error = %v", err)
+	}
+
+	archivedAt := now.Add(time.Hour)
+	cases := []struct {
+		name      string
+		children  []ActionItem
+		wantUnmet bool
+	}{
+		{
+			name: "complete_child_does_not_block",
+			children: []ActionItem{
+				{ID: "child-c", Title: "complete-child", LifecycleState: StateComplete},
+			},
+			wantUnmet: false,
+		},
+		{
+			name: "in_progress_child_blocks",
+			children: []ActionItem{
+				{ID: "child-p", Title: "in-progress-child", LifecycleState: StateInProgress},
+			},
+			wantUnmet: true,
+		},
+		{
+			name: "todo_child_blocks",
+			children: []ActionItem{
+				{ID: "child-t", Title: "todo-child", LifecycleState: StateTodo},
+			},
+			wantUnmet: true,
+		},
+		{
+			name: "failed_child_blocks",
+			children: []ActionItem{
+				{ID: "child-f", Title: "failed-child", LifecycleState: StateFailed},
+			},
+			wantUnmet: true,
+		},
+		{
+			name: "archived_child_skips",
+			children: []ActionItem{
+				{ID: "child-a", Title: "archived-child", LifecycleState: StateInProgress, ArchivedAt: &archivedAt},
+			},
+			wantUnmet: false,
+		},
+		{
+			name:      "no_children_no_block",
+			children:  nil,
+			wantUnmet: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			unmet := parent.CompletionCriteriaUnmet(tc.children)
+			gotBlocked := len(unmet) > 0
+			if gotBlocked != tc.wantUnmet {
+				t.Fatalf("CompletionCriteriaUnmet(%s) = %#v (blocked=%v), want blocked=%v",
+					tc.name, unmet, gotBlocked, tc.wantUnmet)
+			}
+			if tc.wantUnmet && len(tc.children) > 0 {
+				want := fmt.Sprintf("child item %q is not complete", tc.children[0].Title)
+				found := false
+				for _, msg := range unmet {
+					if msg == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("expected unmet entry %q in %#v", want, unmet)
+				}
+			}
+		})
 	}
 }
 
@@ -727,7 +820,6 @@ func TestMergeActionItemMetadataDefaults(t *testing.T) {
 			CompletionChecklist: []ChecklistItem{{ID: "ck-default-2", Text: "default checklist"}},
 			CompletionEvidence:  []string{"evidence-a"},
 			CompletionNotes:     "default notes",
-			Policy:              CompletionPolicy{RequireChildrenComplete: true},
 		},
 	})
 	if err != nil {
@@ -774,9 +866,6 @@ func TestMergeActionItemMetadataDefaults(t *testing.T) {
 	}
 	if merged.CompletionContract.CompletionNotes != "default notes" {
 		t.Fatalf("CompletionNotes = %q, want default notes", merged.CompletionContract.CompletionNotes)
-	}
-	if !merged.CompletionContract.Policy.RequireChildrenComplete {
-		t.Fatal("expected require_children_complete to be tightened by defaults")
 	}
 }
 

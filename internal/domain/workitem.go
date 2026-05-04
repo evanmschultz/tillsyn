@@ -103,19 +103,19 @@ func (c *ChecklistItem) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*alias)(c))
 }
 
-// CompletionPolicy controls parent/child completion requirements.
-type CompletionPolicy struct {
-	RequireChildrenComplete bool `json:"require_children_complete"`
-}
-
 // CompletionContract stores start/complete checks and completion evidence.
+//
+// Parent-blocks-on-incomplete-child is unconditional (Drop 4a Wave 1.7) — a
+// parent action item cannot move to StateComplete while any non-archived
+// child is in any state other than StateComplete. Bypass via the supersede
+// CLI is a post-MVP refinement; until then, dev fresh-DBs or manually
+// promotes the child to StateComplete.
 type CompletionContract struct {
-	StartCriteria       []ChecklistItem  `json:"start_criteria"`
-	CompletionCriteria  []ChecklistItem  `json:"completion_criteria"`
-	CompletionChecklist []ChecklistItem  `json:"completion_checklist"`
-	CompletionEvidence  []string         `json:"completion_evidence"`
-	CompletionNotes     string           `json:"completion_notes"`
-	Policy              CompletionPolicy `json:"policy"`
+	StartCriteria       []ChecklistItem `json:"start_criteria"`
+	CompletionCriteria  []ChecklistItem `json:"completion_criteria"`
+	CompletionChecklist []ChecklistItem `json:"completion_checklist"`
+	CompletionEvidence  []string        `json:"completion_evidence"`
+	CompletionNotes     string          `json:"completion_notes"`
 }
 
 // ContextBlock stores typed contextual notes attached to a work item.
@@ -384,9 +384,6 @@ func MergeCompletionContract(base CompletionContract, defaults *CompletionContra
 		CompletionChecklist: mergeChecklistItems(normalizedBase.CompletionChecklist, normalizedDefaults.CompletionChecklist),
 		CompletionEvidence:  mergeStringLists(normalizedBase.CompletionEvidence, normalizedDefaults.CompletionEvidence),
 		CompletionNotes:     normalizedBase.CompletionNotes,
-		Policy: CompletionPolicy{
-			RequireChildrenComplete: normalizedBase.Policy.RequireChildrenComplete || normalizedDefaults.Policy.RequireChildrenComplete,
-		},
 	}
 	if merged.CompletionNotes == "" {
 		merged.CompletionNotes = normalizedDefaults.CompletionNotes
