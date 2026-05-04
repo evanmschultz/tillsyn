@@ -133,7 +133,25 @@ type ActionItem struct {
 	// arrives in droplet 4a.9). Domain primitive per Drop 4a L3 /
 	// WAVE_1_PLAN.md §1.4. Drop 4b commit-agent consumes this for diff
 	// context (`git diff <start_commit>..<end_commit>` baseline).
-	StartCommit    string
+	StartCommit string
+	// EndCommit optionally records the git commit hash captured at the
+	// moment work completes on this action item — typically the current
+	// `git rev-parse HEAD` of the bare-root or active worktree captured
+	// just before the terminal state transition (caller populates via
+	// UpdateActionItem BEFORE MoveActionItemState). Free-form trimmed
+	// string. Empty string is the meaningful zero value (not yet captured
+	// / not applicable) and is valid until terminal state — domain does
+	// NOT enforce non-empty-on-terminal; that is a Drop 4b dispatcher
+	// concern. NewActionItem trims surrounding whitespace; no format check
+	// (short-SHA, full-SHA, or any caller-supplied identifier all
+	// round-trip). Opaque-domain field: the domain layer holds it
+	// opaquely and does NOT call `git rev-parse HEAD` itself — the caller
+	// (orchestrator pre-cascade; Wave 2 dispatcher; Drop 4b commit-agent)
+	// supplies the value. Disjoint-axis with StartCommit — no chronology
+	// check applied at the domain layer. Domain primitive per Drop 4a L3 /
+	// WAVE_1_PLAN.md §1.5. Drop 4b commit-agent consumes this for diff
+	// context (`git diff <start_commit>..<end_commit>` baseline).
+	EndCommit      string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -231,7 +249,17 @@ type ActionItemInput struct {
 	// Opaque-domain field — the caller supplies the value (typically the
 	// current `git rev-parse HEAD` at in_progress transition). Domain
 	// primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
-	StartCommit    string
+	StartCommit string
+	// EndCommit optionally seeds the action-item end-commit hash at
+	// creation time (free-form trimmed string). Empty string is the
+	// meaningful zero value (not yet captured / not applicable) and is
+	// valid until terminal state — domain does NOT enforce non-empty-on-
+	// terminal. NewActionItem trims surrounding whitespace; no format
+	// check applies. Opaque-domain field — the caller supplies the value
+	// (typically the current `git rev-parse HEAD` captured just before
+	// terminal transition). Domain primitive per Drop 4a L3 /
+	// WAVE_1_PLAN.md §1.5.
+	EndCommit      string
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -419,6 +447,13 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
 	in.StartCommit = strings.TrimSpace(in.StartCommit)
 
+	// EndCommit mirrors StartCommit: free-form opaque-domain string,
+	// inline-trimmed, no format check, no exposed helper. Empty is the
+	// legitimate zero value ("not yet captured") and is valid until
+	// terminal state — domain does NOT enforce non-empty-on-terminal.
+	// Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.5.
+	in.EndCommit = strings.TrimSpace(in.EndCommit)
+
 	return ActionItem{
 		ID:             in.ID,
 		ProjectID:      in.ProjectID,
@@ -436,6 +471,7 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 		Packages:       packages,
 		Files:          files,
 		StartCommit:    in.StartCommit,
+		EndCommit:      in.EndCommit,
 		LifecycleState: in.LifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       in.Position,

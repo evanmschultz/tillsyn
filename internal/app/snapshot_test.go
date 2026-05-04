@@ -1172,3 +1172,90 @@ func TestSnapshotActionItemStartCommitLegacyFormatCompatibility(t *testing.T) {
 		t.Fatalf("legacy snapshot toDomain StartCommit = %q, want empty string", hydrated.StartCommit)
 	}
 }
+
+// TestSnapshotActionItemEndCommitRoundTrip verifies that the EndCommit
+// string added in Drop 4a droplet 4a.9 survives the domain → snapshot →
+// domain round-trip across the empty zero-value case and representative
+// populated cases (short-SHA, full-SHA, free-form identifier). Surrounding
+// whitespace is trimmed at NewActionItem time so the snapshot stage holds
+// already-trimmed values; the round-trip preserves the trimmed form
+// verbatim. Legacy-format compatibility (pre-4a.9 snapshots without the
+// field) is covered by the json:"end_commit,omitempty" tag — missing field
+// deserializes to "", the legitimate zero value, with no SnapshotVersion
+// bump.
+func TestSnapshotActionItemEndCommitRoundTrip(t *testing.T) {
+	now := time.Date(2026, 5, 3, 11, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name      string
+		endCommit string
+		want      string
+	}{
+		{name: "empty-zero-value", endCommit: "", want: ""},
+		{name: "short-SHA", endCommit: "0cf5194", want: "0cf5194"},
+		{name: "full-SHA", endCommit: "0cf5194d4cb6c8d4f9b9b1d7e1f9d3c2b4e5a6f7", want: "0cf5194d4cb6c8d4f9b9b1d7e1f9d3c2b4e5a6f7"},
+		{name: "free-form-identifier", endCommit: "branch/feature@head", want: "branch/feature@head"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			original, err := domain.NewActionItemForTest(domain.ActionItemInput{
+				ID:        "t-endcommit",
+				ProjectID: "p1",
+				ColumnID:  "c1",
+				Position:  0,
+				Title:     "EndCommit round-trip",
+				Priority:  domain.PriorityMedium,
+				Kind:      domain.KindBuild,
+				EndCommit: tc.endCommit,
+			}, now)
+			if err != nil {
+				t.Fatalf("NewActionItem() error = %v", err)
+			}
+			snap := snapshotActionItemFromDomain(original)
+			if snap.EndCommit != tc.want {
+				t.Fatalf("snapshotActionItemFromDomain EndCommit = %q, want %q", snap.EndCommit, tc.want)
+			}
+			hydrated := snap.toDomain()
+			if hydrated.EndCommit != tc.want {
+				t.Fatalf("toDomain EndCommit = %q, want %q", hydrated.EndCommit, tc.want)
+			}
+		})
+	}
+}
+
+// TestSnapshotActionItemEndCommitLegacyFormatCompatibility verifies that a
+// pre-droplet-4a.9 snapshot — one whose JSON wire form OMITS the end_commit
+// field entirely — deserializes cleanly with EndCommit="". The omitempty
+// tag keeps older snapshots forward-compatible without a SnapshotVersion
+// bump.
+func TestSnapshotActionItemEndCommitLegacyFormatCompatibility(t *testing.T) {
+	legacyJSON := []byte(`{
+		"id": "t-legacy-endcommit",
+		"project_id": "p1",
+		"kind": "build",
+		"structural_type": "droplet",
+		"lifecycle_state": "todo",
+		"column_id": "c1",
+		"position": 0,
+		"title": "Legacy snapshot, no end_commit",
+		"description": "pre-4a.9 row",
+		"priority": "medium",
+		"labels": [],
+		"metadata": {},
+		"created_by_actor": "u1",
+		"updated_by_actor": "u1",
+		"updated_by_type": "user",
+		"created_at": "2026-04-01T00:00:00Z",
+		"updated_at": "2026-04-01T00:00:00Z"
+	}`)
+	var snap SnapshotActionItem
+	if err := json.Unmarshal(legacyJSON, &snap); err != nil {
+		t.Fatalf("legacy snapshot unmarshal error = %v", err)
+	}
+	if snap.EndCommit != "" {
+		t.Fatalf("legacy snapshot EndCommit = %q, want empty string", snap.EndCommit)
+	}
+	hydrated := snap.toDomain()
+	if hydrated.EndCommit != "" {
+		t.Fatalf("legacy snapshot toDomain EndCommit = %q, want empty string", hydrated.EndCommit)
+	}
+}

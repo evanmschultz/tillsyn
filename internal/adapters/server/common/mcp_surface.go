@@ -129,6 +129,17 @@ type CreateActionItemRequest struct {
 	// commit-agent) supplies the value; domain layer never calls git
 	// itself. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
 	StartCommit string
+	// EndCommit optionally seeds the new action item's end-commit hash
+	// (free-form trimmed string; empty IS the meaningful zero value "not
+	// yet captured"). Mirrors StartCommit's value-type shape at the
+	// create boundary — no pointer-sentinel needed. Threaded through
+	// app.CreateActionItemInput → domain.NewActionItem in droplet 4a.9.
+	// Opaque-domain field — caller supplies the value (typically the
+	// current `git rev-parse HEAD` captured just before terminal
+	// transition); domain layer never calls git itself. Empty is valid
+	// until terminal state; domain does NOT enforce non-empty-on-
+	// terminal. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.5.
+	EndCommit   string
 	ColumnID    string
 	Title       string
 	Description string
@@ -226,8 +237,20 @@ type UpdateActionItemRequest struct {
 	// update. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.4.
 	// Pointer-sentinel locked per WAVE_1_PLAN post-4a.5 amendment.
 	StartCommit *string
-	Metadata    *domain.ActionItemMetadata
-	Actor       ActorLeaseTuple
+	// EndCommit optionally updates the action-item EndCommit string.
+	// Pointer-sentinel mirrors StartCommit: nil preserves the existing
+	// value; non-nil applies the dereferenced string (empty dereferenced
+	// string clears the prior commit hash — explicit caller intent).
+	// Pointer shape matters because a description-only update must NOT
+	// silently clobber a dispatcher-set end commit. Wave 2 dispatcher
+	// populates this via UpdateActionItem BEFORE MoveActionItemState.
+	// Threaded through app.UpdateActionItemInput; service applies inline
+	// strings.TrimSpace so the create-time trim rule applies equally on
+	// update. Domain primitive per Drop 4a L3 / WAVE_1_PLAN.md §1.5.
+	// Pointer-sentinel locked per WAVE_1_PLAN post-4a.5 amendment.
+	EndCommit *string
+	Metadata  *domain.ActionItemMetadata
+	Actor     ActorLeaseTuple
 }
 
 // MoveActionItemRequest stores transport input for actionItem move operations.

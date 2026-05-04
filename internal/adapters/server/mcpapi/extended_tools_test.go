@@ -4366,3 +4366,133 @@ func TestActionItemMCPStartCommitRoundTrip(t *testing.T) {
 		}
 	})
 }
+
+// TestActionItemMCPEndCommitRoundTrip verifies the EndCommit string field
+// added in Drop 4a droplet 4a.9 plumbs cleanly through the till.action_item
+// MCP tool on both create and update operations. EndCommit mirrors
+// StartCommit's shape — single-value string (not a slice) with pointer-
+// sentinel on update — nil preserves the prior value, non-nil applies
+// (empty dereferenced string clears the prior commit hash). Mirrors
+// TestActionItemMCPStartCommitRoundTrip's shape verbatim adapted to the
+// end_commit wire field.
+func TestActionItemMCPEndCommitRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T) (*stubExpandedService, *httptest.Server) {
+		t.Helper()
+		service := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: common.CaptureState{StateHash: "abc123"},
+			},
+		}
+		handler, err := NewHandler(Config{}, service, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return service, server
+	}
+
+	t.Run("create plumbs end_commit string through to request", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7700, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "EndCommit Set",
+			"end_commit":        "0cf5194",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if got, want := service.lastCreateActionItemReq.EndCommit, "0cf5194"; got != want {
+			t.Fatalf("CreateActionItemRequest.EndCommit = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("create without end_commit round-trips empty string", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7701, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "create",
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "EndCommit Absent",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item create returned isError=true: %#v", createResp.Result)
+		}
+		if got := service.lastCreateActionItemReq.EndCommit; got != "" {
+			t.Fatalf("CreateActionItemRequest.EndCommit = %q, want empty", got)
+		}
+	})
+
+	t.Run("update with end_commit plumbs as non-nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7702, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "EndCommit Updated",
+			"end_commit":        "0cf5194",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.EndCommit == nil {
+			t.Fatalf("UpdateActionItemRequest.EndCommit = nil, want non-nil pointer to %q", "0cf5194")
+		}
+		if got, want := *service.lastUpdateActionItemReq.EndCommit, "0cf5194"; got != want {
+			t.Fatalf("UpdateActionItemRequest.EndCommit = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("update with empty end_commit plumbs as non-nil pointer to empty string (explicit clear)", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7703, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "EndCommit Cleared",
+			"end_commit":        "",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.EndCommit == nil {
+			t.Fatalf("UpdateActionItemRequest.EndCommit = nil, want non-nil pointer to empty string (explicit clear)")
+		}
+		if got := *service.lastUpdateActionItemReq.EndCommit; got != "" {
+			t.Fatalf("UpdateActionItemRequest.EndCommit = %q, want empty string (explicit clear)", got)
+		}
+	})
+
+	t.Run("update without end_commit preserves prior via nil pointer-sentinel", func(t *testing.T) {
+		t.Parallel()
+		service, server := newServer(t)
+		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7704, "till.action_item", mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "update",
+			"action_item_id":    testActionItemUUID,
+			"title":             "EndCommit Preserved",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})))
+		if isError, _ := updateResp.Result["isError"].(bool); isError {
+			t.Fatalf("action_item update returned isError=true: %#v", updateResp.Result)
+		}
+		if service.lastUpdateActionItemReq.EndCommit != nil {
+			t.Fatalf("UpdateActionItemRequest.EndCommit = %v, want nil (preserve)", service.lastUpdateActionItemReq.EndCommit)
+		}
+	})
+}
