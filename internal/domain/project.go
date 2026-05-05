@@ -126,6 +126,32 @@ type ProjectMetadata struct {
 	KindPayload             json.RawMessage         `json:"kind_payload,omitempty"`
 	CapabilityPolicy        ProjectCapabilityPolicy `json:"capability_policy"`
 	OrchSelfApprovalEnabled *bool                   `json:"orch_self_approval_enabled,omitempty"`
+	// DispatcherCommitEnabled toggles automatic commit gate execution.
+	// Pointer-bool nil-means-disabled (Drop 4a Wave 4a.25 precedent —
+	// OrchSelfApprovalEnabled at lines 100-128 above; same pointer-vs-bool
+	// rationale, opposite default polarity). Default OFF until Drop 5
+	// dogfood proves auto-commit safe. Master PLAN.md L20.
+	//
+	// Three states:
+	//   - nil (default / omitted) — DISABLED. The dispatcher does NOT
+	//     run the commit gate.
+	//   - *false — DISABLED. Behaviorally identical to nil; lets the
+	//     dev affirmatively pin the toggle off when the project default
+	//     could otherwise drift.
+	//   - *true — ENABLED. The dispatcher runs the commit gate.
+	//
+	// Pointer-bool deliberate (matching W3.2 falsification attack 3
+	// mitigation): the absent-vs-explicit-false distinction is preserved
+	// even though both currently collapse to "disabled" — reserves the
+	// pointer shape if Drop 5+ wants to introduce a third state (e.g.,
+	// project-default-overrides-template-default merge logic). Pre-MVP we
+	// trade one extra dereference for forward-compatibility.
+	DispatcherCommitEnabled *bool `toml:"dispatcher_commit_enabled,omitempty" json:"dispatcher_commit_enabled,omitempty"`
+	// DispatcherPushEnabled toggles automatic push gate execution.
+	// Default OFF; dev flips this on AFTER DispatcherCommitEnabled has
+	// proven safe in dogfood. Same nil-means-disabled three-state shape
+	// as DispatcherCommitEnabled above. Master PLAN.md L20.
+	DispatcherPushEnabled *bool `toml:"dispatcher_push_enabled,omitempty" json:"dispatcher_push_enabled,omitempty"`
 }
 
 // OrchSelfApprovalIsEnabled reports whether orch-self-approval is currently
@@ -142,6 +168,38 @@ func (m ProjectMetadata) OrchSelfApprovalIsEnabled() bool {
 		return true
 	}
 	return *m.OrchSelfApprovalEnabled
+}
+
+// IsDispatcherCommitEnabled reports whether the dispatcher's automatic
+// commit gate should run for this project. Returns true ONLY when
+// DispatcherCommitEnabled is non-nil AND set to true — nil-means-disabled
+// (Master PLAN.md L20: "Default OFF until dogfood proves them safe").
+//
+// Polarity is the inverse of OrchSelfApprovalIsEnabled (nil → enabled)
+// because the underlying defaults differ: orch-self-approval shipped
+// post-Drop-4a Wave 3 already proven safe and defaulted on, whereas
+// auto-commit ships Drop 4c unproven and must default off.
+func (m ProjectMetadata) IsDispatcherCommitEnabled() bool {
+	if m.DispatcherCommitEnabled == nil {
+		return false
+	}
+	return *m.DispatcherCommitEnabled
+}
+
+// IsDispatcherPushEnabled reports whether the dispatcher's automatic
+// push gate should run for this project. Returns true ONLY when
+// DispatcherPushEnabled is non-nil AND set to true — nil-means-disabled.
+// Master PLAN.md L20.
+//
+// Independent of IsDispatcherCommitEnabled: callers compose them
+// explicitly when push depends on commit (push-without-commit is
+// non-sensical, but the toggles do not enforce that ordering — gate
+// execution does).
+func (m ProjectMetadata) IsDispatcherPushEnabled() bool {
+	if m.DispatcherPushEnabled == nil {
+		return false
+	}
+	return *m.DispatcherPushEnabled
 }
 
 // ProjectInput holds input values for project constructor operations.
