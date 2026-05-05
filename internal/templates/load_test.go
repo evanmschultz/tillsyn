@@ -270,6 +270,130 @@ model = "opus"
 	}
 }
 
+// TestTemplateGatesAndGateRulesCoexist verifies the [gates] and [gate_rules]
+// TOML keys decode independently. The Drop 4b Wave A `gates` field is
+// distinct from the Drop 3 reserved-but-untyped `gate_rules` map; a template
+// with both populated must load cleanly with each landing on its own field.
+//
+// Mitigates falsification attack A2 from WAVE_A_PLAN.md 4b.1: "The reserved
+// [gate_rules] table from Drop 3 conflicts with this [gates] table." It does
+// not — the TOML keys are different and the strict decoder treats them as
+// separate fields.
+func TestTemplateGatesAndGateRulesCoexist(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[gates]
+build = ["mage_ci"]
+
+[gate_rules.mage_ci]
+mage_target = "ci"
+required = true
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+
+	gateSeq, ok := tpl.Gates[domain.KindBuild]
+	if !ok {
+		t.Fatalf("Gates[%q] missing", domain.KindBuild)
+	}
+	if len(gateSeq) != 1 || gateSeq[0] != GateKindMageCI {
+		t.Fatalf("Gates[%q] = %v; want [%q]", domain.KindBuild, gateSeq, GateKindMageCI)
+	}
+
+	if tpl.GateRulesRaw == nil {
+		t.Fatalf("GateRulesRaw nil; want populated map (forward-compat seam preserved)")
+	}
+	if _, ok := tpl.GateRulesRaw["mage_ci"]; !ok {
+		t.Fatalf("GateRulesRaw[%q] missing — forward-compat seam should still decode", "mage_ci")
+	}
+}
+
+// TestValidateGateKindsRejectsUnknownKind verifies validateGateKinds rejects
+// a template whose [gates.<kind>] value-slice carries a gate-kind string that
+// is not a member of the closed GateKind enum. The error wraps
+// ErrUnknownGateKind and names the offending parent kind plus the offending
+// gate value for UX.
+func TestValidateGateKindsRejectsUnknownKind(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[gates]
+build = ["bogus"]
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownGateKind; got nil")
+	}
+	if !errors.Is(err, ErrUnknownGateKind) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownGateKind) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), `"build"`) {
+		t.Fatalf("Load: err = %q; want offending parent kind %q in message", err.Error(), "build")
+	}
+	if !strings.Contains(err.Error(), `"bogus"`) {
+		t.Fatalf("Load: err = %q; want offending gate value %q in message", err.Error(), "bogus")
+	}
+}
+
+// TestValidateGateKindsRejectsUnknownParentKind verifies validateMapKeys
+// rejects a [gates.<bogus-kind>] table whose map key is not a member of the
+// closed 12-value domain.Kind enum. Mirrors the existing kinds/agent_bindings
+// map-key checks — strict decode treats arbitrary keys under [gates.*] as
+// legitimate map entries, so a typo like [gates.bogus_kind] survives strict
+// decode and must be caught by the dedicated map-key validator at load time.
+func TestValidateGateKindsRejectsUnknownParentKind(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[gates]
+bogus_kind = ["mage_ci"]
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownKindReference; got nil")
+	}
+	if !errors.Is(err, ErrUnknownKindReference) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownKindReference) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "gates map key") {
+		t.Fatalf("Load: err = %q; want substring %q", err.Error(), "gates map key")
+	}
+	if !strings.Contains(err.Error(), "bogus_kind") {
+		t.Fatalf("Load: err = %q; want offending key %q in message", err.Error(), "bogus_kind")
+	}
+}
+
+// TestTemplateGatesEmptyMapDecodes verifies that a template TOML document
+// without a [gates] table loads cleanly and Template.Gates decodes to its
+// zero value (nil map). The cascade gate runner treats a nil Gates map — and
+// any absent per-kind entry — as "no gates," so the nil-vs-empty distinction
+// is not load-bearing for runtime semantics; this test pins the
+// zero-value-on-absence contract so future schema edits cannot silently
+// change it (e.g. by initialising Gates to a non-nil empty map at load
+// time, which would defeat the explicit-presence test in
+// TestDefaultTemplateLoadsWithGates).
+func TestTemplateGatesEmptyMapDecodes(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[kinds.build]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = []
+structural_type = "droplet"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if tpl.Gates != nil {
+		t.Fatalf("Gates = %v; want nil (zero-value on absent [gates] table)", tpl.Gates)
+	}
+}
+
 // TestLoadSelfCycleSingleRule verifies a self-loop child_rule (A -> A) is
 // detected as ErrTemplateCycle. A self-loop is the smallest-possible cycle
 // and exercises the gray-color branch of the DFS without relying on

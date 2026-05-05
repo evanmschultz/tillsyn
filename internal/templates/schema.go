@@ -47,14 +47,81 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return nil
 }
 
+// GateKind names one closed-enum gate identifier consumed by the cascade
+// dispatcher's gate runner (Drop 4b Wave A 4b.2). The closed set is
+// deliberately small: each constant binds to a deterministic, no-LLM gate
+// implementation in internal/app/dispatcher (mage_ci → 4b.3 gate_mage_ci.go,
+// mage_test_pkg → 4b.4 gate_mage_test_pkg.go, hylla_reingest → 4b.7).
+//
+// Drop 4c expands the enum with "commit" and "push" — two additional closed
+// values that bind to the commit-message-agent + git-push gates respectively.
+// Until Drop 4c lands, IsValidGateKind rejects those literals so a template
+// authored against a future cascade vocabulary fails at load time rather than
+// silently no-op'ing at run time. The closed-enum + load-time validation
+// pattern mirrors domain.Kind / domain.StructuralType per Drop 4b REVISION_BRIEF
+// locked decisions L1 (closed-enum gates) and L6 (default ships only mage_ci).
+type GateKind string
+
+// Closed-enum GateKind constants. Adding a new value requires both a constant
+// here AND an entry in validGateKinds below — IsValidGateKind reads the
+// validGateKinds slice rather than a switch so the membership set stays in
+// one place.
+const (
+	// GateKindMageCI runs `mage ci` in the project's primary worktree. The
+	// canonical post-build verification gate; ships in the default template
+	// per Drop 4b L6.
+	GateKindMageCI GateKind = "mage_ci"
+
+	// GateKindMageTestPkg runs `mage testPkg <pkg>` for each package in the
+	// triggering action item's domain.ActionItem.Packages slice. Used as a
+	// scoped pre-flight when the full mage_ci gate is too coarse.
+	GateKindMageTestPkg GateKind = "mage_test_pkg"
+
+	// GateKindHyllaReingest invokes the Hylla MCP `hylla_ingest` tool against
+	// the project's GitHub remote. Runs at drop-end only per Drop 4b Wave C
+	// 4b.7 wiring; never per-build.
+	GateKindHyllaReingest GateKind = "hylla_reingest"
+)
+
+// validGateKinds stores every member of the closed GateKind enum. Drop 4c
+// extends this slice with "commit" and "push"; until then the closed set is
+// exactly the three constants above.
+var validGateKinds = []GateKind{
+	GateKindMageCI,
+	GateKindMageTestPkg,
+	GateKindHyllaReingest,
+}
+
+// IsValidGateKind reports whether g is a member of the closed GateKind enum.
+// The check is exact-match against validGateKinds — no whitespace trimming or
+// case folding. Template authors are responsible for canonical spelling.
+//
+// Unlike domain.IsValidKind which normalizes via strings.TrimSpace +
+// strings.ToLower (case-insensitive, whitespace-tolerant), IsValidGateKind
+// does exact-match. Gate kinds are stricter than action-item kinds because
+// templates author them explicitly and silent fold-matching would mask typos
+// (e.g. " Mage_CI " quietly resolving to mage_ci) at load time, well before
+// the dispatcher runs.
+func IsValidGateKind(g GateKind) bool {
+	for _, candidate := range validGateKinds {
+		if candidate == g {
+			return true
+		}
+	}
+	return false
+}
+
 // Template is the closed-schema root for a cascade-template definition. It
 // pairs a schema_version pin with the closed kind, child-rule, and
 // agent-binding tables.
 //
-// The struct intentionally has no GateRules field: per Drop 3 fix L6 and
-// finding 5.B.11, the [gate_rules] TOML table is reserved for forward-compat
-// and consumed by Drop 4's dispatcher. The type for that table lands in the
-// dispatcher droplet, not here.
+// Per Drop 4b Wave A 4b.1 the Gates field encodes the per-kind gate sequence
+// the dispatcher's gate runner executes when an action item of that kind
+// transitions to its provisional terminal state. Gates is distinct from the
+// reserved-but-untyped GateRulesRaw map below: the two TOML keys (`gates` vs
+// `gate_rules`) decode independently. Wave A consumes Gates; GateRulesRaw
+// remains the forward-compat seam for richer gate config (timeouts, retry
+// policy) authored under a different TOML key.
 //
 // Canonical spec: main/PLAN.md § 19.3, ta-docs/cascade-methodology.md §11.
 type Template struct {
@@ -76,12 +143,34 @@ type Template struct {
 	// dispatcher uses when the kind transitions to in_progress.
 	AgentBindings map[domain.Kind]AgentBinding `toml:"agent_bindings"`
 
+	// Gates is the per-kind gate sequence consumed by the dispatcher's gate
+	// runner (Drop 4b Wave A 4b.2). Each map entry pairs a parent action-item
+	// kind with the ordered list of GateKind values the runner executes
+	// post-build, halting on the first failure. Absence of an entry for a
+	// given kind means "no gates" (gate runner returns Success: true
+	// immediately) — NOT "all gates" (resolves Drop 4b WAVE_A_PLAN.md 4b.1
+	// acceptance bullet).
+	//
+	// Both axes are validated at load time: validateMapKeys asserts every
+	// map key is a member of the closed domain.Kind enum, and
+	// validateGateKinds asserts every value-slice element is a member of
+	// the closed GateKind enum. Slice order is preserved by go-toml/v2's
+	// array decoder so [gates.build] = ["mage_ci", "mage_test_pkg"] runs
+	// mage_ci first, then mage_test_pkg.
+	Gates map[domain.Kind][]GateKind `toml:"gates"`
+
 	// GateRulesRaw is the strict-decode escape hatch for the [gate_rules] TOML
 	// table reserved per Drop 3 fix L6 (finding 5.B.11). The Go struct for the
 	// gate-rule schema lands in Drop 4's dispatcher; until then the loader
 	// preserves whatever the document declares as a free-form map so strict
 	// decode does not reject the reserved table. The field is excluded from
 	// any structural validation in Drop 3 and exists purely for forward-compat.
+	//
+	// Distinct from the Gates field above — the two consume different TOML
+	// keys (`gates` vs `gate_rules`) and decode independently. Drop 4b's
+	// `gates` table lands the closed-enum gate sequence; a future drop may
+	// type GateRulesRaw into a richer per-gate config struct (timeouts,
+	// retry policy, env-var pinning) without colliding with `gates`.
 	GateRulesRaw map[string]any `toml:"gate_rules"`
 
 	// StewardSeeds is the ordered list of long-lived coordination anchor

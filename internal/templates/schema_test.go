@@ -46,6 +46,10 @@ func TestZeroValuesConstructible(t *testing.T) {
 // This test does not exercise the schema-version gate, kind-membership
 // validator, or any other behavior reserved for later droplets — it only
 // confirms that every TOML tag declared in schema.go round-trips cleanly.
+//
+// Drop 4b Wave A 4b.1 extension: the populated Gates field round-trips so
+// the [gates] TOML key encoding survives marshal+unmarshal symmetrically with
+// the closed-enum GateKind value-slice axis.
 func TestTemplateTOMLRoundTrip(t *testing.T) {
 	original := Template{
 		SchemaVersion: SchemaVersionV1,
@@ -81,6 +85,9 @@ func TestTemplateTOMLRoundTrip(t *testing.T) {
 				BlockedRetryCooldown: Duration(30 * time.Second),
 			},
 		},
+		Gates: map[domain.Kind][]GateKind{
+			domain.KindBuild: {GateKindMageCI, GateKindMageTestPkg},
+		},
 		StewardSeeds: []StewardSeed{
 			{Title: "DISCUSSIONS", Description: "Cross-cutting discussion topics."},
 			{Title: "REFINEMENTS", Description: "Tillsyn product refinements."},
@@ -99,5 +106,46 @@ func TestTemplateTOMLRoundTrip(t *testing.T) {
 
 	if !reflect.DeepEqual(original, decoded) {
 		t.Fatalf("round-trip mismatch\noriginal: %#v\ndecoded:  %#v\nencoded TOML:\n%s", original, decoded, encoded)
+	}
+}
+
+// TestGateKindClosedEnum verifies the three Drop 4b Wave A GateKind constants
+// are members of the closed enum (IsValidGateKind returns true) and that
+// Drop-4c-future values ("commit", "push") plus arbitrary garbage and the
+// empty string are rejected. Adding "commit" / "push" in Drop 4c flips the
+// commit/push assertions; this test pins the Wave A vocabulary explicitly.
+func TestGateKindClosedEnum(t *testing.T) {
+	t.Parallel()
+
+	validCases := []GateKind{
+		GateKindMageCI,
+		GateKindMageTestPkg,
+		GateKindHyllaReingest,
+	}
+	for _, g := range validCases {
+		t.Run("valid_"+string(g), func(t *testing.T) {
+			t.Parallel()
+			if !IsValidGateKind(g) {
+				t.Fatalf("IsValidGateKind(%q) = false; want true", g)
+			}
+		})
+	}
+
+	invalidCases := []GateKind{
+		GateKind("commit"),    // Drop 4c will accept this; Wave A rejects.
+		GateKind("push"),      // Drop 4c will accept this; Wave A rejects.
+		GateKind(""),          // Empty string is never valid.
+		GateKind("garbage"),   // Arbitrary unknown value.
+		GateKind("MAGE_CI"),   // Case mismatch — exact match enforced.
+		GateKind(" mage_ci "), // Whitespace padding — exact match enforced.
+		GateKind("mage-ci"),   // Hyphen vs underscore — exact match enforced.
+	}
+	for _, g := range invalidCases {
+		t.Run("invalid_"+string(g), func(t *testing.T) {
+			t.Parallel()
+			if IsValidGateKind(g) {
+				t.Fatalf("IsValidGateKind(%q) = true; want false", g)
+			}
+		})
 	}
 }
