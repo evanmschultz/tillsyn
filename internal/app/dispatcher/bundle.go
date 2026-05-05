@@ -101,10 +101,13 @@ type Bundle struct {
 // ManifestMetadata is the structured payload Bundle.WriteManifest serializes
 // to <Root>/manifest.json. The shape is the cross-CLI shell per the spawn
 // architecture memory §2: spawn_id, action_item_id, kind, claude_pid,
-// started_at, paths, bundle_path.
+// started_at, paths, bundle_path, cli_kind.
 //
-// Per Drop 4c F.7-CORE F.7.1 REV-4: NO CLIKind field — F.7.17.6 is the sole
-// owner of manifest.cli_kind and lands it in a follow-up droplet.
+// Per Drop 4c F.7-CORE F.7.1 REV-4: F.7.1 ships ManifestMetadata WITHOUT
+// CLIKind. Drop 4c F.7-CORE F.7.17.6 is the sole owner of manifest.cli_kind
+// per master PLAN §5 "Tillsyn struct extension policy" — the field is added
+// by this droplet so F.7.8's orphan scan (REV-5: blocked_by F.7.17.6) can
+// route adapter-specific liveness checks off the on-disk manifest.
 //
 // ClaudePID is declared HERE per the spawn architecture memory §2 / §8
 // canonical field set, but the field's runtime invocation timing
@@ -125,6 +128,22 @@ type ManifestMetadata struct {
 	// post-mortem categorization and for the orphan-scan to skip
 	// non-spawn-bearing kinds.
 	Kind domain.Kind `json:"kind"`
+
+	// CLIKind identifies the adapter the spawn invokes ("claude" today;
+	// "codex" lands in Drop 4d). Sourced from the resolved binding's
+	// CLIKind at BuildSpawnCommand time and written verbatim into the
+	// manifest. F.7.8's orphan scan reads this field to route
+	// adapter-specific liveness checks (e.g. "claude" bundles probe the
+	// claude PID; future "codex" bundles probe a codex-specific liveness
+	// signal).
+	//
+	// Per Drop 4c F.7-CORE REV-4 + master PLAN §5 "Tillsyn struct
+	// extension policy" — F.7.17.6 is the sole owner of this field;
+	// F.7.1 explicitly does NOT ship it. The JSON tag is rendered
+	// without `omitempty` so the orphan scan sees an explicit empty
+	// string for legacy bundles authored before this field landed,
+	// rather than a missing key that decoders would silently default.
+	CLIKind string `json:"cli_kind"`
 
 	// ClaudePID is the OS process ID of the spawned claude CLI process,
 	// populated by (b *Bundle).UpdateManifestPID after `cmd.Start()`

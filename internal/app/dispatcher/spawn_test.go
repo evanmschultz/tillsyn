@@ -630,6 +630,88 @@ func TestBuildSpawnCommandWritesManifestJSON(t *testing.T) {
 	}
 }
 
+// TestBuildSpawnCommandPopulatesManifestCLIKind asserts the F.7.17.6
+// integration: BuildSpawnCommand populates ManifestMetadata.CLIKind from the
+// resolved binding's CLIKind so the on-disk manifest round-trips the adapter
+// identity. F.7.8's orphan scan reads this field to route adapter-specific
+// liveness checks; without the population this test guards, the manifest's
+// cli_kind would always be the empty string regardless of the binding the
+// dispatcher resolved.
+//
+// The test exercises both the default-to-claude path (empty rawBinding.CLIKind
+// → ResolveBinding substitutes CLIKindClaude → manifest cli_kind = "claude")
+// and the explicit-claude path (rawBinding.CLIKind = "claude" → no
+// substitution → manifest cli_kind = "claude").
+func TestBuildSpawnCommandPopulatesManifestCLIKind(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		bindingKind string
+		wantCLIKind string
+	}{
+		{
+			name:        "default empty resolves to claude",
+			bindingKind: "",
+			wantCLIKind: "claude",
+		},
+		{
+			name:        "explicit claude passes through",
+			bindingKind: "claude",
+			wantCLIKind: "claude",
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			binding := goBuilderBinding()
+			binding.CLIKind = tc.bindingKind
+
+			cmd, _, err := dispatcher.BuildSpawnCommand(fixtureBuildItem(), fixtureProject(), fixtureCatalog(binding), dispatcher.AuthBundle{})
+			if err != nil {
+				t.Fatalf("BuildSpawnCommand() error = %v, want nil", err)
+			}
+			removeBundle(t, cmd)
+
+			pluginDir, ok := argFlagValue(cmd.Args, "--plugin-dir")
+			if !ok {
+				t.Fatalf("cmd.Args missing --plugin-dir flag: %v", cmd.Args)
+			}
+			bundleRoot := filepath.Dir(pluginDir)
+
+			manifest, err := dispatcher.ReadManifest(bundleRoot)
+			if err != nil {
+				t.Fatalf("ReadManifest(%q) error = %v, want nil", bundleRoot, err)
+			}
+			if manifest.CLIKind != tc.wantCLIKind {
+				t.Errorf("manifest.CLIKind = %q, want %q", manifest.CLIKind, tc.wantCLIKind)
+			}
+
+			// Pin the on-disk JSON key shape too — F.7.8's orphan scan reads
+			// raw bytes via the Go struct decoder, but adopters writing
+			// non-Go forensic tooling rely on the snake_case key.
+			manifestPath := filepath.Join(bundleRoot, "manifest.json")
+			contents, err := os.ReadFile(manifestPath)
+			if err != nil {
+				t.Fatalf("os.ReadFile(%q) error = %v", manifestPath, err)
+			}
+			var generic map[string]any
+			if err := json.Unmarshal(contents, &generic); err != nil {
+				t.Fatalf("json.Unmarshal manifest: %v\ncontents:\n%s", err, contents)
+			}
+			got, ok := generic["cli_kind"]
+			if !ok {
+				t.Fatalf("manifest missing JSON key %q\nfull payload:\n%s", "cli_kind", contents)
+			}
+			if got != tc.wantCLIKind {
+				t.Errorf("manifest cli_kind = %v, want %q", got, tc.wantCLIKind)
+			}
+		})
+	}
+}
+
 // TestBuildSpawnCommandRendersFullBundleSubtree asserts the F.7-CORE F.7.3b
 // integration: BuildSpawnCommand's render-hook lookup invokes the
 // cli_claude/render package's Render which writes EVERY artifact memory

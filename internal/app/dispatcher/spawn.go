@@ -425,6 +425,7 @@ func BuildSpawnCommand(
 		SpawnID:      bundle.SpawnID,
 		ActionItemID: item.ID,
 		Kind:         item.Kind,
+		CLIKind:      string(resolved.CLIKind),
 		StartedAt:    bundle.StartedAt,
 		Paths:        item.Paths,
 	}); err != nil {

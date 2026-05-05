@@ -53,13 +53,14 @@ func (d *Duration) UnmarshalText(text []byte) error {
 // implementation in internal/app/dispatcher (mage_ci → 4b.3 gate_mage_ci.go,
 // mage_test_pkg → 4b.4 gate_mage_test_pkg.go, hylla_reingest → 4b.7).
 //
-// Drop 4c expands the enum with "commit" and "push" — two additional closed
-// values that bind to the commit-message-agent + git-push gates respectively.
-// Until Drop 4c lands, IsValidGateKind rejects those literals so a template
-// authored against a future cascade vocabulary fails at load time rather than
-// silently no-op'ing at run time. The closed-enum + load-time validation
-// pattern mirrors domain.Kind / domain.StructuralType per Drop 4b REVISION_BRIEF
-// locked decisions L1 (closed-enum gates) and L6 (default ships only mage_ci).
+// Drop 4c expands the enum with "commit" (F.7.13, landed) and "push" (a
+// follow-up droplet) — two additional closed values that bind to the
+// commit-message-agent + git-push gates respectively. The closed-enum +
+// load-time validation pattern mirrors domain.Kind / domain.StructuralType
+// per Drop 4b REVISION_BRIEF locked decisions L1 (closed-enum gates) and L6
+// (default ships only mage_ci); IsValidGateKind rejects "push" until that
+// droplet lands so templates authored against a future cascade vocabulary
+// fail at load time rather than silently no-op'ing at run time.
 type GateKind string
 
 // Closed-enum GateKind constants. Adding a new value requires both a constant
@@ -81,15 +82,26 @@ const (
 	// the project's GitHub remote. Runs at drop-end only per Drop 4b Wave C
 	// 4b.7 wiring; never per-build.
 	GateKindHyllaReingest GateKind = "hylla_reingest"
+
+	// GateKindCommit invokes the F.7.13 commit gate: shells the F.7.12
+	// CommitAgent for a single-line conventional-commit message, then runs
+	// path-scoped `git add` + `git commit` against the project worktree and
+	// records the resulting HEAD hash on the action item's EndCommit field.
+	// Drop 4c F.7.13 ships the gate implementation; Drop 4c F.7.16 expands
+	// the default template's [gates.build] sequence to include this kind.
+	// Off-by-default per project metadata DispatcherCommitEnabled toggle
+	// (F.7.15) — the gate is a no-op when the toggle is unset / false.
+	GateKindCommit GateKind = "commit"
 )
 
 // validGateKinds stores every member of the closed GateKind enum. Drop 4c
-// extends this slice with "commit" and "push"; until then the closed set is
-// exactly the three constants above.
+// F.7.13 added "commit"; "push" lands in a follow-up droplet alongside its
+// gate implementation.
 var validGateKinds = []GateKind{
 	GateKindMageCI,
 	GateKindMageTestPkg,
 	GateKindHyllaReingest,
+	GateKindCommit,
 }
 
 // IsValidGateKind reports whether g is a member of the closed GateKind enum.
