@@ -208,7 +208,7 @@ type Template struct {
 }
 
 // Tillsyn carries top-level dispatcher / aggregator globals declared under
-// the [tillsyn] table in template TOML. F.7.18.2 ships the initial
+// the [tillsyn] table in template TOML. F.7.18.2 shipped the initial
 // declaration with two fields; subsequent F.7-CORE droplets extend it with
 // SpawnTempRoot (F.7.1) and RequiresPlugins (F.7.6) per master PLAN.md §5
 // "Tillsyn struct extension policy".
@@ -236,6 +236,60 @@ type Tillsyn struct {
 	// cap lives on AgentBinding.Context.MaxRuleDuration). Negative values
 	// are rejected at load time by validateTillsyn.
 	MaxAggregatorDuration Duration `toml:"max_aggregator_duration"`
+
+	// SpawnTempRoot selects where the dispatcher's per-spawn ephemeral
+	// bundle directory is materialized. Closed-enum string values:
+	//
+	//   - "" (omitted): consumer-time default = "os_tmp" (the dispatcher's
+	//     bundle materializer resolves the empty string to OS temp dir at
+	//     spawn time per Drop 4c F.7.1 NewBundle).
+	//   - "os_tmp": bundle root = os.MkdirTemp under os.TempDir() with the
+	//     `tillsyn-spawn-` prefix. Bundles are reaped on terminal-state by
+	//     the dispatcher's cleanup hook (F.7.8 owns orphan-scan).
+	//   - "project": bundle root = <projectRoot>/.tillsyn/spawns/<spawn-id>/.
+	//     Used when the dev wants forensics under the worktree (e.g. for
+	//     post-mortem inspection); F.7.7 lands the gitignore auto-add when
+	//     this mode is selected.
+	//
+	// validateTillsyn rejects any other value at load time. Per Drop 4c
+	// F.7-CORE F.7.1 REV-7 the field belongs on this struct (declared in
+	// F.7.18.2) rather than a separate top-level table — the [tillsyn]
+	// table is the single carrier for dispatcher-global knobs.
+	SpawnTempRoot string `toml:"spawn_temp_root"`
+
+	// RequiresPlugins is the closed list of Claude Code plugin identifiers
+	// the project's spawn pipeline requires the dev's local Claude install
+	// to carry. The dispatcher's pre-flight check (Drop 4c F.7.6
+	// CheckRequiredPlugins) shells out to `claude plugin list --json`,
+	// parses the installed-plugin set, and fails hard with a
+	// `claude plugin install <name>` instruction whenever any entry in this
+	// slice is missing.
+	//
+	// Format: each entry MUST be one of two shapes —
+	//
+	//   - `<name>` — bare plugin identifier (marketplace-implicit). The
+	//     pre-flight matcher accepts any installed entry whose `id` matches
+	//     the supplied name, regardless of marketplace.
+	//   - `<name>@<marketplace>` — plugin identifier scoped to a specific
+	//     marketplace source. The pre-flight matcher accepts only installed
+	//     entries whose `id` AND `marketplace` both match.
+	//
+	// validateTillsyn rejects empty entries, entries containing whitespace,
+	// entries containing more than one `@`, and within-list duplicates at
+	// load time. NO closed-enum vocabulary check on plugin names — adopters
+	// supply real Claude plugin identifiers and the dispatcher's runtime
+	// shell-out is the authoritative gate.
+	//
+	// Empty slice (or omitted field) means "no required plugins" — the
+	// pre-flight check returns nil immediately without invoking
+	// `claude plugin list --json` so adopters who do not depend on any
+	// plugin pay no exec cost per spawn.
+	//
+	// Per Drop 4c REV-7 the field belongs on this struct (declared in
+	// F.7.18.2; SpawnTempRoot added by F.7.1) rather than a separate
+	// top-level table — the [tillsyn] table is the single carrier for
+	// dispatcher-global knobs.
+	RequiresPlugins []string `toml:"requires_plugins,omitempty"`
 }
 
 // StewardSeed is one persistent-anchor specification consumed by droplet

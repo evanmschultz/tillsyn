@@ -2,6 +2,7 @@ package dispatcher_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -557,3 +558,99 @@ func TestRegisterAdapterRoutesCustomCLIKind(t *testing.T) {
 // Compile-time assertion: fakeAdapter satisfies dispatcher.CLIAdapter. If
 // any of the three methods drift, the test build fails here.
 var _ dispatcher.CLIAdapter = (*fakeAdapter)(nil)
+
+// TestBuildSpawnCommandWritesManifestJSON asserts the F.7-CORE F.7.1 bundle
+// integration: BuildSpawnCommand calls Bundle.WriteManifest before invoking
+// the adapter, and the resulting manifest.json carries the per-spawn
+// metadata (action_item_id, kind, paths) sourced from the action item.
+//
+// The previous (4a.19 / F.7.17.5) implementation used os.MkdirTemp with no
+// manifest write — this test pins the new contract end-to-end.
+func TestBuildSpawnCommandWritesManifestJSON(t *testing.T) {
+	t.Parallel()
+
+	item := fixtureBuildItem()
+	item.Paths = []string{"internal/app/dispatcher/spawn.go", "internal/app/dispatcher/bundle.go"}
+	project := fixtureProject()
+
+	cmd, _, err := dispatcher.BuildSpawnCommand(item, project, fixtureCatalog(goBuilderBinding()), dispatcher.AuthBundle{})
+	if err != nil {
+		t.Fatalf("BuildSpawnCommand() error = %v, want nil", err)
+	}
+	removeBundle(t, cmd)
+
+	pluginDir, ok := argFlagValue(cmd.Args, "--plugin-dir")
+	if !ok {
+		t.Fatalf("cmd.Args missing --plugin-dir flag: %v", cmd.Args)
+	}
+	bundleRoot := filepath.Dir(pluginDir)
+	manifestPath := filepath.Join(bundleRoot, "manifest.json")
+
+	contents, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) error = %v — expected manifest.json under bundle root %q", manifestPath, err, bundleRoot)
+	}
+
+	var generic map[string]any
+	if err := json.Unmarshal(contents, &generic); err != nil {
+		t.Fatalf("json.Unmarshal manifest: %v\ncontents:\n%s", err, contents)
+	}
+
+	wantKeys := []string{"spawn_id", "action_item_id", "kind", "started_at", "paths"}
+	for _, k := range wantKeys {
+		if _, ok := generic[k]; !ok {
+			t.Errorf("manifest missing JSON key %q\nfull payload:\n%s", k, contents)
+		}
+	}
+	if got, want := generic["action_item_id"], item.ID; got != want {
+		t.Errorf("manifest action_item_id = %v, want %q", got, want)
+	}
+	if got, want := generic["kind"], string(item.Kind); got != want {
+		t.Errorf("manifest kind = %v, want %q", got, want)
+	}
+	pathsRaw, ok := generic["paths"].([]any)
+	if !ok {
+		t.Fatalf("manifest paths = %T, want []any\ncontents:\n%s", generic["paths"], contents)
+	}
+	if len(pathsRaw) != len(item.Paths) {
+		t.Fatalf("manifest paths len = %d, want %d", len(pathsRaw), len(item.Paths))
+	}
+	for i, p := range item.Paths {
+		if pathsRaw[i] != p {
+			t.Errorf("manifest paths[%d] = %v, want %q", i, pathsRaw[i], p)
+		}
+	}
+}
+
+// TestBuildSpawnCommandBundleRootUnderOSTempDir asserts the spawn-temp-root
+// resolution path: BuildSpawnCommand's call to NewBundle today threads the
+// empty-string sentinel which resolves to "os_tmp" mode. The bundle root
+// MUST live under os.TempDir() with the conventional prefix.
+//
+// When the catalog→Tillsyn plumbing follow-up lands, this test gets a
+// project-mode counterpart that asserts the bundle root lives under
+// <project>/.tillsyn/spawns/<id>/.
+func TestBuildSpawnCommandBundleRootUnderOSTempDir(t *testing.T) {
+	t.Parallel()
+
+	cmd, _, err := dispatcher.BuildSpawnCommand(fixtureBuildItem(), fixtureProject(), fixtureCatalog(goBuilderBinding()), dispatcher.AuthBundle{})
+	if err != nil {
+		t.Fatalf("BuildSpawnCommand() error = %v, want nil", err)
+	}
+	removeBundle(t, cmd)
+
+	pluginDir, ok := argFlagValue(cmd.Args, "--plugin-dir")
+	if !ok {
+		t.Fatalf("cmd.Args missing --plugin-dir flag: %v", cmd.Args)
+	}
+	bundleRoot := filepath.Dir(pluginDir)
+
+	tempRoot := os.TempDir()
+	if !strings.HasPrefix(bundleRoot, tempRoot) {
+		t.Errorf("bundle root = %q; want prefix %q (os_tmp mode)", bundleRoot, tempRoot)
+	}
+	if !strings.HasPrefix(filepath.Base(bundleRoot), "tillsyn-spawn-") {
+		t.Errorf("bundle root basename = %q; want prefix %q",
+			filepath.Base(bundleRoot), "tillsyn-spawn-")
+	}
+}

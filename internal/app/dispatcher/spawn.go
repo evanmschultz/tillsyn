@@ -157,10 +157,12 @@ func lookupAdapter(kind CLIKind) (CLIAdapter, bool) {
 //     default-to-claude rule applied for empty CLIKind).
 //  4. Look up the adapter from `adapters` keyed by resolved.CLIKind.
 //     ErrUnsupportedCLIKind on miss.
-//  5. Create a per-spawn bundle directory via os.MkdirTemp and populate
-//     BundlePaths. Bundle lifecycle (manifest.json, deferred cleanup,
-//     project-mode root) is owned by F.7-CORE F.7.1 — the per-spawn temp dir
-//     here is a TODO marker that F.7.1 will replace.
+//  5. Materialize the per-spawn bundle via F.7-CORE F.7.1 NewBundle, write
+//     the cross-CLI manifest.json (spawn_id / action_item_id / kind /
+//     started_at / paths). Today the spawn_temp_root is hardcoded to "" so
+//     NewBundle resolves to "os_tmp" mode; a follow-up droplet plumbs
+//     catalog.Tillsyn.SpawnTempRoot through so adopters can flip to
+//     project-mode bundles via template TOML without code changes.
 //  6. Render the system-prompt body and write it to
 //     BundlePaths.SystemPromptPath. The body carries action-item structural
 //     fields (task_id, project_id, project_dir, kind, title, paths,
@@ -213,6 +215,30 @@ func BuildSpawnCommand(
 		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: invalid agent binding for kind %q: %w", item.Kind, err)
 	}
 
+	// Drop 4c F.7-CORE F.7.6 pre-dispatch plugin pre-flight. Resolve the
+	// project's required-plugin list via the package-level injection hook
+	// (RequiredPluginsForProject), then verify every required entry is
+	// installed locally. A nil hook OR an empty list short-circuits before
+	// invoking the lister so adopters with no required plugins pay no exec
+	// cost per spawn. ErrMissingRequiredPlugins (and lister-side failures
+	// like ErrClaudeBinaryMissing) propagate through BuildSpawnCommand;
+	// callers in dispatcher.RunOnce wrap the failure the same way they wrap
+	// any other spawn-construction error.
+	//
+	// The hook seam exists because KindCatalog (the per-project baked
+	// snapshot fed to BuildSpawnCommand) does NOT carry the [tillsyn]
+	// globals today — only Kinds + AgentBindings. A future droplet that
+	// extends KindCatalog with a `RequiresPlugins []string` field will
+	// populate the hook from catalog.RequiresPlugins; until then the hook
+	// remains a nil seam adopters can populate at process boot via direct
+	// assignment to RequiredPluginsForProject.
+	if hook := RequiredPluginsForProject; hook != nil {
+		required := hook(project)
+		if err := CheckRequiredPlugins(context.Background(), defaultClaudePluginLister, required); err != nil {
+			return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: plugin pre-flight for kind %q: %w", item.Kind, err)
+		}
+	}
+
 	// Resolve the binding through the priority cascade. F.7.17.5 does NOT
 	// plumb CLI/MCP/TUI overrides — those layers grow knobs in later
 	// droplets. Today only the rawBinding fields contribute, with the
@@ -224,30 +250,42 @@ func BuildSpawnCommand(
 		return nil, SpawnDescriptor{}, fmt.Errorf("%w: %q", ErrUnsupportedCLIKind, resolved.CLIKind)
 	}
 
-	// Provisional per-spawn bundle. F.7-CORE F.7.1 will replace this inline
-	// temp-dir creation with the proper bundle lifecycle (manifest.json,
-	// deferred cleanup hook, project-mode root under
-	// <worktree>/.tillsyn/spawns/<spawn-id>/, materialized plugin tree).
-	// Until that lands, BuildSpawnCommand leaves the bundle on disk — the
-	// monitor's post-terminal cleanup or the dev's tooling are the only
-	// reapers. Tests defer os.RemoveAll(bundleRoot) themselves.
+	// Per-spawn bundle materialization via F.7-CORE F.7.1's NewBundle. The
+	// dispatcher passes the empty string for spawnTempRoot today because
+	// templates.KindCatalog does not yet carry the Tillsyn block — a
+	// follow-up droplet plumbs catalog.Tillsyn.SpawnTempRoot through here
+	// so adopters can flip to project-mode bundles via template TOML
+	// without further code changes. Empty string resolves to
+	// SpawnTempRootOSTmp inside NewBundle, preserving the 4a.19 / F.7.17.5
+	// behavior byte-for-byte.
 	//
-	// TODO(F.7.1): replace inline os.MkdirTemp with bundle-materializer.
-	bundleRoot, err := os.MkdirTemp("", "tillsyn-spawn-")
+	// project.RepoPrimaryWorktree is passed unconditionally so the
+	// project-mode codepath has the worktree available the moment the
+	// catalog plumbing lands; in os_tmp mode NewBundle ignores it.
+	//
+	// Bundle.WriteManifest writes the cross-CLI manifest (spawn_id,
+	// action_item_id, kind, started_at, paths) so F.7.8's orphan scan can
+	// correlate bundles back to action items even if the spawn crashes
+	// before the monitor's terminal-state observer fires. Failure to write
+	// the manifest is non-fatal here only because the F.7.8 orphan scan
+	// will treat a manifest-absent bundle as orphaned and reap it; we
+	// surface the error to the caller for diagnostic visibility.
+	bundle, err := NewBundle(item, "", project.RepoPrimaryWorktree)
 	if err != nil {
 		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: create spawn bundle: %w", err)
 	}
-
-	bundlePaths := BundlePaths{
-		Root:             bundleRoot,
-		SystemPromptPath: filepath.Join(bundleRoot, "system-prompt.md"),
-		// SystemAppendPath stays empty — F.7.3b will populate when the
-		// system_append_template_path knob lands.
-		SystemAppendPath: "",
-		StreamLogPath:    filepath.Join(bundleRoot, "stream.jsonl"),
-		ManifestPath:     filepath.Join(bundleRoot, "manifest.json"),
-		ContextDir:       filepath.Join(bundleRoot, "context"),
+	if err := bundle.WriteManifest(ManifestMetadata{
+		SpawnID:      bundle.SpawnID,
+		ActionItemID: item.ID,
+		Kind:         item.Kind,
+		StartedAt:    bundle.StartedAt,
+		Paths:        item.Paths,
+	}); err != nil {
+		// Cleanup the half-materialized bundle so we don't leak.
+		_ = bundle.Cleanup()
+		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: write spawn manifest: %w", err)
 	}
+	bundlePaths := bundle.Paths
 
 	// Render the spawn prompt body and write it to disk so claude's adapter
 	// can pick it up via `--system-prompt-file`. 0o600 perms are deliberate:
@@ -256,6 +294,7 @@ func BuildSpawnCommand(
 	// scrub. Wider perms can come later if a use-case surfaces.
 	prompt := assemblePrompt(item, project, authBundle)
 	if err := os.WriteFile(bundlePaths.SystemPromptPath, []byte(prompt), 0o600); err != nil {
+		_ = bundle.Cleanup()
 		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: write system prompt: %w", err)
 	}
 

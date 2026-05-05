@@ -1206,6 +1206,107 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
+// TestLoadTillsynSpawnTempRootHappyPath verifies the F.7-CORE F.7.1 extension
+// of [tillsyn] with `spawn_temp_root` decodes both legal non-empty values
+// ("os_tmp" + "project") cleanly and lands on tpl.Tillsyn.SpawnTempRoot.
+func TestLoadTillsynSpawnTempRootHappyPath(t *testing.T) {
+	tests := []struct {
+		name string
+		toml string
+		want string
+	}{
+		{
+			name: "os_tmp",
+			toml: `spawn_temp_root = "os_tmp"`,
+			want: "os_tmp",
+		},
+		{
+			name: "project",
+			toml: `spawn_temp_root = "project"`,
+			want: "project",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+schema_version = "v1"
+
+[tillsyn]
+` + tc.toml + "\n"
+			tpl, err := Load(strings.NewReader(src))
+			if err != nil {
+				t.Fatalf("Load: unexpected error: %v", err)
+			}
+			if tpl.Tillsyn.SpawnTempRoot != tc.want {
+				t.Fatalf("tpl.Tillsyn.SpawnTempRoot = %q; want %q",
+					tpl.Tillsyn.SpawnTempRoot, tc.want)
+			}
+		})
+	}
+}
+
+// TestLoadTillsynSpawnTempRootOmittedDefaultsToEmpty verifies the omitted
+// `spawn_temp_root` key leaves Tillsyn.SpawnTempRoot at the empty string —
+// the F.7.1 NewBundle materializer resolves the empty string to "os_tmp"
+// at spawn time, so this pins the consumer-time-default sentinel at the
+// schema layer.
+func TestLoadTillsynSpawnTempRootOmittedDefaultsToEmpty(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+max_context_bundle_chars = 200000
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if tpl.Tillsyn.SpawnTempRoot != "" {
+		t.Fatalf("tpl.Tillsyn.SpawnTempRoot = %q; want %q (omitted-key zero value)",
+			tpl.Tillsyn.SpawnTempRoot, "")
+	}
+}
+
+// TestLoadTillsynSpawnTempRootRejectsBogusValue verifies validateTillsyn
+// rejects a `spawn_temp_root` set to a value outside the closed
+// {"", "os_tmp", "project"} enum with ErrInvalidTillsynGlobals. The error
+// message names the offending value verbatim for UX.
+func TestLoadTillsynSpawnTempRootRejectsBogusValue(t *testing.T) {
+	tests := []struct {
+		name string
+		val  string
+	}{
+		{name: "totally bogus", val: "tmpfs"},
+		{name: "case mismatch upper", val: "OS_TMP"},
+		{name: "case mismatch capitalized", val: "Project"},
+		{name: "whitespace padded", val: " os_tmp "},
+		{name: "hyphen vs underscore", val: "os-tmp"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+schema_version = "v1"
+
+[tillsyn]
+spawn_temp_root = "` + tc.val + `"
+`
+			_, err := Load(strings.NewReader(src))
+			if err == nil {
+				t.Fatalf("Load: expected ErrInvalidTillsynGlobals; got nil")
+			}
+			if !errors.Is(err, ErrInvalidTillsynGlobals) {
+				t.Fatalf("Load: errors.Is(_, ErrInvalidTillsynGlobals) = false; err = %v", err)
+			}
+			if !strings.Contains(err.Error(), "spawn_temp_root") {
+				t.Fatalf("Load: err = %q; want substring %q", err.Error(), "spawn_temp_root")
+			}
+			if !strings.Contains(err.Error(), tc.val) {
+				t.Fatalf("Load: err = %q; want offending value %q in message", err.Error(), tc.val)
+			}
+		})
+	}
+}
+
 // TestLoadTillsynStrictDecodeUnknownFieldRejected is the REV-3 contract test:
 // a [tillsyn] table with an unknown key MUST fail load with
 // ErrUnknownTemplateKey. This proves the closed-struct unknown-key rejection
@@ -1229,5 +1330,152 @@ bogus_field = true
 	}
 	if !strings.Contains(err.Error(), "bogus_field") {
 		t.Fatalf("Load: err = %q; want offending field %q in message", err.Error(), "bogus_field")
+	}
+}
+
+// TestLoadTillsynRequiresPluginsHappyPath verifies an explicit non-empty
+// requires_plugins slice loads cleanly with bare `<name>` and
+// `<name>@<marketplace>` shapes. Both forms are accepted at the schema
+// layer; the runtime pre-flight check (Drop 4c F.7.6 CheckRequiredPlugins)
+// reads them as-is.
+func TestLoadTillsynRequiresPluginsHappyPath(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+requires_plugins = ["context7@claude-plugins-official", "gopls-lsp"]
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	want := []string{"context7@claude-plugins-official", "gopls-lsp"}
+	if !equalStringSlices(tpl.Tillsyn.RequiresPlugins, want) {
+		t.Fatalf("tpl.Tillsyn.RequiresPlugins = %v; want %v", tpl.Tillsyn.RequiresPlugins, want)
+	}
+}
+
+// TestLoadTillsynRequiresPluginsOmittedZeroValue verifies a Template TOML
+// stream WITHOUT a requires_plugins key (or without a [tillsyn] table at
+// all) loads cleanly with a nil RequiresPlugins slice. Empty / nil means
+// "no required plugins" — the pre-flight check returns nil immediately.
+func TestLoadTillsynRequiresPluginsOmittedZeroValue(t *testing.T) {
+	src := `
+schema_version = "v1"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if tpl.Tillsyn.RequiresPlugins != nil {
+		t.Fatalf("tpl.Tillsyn.RequiresPlugins = %v; want nil (omitted-field zero value)",
+			tpl.Tillsyn.RequiresPlugins)
+	}
+}
+
+// TestLoadTillsynRequiresPluginsEmptySliceAllowed verifies an explicit empty
+// requires_plugins slice loads cleanly. The pre-flight check is a no-op for
+// both nil and empty inputs.
+func TestLoadTillsynRequiresPluginsEmptySliceAllowed(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+requires_plugins = []
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if len(tpl.Tillsyn.RequiresPlugins) != 0 {
+		t.Fatalf("tpl.Tillsyn.RequiresPlugins = %v; want empty/nil", tpl.Tillsyn.RequiresPlugins)
+	}
+}
+
+// TestLoadTillsynRequiresPluginsRejectionTable exhausts every reject case
+// for the Drop 4c F.7-CORE F.7.6 requires_plugins entry contract. Every row
+// declares a single offending construct so the failure mode under test is
+// unambiguous. Each rejection wraps ErrInvalidTillsynGlobals.
+func TestLoadTillsynRequiresPluginsRejectionTable(t *testing.T) {
+	tests := []struct {
+		name       string
+		toml       string
+		wantSubstr string
+	}{
+		{
+			name:       "reject empty entry",
+			toml:       `requires_plugins = ["context7", ""]`,
+			wantSubstr: "requires_plugins entry is empty",
+		},
+		{
+			name:       "reject whitespace inside entry (space)",
+			toml:       `requires_plugins = ["context 7"]`,
+			wantSubstr: "contains whitespace",
+		},
+		{
+			name:       "reject whitespace inside entry (tab)",
+			toml:       "requires_plugins = [\"context\t7\"]",
+			wantSubstr: "contains whitespace",
+		},
+		{
+			name:       "reject more than one @",
+			toml:       `requires_plugins = ["context7@official@bogus"]`,
+			wantSubstr: "contains more than one '@'",
+		},
+		{
+			name:       "reject empty name before @",
+			toml:       `requires_plugins = ["@claude-plugins-official"]`,
+			wantSubstr: "empty name before '@'",
+		},
+		{
+			name:       "reject empty marketplace after @",
+			toml:       `requires_plugins = ["context7@"]`,
+			wantSubstr: "empty marketplace after '@'",
+		},
+		{
+			name:       "reject within-list duplicate bare",
+			toml:       `requires_plugins = ["context7", "context7"]`,
+			wantSubstr: `requires_plugins entry "context7" is duplicated`,
+		},
+		{
+			name:       "reject within-list duplicate scoped",
+			toml:       `requires_plugins = ["context7@claude-plugins-official", "context7@claude-plugins-official"]`,
+			wantSubstr: `is duplicated`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "schema_version = \"v1\"\n\n[tillsyn]\n" + tc.toml + "\n"
+			_, err := Load(strings.NewReader(src))
+			if err == nil {
+				t.Fatalf("Load: expected ErrInvalidTillsynGlobals; got nil")
+			}
+			if !errors.Is(err, ErrInvalidTillsynGlobals) {
+				t.Fatalf("Load: errors.Is(_, ErrInvalidTillsynGlobals) = false; err = %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Fatalf("Load: err = %q; want substring %q", err.Error(), tc.wantSubstr)
+			}
+		})
+	}
+}
+
+// TestLoadTillsynRequiresPluginsCaseSensitiveDistinct verifies that two
+// entries differing only in case are accepted as distinct (no fold-matching)
+// because plugin identifiers in Claude's plugin catalog are case-sensitive.
+func TestLoadTillsynRequiresPluginsCaseSensitiveDistinct(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+requires_plugins = ["Context7", "context7"]
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: case-distinct entries must load cleanly; err = %v", err)
+	}
+	if got, want := tpl.Tillsyn.RequiresPlugins, []string{"Context7", "context7"}; !equalStringSlices(got, want) {
+		t.Fatalf("tpl.Tillsyn.RequiresPlugins = %v; want %v", got, want)
 	}
 }

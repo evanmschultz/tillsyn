@@ -66,8 +66,11 @@ import (
 //     non-empty and carry no URL scheme. Drop 4c F.7.2 hook.
 //     i. validateTillsyn — assert the top-level [tillsyn] globals satisfy
 //     the closed contract: non-negative MaxContextBundleChars and
-//     MaxAggregatorDuration. Zero is legal (engine-time default
-//     substitution); negative values are rejected. Drop 4c F.7.18.2 hook.
+//     MaxAggregatorDuration (zero is legal — engine-time default
+//     substitution; negative values are rejected) AND SpawnTempRoot is a
+//     member of the closed {"", "os_tmp", "project"} enum. Drop 4c
+//     F.7.18.2 hook (MaxContextBundleChars/MaxAggregatorDuration) +
+//     F.7-CORE F.7.1 hook (SpawnTempRoot).
 //
 // Sentinel errors at package scope wrap the underlying failure so callers
 // can use errors.Is for routing without reaching into pelletier/go-toml/v2
@@ -252,12 +255,15 @@ var (
 
 	// ErrInvalidTillsynGlobals is returned by validateTillsyn when the
 	// top-level [tillsyn] table contains a field that fails the closed
-	// rule contract (Drop 4c F.7.18.2 acceptance criteria):
+	// rule contract (Drop 4c F.7.18.2 + F.7-CORE F.7.1 acceptance):
 	//
 	//   - MaxContextBundleChars is negative (zero is legal — engine-time
 	//     default substitution applies per master PLAN L14).
 	//   - MaxAggregatorDuration is negative (zero is legal — engine-time
 	//     default substitution applies per master PLAN L15).
+	//   - SpawnTempRoot is set to a value outside the closed enum
+	//     {"", "os_tmp", "project"} (empty is legal — F.7.1 NewBundle
+	//     resolves the empty string to "os_tmp" at spawn time).
 	//
 	// The wrapped message names the offending field and the offending
 	// value for UX. The sentinel is a top-level Load error rather than a
@@ -747,8 +753,33 @@ func pathContainsTraversal(path string) bool {
 	return false
 }
 
+// validTillsynSpawnTempRootValues lists the closed-enum values accepted by
+// Tillsyn.SpawnTempRoot. The empty string is included because omission is
+// legal at the schema layer — the F.7.1 NewBundle materializer substitutes
+// "os_tmp" at spawn time per the consumer-time-default convention used
+// elsewhere in the schema (e.g. ContextRules.Delivery).
+var validTillsynSpawnTempRootValues = []string{
+	"",
+	"os_tmp",
+	"project",
+}
+
+// isValidTillsynSpawnTempRoot reports whether v is a member of the closed
+// {"", "os_tmp", "project"} spawn-temp-root vocabulary. Exact match — no
+// whitespace trimming or case folding. Mirrors the IsValidGateKind /
+// isValidContextDelivery rationale (silent case-fold matching would mask
+// "OS_TMP" / "Project" typos at load time).
+func isValidTillsynSpawnTempRoot(v string) bool {
+	for _, candidate := range validTillsynSpawnTempRootValues {
+		if v == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 // validateTillsyn asserts the top-level [tillsyn] table satisfies the Drop 4c
-// F.7.18.2 closed contract:
+// F.7.18.2 + F.7-CORE F.7.1 + F.7-CORE F.7.6 closed contract:
 //
 //   - MaxContextBundleChars is non-negative. Zero is legal and means "use
 //     bundle-global default at engine-time" (F.7.18.4 substitutes 200000 per
@@ -756,18 +787,26 @@ func pathContainsTraversal(path string) bool {
 //   - MaxAggregatorDuration is non-negative. Zero is legal and means "use
 //     bundle-global default at engine-time" (F.7.18.4 substitutes 2s per
 //     master PLAN L15).
+//   - SpawnTempRoot is one of {"", "os_tmp", "project"} — closed enum. Empty
+//     string resolves to "os_tmp" at engine-time (NOT at validation-time)
+//     per Drop 4c F.7.1 NewBundle materializer.
+//   - RequiresPlugins entries each match `<name>` OR `<name>@<marketplace>`
+//     where each segment is non-empty, contains no whitespace, and the
+//     entry contains at most one `@`. Within-list duplicates are rejected.
+//     Empty slice is legal and means "no required plugins" — the pre-flight
+//     check (Drop 4c F.7.6 CheckRequiredPlugins) returns nil immediately.
 //
 // All non-nil returns wrap ErrInvalidTillsynGlobals so callers can route on
 // the sentinel via errors.Is. The validator runs after
 // validateAgentBindingContext so per-binding failures surface with their
 // original sentinel rather than being masked by a global rule.
 //
-// Per REV-3 the Tillsyn struct ships with exactly two fields in F.7.18.2;
-// F.7-CORE F.7.1 + F.7.6 extend it with SpawnTempRoot + RequiresPlugins
-// later. Strict-decode unknown-key rejection on the Tillsyn struct is
-// inherited automatically from load.go step 3 (DisallowUnknownFields), so
-// future extenders do not need to reshape this validator — they add their
-// own field-level checks alongside the existing two.
+// Per REV-3 the Tillsyn struct ships with two fields in F.7.18.2; F.7-CORE
+// F.7.1 extends with SpawnTempRoot; F.7-CORE F.7.6 extends with
+// RequiresPlugins. Strict-decode unknown-key rejection on the Tillsyn struct
+// is inherited automatically from load.go step 3 (DisallowUnknownFields),
+// so future extenders do not need to reshape this validator — they add
+// their own field-level checks alongside the existing ones.
 func validateTillsyn(tpl Template) error {
 	if tpl.Tillsyn.MaxContextBundleChars < 0 {
 		return fmt.Errorf("%w: max_context_bundle_chars must be >= 0 (got %d)",
@@ -776,6 +815,69 @@ func validateTillsyn(tpl Template) error {
 	if time.Duration(tpl.Tillsyn.MaxAggregatorDuration) < 0 {
 		return fmt.Errorf("%w: max_aggregator_duration must be >= 0 (got %s)",
 			ErrInvalidTillsynGlobals, time.Duration(tpl.Tillsyn.MaxAggregatorDuration))
+	}
+	if !isValidTillsynSpawnTempRoot(tpl.Tillsyn.SpawnTempRoot) {
+		return fmt.Errorf("%w: spawn_temp_root %q not in {%q, %q, %q}",
+			ErrInvalidTillsynGlobals, tpl.Tillsyn.SpawnTempRoot, "", "os_tmp", "project")
+	}
+	if err := validateTillsynRequiresPlugins(tpl.Tillsyn.RequiresPlugins); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateTillsynRequiresPlugins enforces the Drop 4c F.7-CORE F.7.6 entry
+// contract on each RequiresPlugins slice entry:
+//
+//   - Non-empty.
+//   - Contains no ASCII whitespace (space, tab, CR, LF). Plugin identifiers
+//     are single-token names; whitespace inside an entry is always a
+//     template-author error.
+//   - Contains at most one `@` separator. Two valid shapes are accepted:
+//     `<name>` (bare, marketplace-implicit) and `<name>@<marketplace>`
+//     (marketplace-scoped). A second `@` would yield ambiguous parsing in
+//     the pre-flight matcher.
+//   - When `<name>@<marketplace>` shape is used, BOTH segments must be
+//     non-empty (`@marketplace` and `name@` are both rejected).
+//   - Within-list duplicates are rejected. Case-sensitive comparison —
+//     plugin identifiers in Claude's plugin catalog are case-sensitive and
+//     silent fold-matching would mask "Context7" / "context7" typos at load
+//     time.
+//
+// Returns the first offending entry; the error wraps ErrInvalidTillsynGlobals
+// so callers using `errors.Is(err, ErrInvalidTillsynGlobals)` route correctly
+// without reaching for a separate sentinel.
+func validateTillsynRequiresPlugins(entries []string) error {
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry == "" {
+			return fmt.Errorf("%w: requires_plugins entry is empty",
+				ErrInvalidTillsynGlobals)
+		}
+		if strings.ContainsAny(entry, " \t\r\n") {
+			return fmt.Errorf("%w: requires_plugins entry %q contains whitespace",
+				ErrInvalidTillsynGlobals, entry)
+		}
+		if strings.Count(entry, "@") > 1 {
+			return fmt.Errorf("%w: requires_plugins entry %q contains more than one '@'; expected `<name>` or `<name>@<marketplace>`",
+				ErrInvalidTillsynGlobals, entry)
+		}
+		if at := strings.IndexByte(entry, '@'); at >= 0 {
+			name, marketplace := entry[:at], entry[at+1:]
+			if name == "" {
+				return fmt.Errorf("%w: requires_plugins entry %q has empty name before '@'",
+					ErrInvalidTillsynGlobals, entry)
+			}
+			if marketplace == "" {
+				return fmt.Errorf("%w: requires_plugins entry %q has empty marketplace after '@'",
+					ErrInvalidTillsynGlobals, entry)
+			}
+		}
+		if _, dup := seen[entry]; dup {
+			return fmt.Errorf("%w: requires_plugins entry %q is duplicated",
+				ErrInvalidTillsynGlobals, entry)
+		}
+		seen[entry] = struct{}{}
 	}
 	return nil
 }
