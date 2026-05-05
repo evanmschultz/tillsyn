@@ -144,6 +144,14 @@ The big theme. Drop 3 landed the template foundation; Drop 4a's dispatcher consu
 
 - **F.7.11 — Documentation: write Tillsyn architecture docs** referencing memory `project_drop_4c_spawn_architecture.md` as canonical source. Cover: two plugin paths (system-installed vs --plugin-dir bundle), per-spawn temp file inventory, stream-json event taxonomy, settings.json authority, sandbox semantics, crash recovery, explicit non-goals (adversarial OS sandbox for Read/Edit/Write, real-time interactive prompts).
 
+**F.7 absorbs Drop 4b Wave B (per Option β decision 2026-05-04):** Drop 4b deferred its commit-agent integration + commit gate + push gate + project-metadata toggles for commit/push because all four items depend on the spawn pipeline that F.7 replaces. F.7 absorbs them as additional sub-items:
+
+- **F.7.12 — Commit-agent (haiku) integration via the new spawn pipeline.** `claude --agent commit-message-agent` invoked through F.7.1's per-spawn temp-bundle materialization (not the legacy 4a.19 stub path). Reads `git diff <action_item.start_commit>..<action_item.end_commit>` (Wave 1 first-class fields). Returns single-line conventional commit message. Tool gating per F.7.2's `[agent_bindings.commit].tools_allowed` (Read + Bash for git diff inspection only; nothing else).
+- **F.7.13 — `commit` gate implementation.** Runs `git add <action_item.paths>` (path-scoped, never `git add -A`); runs `git commit -m "<haiku-output>"`; populates `action_item.end_commit = git rev-parse HEAD`. Honors project metadata `dispatcher_commit_enabled` toggle (default false; dogfood flips to true).
+- **F.7.14 — `push` gate implementation.** Runs `git push origin <branch>` when project `dispatcher_push_enabled = true`. On failure: action item moves to `failed` with `metadata.BlockedReason = "git push: <error>"`. No auto-rollback of the local commit; surfaces to dev via attention-item.
+- **F.7.15 — Project-metadata toggles** `dispatcher_commit_enabled bool` + `dispatcher_push_enabled bool` on `domain.ProjectMetadata`. Pointer-bool nil-means-disabled per Drop 4a 4a.25 precedent (default off until dogfood proves them safe).
+- **F.7.16 — Default template `[gates.build]` expansion.** When F.7.13 + F.7.14 land, update `internal/templates/builtin/default.toml` `[gates.build]` from `["mage_ci"]` (Drop 4b state) to `["mage_ci", "commit", "push"]`. Each gate is independently toggleable via the project metadata flags.
+
 **F.7 explicit non-goals** (carried forward from memory §11):
 - Adversarial OS-level sandbox for Read/Edit/Write tools (cooperative deny rules sufficient for non-adversarial subagents; if ever needed, wrap entire `claude` invocation in Docker/Firejail).
 - Real-time interactive permission prompts (Tillsyn's TUI cannot intercept Claude's stdin prompt; failure-loop handshake via terminal `permission_denials[]` is the design).
