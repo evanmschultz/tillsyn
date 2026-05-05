@@ -139,6 +139,43 @@ type ResourceRef struct {
 	LastVerifiedAt *time.Time   `json:"last_verified_at,omitempty"`
 }
 
+// SpawnHistoryEntry records a single dispatcher-spawn lifecycle event for an
+// action item. Each entry is appended once at terminal-state transition by
+// the Drop 4c F.7.4 monitor; entries are not mutated after append.
+//
+// All time fields are UTC — callers SHOULD pass UTC values; the
+// AppendSpawnHistory helper canonicalizes them defensively.
+type SpawnHistoryEntry struct {
+	// SpawnID identifies the dispatcher-spawn instance whose lifecycle this
+	// entry records. Free-form trimmed string supplied by the caller (Drop
+	// 4c F.7.4 monitor); empty is permitted but discouraged.
+	SpawnID string `json:"spawn_id"`
+	// BundlePath records the temp-dir bundle path that was provisioned for
+	// this spawn (mirrors ActionItemMetadata.SpawnBundlePath at the moment
+	// the spawn was dispatched). Free-form trimmed string.
+	BundlePath string `json:"bundle_path"`
+	// StartedAt records the wall-clock time the spawn was dispatched. Zero
+	// time is permitted (treated as "not recorded").
+	StartedAt time.Time `json:"started_at"`
+	// TerminatedAt records the wall-clock time the spawn reached terminal
+	// state (success, failure, or kill). Zero time is permitted (treated as
+	// "still running" — uncommon, since entries are normally appended ON
+	// terminal transition).
+	TerminatedAt time.Time `json:"terminated_at"`
+	// Outcome is a free-form trimmed string describing the spawn's terminal
+	// outcome (e.g. "success", "failure", "killed"). Closed-enum membership
+	// is NOT enforced at the domain layer — Drop 4c F.7.4 monitor and
+	// downstream consumers (ledger / dashboard surfaces) define the
+	// vocabulary.
+	Outcome string `json:"outcome"`
+	// TotalCostUSD records the spawn's terminal cost-to-date as reported by
+	// the stream-jsonl `result` event's `total_cost_usd` field. Pointer
+	// because the stream-jsonl event MAY omit cost (Drop 4c F.7.9 edge
+	// case: terminal event with `Cost = nil` round-trips as nil, NOT as 0
+	// — a 0-cost spawn is meaningfully different from "cost not reported").
+	TotalCostUSD *float64 `json:"total_cost_usd,omitempty"`
+}
+
 // ActionItemMetadata stores rich planning context for an item.
 type ActionItemMetadata struct {
 	Objective                string             `json:"objective"`
@@ -161,6 +198,44 @@ type ActionItemMetadata struct {
 	KindPayload              json.RawMessage    `json:"kind_payload,omitempty"`
 	CompletionContract       CompletionContract `json:"completion_contract"`
 	Outcome                  string             `json:"outcome,omitempty"`
+	// SpawnBundlePath records the absolute filesystem path of the current
+	// dispatcher-spawn's bundle directory (e.g.
+	// `<os.TempDir()>/tillsyn/<spawn-id>/` or
+	// `<worktree>/.tillsyn/spawns/<spawn-id>/`). Set on dispatch by the
+	// Drop 4c F.7.4 monitor; cleared at terminal-state transition by the
+	// Drop 4c F.7.8 orphan-scan / cleanup path. Empty string is the
+	// meaningful zero value (no active spawn / bundle already cleaned up).
+	// Drop 4c F.7.9 metadata field — JSON-blob persistence per REV-6 (no
+	// new SQLite columns).
+	SpawnBundlePath string `json:"spawn_bundle_path,omitempty"`
+	// SpawnHistory is the append-only audit trail of dispatcher-spawn
+	// lifecycle events for this action item. Each entry is appended once
+	// by the Drop 4c F.7.4 monitor on terminal-state transition (including
+	// retries — a fix-builder retry appends a second entry).
+	//
+	// AUDIT-ONLY ROLE: this field exists for ledger / dashboard rendering
+	// surfaces, NOT for re-prompting fix-builders. Round-history
+	// aggregation was DEFERRED in Drop 4c F.7.18 (REV-9) — if a use case
+	// for raw stream-json round-history surfaces post-Drop-5, add
+	// `prior_round_*` rules per F.7.18 commentary, NOT raw spawn_history
+	// reads. Doc-comment requirement enforced per planner-review P-§5.b
+	// (owner: F.7.18.6 per master PLAN §5).
+	//
+	// Empty / nil is the meaningful zero value (action item never
+	// dispatched). Append semantics are atomic per action-item-scoped lock
+	// (Drop 4a Wave 2 lock manager).
+	SpawnHistory []SpawnHistoryEntry `json:"spawn_history,omitempty"`
+	// ActualCostUSD records the current (most-recent) dispatcher-spawn's
+	// terminal cost-to-date in USD, written by the Drop 4c F.7.4 monitor
+	// from the stream-jsonl `result` event's `total_cost_usd` field on
+	// terminal-state transition. Pointer because the stream-jsonl event
+	// MAY omit cost — nil round-trips as "cost not reported" and is
+	// meaningfully different from `*float64`-of-0 ("zero-cost spawn").
+	// Per-spawn audit-trail copy lives in SpawnHistoryEntry.TotalCostUSD;
+	// this field surfaces only the latest spawn's cost for live dashboard
+	// rendering. Drop 4c F.7.9 metadata field — JSON-blob persistence per
+	// REV-6.
+	ActualCostUSD *float64 `json:"actual_cost_usd,omitempty"`
 }
 
 // normalizeLifecycleState canonicalizes lifecycle state input. Strict-canonical:
@@ -200,12 +275,14 @@ func normalizeActionItemMetadata(meta ActionItemMetadata) (ActionItemMetadata, e
 	meta.RiskNotes = strings.TrimSpace(meta.RiskNotes)
 	meta.TransitionNotes = strings.TrimSpace(meta.TransitionNotes)
 	meta.Outcome = strings.TrimSpace(meta.Outcome)
+	meta.SpawnBundlePath = strings.TrimSpace(meta.SpawnBundlePath)
 	meta.CommandSnippets = normalizeStringList(meta.CommandSnippets)
 	meta.ExpectedOutputs = normalizeStringList(meta.ExpectedOutputs)
 	meta.DecisionLog = normalizeStringList(meta.DecisionLog)
 	meta.RelatedItems = normalizeStringList(meta.RelatedItems)
 	meta.DependsOn = normalizeStringList(meta.DependsOn)
 	meta.BlockedBy = normalizeStringList(meta.BlockedBy)
+	meta.SpawnHistory = normalizeSpawnHistory(meta.SpawnHistory)
 	meta.KindPayload = bytes.TrimSpace(meta.KindPayload)
 	if len(meta.KindPayload) > 0 && !json.Valid(meta.KindPayload) {
 		return ActionItemMetadata{}, ErrInvalidKindPayload
@@ -618,6 +695,30 @@ func normalizeStringList(in []string) []string {
 		}
 		seen[value] = struct{}{}
 		out = append(out, value)
+	}
+	return out
+}
+
+// normalizeSpawnHistory canonicalizes each entry's string + time fields
+// without dropping rows. Unlike the *string lists above, spawn-history
+// entries are NEVER deduped — the audit trail records every dispatch even
+// if two retries share a (spawn_id, bundle_path) tuple, which can happen
+// when the dispatcher reuses spawn IDs across rounds. Insertion order is
+// preserved so the trail reads chronologically. Empty input (nil or len==0)
+// returns nil so the JSON `omitempty` tag round-trips a never-dispatched
+// item as a missing key rather than `[]`.
+func normalizeSpawnHistory(in []SpawnHistoryEntry) []SpawnHistoryEntry {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]SpawnHistoryEntry, 0, len(in))
+	for _, entry := range in {
+		entry.SpawnID = strings.TrimSpace(entry.SpawnID)
+		entry.BundlePath = strings.TrimSpace(entry.BundlePath)
+		entry.Outcome = strings.TrimSpace(entry.Outcome)
+		entry.StartedAt = entry.StartedAt.UTC()
+		entry.TerminatedAt = entry.TerminatedAt.UTC()
+		out = append(out, entry)
 	}
 	return out
 }
