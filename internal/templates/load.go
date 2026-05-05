@@ -57,7 +57,14 @@ import (
 //     and MaxRuleDuration, and that every kind referenced by the kind-walk
 //     fields (SiblingsByKind / AncestorsByKind / DescendantsByKind) is a
 //     member of the closed 12-value Kind enum. Drop 4c F.7.18.1 hook.
-//     h. validateTillsyn — assert the top-level [tillsyn] globals satisfy
+//     h. validateAgentBindingToolGating — assert every AgentBinding's
+//     ToolsAllowed / ToolsDisallowed entries are non-empty + unique
+//     within-binding; SystemPromptTemplatePath is project-relative,
+//     traversal-free, and shell-metachar-free; Sandbox.Filesystem
+//     AllowWrite / DenyRead entries are clean absolute paths;
+//     Sandbox.Network AllowedDomains / DeniedDomains entries are
+//     non-empty and carry no URL scheme. Drop 4c F.7.2 hook.
+//     i. validateTillsyn — assert the top-level [tillsyn] globals satisfy
 //     the closed contract: non-negative MaxContextBundleChars and
 //     MaxAggregatorDuration. Zero is legal (engine-time default
 //     substitution); negative values are rejected. Drop 4c F.7.18.2 hook.
@@ -131,6 +138,9 @@ func Load(r io.Reader) (Template, error) {
 		return Template{}, err
 	}
 	if err := validateAgentBindingContext(tpl); err != nil {
+		return Template{}, err
+	}
+	if err := validateAgentBindingToolGating(tpl); err != nil {
 		return Template{}, err
 	}
 	if err := validateTillsyn(tpl); err != nil {
@@ -217,6 +227,28 @@ var (
 	// `errors.Is(err, ErrInvalidAgentBinding)` continue to route correctly
 	// without reaching for the context-specific sentinel.
 	ErrInvalidContextRules = fmt.Errorf("%w: context", ErrInvalidAgentBinding)
+
+	// ErrInvalidAgentBindingToolGating is returned by
+	// validateAgentBindingToolGating when an AgentBinding's tool-gating /
+	// system-prompt-template / sandbox fields fail the Drop 4c F.7.2 closed
+	// contract:
+	//
+	//   - ToolsAllowed / ToolsDisallowed entries are empty strings or
+	//     within-binding duplicates.
+	//   - SystemPromptTemplatePath is absolute (begins with `/`), contains
+	//     `..` traversal segments, or contains shell metacharacters
+	//     `;` `|` `&` backtick `$`.
+	//   - Sandbox.Filesystem.AllowWrite / DenyRead entries are non-absolute,
+	//     contain `..`, or contain double-slashes (path is not clean).
+	//   - Sandbox.Network.AllowedDomains / DeniedDomains entries are empty
+	//     strings or carry a URL scheme prefix (`http://`, `https://`).
+	//
+	// The error wraps ErrInvalidAgentBinding so callers using
+	// `errors.Is(err, ErrInvalidAgentBinding)` continue to route correctly
+	// without reaching for the tool-gating-specific sentinel. The wrapped
+	// message names the offending kind, the offending field, and the failure
+	// reason for UX.
+	ErrInvalidAgentBindingToolGating = fmt.Errorf("%w: tool_gating", ErrInvalidAgentBinding)
 
 	// ErrInvalidTillsynGlobals is returned by validateTillsyn when the
 	// top-level [tillsyn] table contains a field that fails the closed
@@ -543,6 +575,176 @@ func validateContextKindList(kind domain.Kind, fieldName string, kinds []domain.
 		}
 	}
 	return nil
+}
+
+// systemPromptShellMetacharRunes pins the closed set of shell metacharacters
+// rejected inside SystemPromptTemplatePath at template Load time. The set is
+// deliberately conservative — defense-in-depth against future render-layer
+// refactors — and matches the most-likely command-injection vectors a
+// malicious template author could embed in a path string. The dispatcher
+// render layer (F.7.3b) never invokes a shell against this path, but
+// rejecting at the schema layer keeps the resolved-path safe.
+var systemPromptShellMetacharRunes = []rune{';', '|', '&', '`', '$'}
+
+// validateAgentBindingToolGating asserts every AgentBinding's tool-gating /
+// system-prompt-template / sandbox fields satisfy the Drop 4c F.7.2 closed
+// contract. Validates four logical groups in stable order so the error
+// surface for any binding is deterministic:
+//
+//  1. ToolsAllowed / ToolsDisallowed — entries non-empty + within-binding
+//     unique. Tool-name vocabulary is open-ended (Read / Edit / Bash(mage *) /
+//     WebFetch / etc.); no closed-enum check.
+//  2. SystemPromptTemplatePath — when non-empty, a project-relative path
+//     under `.tillsyn/`. Absolute paths, `..` traversal, and shell
+//     metacharacters `;` `|` `&` backtick `$` are rejected.
+//  3. Sandbox.Filesystem.AllowWrite / DenyRead — each entry must be a clean
+//     absolute path (begins with `/`, no `..` segments, no double-slashes).
+//  4. Sandbox.Network.AllowedDomains / DeniedDomains — each entry must be a
+//     non-empty string with no URL scheme prefix (`http://`, `https://`).
+//     A leading `*` glob is permitted (e.g. `*.npmjs.org`).
+//
+// All non-nil returns wrap ErrInvalidAgentBindingToolGating (which itself
+// wraps ErrInvalidAgentBinding) so callers using
+// `errors.Is(err, ErrInvalidAgentBinding)` route correctly without reaching
+// for the tool-gating-specific sentinel.
+//
+// Outer-map iteration order is non-deterministic; the validator returns on
+// the FIRST offending field per binding to keep the error surface bounded.
+// Future drops that want exhaustive reporting can switch to error
+// aggregation; the closed-enum + load-time-reject pattern doesn't need it
+// today.
+func validateAgentBindingToolGating(tpl Template) error {
+	for kind, binding := range tpl.AgentBindings {
+		if err := validateToolNameList(kind, "tools_allowed", binding.ToolsAllowed); err != nil {
+			return err
+		}
+		if err := validateToolNameList(kind, "tools_disallowed", binding.ToolsDisallowed); err != nil {
+			return err
+		}
+		if err := validateSystemPromptTemplatePath(kind, binding.SystemPromptTemplatePath); err != nil {
+			return err
+		}
+		if err := validateSandboxAbsolutePathList(kind, "sandbox.filesystem.allow_write", binding.Sandbox.Filesystem.AllowWrite); err != nil {
+			return err
+		}
+		if err := validateSandboxAbsolutePathList(kind, "sandbox.filesystem.deny_read", binding.Sandbox.Filesystem.DenyRead); err != nil {
+			return err
+		}
+		if err := validateSandboxDomainList(kind, "sandbox.network.allowed_domains", binding.Sandbox.Network.AllowedDomains); err != nil {
+			return err
+		}
+		if err := validateSandboxDomainList(kind, "sandbox.network.denied_domains", binding.Sandbox.Network.DeniedDomains); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolNameList enforces the entries-non-empty + within-list-unique
+// contract on a tool-gating slice (ToolsAllowed or ToolsDisallowed).
+// fieldName is the TOML key name (e.g. "tools_allowed") used in the error
+// UX so adopters see the exact line they need to fix. Tool-name vocabulary
+// is open-ended — no closed-enum check is applied.
+func validateToolNameList(kind domain.Kind, fieldName string, entries []string) error {
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry == "" {
+			return fmt.Errorf("%w: agent_bindings[%q].%s entry is empty",
+				ErrInvalidAgentBindingToolGating, kind, fieldName)
+		}
+		if _, dup := seen[entry]; dup {
+			return fmt.Errorf("%w: agent_bindings[%q].%s entry %q is duplicated",
+				ErrInvalidAgentBindingToolGating, kind, fieldName, entry)
+		}
+		seen[entry] = struct{}{}
+	}
+	return nil
+}
+
+// validateSystemPromptTemplatePath asserts a non-empty path is project-
+// relative, traversal-free, and shell-metachar-free. Empty paths are legal —
+// the render layer (F.7.3b) substitutes the per-kind built-in template. The
+// path is NOT opened or stat'd here: validation is purely syntactic so a
+// template referencing a not-yet-materialized resource still loads cleanly.
+func validateSystemPromptTemplatePath(kind domain.Kind, path string) error {
+	if path == "" {
+		return nil
+	}
+	if strings.HasPrefix(path, "/") {
+		return fmt.Errorf("%w: agent_bindings[%q].system_prompt_template_path %q is absolute; must be relative to .tillsyn/",
+			ErrInvalidAgentBindingToolGating, kind, path)
+	}
+	if pathContainsTraversal(path) {
+		return fmt.Errorf("%w: agent_bindings[%q].system_prompt_template_path %q contains '..' traversal segment",
+			ErrInvalidAgentBindingToolGating, kind, path)
+	}
+	for _, r := range systemPromptShellMetacharRunes {
+		if strings.ContainsRune(path, r) {
+			return fmt.Errorf("%w: agent_bindings[%q].system_prompt_template_path %q contains shell metacharacter %q",
+				ErrInvalidAgentBindingToolGating, kind, path, string(r))
+		}
+	}
+	return nil
+}
+
+// validateSandboxAbsolutePathList enforces the non-empty + clean-absolute-
+// path contract on a sandbox filesystem slice (AllowWrite or DenyRead).
+// "Clean" means: starts with `/`, contains no `..` segment, contains no
+// double-slashes (`//`). The check is syntactic — the path is not opened
+// or stat'd, mirroring SystemPromptTemplatePath's syntactic validator.
+func validateSandboxAbsolutePathList(kind domain.Kind, fieldName string, entries []string) error {
+	for _, entry := range entries {
+		if entry == "" {
+			return fmt.Errorf("%w: agent_bindings[%q].%s entry is empty",
+				ErrInvalidAgentBindingToolGating, kind, fieldName)
+		}
+		if !strings.HasPrefix(entry, "/") {
+			return fmt.Errorf("%w: agent_bindings[%q].%s entry %q must be an absolute path (starts with '/')",
+				ErrInvalidAgentBindingToolGating, kind, fieldName, entry)
+		}
+		if pathContainsTraversal(entry) {
+			return fmt.Errorf("%w: agent_bindings[%q].%s entry %q contains '..' traversal segment",
+				ErrInvalidAgentBindingToolGating, kind, fieldName, entry)
+		}
+		if strings.Contains(entry, "//") {
+			return fmt.Errorf("%w: agent_bindings[%q].%s entry %q contains '//' (path is not clean)",
+				ErrInvalidAgentBindingToolGating, kind, fieldName, entry)
+		}
+	}
+	return nil
+}
+
+// validateSandboxDomainList enforces the non-empty + no-URL-scheme contract
+// on a sandbox network slice (AllowedDomains or DeniedDomains). A leading
+// `*` glob is permitted (e.g. `*.npmjs.org`). Schemes other than `http://`
+// and `https://` are not enumerated — the canonical command-injection
+// surface is HTTP / HTTPS, and template authors writing custom schemes
+// trigger the same generic "looks like a URL" guard via the `://`
+// substring check.
+func validateSandboxDomainList(kind domain.Kind, fieldName string, entries []string) error {
+	for _, entry := range entries {
+		if entry == "" {
+			return fmt.Errorf("%w: agent_bindings[%q].%s entry is empty",
+				ErrInvalidAgentBindingToolGating, kind, fieldName)
+		}
+		if strings.Contains(entry, "://") {
+			return fmt.Errorf("%w: agent_bindings[%q].%s entry %q contains URL scheme '://'; declare host only (e.g. 'github.com', '*.npmjs.org')",
+				ErrInvalidAgentBindingToolGating, kind, fieldName, entry)
+		}
+	}
+	return nil
+}
+
+// pathContainsTraversal reports whether path has any `..` path segment.
+// Splits on `/` so substrings like `foo..bar` (a literal filename containing
+// two dots) do not trip the check — only a true traversal segment qualifies.
+func pathContainsTraversal(path string) bool {
+	for _, segment := range strings.Split(path, "/") {
+		if segment == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // validateTillsyn asserts the top-level [tillsyn] table satisfies the Drop 4c

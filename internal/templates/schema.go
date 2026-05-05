@@ -427,6 +427,116 @@ type AgentBinding struct {
 	// `Tillsyn` struct that supplies bundle-global caps + the aggregator
 	// engine itself land in F.7.18.2 + F.7.18.3 respectively.
 	Context ContextRules `toml:"context"`
+
+	// ToolsAllowed names the tools an agent's settings.json `permissions.allow`
+	// list will include at spawn-render time (F.7.3b). Empty means no explicit
+	// allow rules — the agent inherits whatever defaults the rendered
+	// settings.json carries. Per memory §5 / SKETCH §F.7.2 the two-layer
+	// tool-gating strategy uses this field as Layer A: the agent's frontmatter
+	// `allowedTools` mirrors the entries here for human readability while the
+	// settings.json `permissions.allow` rendered from the same slice is the
+	// authoritative gate at runtime.
+	//
+	// Validated at template Load time by validateAgentBindingToolGating: each
+	// entry must be a non-empty string, and within-binding duplicates are
+	// rejected. NO closed-enum membership check — tool names are open-ended
+	// (Read / Edit / Bash(mage *) / WebFetch / etc.) and template authors are
+	// trusted to supply real Claude / MCP tool identifiers.
+	ToolsAllowed []string `toml:"tools_allowed"`
+
+	// ToolsDisallowed names the tools the settings.json `permissions.deny`
+	// list will include at spawn-render time. Per memory §5 / SKETCH §F.7.2
+	// this is the AUTHORITATIVE tool-gating layer — the probe-grounded finding
+	// is that agents route around `--allowed-tools` / `--disallowed-tools` CLI
+	// flag removal via Bash, so only deny patterns inside settings.json catch
+	// the workaround. F.7.3b will additionally auto-mirror these entries into
+	// `--allowed-tools` / `--disallowed-tools` flag emission AND auto-add the
+	// closed set of Bash-workaround patterns when `WebFetch` is denied.
+	//
+	// Validated by validateAgentBindingToolGating with the same rules as
+	// ToolsAllowed (non-empty entries, within-binding-unique).
+	ToolsDisallowed []string `toml:"tools_disallowed"`
+
+	// SystemPromptTemplatePath optionally overrides the per-kind built-in
+	// system-prompt template the dispatcher's render layer (F.7.3b) uses when
+	// assembling `<bundle>/system-prompt.md`. When empty the render layer
+	// falls back to the canonical built-in template for the binding's kind.
+	//
+	// Format contract: a project-relative path under `.tillsyn/`. Validation
+	// at template Load time (validateAgentBindingToolGating) rejects:
+	//
+	//   - Absolute paths (path begins with `/`).
+	//   - Paths containing `..` traversal segments.
+	//   - Paths containing shell metacharacters `;`, `|`, `&`, backtick, or `$`
+	//     (defense-in-depth — the dispatcher's render layer never invokes a
+	//     shell against this path, but rejecting at the schema layer keeps the
+	//     resolved-path safe in the face of future refactors).
+	//
+	// The actual file is NOT opened or stat'd at template Load time — the
+	// path may legitimately reference a resource that doesn't exist until the
+	// template is consumed. Resolution + read errors surface at spawn-render
+	// time inside F.7.3b.
+	SystemPromptTemplatePath string `toml:"system_prompt_template_path"`
+
+	// Sandbox declares per-spawn sandbox configuration the dispatcher's render
+	// layer (F.7.3b) renders into the rendered settings.json. Per memory §4
+	// the sandbox semantics rely on Claude Code's settings.json
+	// `permissions.{allow,deny}` for filesystem AND on out-of-process network
+	// gating; this field is the schema seam, NOT the enforcement layer.
+	//
+	// Closed sub-struct: every field carries an explicit TOML tag so
+	// templates.Load's strict-decode chain (load.go step 3) rejects unknown
+	// keys nested under `[agent_bindings.<kind>.sandbox]` as
+	// ErrUnknownTemplateKey at load time.
+	Sandbox SandboxRules `toml:"sandbox"`
+}
+
+// SandboxRules is the closed sub-struct on AgentBinding declaring per-spawn
+// sandbox directives consumed by the F.7.3b render layer when rendering
+// settings.json. Both nested fields are optional; the zero-value struct
+// (no `[sandbox]` table at all) means "no sandbox rules" — the spawn inherits
+// whatever permissions the rendered settings.json grants by default.
+//
+// Closed-struct unknown-key rejection: every field carries an explicit TOML
+// tag so templates.Load's strict-decode chain (load.go step 3) rejects
+// unknown keys nested under `[agent_bindings.<kind>.sandbox]` as
+// ErrUnknownTemplateKey at load time.
+//
+// Per Drop 4c F.7.2 plan acceptance criteria.
+type SandboxRules struct {
+	// Filesystem declares filesystem permissions for the spawn's sandbox.
+	Filesystem SandboxFilesystem `toml:"filesystem"`
+
+	// Network declares network permissions for the spawn's sandbox.
+	Network SandboxNetwork `toml:"network"`
+}
+
+// SandboxFilesystem encodes filesystem permissions for the spawn's sandbox.
+// Both slices are optional. Each entry must be a clean absolute path (begins
+// with `/`, no `..` segments, no double-slashes); validation at template Load
+// time is performed by validateAgentBindingToolGating.
+type SandboxFilesystem struct {
+	// AllowWrite is the set of absolute paths the spawn may write to. Each
+	// entry must be a clean absolute path.
+	AllowWrite []string `toml:"allow_write"`
+
+	// DenyRead is the set of absolute paths the spawn must NOT read. Each
+	// entry must be a clean absolute path.
+	DenyRead []string `toml:"deny_read"`
+}
+
+// SandboxNetwork encodes network permissions for the spawn's sandbox. Both
+// slices are optional. Each entry must be a non-empty string with no URL
+// scheme prefix (no `http://`, `https://`); a leading `*` glob is permitted
+// (e.g. `*.npmjs.org`).
+type SandboxNetwork struct {
+	// AllowedDomains is the set of network destinations (e.g. "github.com",
+	// "*.npmjs.org") the spawn may reach.
+	AllowedDomains []string `toml:"allowed_domains"`
+
+	// DeniedDomains is the set of network destinations the spawn must NOT
+	// reach.
+	DeniedDomains []string `toml:"denied_domains"`
 }
 
 // ContextRules is the closed sub-struct on AgentBinding declaring the

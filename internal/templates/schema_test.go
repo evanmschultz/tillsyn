@@ -98,6 +98,22 @@ func TestTemplateTOMLRoundTrip(t *testing.T) {
 					MaxChars:          50000,
 					MaxRuleDuration:   Duration(500 * time.Millisecond),
 				},
+				// Drop 4c F.7.2: tool-gating + system-prompt-template +
+				// sandbox fields populated so the round-trip exercises the
+				// new TOML tags symmetrically with the existing fields.
+				ToolsAllowed:             []string{"Read", "Edit", "Bash(mage *)"},
+				ToolsDisallowed:          []string{"WebFetch"},
+				SystemPromptTemplatePath: "prompts/build.md",
+				Sandbox: SandboxRules{
+					Filesystem: SandboxFilesystem{
+						AllowWrite: []string{"/Users/me/repo"},
+						DenyRead:   []string{"/etc/secrets"},
+					},
+					Network: SandboxNetwork{
+						AllowedDomains: []string{"github.com", "*.npmjs.org"},
+						DeniedDomains:  []string{"badactor.example"},
+					},
+				},
 			},
 		},
 		Gates: map[domain.Kind][]GateKind{
