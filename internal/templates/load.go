@@ -33,15 +33,19 @@ import (
 //     unknown kind survives this pass and is caught by validateMapKeys
 //     below.
 //  4. Load-time validators in this order:
-//     a. validateMapKeys — assert every map key in Template.Kinds and
-//     Template.AgentBindings is a member of the closed 12-value Kind
-//     enum. Catches typos like [kinds.bulid] that strict decode cannot.
+//     a. validateMapKeys — assert every map key in Template.Kinds,
+//     Template.AgentBindings, and Template.Gates is a member of the
+//     closed 12-value Kind enum. Catches typos like [kinds.bulid] that
+//     strict decode cannot.
 //     b. validateChildRuleKinds — assert every Kind referenced in
 //     [child_rules] is a member of the closed enum.
 //     c. validateChildRuleCycles — DFS the parent → child kind graph for
 //     directed cycles.
 //     d. validateChildRuleReachability — reserved extension point;
 //     currently a no-op.
+//     e. validateGateKinds — assert every gate-kind string in
+//     Template.Gates value slices is a member of the closed
+//     GateKind enum (4b.1 hook).
 //
 // Sentinel errors at package scope wrap the underlying failure so callers
 // can use errors.Is for routing without reaching into pelletier/go-toml/v2
@@ -105,6 +109,9 @@ func Load(r io.Reader) (Template, error) {
 	if err := validateChildRuleReachability(tpl.ChildRules); err != nil {
 		return Template{}, err
 	}
+	if err := validateGateKinds(tpl); err != nil {
+		return Template{}, err
+	}
 
 	return tpl, nil
 }
@@ -148,16 +155,22 @@ var (
 	// max_budget_usd/blocked_retries/blocked_retry_cooldown). The wrapped
 	// message names the offending field and the offending value for UX.
 	ErrInvalidAgentBinding = errors.New("invalid agent binding")
+
+	// ErrUnknownGateKind is returned by validateGateKinds when a value-slice
+	// element under Template.Gates is not a member of the closed GateKind
+	// enum (templates.IsValidGateKind). The wrapped message names the parent
+	// kind and the offending gate-kind string for UX.
+	ErrUnknownGateKind = errors.New("template references an unknown gate kind")
 )
 
-// validateMapKeys asserts every key in Template.Kinds and
-// Template.AgentBindings is a member of the closed 12-value domain.Kind enum.
-// Catches typos like [kinds.bulid] (transposed letters) or
-// [agent_bindings.totally-bogus] at load time rather than letting them
-// silently coexist with the real entries — strict decode validates fields
-// inside a row but not the map keys themselves, because pelletier/go-toml/v2
-// treats arbitrary keys as legitimate map entries when the destination type
-// is a map.
+// validateMapKeys asserts every key in Template.Kinds,
+// Template.AgentBindings, and Template.Gates is a member of the closed
+// 12-value domain.Kind enum. Catches typos like [kinds.bulid] (transposed
+// letters), [agent_bindings.totally-bogus], or [gates.bogus-kind] at load
+// time rather than letting them silently coexist with the real entries —
+// strict decode validates fields inside a row but not the map keys themselves,
+// because pelletier/go-toml/v2 treats arbitrary keys as legitimate map
+// entries when the destination type is a map.
 func validateMapKeys(tpl Template) error {
 	for k := range tpl.Kinds {
 		if !domain.IsValidKind(k) {
@@ -167,6 +180,11 @@ func validateMapKeys(tpl Template) error {
 	for k := range tpl.AgentBindings {
 		if !domain.IsValidKind(k) {
 			return fmt.Errorf("%w: agent_bindings map key %q", ErrUnknownKindReference, k)
+		}
+	}
+	for k := range tpl.Gates {
+		if !domain.IsValidKind(k) {
+			return fmt.Errorf("%w: gates map key %q", ErrUnknownKindReference, k)
 		}
 	}
 	return nil
@@ -271,5 +289,27 @@ func formatCyclePath(stack []domain.Kind, closure domain.Kind) string {
 // ErrUnreachableChildRule without reshuffling the public API.
 func validateChildRuleReachability(rules []ChildRule) error {
 	_ = rules
+	return nil
+}
+
+// validateGateKinds asserts every gate-kind string in Template.Gates value
+// slices is a member of the closed GateKind enum (templates.IsValidGateKind).
+// The map-key axis (parent kind) is validated by validateMapKeys above —
+// validateGateKinds focuses exclusively on the value-slice axis.
+//
+// Drop 4b Wave A 4b.1 hook: invoked from Load after
+// validateChildRuleReachability so the gate vocabulary check fires on a
+// template whose kind/child-rule axes already passed. Drop 4c will extend
+// IsValidGateKind to accept "commit" and "push"; this validator's body is
+// agnostic to the closed-enum size — it delegates entirely to
+// IsValidGateKind.
+func validateGateKinds(tpl Template) error {
+	for parentKind, gateSeq := range tpl.Gates {
+		for _, g := range gateSeq {
+			if !IsValidGateKind(g) {
+				return fmt.Errorf("%w: gates[%q] entry %q", ErrUnknownGateKind, parentKind, g)
+			}
+		}
+	}
 	return nil
 }

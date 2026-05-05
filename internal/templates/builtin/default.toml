@@ -317,6 +317,40 @@ title = "HYLLA_REFINEMENTS"
 description = "Perpetual Hylla-tooling refinement rollup — entries that came out of Hylla-feedback rounds. Populated drop-end by drop-orch via DROP_N_HYLLA_REFINEMENTS_RAISED."
 
 # -----------------------------------------------------------------------------
+# [gates] — per-kind closed-enum gate sequence (Drop 4b Wave A 4b.1).
+# -----------------------------------------------------------------------------
+#
+# Each [gates.<kind>] entry pairs a parent action-item kind with the ordered
+# list of GateKind values the dispatcher's gate runner (Drop 4b Wave A 4b.2)
+# executes when an action item of that kind transitions to its provisional
+# terminal state. Halt-on-first-failure: the first gate that returns
+# Success: false halts the sequence and the action item moves to `failed`
+# with metadata.BlockedReason populated.
+#
+# Closed-enum gate vocabulary (templates.GateKind):
+#   - mage_ci          — `mage ci` in project's primary worktree (4b.3).
+#   - mage_test_pkg    — `mage testPkg <pkg>` per item.Packages (4b.4).
+#   - hylla_reingest   — drop-end Hylla reingest (4b.7).
+#
+# Drop 4c expands the enum with "commit" and "push" and the build sequence
+# becomes ["mage_ci", "commit", "push"]. Drop 4b Wave A ships only mage_ci
+# in the build sequence per REVISION_BRIEF locked decision L6 — the closed
+# enum stays tight and the default template stays minimal until Drop 4c
+# lands the additional gate implementations.
+#
+# Absence of an entry for a given kind means "no gates" — the gate runner
+# returns Success: true immediately. NOT "all gates" (resolves WAVE_A_PLAN
+# 4b.1 acceptance bullet).
+#
+# Distinct from the reserved [gate_rules] table on Template.GateRulesRaw —
+# the two TOML keys (`gates` vs `gate_rules`) decode independently. A future
+# drop may type GateRulesRaw into a richer per-gate config struct (timeouts,
+# retry policy) without colliding with `gates`.
+
+[gates]
+build = ["mage_ci"]
+
+# -----------------------------------------------------------------------------
 # [agent_bindings] — closed 12-value Kind → agent spawn parameters.
 # -----------------------------------------------------------------------------
 #

@@ -342,6 +342,51 @@ func TestDefaultTemplateStewardOwnedKinds(t *testing.T) {
 	}
 }
 
+// TestDefaultTemplateLoadsWithGates asserts the embedded default.toml decodes
+// the Drop 4b Wave A 4b.1 [gates] section: [gates.build] = ["mage_ci"]. Per
+// REVISION_BRIEF locked decision L6 the build sequence stays minimal in
+// Drop 4b — Drop 4c expands to ["mage_ci", "commit", "push"]. Other kinds
+// (plan-qa-proof, build-qa-proof, closeout, etc.) are ABSENT from [gates.*];
+// the gate runner treats absence as "no gates" not "all gates" per the
+// 4b.2 doc-comment.
+func TestDefaultTemplateLoadsWithGates(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+
+	gateSeq, ok := tpl.Gates[domain.KindBuild]
+	if !ok {
+		t.Fatalf("Gates[%q] missing — Drop 4b Wave A 4b.1 ships [gates.build] = [\"mage_ci\"]", domain.KindBuild)
+	}
+	if len(gateSeq) != 1 {
+		t.Fatalf("Gates[%q] len = %d; want 1 (Drop 4b L6: only mage_ci ships in default; Drop 4c expands)", domain.KindBuild, len(gateSeq))
+	}
+	if gateSeq[0] != GateKindMageCI {
+		t.Fatalf("Gates[%q][0] = %q; want %q", domain.KindBuild, gateSeq[0], GateKindMageCI)
+	}
+
+	// Sibling kinds carry no gate sequence — the gate runner treats absence
+	// as "no gates" (returns Success: true immediately).
+	absentKinds := []domain.Kind{
+		domain.KindPlan,
+		domain.KindResearch,
+		domain.KindBuildQAProof,
+		domain.KindBuildQAFalsification,
+		domain.KindPlanQAProof,
+		domain.KindPlanQAFalsification,
+		domain.KindCloseout,
+		domain.KindCommit,
+		domain.KindRefinement,
+		domain.KindDiscussion,
+		domain.KindHumanVerify,
+	}
+	for _, kind := range absentKinds {
+		if _, present := tpl.Gates[kind]; present {
+			t.Fatalf("Gates[%q] should be absent in Drop 4b default — only build carries a gate sequence", kind)
+		}
+	}
+}
+
 // TestDefaultTemplateProhibitionsAreExplicit asserts the four reverse-
 // hierarchy prohibitions are encoded via NON-EMPTY allowed_child_kinds
 // allow-lists, not via implicit absence. Per finding 5.B.16 (N3) adding a
