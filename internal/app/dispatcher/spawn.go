@@ -61,8 +61,8 @@ type SpawnDescriptor struct {
 	MCPConfigPath string
 	// Prompt is the assembled spawn prompt passed to `-p`. The body is opaque
 	// to the dispatcher; the Wave 2.6 promptAssembler only guarantees that
-	// structural fields (task_id, project_dir, hylla_artifact_ref, move-state
-	// directive) are present so downstream agents can self-locate.
+	// structural fields (task_id, project_dir, move-state directive) are
+	// present so downstream agents can self-locate.
 	Prompt string
 	// WorkingDir is the project worktree the agent runs in (cmd.Dir).
 	WorkingDir string
@@ -191,9 +191,16 @@ func formatBudget(v float64) string {
 
 // assemblePrompt produces the spawn prompt body the agent receives via `-p`.
 // The body is opaque to the dispatcher contract — only the structural fields
-// (task_id, project_dir, hylla_artifact_ref, move-state directive) are
-// asserted by tests. Wave 4's CLAUDE.md updates document the prompt-body
-// contract for agent authors; this function is the producer.
+// (task_id, project_dir, move-state directive) are asserted by tests. Wave 4's
+// CLAUDE.md updates document the prompt-body contract for agent authors; this
+// function is the producer.
+//
+// Hylla awareness was deliberately removed in Drop 4c F.7.10: Hylla is a
+// dev-local tool, NOT part of Tillsyn's shipped cascade. Adopters who opt
+// into Hylla MCP can surface the project's HyllaArtifactRef via their own
+// system-prompt template (F.7.2 system_prompt_template_path). The data
+// field domain.Project.HyllaArtifactRef and project.metadata.hylla_artifact_ref
+// stay because adopter-local templates legitimately consume them.
 //
 // Wave 3 will fold authBundle session/lease IDs into the prompt under the
 // "Auth credentials" line; today the bundle is the empty-struct stub.
@@ -207,9 +214,6 @@ func assemblePrompt(item domain.ActionItem, project domain.Project, _ AuthBundle
 	b.WriteString("\n")
 	b.WriteString("project_dir: ")
 	b.WriteString(project.RepoPrimaryWorktree)
-	b.WriteString("\n")
-	b.WriteString("hylla_artifact_ref: ")
-	b.WriteString(project.HyllaArtifactRef)
 	b.WriteString("\n")
 	b.WriteString("kind: ")
 	b.WriteString(string(item.Kind))
