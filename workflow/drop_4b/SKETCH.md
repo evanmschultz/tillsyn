@@ -1,8 +1,10 @@
 # Drop 4b — Gate Execution + Post-Build Pipeline (Sketch)
 
-**Status:** placeholder — NOT a full plan. Full PLAN.md authoring + parallel-planner dispatch + plan-QA twins land post-Drop-4a-merge before any builder fires.
-**Author date:** 2026-05-03 (during Drop 4a planning phase).
+**Status:** scope locked Option β (2026-05-04). Full PLAN.md authoring + parallel-planner dispatch + plan-QA twins land post-sketch-update before any builder fires.
+**Author date:** 2026-05-03 (during Drop 4a planning phase). Updated 2026-05-04 with β scope split.
 **Purpose:** capture scope so nothing gets forgotten when full planning starts.
+
+**Option β scope split (2026-05-04):** Drop 4b ships only the spawn-pipeline-INDEPENDENT slice. Wave B (commit-agent + push gate + project-metadata toggles for commit/push) is DEFERRED to Drop 4c, which absorbs it alongside Theme F.7's spawn redesign. Rationale: commit-agent invocation depends on the dispatcher spawn pipeline, and 4a.19's spawn.go is a stub that Drop 4c F.7 wholesale-replaces with a per-spawn temp-bundle architecture. Building Wave B on the stub then rewiring = double-work + tech-debt window. Defer once, land once.
 
 ## Naming
 
@@ -52,12 +54,16 @@ These ride forward from Drop 4a's REVISION_BRIEF and confirm the 4b shape:
 - **`mage_ci` gate**: shells out via `exec.Cmd` (or wraps existing `mage` binary call); captures exit code + last 100 lines of stdout/stderr for `metadata.gate_output`.
 - **`mage_test_pkg` gate**: derives package list from action-item `packages`, runs `mage test-pkg <pkg>` per package. Optimization for sub-package work.
 
-### Wave B — Commit + push pipeline (~4 droplets)
+### Wave B — DEFERRED TO DROP 4C (commit + push pipeline)
 
-- **Commit-agent (haiku) integration `internal/app/dispatcher/commit_agent.go`**: spawns `claude --agent commit-message-agent --model haiku` against `git diff <start_commit>..<end_commit>` (using 4a's first-class commit fields). Returns single-line conventional commit message.
-- **`commit` gate**: runs `git add <paths>` (action-item-declared paths only, NOT `git add -A`); runs `git commit -m "<message>"`; sets action-item `end_commit = git rev-parse HEAD`. Honors project `metadata.dispatcher_commit_enabled` toggle (default false in 4b; flip to true in dogfood).
-- **`push` gate**: runs `git push origin <branch>`; gates on toggle. On push failure: action item moves to `failed` with `metadata.failure_reason = "git push: <error>"`.
-- **Project-metadata toggles** for both: `dispatcher_commit_enabled bool`, `dispatcher_push_enabled bool`. Default false in 4b. Dev opts in per project.
+**Status:** REMOVED from Drop 4b scope per Option β (2026-05-04). All Wave B items absorbed into Drop 4c alongside Theme F.7's spawn redesign:
+
+- ~~Commit-agent (haiku) integration~~ — Drop 4c (depends on F.7's per-spawn temp-bundle pipeline).
+- ~~`commit` gate~~ — Drop 4c (invokes commit-agent).
+- ~~`push` gate~~ — Drop 4c (tightly coupled to commit gate; same toggle / same surface).
+- ~~Project-metadata toggles `dispatcher_commit_enabled` / `dispatcher_push_enabled`~~ — Drop 4c (they exist to gate the deferred items).
+
+**What replaces Wave B in 4b:** nothing. Drop 4b's default template ships `[gates.build] = ["mage_ci"]` only — commit + push aren't wired yet. Drop 4c expands the default to include them once the spawn pipeline is replaced.
 
 ### Wave C — Hylla reingest + auth auto-revoke + git-status-pre-check + closeout (~3 droplets)
 
@@ -92,7 +98,7 @@ These are sketch-time unknowns; full planning + plan-QA-falsification surfaces r
 
 ## Approximate Size
 
-~11 droplets. Smaller than 4a (32). Most droplets are surgical wiring on top of 4a's primitives — gate runner is the largest new component, ~5-6 source files. Full planning at post-4a-merge time will refine the count.
+**~7 droplets** post-Option-β split (was ~11 with Wave B). Smaller than 4a (32). Wave A gate runner is the largest new component (~4 droplets, 5-6 source files); Wave C subset adds ~3 droplets (auth auto-revoke + git-status-pre-check + auto-promotion subscriber). Full planning at post-4a-merge time will refine the count. Drop 4c absorbs the ~4 deferred Wave B droplets.
 
 ## Workflow Cross-References
 
