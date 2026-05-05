@@ -36,9 +36,13 @@ func fixtureCatalog(binding templates.AgentBinding) templates.KindCatalog {
 	}
 }
 
-// fixtureProject returns a project value populated with the four fields
-// BuildSpawnCommand reads (RepoPrimaryWorktree, ID, HyllaArtifactRef,
-// Language). Other fields stay zero-value: they are not consumed in 4a.19.
+// fixtureProject returns a project value populated with the fields
+// BuildSpawnCommand reads (RepoPrimaryWorktree, ID). HyllaArtifactRef stays
+// populated to exercise the F.7.10 negative assertion (the value MUST NOT
+// leak into the prompt body even when the project sets it). Language is
+// retained for forward-compat — Wave 1 added it to the project field set;
+// the dispatcher no longer consumes it post-F.7.10. Other fields stay
+// zero-value: they are not consumed by the spawner.
 func fixtureProject() domain.Project {
 	return domain.Project{
 		ID:                  "proj-1",
@@ -119,11 +123,12 @@ func TestBuildSpawnCommandAssemblesArgvForGoBuilder(t *testing.T) {
 	}
 
 	// Prompt structural fields — body opaque, but key tokens MUST be present.
+	// Drop 4c F.7.10 removed hylla_artifact_ref from the prompt body; assert
+	// it is absent below.
 	wantTokens := []string{
 		"task_id: " + item.ID,
 		"project_id: " + project.ID,
 		"project_dir: " + project.RepoPrimaryWorktree,
-		"hylla_artifact_ref: " + project.HyllaArtifactRef,
 		"kind: " + string(item.Kind),
 		"move-state directive:",
 	}
@@ -131,6 +136,15 @@ func TestBuildSpawnCommandAssemblesArgvForGoBuilder(t *testing.T) {
 		if !strings.Contains(descriptor.Prompt, tok) {
 			t.Errorf("descriptor.Prompt missing %q\nfull prompt:\n%s", tok, descriptor.Prompt)
 		}
+	}
+
+	// Drop 4c F.7.10: hylla_artifact_ref MUST NOT appear in the prompt body.
+	// Hylla is dev-local, not part of Tillsyn's shipped cascade. The data
+	// field domain.Project.HyllaArtifactRef is preserved (adopter-local
+	// templates may opt into Hylla MCP via system_prompt_template_path);
+	// only the prompt-body emission is removed.
+	if strings.Contains(descriptor.Prompt, "hylla_artifact_ref") {
+		t.Errorf("descriptor.Prompt unexpectedly contains %q (F.7.10 removed it)\nfull prompt:\n%s", "hylla_artifact_ref", descriptor.Prompt)
 	}
 }
 
