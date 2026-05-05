@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -46,6 +47,10 @@ import (
 //     e. validateGateKinds — assert every gate-kind string in
 //     Template.Gates value slices is a member of the closed
 //     GateKind enum (4b.1 hook).
+//     f. validateAgentBindingEnvNames — assert every entry in each
+//     AgentBinding.Env slice matches the closed env-var name regex
+//     (`^[A-Za-z][A-Za-z0-9_]*$`), is non-empty, contains no `=`, and
+//     is unique within its binding (Drop 4c F.7.17.1 hook).
 //
 // Sentinel errors at package scope wrap the underlying failure so callers
 // can use errors.Is for routing without reaching into pelletier/go-toml/v2
@@ -112,6 +117,9 @@ func Load(r io.Reader) (Template, error) {
 	if err := validateGateKinds(tpl); err != nil {
 		return Template{}, err
 	}
+	if err := validateAgentBindingEnvNames(tpl); err != nil {
+		return Template{}, err
+	}
 
 	return tpl, nil
 }
@@ -161,6 +169,17 @@ var (
 	// enum (templates.IsValidGateKind). The wrapped message names the parent
 	// kind and the offending gate-kind string for UX.
 	ErrUnknownGateKind = errors.New("template references an unknown gate kind")
+
+	// ErrInvalidAgentBindingEnv is returned by validateAgentBindingEnvNames
+	// when an AgentBinding.Env slice contains an entry that fails the closed
+	// env-var name contract (Drop 4c F.7.17.1 locked decision L5 + REV-2
+	// expanded baseline). Each entry MUST match `^[A-Za-z][A-Za-z0-9_]*$`,
+	// be non-empty, contain no `=`, and be unique within its binding. The
+	// wrapped message names the offending kind, the offending entry, and
+	// the failure reason for UX. The error wraps ErrInvalidAgentBinding so
+	// callers using `errors.Is(err, ErrInvalidAgentBinding)` continue to
+	// work.
+	ErrInvalidAgentBindingEnv = fmt.Errorf("%w: env", ErrInvalidAgentBinding)
 )
 
 // validateMapKeys asserts every key in Template.Kinds,
@@ -309,6 +328,69 @@ func validateGateKinds(tpl Template) error {
 			if !IsValidGateKind(g) {
 				return fmt.Errorf("%w: gates[%q] entry %q", ErrUnknownGateKind, parentKind, g)
 			}
+		}
+	}
+	return nil
+}
+
+// envVarNameRegex pins the closed env-var name pattern per Drop 4c F.7.17
+// locked decision L5 (formerly L5 in the F.7.17 sub-plan). The pattern is the
+// literal `^[A-Za-z][A-Za-z0-9_]*$` per A1.c — explicit anchors inside the
+// pattern AND the call uses MatchString against a compiled regex so the
+// "regex without anchors" footgun documented in falsification round 2 is
+// statically impossible.
+//
+// Both uppercase and lowercase leading letters are allowed: corporate-network
+// adopters routinely set `https_proxy` (lowercase, the conventional cURL
+// spelling) AND `HTTPS_PROXY` (uppercase, the conventional Go net/http
+// spelling) on the same machine, and Tillsyn's per-binding env declarations
+// must be able to forward either form without the dev rewriting their shell.
+var envVarNameRegex = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
+
+// validateAgentBindingEnvNames asserts every entry in every AgentBinding.Env
+// slice satisfies the closed env-var-name contract before the dispatcher's
+// CLI adapter resolves it via os.Getenv at spawn time.
+//
+// Per Drop 4c F.7.17.1 acceptance contract each entry MUST:
+//
+//   - Be non-empty.
+//   - Contain no `=` character (a TOML editor writing `KEY=value` instead of
+//     just `KEY` is the most common authoring footgun and merits a precise,
+//     ahead-of-regex error message naming the offending entry verbatim).
+//   - Match `^[A-Za-z][A-Za-z0-9_]*$` — leading letter, trailing
+//     alphanumerics + underscore. Whitespace, hyphens, dots, and leading
+//     digits are rejected.
+//   - Be unique within its binding's env list (case-sensitive comparison;
+//     `FOO` and `foo` are distinct entries because POSIX env-var names are
+//     case-sensitive).
+//
+// The validator iterates `tpl.AgentBindings` deterministically by stable
+// field order inside each binding's slice, but the outer map iteration order
+// is not deterministic — the function returns on the FIRST offending entry
+// to keep the error surface bounded. Future drops that want exhaustive
+// reporting can switch to error aggregation; the closed-enum + load-time-
+// reject pattern doesn't need it today.
+//
+// All non-nil returns wrap ErrInvalidAgentBindingEnv (which itself wraps
+// ErrInvalidAgentBinding) so callers using `errors.Is(err, ErrInvalidAgentBinding)`
+// route correctly without reaching for the env-specific sentinel.
+func validateAgentBindingEnvNames(tpl Template) error {
+	for kind, binding := range tpl.AgentBindings {
+		seen := make(map[string]struct{}, len(binding.Env))
+		for _, entry := range binding.Env {
+			if entry == "" {
+				return fmt.Errorf("%w: agent_bindings[%q].env entry is empty", ErrInvalidAgentBindingEnv, kind)
+			}
+			if strings.Contains(entry, "=") {
+				return fmt.Errorf("%w: agent_bindings[%q].env entry %q contains '='; declare names only (values resolve via os.Getenv)", ErrInvalidAgentBindingEnv, kind, entry)
+			}
+			if !envVarNameRegex.MatchString(entry) {
+				return fmt.Errorf("%w: agent_bindings[%q].env entry %q does not match %s", ErrInvalidAgentBindingEnv, kind, entry, envVarNameRegex.String())
+			}
+			if _, dup := seen[entry]; dup {
+				return fmt.Errorf("%w: agent_bindings[%q].env entry %q is duplicated", ErrInvalidAgentBindingEnv, kind, entry)
+			}
+			seen[entry] = struct{}{}
 		}
 	}
 	return nil

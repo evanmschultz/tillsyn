@@ -11,9 +11,14 @@ import (
 )
 
 // fullyPopulatedAgentBinding returns a fresh AgentBinding with every one of
-// the 11 fields set to a non-zero, validation-passing value. Used as the
+// the 13 fields set to a non-zero, validation-passing value. Used as the
 // shared baseline for the round-trip test and as the start state for each
 // Validate table-row's targeted mutation.
+//
+// Drop 4c F.7.17.1 extension: Env + CLIKind are populated so the round-trip
+// assertion exercises the new TOML tags symmetrically with the original
+// 11 fields. CLIKind is set to the closed-enum literal "claude" (REV-1
+// closed enum: claude | codex; codex lands in Drop 4d).
 func fullyPopulatedAgentBinding() AgentBinding {
 	return AgentBinding{
 		AgentName:            "go-builder-agent",
@@ -27,15 +32,17 @@ func fullyPopulatedAgentBinding() AgentBinding {
 		CommitAgent:          "commit-agent",
 		BlockedRetries:       2,
 		BlockedRetryCooldown: Duration(30 * time.Second),
+		Env:                  []string{"ANTHROPIC_API_KEY", "https_proxy", "HTTP_PROXY"},
+		CLIKind:              "claude",
 	}
 }
 
 // TestAgentBindingTOMLRoundTrip marshals a fully-populated AgentBinding via
 // pelletier/go-toml/v2 and unmarshals the resulting bytes back into a struct,
-// asserting reflect.DeepEqual equivalence. Every one of the 11 fields is
-// populated with a non-zero value (Tools has multiple elements,
-// BlockedRetryCooldown is non-zero) so the assertion does not pass trivially
-// for an unmarshaller that silently drops fields.
+// asserting reflect.DeepEqual equivalence. Every one of the 13 fields is
+// populated with a non-zero value (Tools and Env each have multiple elements,
+// BlockedRetryCooldown is non-zero, CLIKind = "claude") so the assertion does
+// not pass trivially for an unmarshaller that silently drops fields.
 func TestAgentBindingTOMLRoundTrip(t *testing.T) {
 	original := fullyPopulatedAgentBinding()
 

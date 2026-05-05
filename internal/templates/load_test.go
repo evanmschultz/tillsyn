@@ -418,3 +418,245 @@ title = "SELF-LOOP"
 		t.Fatalf("Load: err = %q; want cycle path %q", err.Error(), "build -> build")
 	}
 }
+
+// TestLoadAgentBindingEnvAndCLIKindHappyPath verifies a Template TOML stream
+// declaring an [agent_bindings.<kind>] row with the new Drop 4c F.7.17.1
+// fields (`env` and `cli_kind`) decodes cleanly: every entry in the env
+// allow-list is preserved verbatim, the cli_kind value lands on the field,
+// and validateAgentBindingEnvNames does not fire. Mixed-case env names
+// (uppercase HTTP_PROXY + lowercase https_proxy) ride the same binding so
+// the test pins the L5 + REV-2 lowercase-allowed contract.
+func TestLoadAgentBindingEnvAndCLIKindHappyPath(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+env = ["ANTHROPIC_API_KEY", "https_proxy", "HTTP_PROXY"]
+cli_kind = "claude"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	binding, ok := tpl.AgentBindings[domain.KindBuild]
+	if !ok {
+		t.Fatalf("AgentBindings[%q] missing", domain.KindBuild)
+	}
+	wantEnv := []string{"ANTHROPIC_API_KEY", "https_proxy", "HTTP_PROXY"}
+	if len(binding.Env) != len(wantEnv) {
+		t.Fatalf("binding.Env = %v; want %v", binding.Env, wantEnv)
+	}
+	for i, want := range wantEnv {
+		if binding.Env[i] != want {
+			t.Fatalf("binding.Env[%d] = %q; want %q", i, binding.Env[i], want)
+		}
+	}
+	if binding.CLIKind != "claude" {
+		t.Fatalf("binding.CLIKind = %q; want %q", binding.CLIKind, "claude")
+	}
+}
+
+// TestLoadAgentBindingCLIKindOmittedDefaultsToEmpty verifies that omitting
+// `cli_kind` from a TOML binding leaves AgentBinding.CLIKind at the empty
+// string. Per Drop 4c F.7.17 locked decision L15 the empty string is the
+// "back-compat default → claude" sentinel handled at adapter-lookup time
+// (NOT at template Load time), so this droplet just verifies the field is
+// settable AND zero-valued on absence.
+func TestLoadAgentBindingCLIKindOmittedDefaultsToEmpty(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	binding, ok := tpl.AgentBindings[domain.KindBuild]
+	if !ok {
+		t.Fatalf("AgentBindings[%q] missing", domain.KindBuild)
+	}
+	if binding.CLIKind != "" {
+		t.Fatalf("binding.CLIKind = %q; want empty string (omitted cli_kind sentinel)", binding.CLIKind)
+	}
+	if binding.Env != nil {
+		t.Fatalf("binding.Env = %v; want nil (omitted env)", binding.Env)
+	}
+}
+
+// TestLoadAgentBindingEnvRejectionTable exhausts the closed reject contract
+// for AgentBinding.Env enforced by validateAgentBindingEnvNames. Every row
+// declares a single offending entry (or duplicate pair) so the failure mode
+// under test is unambiguous. Each rejection wraps ErrInvalidAgentBinding via
+// ErrInvalidAgentBindingEnv; both sentinel routings are asserted.
+//
+// Acceptance per Drop 4c F.7.17.1 spec:
+//
+//   - Reject `=` in entry: most common authoring footgun (TOML editor writes
+//     KEY=value instead of just KEY).
+//   - Reject empty entry.
+//   - Reject duplicate within a single binding's env list.
+//   - Reject malformed names: whitespace, hyphen, dot, leading digit.
+//   - Allow lowercase: `https_proxy`, `foo_bar` MUST pass.
+func TestLoadAgentBindingEnvRejectionTable(t *testing.T) {
+	tests := []struct {
+		name         string
+		env          string // raw TOML literal for the env array, e.g. `["KEY=value"]`
+		wantValid    bool   // when true, Load returns nil error and the entry survives the validator
+		wantSubstr   string // substring required in err.Error() when wantValid=false; empty = skip
+		wantSentinel error
+	}{
+		{
+			name:         "reject equals in entry KEY=value",
+			env:          `["KEY=value"]`,
+			wantSentinel: ErrInvalidAgentBindingEnv,
+			wantSubstr:   "KEY=value",
+		},
+		{
+			name:         "reject empty entry",
+			env:          `[""]`,
+			wantSentinel: ErrInvalidAgentBindingEnv,
+			wantSubstr:   "is empty",
+		},
+		{
+			name:         "reject duplicate entry within same binding",
+			env:          `["FOO", "FOO"]`,
+			wantSentinel: ErrInvalidAgentBindingEnv,
+			wantSubstr:   "duplicated",
+		},
+		{
+			name:         "reject whitespace-containing name FOO BAR",
+			env:          `["FOO BAR"]`,
+			wantSentinel: ErrInvalidAgentBindingEnv,
+			wantSubstr:   "FOO BAR",
+		},
+		{
+			name:         "reject hyphen-containing name FOO-BAR",
+			env:          `["FOO-BAR"]`,
+			wantSentinel: ErrInvalidAgentBindingEnv,
+			wantSubstr:   "FOO-BAR",
+		},
+		{
+			name:         "reject dot-containing name FOO.BAR",
+			env:          `["FOO.BAR"]`,
+			wantSentinel: ErrInvalidAgentBindingEnv,
+			wantSubstr:   "FOO.BAR",
+		},
+		{
+			name:         "reject leading-digit name 1FOO",
+			env:          `["1FOO"]`,
+			wantSentinel: ErrInvalidAgentBindingEnv,
+			wantSubstr:   "1FOO",
+		},
+		{
+			name:      "allow lowercase https_proxy",
+			env:       `["https_proxy"]`,
+			wantValid: true,
+		},
+		{
+			name:      "allow lowercase foo_bar",
+			env:       `["foo_bar"]`,
+			wantValid: true,
+		},
+		{
+			name:      "allow uppercase HTTP_PROXY",
+			env:       `["HTTP_PROXY"]`,
+			wantValid: true,
+		},
+		{
+			name:      "allow trailing digits FOO123",
+			env:       `["FOO123"]`,
+			wantValid: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+env = ` + tc.env + `
+`
+			_, err := Load(strings.NewReader(src))
+			if tc.wantValid {
+				if err != nil {
+					t.Fatalf("Load: unexpected error %v for env=%s", err, tc.env)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Load: expected error for env=%s; got nil", tc.env)
+			}
+			if tc.wantSentinel != nil && !errors.Is(err, tc.wantSentinel) {
+				t.Fatalf("Load: errors.Is(_, %v) = false; err = %v", tc.wantSentinel, err)
+			}
+			// Every env-rejection error MUST also satisfy errors.Is(_, ErrInvalidAgentBinding)
+			// since ErrInvalidAgentBindingEnv wraps the umbrella sentinel.
+			if !errors.Is(err, ErrInvalidAgentBinding) {
+				t.Fatalf("Load: errors.Is(_, ErrInvalidAgentBinding) = false; err = %v", err)
+			}
+			if tc.wantSubstr != "" && !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Fatalf("Load: err = %q; want substring %q", err.Error(), tc.wantSubstr)
+			}
+		})
+	}
+}
+
+// TestLoadAgentBindingDuplicateEnvNamesEntry verifies the duplicate-detection
+// state is per-binding, NOT cross-binding. Two distinct binding rows may each
+// declare `FOO` without colliding because env values resolve at spawn time
+// per their owning binding, not globally. The test seeds two bindings with
+// identical env names and asserts Load succeeds.
+func TestLoadAgentBindingDuplicateEnvNamesAcrossBindingsAllowed(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+env = ["ANTHROPIC_API_KEY"]
+
+[agent_bindings.plan]
+agent_name = "go-planning-agent"
+model = "opus"
+env = ["ANTHROPIC_API_KEY"]
+`
+	if _, err := Load(strings.NewReader(src)); err != nil {
+		t.Fatalf("Load: cross-binding duplicate env names should be allowed; err = %v", err)
+	}
+}
+
+// TestLoadAgentBindingStrictDecodeUnknownFieldStillRejects verifies the
+// strict-decode chain (load.go step 3) STILL rejects unknown nested fields
+// inside [agent_bindings.<kind>] after Drop 4c F.7.17.1 widens the closed
+// AgentBinding struct. This is regression coverage, not new functionality:
+// adding `Env` and `CLIKind` to the struct doesn't relax strict decode for
+// any other key. A bogus key like `bogus_field` MUST still surface as
+// ErrUnknownTemplateKey at Load time.
+func TestLoadAgentBindingStrictDecodeUnknownFieldStillRejects(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+bogus_field = true
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownTemplateKey; got nil")
+	}
+	if !errors.Is(err, ErrUnknownTemplateKey) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownTemplateKey) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "bogus_field") {
+		t.Fatalf("Load: err = %q; want offending field %q in message", err.Error(), "bogus_field")
+	}
+}

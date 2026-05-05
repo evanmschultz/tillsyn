@@ -329,6 +329,46 @@ type AgentBinding struct {
 	// templates.Duration's TextUnmarshaler. Round-trips back to the canonical
 	// time.Duration.String() form.
 	BlockedRetryCooldown Duration `toml:"blocked_retry_cooldown"`
+
+	// Env is the closed allow-list of environment-variable NAMES the
+	// dispatcher's CLI adapter forwards from the orchestrator's process to
+	// the spawned agent process. Per Drop 4c F.7.17 locked decision L4 the
+	// adapter resolves each name via os.Getenv at spawn time; missing values
+	// fail loud per-action-item (the action item moves to failed with a
+	// metadata.failure_reason naming the offending var). Per L8 the adapter
+	// constructs cmd.Env explicitly — os.Environ() is NOT inherited — so
+	// only the closed POSIX baseline (L6) plus the names listed here ever
+	// reach the spawn.
+	//
+	// Each entry must match `^[A-Za-z][A-Za-z0-9_]*$` (uppercase OR
+	// lowercase leading letter; trailing alphanumerics + underscore). The
+	// regex permits both `HTTP_PROXY` and the conventional cURL `http_proxy`
+	// spelling per L5 + Drop 4c F.7.17 falsification round 2 A2.d. Empty
+	// strings, entries containing `=` (KEY=value form), whitespace,
+	// hyphens, dots, leading digits, and within-binding duplicates are
+	// rejected at template Load time by validateAgentBindingEnvNames.
+	//
+	// REV-1 (Drop 4c F.7.17.1 REVISIONS POST-AUTHORING): the originally
+	// scoped `Command []string` and `ArgsPrefix []string` fields were
+	// dropped from the design — adapters invoke their CLI binary directly
+	// (`claude` / `codex`) and process-isolation is an OS-level concern.
+	// `Env` and `CLIKind` are the only F.7.17.1 additions.
+	Env []string `toml:"env"`
+
+	// CLIKind selects which CLI adapter the dispatcher routes the spawn to.
+	// Closed enum: "claude" (Drop 4c) and "codex" (Drop 4d). The empty
+	// string is permitted at the schema level and resolves to "claude" at
+	// adapter-lookup time per Drop 4c F.7.17 locked decision L15
+	// (back-compat default). Validation against the closed set is
+	// performed at adapter-lookup time, NOT at template Load time, so a
+	// template authored against a future Tillsyn release that adds new
+	// CLIKind values still loads cleanly under an older binary — the spawn
+	// fails at dispatch time with a precise "no adapter for cli_kind X"
+	// error instead.
+	//
+	// REV-1: companion to Env. The wrapper-interop knob (`Command` /
+	// `ArgsPrefix`) is GONE; adapters hardcode their CLI binary internally.
+	CLIKind string `toml:"cli_kind"`
 }
 
 // Validate reports field-level errors on an AgentBinding. Returns nil if all
