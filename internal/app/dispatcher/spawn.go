@@ -1,12 +1,14 @@
 package dispatcher
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/evanmschultz/tillsyn/internal/templates"
@@ -16,10 +18,11 @@ import (
 //
 // Wave 3: Wave 3 of Drop 4a (auth flow) replaces this stub with the populated
 // form — session/lease IDs, MCP config materialization, capability scope. The
-// Wave-2.6 spawner accepts a zero-value AuthBundle and emits an
-// `--mcp-config` flag pointing at a deterministic placeholder path under
-// `<project_root>/.tillsyn/`. Wave 3 will overwrite that path with a real
-// per-spawn MCP config file.
+// Wave-2.6 spawner accepted a zero-value AuthBundle; Drop 4c F.7.17.5 keeps
+// the same seam unchanged so callers do not break across the adapter wiring
+// landing. F.7-CORE F.7.1 (bundle-materializer) and Wave 3 (auth materializer)
+// will populate the bundle paths through dependencies of BuildSpawnCommand,
+// not through fields on AuthBundle.
 //
 // The struct is intentionally empty today: any populated form Wave 3 chooses
 // (struct vs interface vs functional option) is a non-breaking change because
@@ -33,8 +36,11 @@ type AuthBundle struct {
 
 // SpawnDescriptor captures the inputs and resolved outputs of one
 // BuildSpawnCommand call. The struct is the logging + monitor handoff —
-// 4a.21's process monitor consumes it to populate trace fields, and the
-// continuous-mode loop in Drop 4b will surface it on dispatcher dashboards.
+// 4a.21's process monitor consumes it to populate trace fields, the
+// continuous-mode loop in Drop 4b surfaces it on dispatcher dashboards, and
+// Drop 4c F.7.17.5 carries the bundle root path through MCPConfigPath so
+// `till dispatcher run --dry-run` JSON output continues to reflect the spawn
+// intent across the adapter wiring landing.
 //
 // Every field is set by BuildSpawnCommand on success. Callers MUST NOT mutate
 // the returned descriptor; the dispatcher treats the value as immutable for
@@ -55,14 +61,19 @@ type SpawnDescriptor struct {
 	// flag value.
 	MaxTurns int
 	// MCPConfigPath is the absolute filesystem path passed to `--mcp-config`.
-	// Wave 2.6 uses a deterministic placeholder under the project worktree's
-	// `.tillsyn/` directory; Wave 3 writes the real per-spawn config to this
-	// path before the monitor in 4a.21 runs the *exec.Cmd.
+	// Drop 4c F.7.17.5 wires this from the per-spawn bundle root: claude's
+	// adapter materializes its plugin tree under <bundleRoot>/plugin/ and the
+	// MCP config lives at <bundleRoot>/plugin/.mcp.json. F.7-CORE F.7.1 will
+	// own the bundle lifecycle (manifest.json, deferred cleanup, project-mode
+	// root); the path shape stays compatible.
 	MCPConfigPath string
-	// Prompt is the assembled spawn prompt passed to `-p`. The body is opaque
-	// to the dispatcher; the Wave 2.6 promptAssembler only guarantees that
+	// Prompt is the assembled spawn prompt body. The body is opaque to the
+	// dispatcher; the F.7.17.5 promptAssembler only guarantees that
 	// structural fields (task_id, project_dir, move-state directive) are
-	// present so downstream agents can self-locate.
+	// present so downstream agents can self-locate. The prompt is written to
+	// disk at BundlePaths.SystemPromptPath and surfaced to claude via
+	// `--system-prompt-file`; the descriptor field carries the same body for
+	// dry-run JSON / monitor logging.
 	Prompt string
 	// WorkingDir is the project worktree the agent runs in (cmd.Dir).
 	WorkingDir string
@@ -79,30 +90,98 @@ var ErrNoAgentBinding = errors.New("dispatcher: no agent binding for kind")
 // project.RepoPrimaryWorktree, etc.). Callers detect this via errors.Is.
 var ErrInvalidSpawnInput = errors.New("dispatcher: invalid spawn input")
 
+// ErrUnsupportedCLIKind is returned by BuildSpawnCommand when the resolved
+// binding's CLIKind has no registered adapter in the `adapters` map. Drop 4c
+// ships CLIKindClaude only; Drop 4d adds CLIKindCodex by registering an
+// additional entry. Callers detect via errors.Is and route the action item
+// to a "no agent configured" failure (same disposition as ErrNoAgentBinding).
+var ErrUnsupportedCLIKind = errors.New("dispatcher: unsupported CLIKind")
+
+// adaptersMu guards adaptersMap. RegisterAdapter / lookupAdapter are
+// concurrency-safe so wiring code can populate the registry from package
+// init() in any order, and tests can register/swap adapters without races.
+var adaptersMu sync.RWMutex
+
+// adaptersMap maps CLIKind to its adapter implementation. Drop 4c F.7.17.5
+// ships CLIKindClaude only; Drop 4d adds CLIKindCodex via:
+//
+//	dispatcher.RegisterAdapter(dispatcher.CLIKindCodex, cli_codex.New())
+//
+// The map is populated at process start by a wiring package that imports
+// both dispatcher and the per-CLI adapter packages — this indirection breaks
+// the import cycle that would otherwise form (cli_claude already imports
+// dispatcher for the BindingResolved / BundlePaths / CLIAdapter types).
+//
+// Production wiring lives at internal/app/dispatcher/cli_register; cmd/till
+// imports it for side-effects so the registry is populated before the
+// dispatcher dispatches anything. Test code that drives BuildSpawnCommand
+// directly does the same import.
+var adaptersMap = map[CLIKind]CLIAdapter{}
+
+// RegisterAdapter wires `adapter` into the dispatcher's CLIKind→adapter
+// registry under `kind`. Wiring packages (cli_register today; per-CLI
+// register packages in future drops) call this at init() time. Repeat
+// registrations under the same kind overwrite — last writer wins. The
+// concurrency primitives are conservative: registration is rare and lookup
+// is hot, so a sync.RWMutex around a plain map is the right shape.
+//
+// Adapters MUST be safe for concurrent calls — the dispatcher reuses one
+// instance per CLIKind across all spawns. The adapter implementations
+// shipped today (cli_claude) hold no state, so this is automatically true.
+func RegisterAdapter(kind CLIKind, adapter CLIAdapter) {
+	adaptersMu.Lock()
+	defer adaptersMu.Unlock()
+	adaptersMap[kind] = adapter
+}
+
+// lookupAdapter returns the registered adapter for `kind`, or nil + false
+// when no adapter is registered. BuildSpawnCommand wraps the false case as
+// ErrUnsupportedCLIKind.
+func lookupAdapter(kind CLIKind) (CLIAdapter, bool) {
+	adaptersMu.RLock()
+	defer adaptersMu.RUnlock()
+	a, ok := adaptersMap[kind]
+	return a, ok
+}
+
 // BuildSpawnCommand assembles one *exec.Cmd that — when later executed by the
 // process monitor in 4a.21 — launches a subagent for the supplied action
-// item. This droplet ONLY constructs the Cmd; it does not Start, Run, or Wait.
+// item. This function ONLY constructs the Cmd; it does not Start, Run, or
+// Wait.
 //
-// The argv shape matches REVISION_BRIEF Wave 2 spec:
+// Drop 4c F.7.17.5 multi-adapter wiring:
 //
-//	claude --agent <agentName> --bare -p "<prompt>" \
-//	  --mcp-config <perRunPath> --strict-mcp-config \
-//	  --permission-mode acceptEdits \
-//	  --max-budget-usd <N> --max-turns <N>
-//
-// Agent-variant resolution is delegated to templates.KindCatalog.LookupAgentBinding:
-// the binding's AgentName is taken verbatim. The Wave 2.6 droplet does NOT
-// synthesize {lang}-{role} variants from project.Language — Wave 1 gives the
-// planner the project field and the template gives the binding; combining
-// them is the planner's responsibility, not the dispatcher's.
+//  1. Validate caller-supplied inputs (preserved from the 4a.19 stub).
+//  2. Look up the AgentBinding in catalog. ErrNoAgentBinding on miss.
+//  3. ResolveBinding(rawBinding) → BindingResolved (with the F.7.17 L15
+//     default-to-claude rule applied for empty CLIKind).
+//  4. Look up the adapter from `adapters` keyed by resolved.CLIKind.
+//     ErrUnsupportedCLIKind on miss.
+//  5. Create a per-spawn bundle directory via os.MkdirTemp and populate
+//     BundlePaths. Bundle lifecycle (manifest.json, deferred cleanup,
+//     project-mode root) is owned by F.7-CORE F.7.1 — the per-spawn temp dir
+//     here is a TODO marker that F.7.1 will replace.
+//  6. Render the system-prompt body and write it to
+//     BundlePaths.SystemPromptPath. The body carries action-item structural
+//     fields (task_id, project_id, project_dir, kind, title, paths,
+//     packages, move-state directive) but NOT hylla_artifact_ref — Hylla is
+//     a dev-local tool, not part of Tillsyn's shipped cascade per F.7.10.
+//  7. Call adapter.BuildCommand(ctx, resolved, bundlePaths) to assemble the
+//     CLI-specific argv + cmd.Env, and set cmd.Dir to the project worktree.
+//  8. Build SpawnDescriptor mirroring the resolved fields and bundle-derived
+//     MCP config path (the path claude actually wires under the bundle).
 //
 // Returns ErrNoAgentBinding wrapped with the offending kind when the catalog
 // has no entry for item.Kind. Returns ErrInvalidSpawnInput wrapped with a
 // reason for empty / malformed inputs. Returns templates.ErrInvalidAgentBinding
-// (via Validate) when a corrupted binding survived template-load — the Validate
-// re-call inside this function is defensive: AgentBinding.Validate already runs
-// at template-load time, so this path is reachable only via direct catalog
-// mutation by tests.
+// (via Validate) when a corrupted binding survived template-load. Returns
+// ErrUnsupportedCLIKind wrapped with the offending kind when the resolved
+// CLIKind has no registered adapter.
+//
+// Context handling: the 4a.19 signature predates F.7.17's context-aware
+// adapter contract, so this function uses context.Background() internally.
+// TODO(F.7-CORE): plumb a real ctx parameter through BuildSpawnCommand once
+// dispatcher.Dispatch can pass its outer ctx through stage 6.
 func BuildSpawnCommand(
 	item domain.ActionItem,
 	project domain.Project,
@@ -122,41 +201,86 @@ func BuildSpawnCommand(
 		)
 	}
 
-	binding, ok := catalog.LookupAgentBinding(item.Kind)
+	rawBinding, ok := catalog.LookupAgentBinding(item.Kind)
 	if !ok {
 		return nil, SpawnDescriptor{}, fmt.Errorf("%w: kind %q", ErrNoAgentBinding, item.Kind)
 	}
 	// Defensive re-validate. Validate already runs at template-load (per
-	// schema.go:264) so a corrupted binding only reaches here via direct
+	// schema.go) so a corrupted binding only reaches here via direct
 	// in-memory mutation (tests use this to assert empty-AgentName trips a
-	// loud failure rather than silently emitting a `--agent ` flag).
-	if err := binding.Validate(); err != nil {
+	// loud failure rather than silently emitting an empty `--agent` value).
+	if err := rawBinding.Validate(); err != nil {
 		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: invalid agent binding for kind %q: %w", item.Kind, err)
 	}
 
-	mcpConfigPath := mcpConfigPlaceholderPath(project.RepoPrimaryWorktree, item.ID)
-	prompt := assemblePrompt(item, project, authBundle)
+	// Resolve the binding through the priority cascade. F.7.17.5 does NOT
+	// plumb CLI/MCP/TUI overrides — those layers grow knobs in later
+	// droplets. Today only the rawBinding fields contribute, with the
+	// F.7.17 L15 default-to-claude substitution applied to CLIKind.
+	resolved := ResolveBinding(rawBinding)
 
-	argv := []string{
-		"claude",
-		"--agent", binding.AgentName,
-		"--bare",
-		"-p", prompt,
-		"--mcp-config", mcpConfigPath,
-		"--strict-mcp-config",
-		"--permission-mode", "acceptEdits",
-		"--max-budget-usd", formatBudget(binding.MaxBudgetUSD),
-		"--max-turns", strconv.Itoa(binding.MaxTurns),
+	adapter, ok := lookupAdapter(resolved.CLIKind)
+	if !ok {
+		return nil, SpawnDescriptor{}, fmt.Errorf("%w: %q", ErrUnsupportedCLIKind, resolved.CLIKind)
 	}
 
-	cmd := exec.Command(argv[0], argv[1:]...)
+	// Provisional per-spawn bundle. F.7-CORE F.7.1 will replace this inline
+	// temp-dir creation with the proper bundle lifecycle (manifest.json,
+	// deferred cleanup hook, project-mode root under
+	// <worktree>/.tillsyn/spawns/<spawn-id>/, materialized plugin tree).
+	// Until that lands, BuildSpawnCommand leaves the bundle on disk — the
+	// monitor's post-terminal cleanup or the dev's tooling are the only
+	// reapers. Tests defer os.RemoveAll(bundleRoot) themselves.
+	//
+	// TODO(F.7.1): replace inline os.MkdirTemp with bundle-materializer.
+	bundleRoot, err := os.MkdirTemp("", "tillsyn-spawn-")
+	if err != nil {
+		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: create spawn bundle: %w", err)
+	}
+
+	bundlePaths := BundlePaths{
+		Root:             bundleRoot,
+		SystemPromptPath: filepath.Join(bundleRoot, "system-prompt.md"),
+		// SystemAppendPath stays empty — F.7.3b will populate when the
+		// system_append_template_path knob lands.
+		SystemAppendPath: "",
+		StreamLogPath:    filepath.Join(bundleRoot, "stream.jsonl"),
+		ManifestPath:     filepath.Join(bundleRoot, "manifest.json"),
+		ContextDir:       filepath.Join(bundleRoot, "context"),
+	}
+
+	// Render the spawn prompt body and write it to disk so claude's adapter
+	// can pick it up via `--system-prompt-file`. 0o600 perms are deliberate:
+	// the bundle directory is per-spawn and tooling-private — the prompt
+	// body may carry action-item structural data the dev should not have to
+	// scrub. Wider perms can come later if a use-case surfaces.
+	prompt := assemblePrompt(item, project, authBundle)
+	if err := os.WriteFile(bundlePaths.SystemPromptPath, []byte(prompt), 0o600); err != nil {
+		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: write system prompt: %w", err)
+	}
+
+	// TODO(F.7-CORE): replace context.Background() with the outer dispatcher
+	// ctx so cancellation propagates through the spawned process tree.
+	cmd, err := adapter.BuildCommand(context.Background(), resolved, bundlePaths)
+	if err != nil {
+		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: adapter build command: %w", err)
+	}
 	cmd.Dir = project.RepoPrimaryWorktree
 
+	// MCPConfigPath mirrors what claude's argv builder wires:
+	// <bundleRoot>/plugin/.mcp.json. Hardcoding the subpath here couples
+	// spawn.go to claude's bundle layout, which is acceptable in Drop 4c
+	// because claude is the only registered adapter and the descriptor's
+	// MCPConfigPath field IS surfaced via `till dispatcher run --dry-run`'s
+	// JSON output. F.7-CORE F.7.1 will lift this onto the bundle materializer
+	// so future adapters (codex) can publish their own MCP config path.
+	mcpConfigPath := filepath.Join(bundlePaths.Root, "plugin", ".mcp.json")
+
 	descriptor := SpawnDescriptor{
-		AgentName:     binding.AgentName,
-		Model:         binding.Model,
-		MaxBudgetUSD:  binding.MaxBudgetUSD,
-		MaxTurns:      binding.MaxTurns,
+		AgentName:     resolved.AgentName,
+		Model:         derefString(resolved.Model),
+		MaxBudgetUSD:  derefFloat64(resolved.MaxBudgetUSD),
+		MaxTurns:      derefInt(resolved.MaxTurns),
 		MCPConfigPath: mcpConfigPath,
 		Prompt:        prompt,
 		WorkingDir:    project.RepoPrimaryWorktree,
@@ -165,35 +289,38 @@ func BuildSpawnCommand(
 	return cmd, descriptor, nil
 }
 
-// mcpConfigPlaceholderPath returns the deterministic path the spawner emits
-// in the `--mcp-config` slot. Wave 3 will overwrite the file at this path
-// with a real per-spawn MCP config; today the path is a placeholder, the file
-// is not created, and the agent will fail to load it if the *exec.Cmd is
-// actually executed (4a.21 covers execution, Wave 3 covers materialization).
-//
-// Wave 3: replace this placeholder with a write of the real bundle to the
-// returned path before BuildSpawnCommand returns. The path shape (under the
-// worktree's `.tillsyn/` dir, action-item-ID-keyed) stays compatible.
-func mcpConfigPlaceholderPath(worktree, actionItemID string) string {
-	return filepath.Join(worktree, ".tillsyn", "dispatcher-spawn-"+actionItemID+".json")
-}
-
-// formatBudget renders a MaxBudgetUSD value for the `--max-budget-usd` CLI
-// flag. Whole values render without decimals ("5", not "5.00"); fractional
-// values render with the minimum digits required to round-trip via
-// strconv.FormatFloat.
-func formatBudget(v float64) string {
-	if v == float64(int64(v)) {
-		return strconv.FormatInt(int64(v), 10)
+// derefString returns *p when p is non-nil, else "". ResolveBinding ALWAYS
+// populates pointer-typed fields (it promotes the rawBinding scalar to a
+// pointer copy on no-override), so derefString never returns "" via the nil
+// branch in production — the helper exists for defensive symmetry with
+// derefInt / derefFloat64.
+func derefString(p *string) string {
+	if p == nil {
+		return ""
 	}
-	return strconv.FormatFloat(v, 'f', -1, 64)
+	return *p
 }
 
-// assemblePrompt produces the spawn prompt body the agent receives via `-p`.
-// The body is opaque to the dispatcher contract — only the structural fields
-// (task_id, project_dir, move-state directive) are asserted by tests. Wave 4's
-// CLAUDE.md updates document the prompt-body contract for agent authors; this
-// function is the producer.
+// derefInt returns *p when p is non-nil, else 0.
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// derefFloat64 returns *p when p is non-nil, else 0.
+func derefFloat64(p *float64) float64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// assemblePrompt produces the spawn prompt body the agent receives via
+// `--system-prompt-file`. The body is opaque to the dispatcher contract —
+// only the structural fields (task_id, project_dir, move-state directive)
+// are asserted by tests.
 //
 // Hylla awareness was deliberately removed in Drop 4c F.7.10: Hylla is a
 // dev-local tool, NOT part of Tillsyn's shipped cascade. Adopters who opt
@@ -201,6 +328,12 @@ func formatBudget(v float64) string {
 // system-prompt template (F.7.2 system_prompt_template_path). The data
 // field domain.Project.HyllaArtifactRef and project.metadata.hylla_artifact_ref
 // stay because adopter-local templates legitimately consume them.
+//
+// Drop 4c F.7.17.5 extends the body with paths + packages when set on the
+// action item — those are write-scope / lock-domain primitives the agent
+// needs to honor (declared edit scope) and were already on the action item
+// per Drop 4a Wave 1. Empty slices stay omitted from the body so non-paths
+// items render cleanly.
 //
 // Wave 3 will fold authBundle session/lease IDs into the prompt under the
 // "Auth credentials" line; today the bundle is the empty-struct stub.
@@ -221,6 +354,16 @@ func assemblePrompt(item domain.ActionItem, project domain.Project, _ AuthBundle
 	if item.Title != "" {
 		b.WriteString("title: ")
 		b.WriteString(item.Title)
+		b.WriteString("\n")
+	}
+	if len(item.Paths) > 0 {
+		b.WriteString("paths: ")
+		b.WriteString(strings.Join(item.Paths, ", "))
+		b.WriteString("\n")
+	}
+	if len(item.Packages) > 0 {
+		b.WriteString("packages: ")
+		b.WriteString(strings.Join(item.Packages, ", "))
 		b.WriteString("\n")
 	}
 	// Move-state directive — every spawn prompt instructs the agent to take

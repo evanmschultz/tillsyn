@@ -25,6 +25,10 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
+	// Side-effect import: cli_claude.init() registers the claude adapter
+	// with the dispatcher's CLIKind→adapter registry at process start. Drop
+	// 4c F.7.17.5 adapter wiring; Drop 4d adds a parallel cli_codex import.
+	_ "github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_claude"
 	"github.com/evanmschultz/tillsyn/internal/buildinfo"
 	"github.com/evanmschultz/tillsyn/internal/config"
 	"github.com/evanmschultz/tillsyn/internal/domain"
