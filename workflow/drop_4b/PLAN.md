@@ -2,7 +2,7 @@
 
 **Working name:** Drop 4b — Gate Execution
 **Sequencing:** post-Drop-4a-merge, pre-Drop-4c
-**Total droplets:** 7 across 2 waves (Wave B deferred to Drop 4c per Option β)
+**Total droplets:** 8 across 2 waves (Wave B deferred to Drop 4c per Option β; 4b.8 added post-plan-QA-falsification 2026-05-04 to cover R1+R2 publish gap)
 **Mode:** filesystem-MD only (no per-droplet Tillsyn plan items today)
 **Plan-QA gate:** plan-QA-proof + plan-QA-falsification fire AGAINST this unified plan before any builder spawns
 
@@ -49,9 +49,9 @@ Locked at REVISION_BRIEF authoring time:
 | ---- | -------------------------------------------------- | ----------------- | ----- | -------- |
 | A    | Gate runner mechanism                              | 4b.1 – 4b.4       | 4     | First    |
 | B    | DEFERRED TO DROP 4C (commit-agent + commit + push) | —                 | 0     | (4c F.7) |
-| C    | Auth auto-revoke + git-status + auto-promotion     | 4b.5 – 4b.7       | 3     | After A  |
+| C    | Auth auto-revoke + git-status + auto-promotion + publishers | 4b.5 – 4b.8 | 4 | After A  |
 
-Total: **7 droplets**.
+Total: **8 droplets**.
 
 ---
 
@@ -76,7 +76,8 @@ Builders spawn against the unified PLAN's droplet row PLUS the wave plan's full 
 | WA.4          | **4b.4** | `mage_test_pkg` GATE IMPLEMENTATION                                     |
 | WC.1          | **4b.5** | AUTH AUTO-REVOKE WIRING (REPLACE 4A.22 STUB)                            |
 | WC.2          | **4b.6** | GIT-STATUS PRE-CHECK ON `Service.CreateActionItem`                      |
-| WC.3          | **4b.7** | AUTO-PROMOTION SUBSCRIBER + `hylla_reingest` GATE STUB                  |
+| WC.3          | **4b.7** | AUTO-PROMOTION SUBSCRIBER (in `till serve` daemon)                      |
+| WC.4          | **4b.8** | PUBLISHER ADDITIONS — RESTORE / RENAME / ARCHIVE / REPARENT / IMPORT_SNAPSHOT |
 
 ---
 
@@ -114,7 +115,7 @@ Wave-plan cross-references give the full acceptance detail. Rows below are the g
 
 - **Paths:** `internal/app/dispatcher/gate_mage_test_pkg.go` (NEW), `gate_mage_test_pkg_test.go` (NEW).
 - **Packages:** `internal/app/dispatcher`.
-- **Acceptance:** `gateMageTestPkg(ctx, item, project) GateResult` iterates over `item.Packages`; runs `mage test-pkg <pkg>` per package via `commandRunner`; halts on first failure; output capture aggregated across packages. Empty `item.Packages` documented behavior: gate emits info-level log + returns success (silent-success documented as PQA-4 routed open question). See WAVE_A_PLAN.md §4b.4.
+- **Acceptance:** `gateMageTestPkg(ctx, item, project) GateResult` iterates over `item.Packages`; runs `mage test-pkg <pkg>` per package via `commandRunner`; halts on first failure; output capture aggregated across packages. **Empty `item.Packages` is FAIL-LOUD** (per plan-QA-falsification WA-A5): gate returns `GateResult{Status: Failed, Output: "mage_test_pkg: action item declares no packages — planner must populate packages or remove this gate from kind"}`. Defensive against silent QA gaps when planner forgets `packages`. See WAVE_A_PLAN.md §4b.4.
 - **Blocked by:** **4b.3** (shares `commandRunner` indirection; same-package compile lock).
 - **Notes:** Wave A terminal droplet; 4b.7 (Wave C) registers `hylla_reingest` gate next.
 
@@ -122,11 +123,18 @@ Wave-plan cross-references give the full acceptance detail. Rows below are the g
 
 #### 4b.5 — AUTH AUTO-REVOKE WIRING
 
-- **Paths:** `internal/app/auth_requests.go` (extend with `RevokeSessionForActionItem`), `internal/app/dispatcher/cleanup.go` (replace `revokeAuthBundleStub`), test files in both packages.
+- **Paths:** `internal/app/auth_requests.go` (extend with `RevokeSessionForActionItem`), `internal/app/dispatcher/cleanup.go` (replace `revokeAuthBundleStub` AND update constructor binding at `cleanup.go:154`), test files in both packages.
 - **Packages:** `internal/app`, `internal/app/dispatcher`.
-- **Acceptance:** Add `Service.RevokeSessionForActionItem(ctx, actionItemID) error` that filters via `AuthSessionFilter` + parses `session.ApprovedPath` for `ScopeID == actionItemID`; revokes session + lease; returns `errors.Join` of failures. `cleanup.go:253-256` `revokeAuthBundleStub` replaced by call into the new method. Existing `errors.Join` aggregation in cleanup hook (line 218-237) survives unchanged. See WAVE_C_PLAN.md §4b.5.
+- **Acceptance:** Add `Service.RevokeSessionForActionItem(ctx, actionItemID) error` that:
+  1. Filters via `AuthSessionFilter` for sessions whose `ApprovedPath` resolves to `ScopeID == actionItemID`.
+  2. **Iterates over ALL matching sessions** (per plan-QA-falsification WC-A2 — retries / fix-builder cycles leave multiple sessions per action-item; "first match" leaks).
+  3. For each session: calls `s.repo.RevokeAuthSession(ctx, sessionID, "terminal_state_cleanup")` AND `s.repo.RevokeCapabilityLeasesByScope(ctx, scopeID)` (per plan-QA-falsification WC-A1 — `RevokeAuthSession` does NOT cascade to capability leases per `internal/adapters/auth/autentauth/service.go:720-727`; tillsyn-repo leases live in `internal/app/kind_capability.go:333-365`'s separate surface).
+  4. Returns `errors.Join` of all per-session failures so cleanup can continue past individual revoke errors.
+- `cleanup.go:253-256` `revokeAuthBundleStub` body replaced by call into the new method. **`cleanup.go:154` `revokeAuthBundle: revokeAuthBundleStub` constructor binding updated** to call the new method (per plan-QA-proof NIT-1).
+- Existing `errors.Join` aggregation in cleanup hook (line 218-237) survives unchanged.
+- See WAVE_C_PLAN.md §4b.5.
 - **Blocked by:** **4b.4** (Wave A close; sequencing per `feedback_md_update_qa.md` self-QA-budget rule even though file-disjoint).
-- **Notes:** L3. Tests verify session + lease both revoked; revoke errors don't block lock release.
+- **Notes:** L3. Tests verify session + lease both revoked across multi-session scenarios; revoke errors don't block lock release.
 
 #### 4b.6 — GIT-STATUS PRE-CHECK ON `Service.CreateActionItem`
 
@@ -136,13 +144,21 @@ Wave-plan cross-references give the full acceptance detail. Rows below are the g
 - **Blocked by:** **4b.4** (Wave A close; file-disjoint from 4b.5 → can run parallel with 4b.5 after Wave A).
 - **Notes:** L4. Domain-level guard before repo write.
 
-#### 4b.7 — AUTO-PROMOTION SUBSCRIBER + `hylla_reingest` GATE STUB
+#### 4b.7 — AUTO-PROMOTION SUBSCRIBER (in `till serve` daemon)
 
-- **Paths:** `internal/app/dispatcher/dispatcher.go` (Start/Stop bodies replace `ErrNotImplemented`), `internal/app/dispatcher/gate_hylla_reingest.go` (NEW), `cmd/till/main.go` (wire dispatcher subscriber into `runServe`).
+- **Paths:** `internal/app/dispatcher/dispatcher.go` (Start/Stop bodies replace `ErrNotImplemented`), `cmd/till/main.go` (wire dispatcher subscriber into `runServe`).
 - **Packages:** `internal/app/dispatcher`, `cmd/till`.
-- **Acceptance:** `dispatcher.Start(ctx)` spins subscriber goroutine that calls `subscribeBroker(ctx, projectID)` for each project (4b.7 author recommends Option B per WAVE_C_PLAN.md Q3: `s.repo.ListProjects` at Start time, one goroutine per project — plan-QA falsification arbitrates). On every `LiveWaitEventActionItemChanged`, walk tree via 4a.18 walker, promote eligible items via existing 4a.23's `RunOnce`. `dispatcher.Stop(ctx)` cancels ctx + waits for goroutines. `cmd/till serve` wires Start at startup, Stop on shutdown. Plus: `gateHyllaReingest` stub — programmatic `hylla_ingest` call wrapper; pre-MVP fallback when Hylla MCP not connected (logs warning + returns success; doesn't fail closeout). See WAVE_C_PLAN.md §4b.7.
-- **Blocked by:** **4b.5** (shares `dispatcher.go` edits with auth-revoke wiring), **4b.2** (registers `hylla_reingest` against gate runner).
-- **Notes:** L5 + L7. Continuous-mode subscriber lives in `till serve` daemon. Spawn invocation uses 4a.19 stub — Drop 4c F.7 replaces; subscriber loop survives unchanged.
+- **Acceptance:** `dispatcher.Start(ctx)` spins subscriber goroutine that calls `subscribeBroker(ctx, projectID)` for each project (Option B per WAVE_C_PLAN.md Q3: `s.repo.ListProjects` at Start time, one goroutine per project). On every `LiveWaitEventActionItemChanged`, walk tree via 4a.18 walker, promote eligible items via existing 4a.23's `RunOnce` with empty `projectIDOverride` (or `item.ProjectID`). `dispatcher.Stop(ctx)` cancels ctx + waits for goroutines. `cmd/till serve` wires Start at startup, Stop on shutdown. **`hylla_reingest` gate stub DROPPED** (per plan-QA-falsification WC-A10 — "log + skip" semantic violates memory rule `feedback_orchestrator_runs_ingest.md`). The gate kind stays in the closed enum (4b.1) for forward-compat; Drop 4c F.7 lands the real implementation. Until then, templates that reference `hylla_reingest` will fail-loud at gate-runner dispatch via `ErrGateNotRegistered` per 4b.2 — fail-loud beats silent-skip. See WAVE_C_PLAN.md §4b.7.
+- **Blocked by:** **4b.5** (shares `dispatcher.go` edits with auth-revoke wiring), **4b.2** (subscriber's RunOnce calls into the gate runner).
+- **Notes:** L5. Continuous-mode subscriber lives in `till serve` daemon. Spawn invocation uses 4a.19 stub — Drop 4c F.7 replaces; subscriber loop survives unchanged.
+
+#### 4b.8 — PUBLISHER ADDITIONS — RESTORE / RENAME / ARCHIVE / REPARENT / IMPORT_SNAPSHOT
+
+- **Paths:** `internal/app/service.go` (5 method extensions: `RestoreActionItem`, `RenameActionItem`, `ArchiveActionItem`, `ReparentActionItem`, plus any other write paths missing publish), `internal/app/snapshot.go` (`ImportSnapshot` extension), test files for both packages.
+- **Packages:** `internal/app`.
+- **Acceptance:** Each of the 5 service.go write paths gets a `s.publishActionItemChanged(ctx, projectID)` call AFTER the successful repo write, mirroring the 4a.15 pattern in `CreateActionItem` / `UpdateActionItem` / `MoveActionItem`. `ImportSnapshot` gets a single-bulk publish per project_id touched at the end of the import (cheap signal; subscriber re-walks tree regardless). Tests: per-method `TestServiceXPublishesActionItemChanged` verifying broker receives the event within 100ms of the call. Closes the publish gap that 4b.7's subscriber depends on (per plan-QA-falsification CW-A2; per memory R1+R2 in `project_drop_4a_refinements_raised.md`).
+- **Blocked by:** **4b.6** (same-file lock on `service.go`; 4b.6 adds git-status pre-check, 4b.8 adds publish calls; serializing through 4b.6 prevents merge conflict). Independent of 4b.5 (`auth_requests.go`) and 4b.7 (`dispatcher.go` + `cmd/till/main.go`) — could in principle run parallel with those, but stays serial after 4b.6 for clean self-QA cadence.
+- **Notes:** L5 enabler. Resolves Drop 4a refinements R1 + R2 (`project_drop_4a_refinements_raised.md`).
 
 ---
 
@@ -162,8 +178,8 @@ Drop 4a merge (committed)
    ┌───┴───┐
    ↓       ↓
   4b.5   4b.6     (auth-revoke + git-status pre-check; PARALLEL after Wave A)
-   ↓
-  4b.7   (auto-promotion + hylla_reingest stub; blocks on 4b.5 + 4b.2)
+   ↓       ↓
+  4b.7   4b.8     (subscriber blocks on 4b.5; publisher additions block on 4b.6)
 ```
 
 W4 closeout MD sweeps not in scope — no closeout MD rollup pre-dogfood per memory rule.
@@ -172,7 +188,7 @@ W4 closeout MD sweeps not in scope — no closeout MD rollup pre-dogfood per mem
 
 ## 9. Approximate Size
 
-~7 droplets total. ~1690 LOC (Wave A ~1200, Wave C ~490). ~3 days build work given Drop 4a's pace. Plan-QA twins after this PLAN.md commits.
+~8 droplets total. ~1750 LOC (Wave A ~1200, Wave C ~550 — 4b.8 ~60 LOC for the 6 publisher additions + tests). ~3 days build work given Drop 4a's pace. Plan-QA twins re-confirmed after revision (CONFIRMED counterexamples WC-A1 / WC-A2 / CW-A2 + PASS-WITH-NIT items resolved).
 
 ---
 
