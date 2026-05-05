@@ -564,6 +564,19 @@ func (a dispatcherSvcAdapter) UpdateActionItem(ctx context.Context, in updateAct
 	return a.inner.UpdateActionItem(ctx, wide)
 }
 
+// noopAuthRevoker satisfies the cleanup hook's auth-revoke seam for
+// dispatcher tests that do not exercise the auth-revoke path. The richer
+// auth-revoke assertions live in cleanup_test.go's stubAuthRevoker; here
+// the no-op shape keeps the rich-dispatcher fixture focused on walker /
+// conflict / monitor wiring without depending on a Service stack.
+type noopAuthRevoker struct{}
+
+// RevokeSessionForActionItem returns nil — the rich-dispatcher tests do not
+// exercise the auth-revoke step.
+func (noopAuthRevoker) RevokeSessionForActionItem(_ context.Context, _ string) error {
+	return nil
+}
+
 // newRichDispatcherForTest wires a dispatcher with a real walker, conflict
 // detector, file/package lock managers, monitor, and cleanup hook bound to
 // rich. The mutator seam is wired so transitionToFailed has somewhere to go.
@@ -574,7 +587,7 @@ func newRichDispatcherForTest(t *testing.T, rich *richDispatchService) *dispatch
 	fileLocks := newFileLockManager()
 	pkgLocks := newPackageLockManager()
 	monitor := newProcessMonitor(richMonitorAdapter{inner: rich}, nil)
-	cleanup, err := newCleanupHook(fileLocks, pkgLocks, monitor)
+	cleanup, err := newCleanupHook(fileLocks, pkgLocks, monitor, noopAuthRevoker{})
 	if err != nil {
 		t.Fatalf("newCleanupHook() error = %v", err)
 	}

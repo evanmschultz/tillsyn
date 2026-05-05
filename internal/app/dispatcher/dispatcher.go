@@ -255,7 +255,7 @@ func NewDispatcher(svc *app.Service, broker app.LiveWaitBroker, opts Options) (*
 	pkgLocks := newPackageLockManager()
 	adapter := monitorServiceAdapter{svc: svc}
 	monitor := newProcessMonitor(adapter, nil)
-	cleanup, err := newCleanupHook(fileLocks, pkgLocks, monitor)
+	cleanup, err := newCleanupHook(fileLocks, pkgLocks, monitor, svc)
 	if err != nil {
 		// newCleanupHook only errors when one of its inputs is nil — defense
 		// in depth; the lock managers + monitor above are always non-nil at
