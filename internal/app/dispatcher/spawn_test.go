@@ -16,7 +16,15 @@ import (
 	// breaks the dispatcher → cli_claude import cycle by inverting the
 	// direction (cli_claude.init() calls dispatcher.RegisterAdapter); the
 	// blank import here triggers that init when the test binary starts.
+	// cli_claude's own init() also triggers cli_claude/render's init() via
+	// a sub-blank-import there, so the real bundle-render hook is wired
+	// in too.
 	_ "github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_claude"
+	// Named import: lets failure-injection tests substitute a faulty
+	// render hook AND restore the real render.Render afterwards. The
+	// blank import above already runs render.init(); this named alias
+	// only exposes the Render symbol so t.Cleanup hooks can re-register.
+	clauderender "github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_claude/render"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/evanmschultz/tillsyn/internal/templates"
 )
@@ -619,6 +627,100 @@ func TestBuildSpawnCommandWritesManifestJSON(t *testing.T) {
 		if pathsRaw[i] != p {
 			t.Errorf("manifest paths[%d] = %v, want %q", i, pathsRaw[i], p)
 		}
+	}
+}
+
+// TestBuildSpawnCommandRendersFullBundleSubtree asserts the F.7-CORE F.7.3b
+// integration: BuildSpawnCommand's render-hook lookup invokes the
+// cli_claude/render package's Render which writes EVERY artifact memory
+// §2 specifies — system-prompt.md at the bundle root + plugin/{plugin.json,
+// agents/<name>.md, .mcp.json, settings.json} under the claude-specific
+// subtree. F.7.17.5's provisional minimal-prompt-only behavior is REPLACED
+// by this droplet; the assertion below is the regression pin against
+// reverting to the minimal block.
+func TestBuildSpawnCommandRendersFullBundleSubtree(t *testing.T) {
+	t.Parallel()
+
+	cmd, _, err := dispatcher.BuildSpawnCommand(fixtureBuildItem(), fixtureProject(), fixtureCatalog(goBuilderBinding()), dispatcher.AuthBundle{})
+	if err != nil {
+		t.Fatalf("BuildSpawnCommand() error = %v, want nil", err)
+	}
+	removeBundle(t, cmd)
+
+	pluginDir, ok := argFlagValue(cmd.Args, "--plugin-dir")
+	if !ok {
+		t.Fatalf("cmd.Args missing --plugin-dir flag: %v", cmd.Args)
+	}
+	bundleRoot := filepath.Dir(pluginDir)
+
+	wantFiles := []string{
+		filepath.Join(bundleRoot, "system-prompt.md"),
+		filepath.Join(bundleRoot, "plugin", ".claude-plugin", "plugin.json"),
+		filepath.Join(bundleRoot, "plugin", "agents", "go-builder-agent.md"),
+		filepath.Join(bundleRoot, "plugin", ".mcp.json"),
+		filepath.Join(bundleRoot, "plugin", "settings.json"),
+		// manifest.json from F.7.1 also expected at the bundle root.
+		filepath.Join(bundleRoot, "manifest.json"),
+	}
+	for _, p := range wantFiles {
+		info, statErr := os.Stat(p)
+		if statErr != nil {
+			t.Errorf("os.Stat(%q) error = %v, want file present after Render", p, statErr)
+			continue
+		}
+		if info.Size() == 0 {
+			t.Errorf("file %q has zero bytes; expected non-empty content from Render", p)
+		}
+	}
+}
+
+// TestBuildSpawnCommandRenderHookFailureCleansUpBundle asserts the
+// dispatcher's failure-path contract: a render hook that fails causes
+// BuildSpawnCommand to return a non-nil error AND clean up the bundle
+// directory it created via NewBundle. The test substitutes a faulty
+// render hook via RegisterBundleRenderFunc, then restores the real one
+// (registered by cli_claude's blank-import init) for downstream tests.
+func TestBuildSpawnCommandRenderHookFailureCleansUpBundle(t *testing.T) {
+	// NOT t.Parallel() — RegisterBundleRenderFunc mutates a process-wide
+	// hook; running in parallel with other tests can race against the
+	// real-render hook the rest of the suite expects.
+
+	// Capture the real hook so we can restore it after the failure path.
+	var capturedBundleRoot string
+	faulty := func(bundle dispatcher.Bundle, item domain.ActionItem, project domain.Project, binding dispatcher.BindingResolved) (string, error) {
+		capturedBundleRoot = bundle.Paths.Root
+		return "", errors.New("render: fault-injected failure")
+	}
+
+	// The cli_claude blank-import in spawn_test.go's import list registers
+	// the real Render via render's init(). Substitute the faulty hook,
+	// run the test, then restore the real one by re-importing render's
+	// Render directly. Using the dispatcher's lookup helper isn't
+	// available (lowercase); we restore by re-registering after the test
+	// via a deferred RegisterBundleRenderFunc.
+	dispatcher.RegisterBundleRenderFunc(faulty)
+	t.Cleanup(func() {
+		// Restore the real render hook so subsequent tests in this
+		// package see the production wiring. The clauderender named
+		// import above gives us direct access to the Render symbol.
+		dispatcher.RegisterBundleRenderFunc(clauderender.Render)
+	})
+
+	_, _, err := dispatcher.BuildSpawnCommand(fixtureBuildItem(), fixtureProject(), fixtureCatalog(goBuilderBinding()), dispatcher.AuthBundle{})
+	if err == nil {
+		t.Fatalf("BuildSpawnCommand() error = nil, want non-nil from faulty render")
+	}
+	if !strings.Contains(err.Error(), "render spawn bundle") {
+		t.Errorf("err = %v, want containing %q", err, "render spawn bundle")
+	}
+
+	// Bundle cleanup: NewBundle created the dir, render failed, the
+	// dispatcher should have run bundle.Cleanup which removes the root.
+	if capturedBundleRoot == "" {
+		t.Fatalf("faulty hook never observed bundle root; was it called?")
+	}
+	if _, statErr := os.Stat(capturedBundleRoot); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("bundle root %q still exists after failed render; statErr = %v", capturedBundleRoot, statErr)
 	}
 }
 

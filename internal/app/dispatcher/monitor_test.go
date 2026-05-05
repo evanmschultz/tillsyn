@@ -14,9 +14,13 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -580,4 +584,528 @@ func contains(haystack, needle string) bool {
 		}
 	}
 	return false
+}
+
+// =============================================================================
+// Stream-JSON Monitor tests (F.7-CORE F.7.4)
+// =============================================================================
+//
+// These tests exercise the cross-CLI Monitor against two adapter
+// implementations (MockAdapter from mock_adapter_test.go + claudeAdapter from
+// the cli_claude package) to prove the seam is multi-adapter ready. They also
+// pin the CLI-agnosticism property by reading monitor.go's source bytes and
+// asserting no claude-specific event-type literals leaked into the routing.
+
+// captureLogger collects every Monitor log line into an in-memory slice for
+// assertion. Goroutine-safe so the Monitor's internal goroutines (none today,
+// but defensive against future refactors) cannot race against a test reader.
+type captureLogger struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (c *captureLogger) Printf(format string, args ...any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lines = append(c.lines, fmt.Sprintf(format, args...))
+}
+
+func (c *captureLogger) snapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.lines))
+	copy(out, c.lines)
+	return out
+}
+
+// TestMonitor_Run_MockAdapterIntegration feeds the recorded
+// testdata/mock_stream_minimal.jsonl fixture through the Monitor wired to a
+// MockAdapter. Asserts every event reaches the sink in order and the terminal
+// report carries the fixture's cost / denial / reason / errors.
+func TestMonitor_Run_MockAdapterIntegration(t *testing.T) {
+	t.Parallel()
+
+	fixturePath := filepath.Join("testdata", "mock_stream_minimal.jsonl")
+	f, err := os.Open(fixturePath)
+	if err != nil {
+		t.Fatalf("open fixture %q: %v", fixturePath, err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+
+	adapter := newMockAdapter()
+	sink := make(chan StreamEvent, 16)
+	logger := &captureLogger{}
+
+	monitor := NewMonitor(adapter, f, sink, logger)
+	report, err := monitor.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run returned err = %v; want nil", err)
+	}
+	close(sink)
+
+	// Drain sink; expect 3 events.
+	var events []StreamEvent
+	for ev := range sink {
+		events = append(events, ev)
+	}
+	if len(events) != 3 {
+		t.Fatalf("sink received %d events; want 3", len(events))
+	}
+	if events[0].Type != "mock_chunk" || events[0].Text != "hello" {
+		t.Errorf("event[0] = %+v; want mock_chunk text=hello", events[0])
+	}
+	if events[1].Type != "mock_chunk" || events[1].Text != "world" {
+		t.Errorf("event[1] = %+v; want mock_chunk text=world", events[1])
+	}
+	if !events[2].IsTerminal {
+		t.Errorf("event[2].IsTerminal = false; want true")
+	}
+
+	// Terminal report from fixture line 3.
+	if report.Cost == nil {
+		t.Fatalf("report.Cost = nil; want non-nil")
+	}
+	if *report.Cost != 0.5 {
+		t.Errorf("*report.Cost = %v; want 0.5", *report.Cost)
+	}
+	if report.Reason != "ok" {
+		t.Errorf("report.Reason = %q; want %q", report.Reason, "ok")
+	}
+	if len(report.Denials) != 1 {
+		t.Fatalf("len(report.Denials) = %d; want 1", len(report.Denials))
+	}
+	if report.Denials[0].ToolName != "Bash" {
+		t.Errorf("Denials[0].ToolName = %q; want Bash", report.Denials[0].ToolName)
+	}
+
+	// No malformed-line warnings expected from a clean fixture.
+	if len(logger.snapshot()) != 0 {
+		t.Errorf("logger captured warnings on clean fixture: %v", logger.snapshot())
+	}
+}
+
+// TestMonitor_Run_ClaudeAdapterIntegration feeds the cli_claude package's
+// recorded testdata fixture through the Monitor wired to the real
+// claudeAdapter. Proves no regression vs droplet 4c.F.7.17.3 stream parsing
+// AND that the CLI-agnostic Monitor handles claude-shaped events without
+// special-casing.
+func TestMonitor_Run_ClaudeAdapterIntegration(t *testing.T) {
+	t.Parallel()
+
+	fixturePath := filepath.Join("cli_claude", "testdata", "claude_stream_minimal.jsonl")
+	f, err := os.Open(fixturePath)
+	if err != nil {
+		t.Fatalf("open fixture %q: %v", fixturePath, err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+
+	adapter, ok := lookupAdapter(CLIKindClaude)
+	if !ok {
+		t.Fatalf("lookupAdapter(CLIKindClaude) = (_, false); claude adapter must be registered via cli_claude side-effect import")
+	}
+	sink := make(chan StreamEvent, 16)
+	logger := &captureLogger{}
+
+	monitor := NewMonitor(adapter, f, sink, logger)
+	report, err := monitor.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run returned err = %v; want nil", err)
+	}
+	close(sink)
+
+	var events []StreamEvent
+	for ev := range sink {
+		events = append(events, ev)
+	}
+	// claude_stream_minimal.jsonl has 4 lines: system+init, assistant,
+	// user, result. The Monitor canonicalizes via the adapter; we count
+	// one terminal among them.
+	if len(events) != 4 {
+		t.Fatalf("sink received %d events; want 4", len(events))
+	}
+	terminals := 0
+	for _, ev := range events {
+		if ev.IsTerminal {
+			terminals++
+		}
+	}
+	if terminals != 1 {
+		t.Errorf("terminal-event count = %d; want 1", terminals)
+	}
+
+	if report.Cost == nil {
+		t.Fatalf("report.Cost = nil; want non-nil")
+	}
+	if *report.Cost != 0.0123 {
+		t.Errorf("*report.Cost = %v; want 0.0123", *report.Cost)
+	}
+	if report.Reason != "completed" {
+		t.Errorf("report.Reason = %q; want %q", report.Reason, "completed")
+	}
+	if len(report.Denials) != 1 {
+		t.Fatalf("len(report.Denials) = %d; want 1", len(report.Denials))
+	}
+	if report.Denials[0].ToolName != "Bash" {
+		t.Errorf("Denials[0].ToolName = %q; want Bash", report.Denials[0].ToolName)
+	}
+}
+
+// TestMonitor_Source_NoCLISpecificEventLiterals is the load-bearing
+// CLI-agnosticism guard. Reads monitor.go's source bytes from disk and
+// asserts NONE of the forbidden claude-specific wire-format literals appear.
+// This regression-pins the F.7-CORE F.7.4 + master PLAN.md L11 invariant
+// across future refactors.
+func TestMonitor_Source_NoCLISpecificEventLiterals(t *testing.T) {
+	t.Parallel()
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("runtime.Caller failed — cannot locate monitor.go")
+	}
+	monitorPath := filepath.Join(filepath.Dir(thisFile), "monitor.go")
+
+	bytesRead, err := os.ReadFile(monitorPath)
+	if err != nil {
+		t.Fatalf("read %q: %v", monitorPath, err)
+	}
+	src := string(bytesRead)
+
+	forbidden := []string{
+		// The exact strings the F.7.4 spec calls out as banned literals
+		// in the monitor source. Each represents a claude-specific
+		// wire-format token that, if present in monitor.go, would mean
+		// the routing is leaking adapter-internal knowledge.
+		`system/init`,
+		`"assistant"`,
+		`"result"`,
+	}
+	for _, lit := range forbidden {
+		if strings.Contains(src, lit) {
+			t.Errorf("monitor.go contains forbidden CLI-specific literal %q (Monitor must route via StreamEvent.Type + IsTerminal only)", lit)
+		}
+	}
+}
+
+// TestMonitor_Run_MalformedLineLoggedAndSkipped feeds a stream with one
+// invalid-JSON line interleaved between valid events. The Monitor must log a
+// warning and continue past the malformed line; the terminal report from the
+// last valid event must still be returned.
+func TestMonitor_Run_MalformedLineLoggedAndSkipped(t *testing.T) {
+	t.Parallel()
+
+	stream := `{"type":"mock_chunk","text":"first"}
+{not valid json
+{"type":"mock_terminal","cost":0.25,"reason":"done"}
+`
+	adapter := newMockAdapter()
+	logger := &captureLogger{}
+	sink := make(chan StreamEvent, 16)
+
+	monitor := NewMonitor(adapter, strings.NewReader(stream), sink, logger)
+	report, err := monitor.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run returned err = %v; want nil (malformed lines are non-fatal)", err)
+	}
+	close(sink)
+
+	var events []StreamEvent
+	for ev := range sink {
+		events = append(events, ev)
+	}
+	if len(events) != 2 {
+		t.Fatalf("forwarded events = %d; want 2 (malformed line skipped)", len(events))
+	}
+
+	if report.Cost == nil || *report.Cost != 0.25 {
+		t.Errorf("report.Cost = %v; want 0.25", report.Cost)
+	}
+
+	logs := logger.snapshot()
+	foundWarning := false
+	for _, line := range logs {
+		if strings.Contains(line, "skip malformed") {
+			foundWarning = true
+			break
+		}
+	}
+	if !foundWarning {
+		t.Errorf("logger did NOT capture malformed-line warning; got logs = %v", logs)
+	}
+}
+
+// TestMonitor_Run_EmptyLinesSkippedSilently asserts blank lines / whitespace
+// padding around real events flow through without producing parse warnings or
+// sink entries.
+func TestMonitor_Run_EmptyLinesSkippedSilently(t *testing.T) {
+	t.Parallel()
+
+	stream := "\n   \n{\"type\":\"mock_chunk\",\"text\":\"only\"}\n\n{\"type\":\"mock_terminal\",\"cost\":0.1,\"reason\":\"done\"}\n\n"
+	adapter := newMockAdapter()
+	logger := &captureLogger{}
+	sink := make(chan StreamEvent, 16)
+
+	monitor := NewMonitor(adapter, strings.NewReader(stream), sink, logger)
+	report, err := monitor.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run returned err = %v; want nil", err)
+	}
+	close(sink)
+
+	var events []StreamEvent
+	for ev := range sink {
+		events = append(events, ev)
+	}
+	if len(events) != 2 {
+		t.Fatalf("forwarded events = %d; want 2 (empty lines skipped)", len(events))
+	}
+	if report.Cost == nil || *report.Cost != 0.1 {
+		t.Errorf("report.Cost = %v; want 0.1", report.Cost)
+	}
+	if len(logger.snapshot()) != 0 {
+		t.Errorf("empty lines emitted warnings: %v", logger.snapshot())
+	}
+}
+
+// TestMonitor_Run_ContextCancellation cancels the context after the first
+// event and asserts Run returns ctx.Err(). Uses a slow reader so the
+// cancellation arrives mid-stream.
+func TestMonitor_Run_ContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	// The reader emits the first line, then blocks indefinitely on the
+	// next Read call. Cancellation between iterations short-circuits the
+	// loop.
+	stream := []byte("{\"type\":\"mock_chunk\",\"text\":\"a\"}\n")
+	reader := newBlockingReader(stream)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	adapter := newMockAdapter()
+	sink := make(chan StreamEvent, 1)
+	logger := &captureLogger{}
+
+	monitor := NewMonitor(adapter, reader, sink, logger)
+
+	done := make(chan struct{})
+	var (
+		report TerminalReport
+		err    error
+	)
+	go func() {
+		report, err = monitor.Run(ctx)
+		close(done)
+	}()
+
+	// Wait for the first event so we know Run is past at least one
+	// iteration before we cancel.
+	select {
+	case <-sink:
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatalf("Run never produced first event before cancellation")
+	}
+
+	cancel()
+	reader.unblock()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Run did not return within 2s of cancellation")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Run err = %v; want context.Canceled", err)
+	}
+	if report.Cost != nil {
+		t.Errorf("report.Cost = %v; want nil on cancellation", report.Cost)
+	}
+}
+
+// TestMonitor_Run_MultipleTerminalEventsReturnsLast simulates a (defensive)
+// stream containing two terminal events and asserts the Monitor returns the
+// LAST one — per memory §6 the canonical claude stream emits exactly one
+// terminal event, but the Monitor must not silently swallow trailing
+// terminal noise.
+func TestMonitor_Run_MultipleTerminalEventsReturnsLast(t *testing.T) {
+	t.Parallel()
+
+	stream := `{"type":"mock_chunk","text":"warmup"}
+{"type":"mock_terminal","cost":0.1,"reason":"first"}
+{"type":"mock_terminal","cost":0.5,"reason":"second"}
+`
+	adapter := newMockAdapter()
+	sink := make(chan StreamEvent, 16)
+
+	monitor := NewMonitor(adapter, strings.NewReader(stream), sink, nil)
+	report, err := monitor.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run returned err = %v; want nil", err)
+	}
+	close(sink)
+
+	if report.Cost == nil || *report.Cost != 0.5 {
+		t.Errorf("report.Cost = %v; want 0.5 (last terminal wins)", report.Cost)
+	}
+	if report.Reason != "second" {
+		t.Errorf("report.Reason = %q; want %q", report.Reason, "second")
+	}
+
+	terminalCount := 0
+	for ev := range sink {
+		if ev.IsTerminal {
+			terminalCount++
+		}
+	}
+	if terminalCount != 2 {
+		t.Errorf("forwarded terminal events = %d; want 2 (both events visible to sink)", terminalCount)
+	}
+}
+
+// TestMonitor_Run_SlowSinkDoesNotBlock pins the non-blocking-send invariant:
+// when the sink buffer is full the Monitor drops the event and continues
+// (with a debug log), instead of blocking the reader on a stuck consumer.
+func TestMonitor_Run_SlowSinkDoesNotBlock(t *testing.T) {
+	t.Parallel()
+
+	stream := strings.Repeat(`{"type":"mock_chunk","text":"x"}`+"\n", 16) +
+		`{"type":"mock_terminal","cost":0.9,"reason":"slow"}` + "\n"
+
+	// Buffered to 1 slot — ALL subsequent events should drop rather than
+	// block the Monitor.
+	sink := make(chan StreamEvent, 1)
+	adapter := newMockAdapter()
+	logger := &captureLogger{}
+
+	monitor := NewMonitor(adapter, strings.NewReader(stream), sink, logger)
+
+	done := make(chan struct{})
+	var (
+		report TerminalReport
+		err    error
+	)
+	go func() {
+		report, err = monitor.Run(context.Background())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Run blocked on full sink instead of dropping events")
+	}
+
+	if err != nil {
+		t.Fatalf("Run returned err = %v; want nil", err)
+	}
+	if report.Cost == nil || *report.Cost != 0.9 {
+		t.Errorf("report.Cost = %v; want 0.9 (terminal report still extracted on slow sink)", report.Cost)
+	}
+
+	// The logger should have at least one drop notice.
+	logs := logger.snapshot()
+	dropFound := false
+	for _, line := range logs {
+		if strings.Contains(line, "sink full") {
+			dropFound = true
+			break
+		}
+	}
+	if !dropFound {
+		t.Errorf("logger did NOT capture sink-full warning; logs = %v", logs)
+	}
+}
+
+// TestMonitor_Run_NilConfigRejected asserts the Monitor rejects nil adapter
+// or nil reader at Run time with a wrapped ErrInvalidMonitorConfig sentinel
+// callers can errors.Is against.
+func TestMonitor_Run_NilConfigRejected(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil adapter", func(t *testing.T) {
+		t.Parallel()
+		monitor := NewMonitor(nil, strings.NewReader(""), nil, nil)
+		_, err := monitor.Run(context.Background())
+		if !errors.Is(err, ErrInvalidMonitorConfig) {
+			t.Errorf("Run err = %v; want wraps ErrInvalidMonitorConfig", err)
+		}
+	})
+
+	t.Run("nil reader", func(t *testing.T) {
+		t.Parallel()
+		monitor := NewMonitor(newMockAdapter(), nil, nil, nil)
+		_, err := monitor.Run(context.Background())
+		if !errors.Is(err, ErrInvalidMonitorConfig) {
+			t.Errorf("Run err = %v; want wraps ErrInvalidMonitorConfig", err)
+		}
+	})
+
+	t.Run("nil monitor", func(t *testing.T) {
+		t.Parallel()
+		var monitor *Monitor
+		_, err := monitor.Run(context.Background())
+		if !errors.Is(err, ErrInvalidMonitorConfig) {
+			t.Errorf("nil-monitor Run err = %v; want wraps ErrInvalidMonitorConfig", err)
+		}
+	})
+}
+
+// TestMonitor_Run_NilSinkDoesNotPanic ensures the optional sink contract:
+// passing nil for the sink argument flows events through extraction without a
+// nil-channel send (which would panic).
+func TestMonitor_Run_NilSinkDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	stream := `{"type":"mock_chunk","text":"x"}
+{"type":"mock_terminal","cost":0.42,"reason":"ok"}
+`
+	adapter := newMockAdapter()
+	monitor := NewMonitor(adapter, strings.NewReader(stream), nil, nil)
+	report, err := monitor.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run with nil sink returned err = %v; want nil", err)
+	}
+	if report.Cost == nil || *report.Cost != 0.42 {
+		t.Errorf("report.Cost = %v; want 0.42", report.Cost)
+	}
+}
+
+// blockingReader is a test double that returns the supplied buffered bytes
+// then blocks indefinitely on subsequent Read calls until unblock is called.
+// The cancellation test uses it so Monitor.Run is guaranteed to be in the
+// scanner loop when the context is cancelled.
+type blockingReader struct {
+	mu      sync.Mutex
+	pending []byte
+	gate    chan struct{}
+}
+
+func newBlockingReader(initial []byte) *blockingReader {
+	return &blockingReader{
+		pending: append([]byte(nil), initial...),
+		gate:    make(chan struct{}),
+	}
+}
+
+func (b *blockingReader) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	if len(b.pending) > 0 {
+		n := copy(p, b.pending)
+		b.pending = b.pending[n:]
+		b.mu.Unlock()
+		return n, nil
+	}
+	b.mu.Unlock()
+	<-b.gate
+	return 0, io.EOF
+}
+
+func (b *blockingReader) unblock() {
+	select {
+	case <-b.gate:
+		// already closed
+	default:
+		close(b.gate)
+	}
 }
