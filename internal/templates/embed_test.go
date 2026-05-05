@@ -3,6 +3,7 @@ package templates
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
@@ -425,5 +426,244 @@ func TestDefaultTemplateProhibitionsAreExplicit(t *testing.T) {
 				t.Fatalf("Kinds[%q].AllowedChildKinds contains %q; want exclusion (reverse-hierarchy prohibition)", tc.parent, tc.prohibitedChild)
 			}
 		})
+	}
+}
+
+// contextSeededKinds names the six kinds the F.7.18.5 default-template seed
+// populates with an `[agent_bindings.<kind>.context]` block. The remaining
+// six kinds (research, closeout, commit, refinement, discussion,
+// human-verify) intentionally have a zero-value Context per the F.7.18.5
+// plan + master PLAN L13 FLEXIBLE-not-REQUIRED framing. The test
+// TestDefaultTemplateNonContextSeededKindsHaveZeroContext below pins that
+// half of the contract.
+var contextSeededKinds = []domain.Kind{
+	domain.KindPlan,
+	domain.KindBuild,
+	domain.KindPlanQAProof,
+	domain.KindPlanQAFalsification,
+	domain.KindBuildQAProof,
+	domain.KindBuildQAFalsification,
+}
+
+// TestDefaultTemplateBuildContextSeedsParentGitDiff asserts the default-template
+// build binding declares `parent_git_diff = true` so the dispatcher's
+// aggregator engine pre-stages the parent's diff for the builder agent.
+//
+// REV-4 contract: ONLY the build binding gets parent_git_diff in the default
+// seed. The four QA bindings have NO parent_git_diff rule — see the negative
+// assertions below. F.7.18.5 acceptance: builder lens reduces redundant tool
+// calls during implementation.
+func TestDefaultTemplateBuildContextSeedsParentGitDiff(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	binding, ok := tpl.AgentBindings[domain.KindBuild]
+	if !ok {
+		t.Fatalf("AgentBindings[%q] missing", domain.KindBuild)
+	}
+	if !binding.Context.ParentGitDiff {
+		t.Fatalf("AgentBindings[build].Context.ParentGitDiff = false; want true (REV-4 builder lens)")
+	}
+}
+
+// TestDefaultTemplateQABindingsRejectParentGitDiff is the REV-4 regression
+// guard. Per F.7.18 REV-4 the four QA bindings (build-qa-proof,
+// build-qa-falsification, plan-qa-proof, plan-qa-falsification) MUST NOT
+// pre-stage `parent_git_diff` — independent verification is load-bearing for
+// cascade-on-itself trustworthiness.
+//
+// The test runs as a subtest per binding so a regression on any one binding
+// surfaces with a precise failure name. ContextRules.ParentGitDiff is a Go
+// bool; the zero value is false so omitting the field in TOML and explicitly
+// setting `parent_git_diff = false` are equivalent at this assertion.
+func TestDefaultTemplateQABindingsRejectParentGitDiff(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	qaKinds := []domain.Kind{
+		domain.KindBuildQAProof,
+		domain.KindBuildQAFalsification,
+		domain.KindPlanQAProof,
+		domain.KindPlanQAFalsification,
+	}
+	for _, kind := range qaKinds {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			binding, ok := tpl.AgentBindings[kind]
+			if !ok {
+				t.Fatalf("AgentBindings[%q] missing", kind)
+			}
+			if binding.Context.ParentGitDiff {
+				t.Fatalf("AgentBindings[%q].Context.ParentGitDiff = true; want false (REV-4 — QA must verify independently)", kind)
+			}
+		})
+	}
+}
+
+// TestDefaultTemplateContextSeedsAncestorsByKind asserts every context-seeded
+// binding declares `ancestors_by_kind = ["plan"]`. The walk lets the spawned
+// agent see its enclosing plan ancestor regardless of how deeply nested the
+// action item sits in the cascade subtree.
+func TestDefaultTemplateContextSeedsAncestorsByKind(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	for _, kind := range contextSeededKinds {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			binding, ok := tpl.AgentBindings[kind]
+			if !ok {
+				t.Fatalf("AgentBindings[%q] missing", kind)
+			}
+			got := binding.Context.AncestorsByKind
+			if len(got) != 1 || got[0] != domain.KindPlan {
+				t.Fatalf("AgentBindings[%q].Context.AncestorsByKind = %v; want [%q]", kind, got, domain.KindPlan)
+			}
+		})
+	}
+}
+
+// TestDefaultTemplateContextSeedsDelivery asserts every context-seeded binding
+// declares `delivery = "file"`. The default seed renders pre-staged context
+// into `<bundle>/context/<rule>.md` files the agent loads on demand via the
+// Read tool — distinct from `inline` which appends to system-append.md.
+func TestDefaultTemplateContextSeedsDelivery(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	for _, kind := range contextSeededKinds {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			binding, ok := tpl.AgentBindings[kind]
+			if !ok {
+				t.Fatalf("AgentBindings[%q] missing", kind)
+			}
+			if binding.Context.Delivery != ContextDeliveryFile {
+				t.Fatalf("AgentBindings[%q].Context.Delivery = %q; want %q", kind, binding.Context.Delivery, ContextDeliveryFile)
+			}
+		})
+	}
+}
+
+// TestDefaultTemplateContextSeedsCaps asserts every context-seeded binding
+// declares `max_chars = 50000` and `max_rule_duration = "500ms"`. The
+// per-rule caps localize truncation + timeouts to a single rule before the
+// bundle-global caps under [tillsyn] consider skipping.
+func TestDefaultTemplateContextSeedsCaps(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	const wantMaxChars = 50000
+	const wantMaxRuleDuration = 500 * time.Millisecond
+	for _, kind := range contextSeededKinds {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			binding, ok := tpl.AgentBindings[kind]
+			if !ok {
+				t.Fatalf("AgentBindings[%q] missing", kind)
+			}
+			if binding.Context.MaxChars != wantMaxChars {
+				t.Fatalf("AgentBindings[%q].Context.MaxChars = %d; want %d", kind, binding.Context.MaxChars, wantMaxChars)
+			}
+			got := time.Duration(binding.Context.MaxRuleDuration)
+			if got != wantMaxRuleDuration {
+				t.Fatalf("AgentBindings[%q].Context.MaxRuleDuration = %s; want %s", kind, got, wantMaxRuleDuration)
+			}
+		})
+	}
+}
+
+// TestDefaultTemplateContextSeedsParentTrue asserts every context-seeded
+// binding sets `parent = true`. The aggregator's `parent` rule renders the
+// parent action-item's identity + description into the spawn bundle so the
+// agent has the immediate cascade context without needing a separate MCP
+// call. Companion to the AncestorsByKind / Delivery / Caps tests above.
+func TestDefaultTemplateContextSeedsParentTrue(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	for _, kind := range contextSeededKinds {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			binding, ok := tpl.AgentBindings[kind]
+			if !ok {
+				t.Fatalf("AgentBindings[%q] missing", kind)
+			}
+			if !binding.Context.Parent {
+				t.Fatalf("AgentBindings[%q].Context.Parent = false; want true", kind)
+			}
+		})
+	}
+}
+
+// TestDefaultTemplateNonContextSeededKindsHaveZeroContext asserts the six
+// kinds NOT in contextSeededKinds (research, closeout, commit, refinement,
+// discussion, human-verify) carry a zero-value Context — the master PLAN L13
+// "fully-agentic mode" path. F.7.18.5 acceptance: scope creep guard — only
+// the six SKETCH-named bindings get a default seed; adopters override per
+// project for the rest.
+func TestDefaultTemplateNonContextSeededKindsHaveZeroContext(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	seeded := make(map[domain.Kind]bool, len(contextSeededKinds))
+	for _, kind := range contextSeededKinds {
+		seeded[kind] = true
+	}
+	for _, kind := range allKinds {
+		if seeded[kind] {
+			continue
+		}
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			binding, ok := tpl.AgentBindings[kind]
+			if !ok {
+				t.Fatalf("AgentBindings[%q] missing", kind)
+			}
+			ctx := binding.Context
+			if ctx.Parent {
+				t.Fatalf("AgentBindings[%q].Context.Parent = true; want false (no [context] block in default for non-seeded kind)", kind)
+			}
+			if ctx.ParentGitDiff {
+				t.Fatalf("AgentBindings[%q].Context.ParentGitDiff = true; want false", kind)
+			}
+			if len(ctx.AncestorsByKind) != 0 {
+				t.Fatalf("AgentBindings[%q].Context.AncestorsByKind = %v; want empty", kind, ctx.AncestorsByKind)
+			}
+			if len(ctx.SiblingsByKind) != 0 {
+				t.Fatalf("AgentBindings[%q].Context.SiblingsByKind = %v; want empty", kind, ctx.SiblingsByKind)
+			}
+			if len(ctx.DescendantsByKind) != 0 {
+				t.Fatalf("AgentBindings[%q].Context.DescendantsByKind = %v; want empty", kind, ctx.DescendantsByKind)
+			}
+			if ctx.Delivery != "" {
+				t.Fatalf("AgentBindings[%q].Context.Delivery = %q; want empty", kind, ctx.Delivery)
+			}
+			if ctx.MaxChars != 0 {
+				t.Fatalf("AgentBindings[%q].Context.MaxChars = %d; want 0", kind, ctx.MaxChars)
+			}
+			if time.Duration(ctx.MaxRuleDuration) != 0 {
+				t.Fatalf("AgentBindings[%q].Context.MaxRuleDuration = %s; want 0", kind, time.Duration(ctx.MaxRuleDuration))
+			}
+		})
+	}
+}
+
+// TestDefaultTemplatePlanContextHasNoDescendants asserts the default-seed
+// plan binding does NOT declare `descendants_by_kind` — default planners
+// walk UP only. The schema (per F.7.18.1) accepts the field; the default
+// just doesn't seed it. F.7.18.5 acceptance: planner-flexibility cross-check
+// (master PLAN L13 A-λ) — adopters who want fix-planner / tree-pruner
+// behavior add the field themselves in their project template.
+func TestDefaultTemplatePlanContextHasNoDescendants(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	binding, ok := tpl.AgentBindings[domain.KindPlan]
+	if !ok {
+		t.Fatalf("AgentBindings[%q] missing", domain.KindPlan)
+	}
+	if len(binding.Context.DescendantsByKind) != 0 {
+		t.Fatalf("AgentBindings[plan].Context.DescendantsByKind = %v; want empty (default planners walk UP only — adopter opt-in)", binding.Context.DescendantsByKind)
 	}
 }
