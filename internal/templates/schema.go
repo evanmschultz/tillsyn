@@ -173,6 +173,15 @@ type Template struct {
 	// retry policy, env-var pinning) without colliding with `gates`.
 	GateRulesRaw map[string]any `toml:"gate_rules"`
 
+	// Tillsyn carries top-level dispatcher / aggregator globals declared
+	// under the [tillsyn] table. F.7.18.2 ships the initial declaration with
+	// two fields (MaxContextBundleChars, MaxAggregatorDuration); subsequent
+	// F.7-CORE droplets extend it with SpawnTempRoot (F.7.1) and
+	// RequiresPlugins (F.7.6) per master PLAN.md §5 "Tillsyn struct extension
+	// policy". Without this field, strict-decode would reject any [tillsyn]
+	// table at load time per load.go step 3.
+	Tillsyn Tillsyn `toml:"tillsyn"`
+
 	// StewardSeeds is the ordered list of long-lived coordination anchor
 	// nodes the auto-generator (droplet 3.20) materializes once at project-
 	// creation time. Per fix L3 the canonical six are DISCUSSIONS,
@@ -196,6 +205,37 @@ type Template struct {
 	// domain.NewActionItem rejects an empty StructuralType, so the closest
 	// approximation is droplet — a terminal node that does not decompose).
 	StewardSeeds []StewardSeed `toml:"steward_seeds"`
+}
+
+// Tillsyn carries top-level dispatcher / aggregator globals declared under
+// the [tillsyn] table in template TOML. F.7.18.2 ships the initial
+// declaration with two fields; subsequent F.7-CORE droplets extend it with
+// SpawnTempRoot (F.7.1) and RequiresPlugins (F.7.6) per master PLAN.md §5
+// "Tillsyn struct extension policy".
+//
+// Closed-struct unknown-key rejection: every field carries an explicit TOML
+// tag so templates.Load's strict-decode chain (load.go step 3) rejects
+// unknown keys nested under [tillsyn] as ErrUnknownTemplateKey at load time.
+// The strict-decode contract is exercised by
+// TestLoadTillsynStrictDecodeUnknownFieldRejected.
+//
+// Default-substitution semantics: a zero-valued field is LEGAL at the schema
+// layer; the aggregator engine substitutes the bundle-global default at
+// runtime (F.7.18.4 territory). Negative values are rejected at load time
+// by validateTillsyn.
+type Tillsyn struct {
+	// MaxContextBundleChars caps the total bytes the F.7.18 aggregator
+	// emits per spawn bundle. Engine-time default substituted when zero
+	// per master PLAN L14 (greedy-fit algorithm). Negative values are
+	// rejected at load time by validateTillsyn.
+	MaxContextBundleChars int `toml:"max_context_bundle_chars"`
+
+	// MaxAggregatorDuration caps total wall-clock time the F.7.18
+	// aggregator spends building one spawn bundle. Engine-time default
+	// substituted when zero per master PLAN L15 (two-axis cap; per-rule
+	// cap lives on AgentBinding.Context.MaxRuleDuration). Negative values
+	// are rejected at load time by validateTillsyn.
+	MaxAggregatorDuration Duration `toml:"max_aggregator_duration"`
 }
 
 // StewardSeed is one persistent-anchor specification consumed by droplet

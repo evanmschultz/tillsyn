@@ -57,6 +57,10 @@ import (
 //     and MaxRuleDuration, and that every kind referenced by the kind-walk
 //     fields (SiblingsByKind / AncestorsByKind / DescendantsByKind) is a
 //     member of the closed 12-value Kind enum. Drop 4c F.7.18.1 hook.
+//     h. validateTillsyn — assert the top-level [tillsyn] globals satisfy
+//     the closed contract: non-negative MaxContextBundleChars and
+//     MaxAggregatorDuration. Zero is legal (engine-time default
+//     substitution); negative values are rejected. Drop 4c F.7.18.2 hook.
 //
 // Sentinel errors at package scope wrap the underlying failure so callers
 // can use errors.Is for routing without reaching into pelletier/go-toml/v2
@@ -127,6 +131,9 @@ func Load(r io.Reader) (Template, error) {
 		return Template{}, err
 	}
 	if err := validateAgentBindingContext(tpl); err != nil {
+		return Template{}, err
+	}
+	if err := validateTillsyn(tpl); err != nil {
 		return Template{}, err
 	}
 
@@ -210,6 +217,22 @@ var (
 	// `errors.Is(err, ErrInvalidAgentBinding)` continue to route correctly
 	// without reaching for the context-specific sentinel.
 	ErrInvalidContextRules = fmt.Errorf("%w: context", ErrInvalidAgentBinding)
+
+	// ErrInvalidTillsynGlobals is returned by validateTillsyn when the
+	// top-level [tillsyn] table contains a field that fails the closed
+	// rule contract (Drop 4c F.7.18.2 acceptance criteria):
+	//
+	//   - MaxContextBundleChars is negative (zero is legal — engine-time
+	//     default substitution applies per master PLAN L14).
+	//   - MaxAggregatorDuration is negative (zero is legal — engine-time
+	//     default substitution applies per master PLAN L15).
+	//
+	// The wrapped message names the offending field and the offending
+	// value for UX. The sentinel is a top-level Load error rather than a
+	// nested wrap of ErrInvalidAgentBinding because the [tillsyn] table is
+	// distinct from [agent_bindings] — failures here are global, not
+	// per-binding.
+	ErrInvalidTillsynGlobals = errors.New("invalid tillsyn globals")
 )
 
 // validateMapKeys asserts every key in Template.Kinds,
@@ -518,6 +541,39 @@ func validateContextKindList(kind domain.Kind, fieldName string, kinds []domain.
 			return fmt.Errorf("%w: agent_bindings[%q].context.%s entry %q",
 				ErrUnknownKindReference, kind, fieldName, k)
 		}
+	}
+	return nil
+}
+
+// validateTillsyn asserts the top-level [tillsyn] table satisfies the Drop 4c
+// F.7.18.2 closed contract:
+//
+//   - MaxContextBundleChars is non-negative. Zero is legal and means "use
+//     bundle-global default at engine-time" (F.7.18.4 substitutes 200000 per
+//     master PLAN L14).
+//   - MaxAggregatorDuration is non-negative. Zero is legal and means "use
+//     bundle-global default at engine-time" (F.7.18.4 substitutes 2s per
+//     master PLAN L15).
+//
+// All non-nil returns wrap ErrInvalidTillsynGlobals so callers can route on
+// the sentinel via errors.Is. The validator runs after
+// validateAgentBindingContext so per-binding failures surface with their
+// original sentinel rather than being masked by a global rule.
+//
+// Per REV-3 the Tillsyn struct ships with exactly two fields in F.7.18.2;
+// F.7-CORE F.7.1 + F.7.6 extend it with SpawnTempRoot + RequiresPlugins
+// later. Strict-decode unknown-key rejection on the Tillsyn struct is
+// inherited automatically from load.go step 3 (DisallowUnknownFields), so
+// future extenders do not need to reshape this validator — they add their
+// own field-level checks alongside the existing two.
+func validateTillsyn(tpl Template) error {
+	if tpl.Tillsyn.MaxContextBundleChars < 0 {
+		return fmt.Errorf("%w: max_context_bundle_chars must be >= 0 (got %d)",
+			ErrInvalidTillsynGlobals, tpl.Tillsyn.MaxContextBundleChars)
+	}
+	if time.Duration(tpl.Tillsyn.MaxAggregatorDuration) < 0 {
+		return fmt.Errorf("%w: max_aggregator_duration must be >= 0 (got %s)",
+			ErrInvalidTillsynGlobals, time.Duration(tpl.Tillsyn.MaxAggregatorDuration))
 	}
 	return nil
 }
