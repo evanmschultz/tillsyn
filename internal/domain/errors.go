@@ -78,4 +78,18 @@ var (
 	// callers branching via errors.Is can surface the toggle status without
 	// confusing it with the role-gate's denials.
 	ErrOrchSelfApprovalDisabled = errors.New("orch self-approval disabled by project metadata")
+	// ErrInvalidPermissionGrantRule reports a missing or empty permission
+	// rule on PermissionGrant creation (Drop 4c F.7.17.7). Domain layer
+	// rejects the empty string only; rule shape ("Bash(npm run *)" etc.)
+	// is the caller's responsibility.
+	ErrInvalidPermissionGrantRule = errors.New("invalid permission grant rule")
+	// ErrInvalidPermissionGrantCLIKind reports a missing CLI kind on
+	// PermissionGrant creation (Drop 4c F.7.17.7). Closed-enum membership
+	// for the CLI vocabulary is enforced at the templates / dispatcher
+	// layer; the domain only refuses the empty string so the UNIQUE
+	// composite never stores a blank cli_kind.
+	ErrInvalidPermissionGrantCLIKind = errors.New("invalid permission grant cli kind")
+	// ErrInvalidPermissionGrantGrantedBy reports a missing principal on
+	// PermissionGrant creation (Drop 4c F.7.17.7).
+	ErrInvalidPermissionGrantGrantedBy = errors.New("invalid permission grant granted_by")
 )
