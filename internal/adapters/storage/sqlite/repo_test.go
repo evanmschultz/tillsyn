@@ -4198,3 +4198,104 @@ func assertSpawnMetadataEqual(t *testing.T, label string, want, got domain.Actio
 		}
 	}
 }
+
+// TestRepository_PersistsDispatcherCommitAndPushEnabled verifies the new
+// pointer-bool toggles introduced in Drop 4c F.7.15 round-trip through
+// the JSON-blob `metadata_json` column on `projects`. No DDL change is
+// required: the fields ride alongside OrchSelfApprovalEnabled in the
+// already-existing JSON envelope.
+//
+// The test exercises three states per field: nil (default-disabled),
+// *true (explicit-enabled), *false (explicit-disabled). Pointer-shape
+// equivalence is asserted in addition to dereferenced semantics so the
+// round-trip cannot silently collapse nil into *false.
+func TestRepository_PersistsDispatcherCommitAndPushEnabled(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	trueVal := true
+	falseVal := false
+
+	cases := []struct {
+		name              string
+		commit            *bool
+		push              *bool
+		wantCommitEnabled bool
+		wantPushEnabled   bool
+	}{
+		{"both_nil_default_disabled", nil, nil, false, false},
+		{"commit_true_push_nil", &trueVal, nil, true, false},
+		{"commit_nil_push_true", nil, &trueVal, false, true},
+		{"both_explicit_true", &trueVal, &trueVal, true, true},
+		{"both_explicit_false", &falseVal, &falseVal, false, false},
+	}
+
+	for i, tc := range cases {
+		tc := tc
+		i := i
+		t.Run(tc.name, func(t *testing.T) {
+			projectID := tc.name + "-id"
+			project, err := domain.NewProjectFromInput(domain.ProjectInput{
+				ID:   projectID,
+				Name: "Dispatch Toggle " + tc.name,
+			}, now.Add(time.Duration(i)*time.Minute))
+			if err != nil {
+				t.Fatalf("NewProjectFromInput() error = %v", err)
+			}
+			project.Metadata = domain.ProjectMetadata{
+				DispatcherCommitEnabled: tc.commit,
+				DispatcherPushEnabled:   tc.push,
+			}
+			if err := repo.CreateProject(ctx, project); err != nil {
+				t.Fatalf("CreateProject() error = %v", err)
+			}
+
+			loaded, err := repo.GetProject(ctx, projectID)
+			if err != nil {
+				t.Fatalf("GetProject() error = %v", err)
+			}
+			if got := loaded.Metadata.IsDispatcherCommitEnabled(); got != tc.wantCommitEnabled {
+				t.Fatalf("after CreateProject IsDispatcherCommitEnabled() = %v, want %v",
+					got, tc.wantCommitEnabled)
+			}
+			if got := loaded.Metadata.IsDispatcherPushEnabled(); got != tc.wantPushEnabled {
+				t.Fatalf("after CreateProject IsDispatcherPushEnabled() = %v, want %v",
+					got, tc.wantPushEnabled)
+			}
+			// Pointer-shape equivalence: nil-input must stay nil-decoded.
+			if (loaded.Metadata.DispatcherCommitEnabled == nil) != (tc.commit == nil) {
+				t.Fatalf("after CreateProject DispatcherCommitEnabled nil-ness changed: input nil=%v, decoded nil=%v",
+					tc.commit == nil, loaded.Metadata.DispatcherCommitEnabled == nil)
+			}
+			if (loaded.Metadata.DispatcherPushEnabled == nil) != (tc.push == nil) {
+				t.Fatalf("after CreateProject DispatcherPushEnabled nil-ness changed: input nil=%v, decoded nil=%v",
+					tc.push == nil, loaded.Metadata.DispatcherPushEnabled == nil)
+			}
+
+			// Update path: flip both fields to true and re-load.
+			loaded.Metadata.DispatcherCommitEnabled = &trueVal
+			loaded.Metadata.DispatcherPushEnabled = &trueVal
+			loaded.UpdatedAt = now.Add(time.Duration(i)*time.Minute + time.Hour)
+			if err := repo.UpdateProject(ctx, loaded); err != nil {
+				t.Fatalf("UpdateProject() error = %v", err)
+			}
+			reloaded, err := repo.GetProject(ctx, projectID)
+			if err != nil {
+				t.Fatalf("GetProject() after update error = %v", err)
+			}
+			if !reloaded.Metadata.IsDispatcherCommitEnabled() {
+				t.Fatalf("after UpdateProject IsDispatcherCommitEnabled() = false, want true")
+			}
+			if !reloaded.Metadata.IsDispatcherPushEnabled() {
+				t.Fatalf("after UpdateProject IsDispatcherPushEnabled() = false, want true")
+			}
+		})
+	}
+}

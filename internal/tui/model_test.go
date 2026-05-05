@@ -15017,6 +15017,16 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		// this coverage test stays green without forcing premature TUI
 		// design.
 		"OrchSelfApprovalEnabled": {},
+		// DispatcherCommitEnabled / DispatcherPushEnabled are the Drop 4c
+		// F.7.15 dispatcher-gate toggles (Master PLAN.md L20). Pointer-bool
+		// (*bool) keyed off nil-means-disabled — opposite default polarity
+		// from OrchSelfApprovalEnabled because both gates ship unproven and
+		// must default OFF until Drop 5 dogfood. Admin / policy fields —
+		// set via till.project(operation=update) Metadata payload or template
+		// TOML, never edited through the project form TUI surface today.
+		// Classified internal for the same reason as OrchSelfApprovalEnabled.
+		"DispatcherCommitEnabled": {},
+		"DispatcherPushEnabled":   {},
 	}
 	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.ProjectMetadata{}), projectMetadataEditable, nil, projectMetadataInternal)
 }
