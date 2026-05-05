@@ -24,6 +24,7 @@ import (
 	servercommon "github.com/evanmschultz/tillsyn/internal/adapters/server/common"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
 	"github.com/evanmschultz/tillsyn/internal/buildinfo"
 	"github.com/evanmschultz/tillsyn/internal/config"
 	"github.com/evanmschultz/tillsyn/internal/domain"
@@ -50,6 +51,26 @@ var programFactory = func(m tea.Model) program {
 // serveCommandRunner starts the HTTP+MCP serve flow.
 var serveCommandRunner = func(ctx context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
 	return serveradapter.Run(ctx, cfg, deps)
+}
+
+// dispatcherLifecycle is the narrow Start/Stop seam runServe consumes for
+// the cascade dispatcher. The dispatcher package's Dispatcher interface is
+// the production satisfier; the local alias keeps cmd/till's surface
+// minimal. Tests stub the factory to assert Start/Stop both fire during the
+// serve flow without standing up the real subscriber graph.
+type dispatcherLifecycle interface {
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+}
+
+// dispatcherFactoryFunc constructs a dispatcherLifecycle for runServe.
+// Production wires NewDispatcher; tests swap in a stub via t.Cleanup.
+var dispatcherFactoryFunc = func(svc *app.Service, broker app.LiveWaitBroker) (dispatcherLifecycle, error) {
+	disp, err := dispatcher.NewDispatcher(svc, broker, dispatcher.Options{})
+	if err != nil {
+		return nil, err
+	}
+	return disp, nil
 }
 
 // mcpCommandRunner starts the stdio MCP flow.
@@ -2330,7 +2351,7 @@ func executeCommandFlow(
 	case "serve":
 		logger.Info("command flow start", "command", "serve")
 		if err := withInterruptEchoSuppressedFunc(func() error {
-			return runServe(ctx, svc, authSvc, rootOpts.appName, serveOpts)
+			return runServe(ctx, svc, authSvc, liveWaitBroker, rootOpts.appName, serveOpts)
 		}); err != nil {
 			if errors.Is(err, context.Canceled) {
 				logger.Info("command flow complete", "command", "serve", "shutdown", "interrupt")
@@ -2580,8 +2601,34 @@ func shouldMuteRuntimeConsole(command string) bool {
 }
 
 // runServe runs the serve subcommand flow.
-func runServe(ctx context.Context, svc *app.Service, auth *autentauth.Service, appName string, opts serveCommandOptions) error {
+//
+// Drop 4b.7 wires the cascade dispatcher's continuous-mode loop alongside
+// the HTTP + MCP servers: NewDispatcher / Start at boot, Stop with a
+// bounded shutdown context on exit. The dispatcher subscribes to
+// LiveWaitEventActionItemChanged events per project and auto-promotes
+// eligible action items via the existing 4a.23 RunOnce pipeline. Spawn
+// invocation goes through the 4a.19 stub today; Drop 4c F.7 swaps in the
+// real Claude-Code spawn pipeline without disturbing the subscriber loop.
+//
+// dispatcher Start failures surface as a non-nil error so the serve flow
+// fails fast on misconfiguration — fail-loud is preferred for MVP. The
+// HTTP / MCP servers do NOT boot if the dispatcher cannot start.
+func runServe(ctx context.Context, svc *app.Service, auth *autentauth.Service, broker app.LiveWaitBroker, appName string, opts serveCommandOptions) error {
 	appAdapter := servercommon.NewAppServiceAdapter(svc, auth)
+
+	disp, err := dispatcherFactoryFunc(svc, broker)
+	if err != nil {
+		return fmt.Errorf("construct dispatcher: %w", err)
+	}
+	if err := disp.Start(ctx); err != nil {
+		return fmt.Errorf("start dispatcher: %w", err)
+	}
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = disp.Stop(stopCtx)
+	}()
+
 	return serveCommandRunner(ctx, serveradapter.Config{
 		HTTPBind:      opts.httpBind,
 		APIEndpoint:   opts.apiEndpoint,

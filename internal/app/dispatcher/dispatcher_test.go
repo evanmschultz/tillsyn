@@ -337,27 +337,34 @@ func TestRunOnceNilDispatcherReturnsConfigError(t *testing.T) {
 	}
 }
 
-// TestStartReturnsNotImplemented asserts the Start stub returns
-// ErrNotImplemented. Drop 4b replaces this with the continuous-mode loop.
-func TestStartReturnsNotImplemented(t *testing.T) {
+// TestStartRequiresWalker asserts the Drop 4b.7 Start path rejects a
+// dispatcher missing the walker dependency with ErrInvalidDispatcherConfig.
+// Replaces the pre-Drop-4b.7 ErrNotImplemented stub assertion. The
+// newDispatcherForTest helper does not wire walker / projectsLister so this
+// test lands on the first nil-check.
+func TestStartRequiresWalker(t *testing.T) {
 	t.Parallel()
 
 	d := newDispatcherForTest(&stubActionItemReader{})
 	err := d.Start(context.Background())
-	if !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("Start() error = %v, want errors.Is(ErrNotImplemented)", err)
+	if err == nil {
+		t.Fatalf("Start() error = nil, want ErrInvalidDispatcherConfig")
+	}
+	if !errors.Is(err, ErrInvalidDispatcherConfig) {
+		t.Fatalf("Start() error = %v, want errors.Is(ErrInvalidDispatcherConfig)", err)
 	}
 }
 
-// TestStopReturnsNotImplemented asserts the Stop stub returns
-// ErrNotImplemented. Drop 4b replaces this with the continuous-mode loop.
-func TestStopReturnsNotImplemented(t *testing.T) {
+// TestStopOnUnstartedDispatcherReturnsNil asserts the Drop 4b.7 Stop path
+// returns nil when called on a dispatcher that was never started — Stop is
+// idempotent across the unstarted / started / stopped lifecycle states.
+// Replaces the pre-Drop-4b.7 ErrNotImplemented stub assertion.
+func TestStopOnUnstartedDispatcherReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	d := newDispatcherForTest(&stubActionItemReader{})
-	err := d.Stop(context.Background())
-	if !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("Stop() error = %v, want errors.Is(ErrNotImplemented)", err)
+	if err := d.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() on unstarted dispatcher error = %v, want nil", err)
 	}
 }
 
