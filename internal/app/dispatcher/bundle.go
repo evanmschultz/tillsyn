@@ -1,6 +1,7 @@
 package dispatcher
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -442,6 +443,161 @@ func writeManifestAtomic(manifestPath string, metadata ManifestMetadata) error {
 	if err := os.Rename(tmpPath, manifestPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("dispatcher: rename manifest into place: %w", err)
+	}
+	return nil
+}
+
+// gitignoreSpawnsEntry is the canonical line written into the project's
+// .gitignore by EnsureSpawnsGitignored when project-mode spawn bundles are in
+// use. Listed without a leading slash because the entry sits at project root
+// already; git treats `<pattern>/` as "match the directory anywhere in the
+// repo" but at project-root scope that's equivalent to anchored. The
+// idempotency check ALSO recognizes the leading-slash variant
+// (`/.tillsyn/spawns/`) so devs who hand-edit the file with the explicit
+// anchor are not double-appended.
+const gitignoreSpawnsEntry = ".tillsyn/spawns/"
+
+// gitignoreSpawnsEntryAnchored is the leading-slash variant of
+// gitignoreSpawnsEntry. EnsureSpawnsGitignored treats it as already-ignored
+// for idempotency purposes — appending the unanchored form when the anchored
+// form is already present would duplicate semantics.
+const gitignoreSpawnsEntryAnchored = "/.tillsyn/spawns/"
+
+// EnsureSpawnsGitignored appends ".tillsyn/spawns/" to <projectRoot>/.gitignore
+// when the dispatcher is materializing per-spawn bundles under the worktree
+// (`spawn_temp_root = "project"`). The function is idempotent — re-calls
+// after the entry is already present are no-ops — and is a no-op outright
+// when spawnTempRoot resolves to OS-temp mode (where bundles never touch the
+// worktree and therefore don't need to be gitignored).
+//
+// Behavior matrix:
+//
+//   - spawnTempRoot != SpawnTempRootProject: return nil immediately. The OS
+//     temp dir mode never writes inside the worktree, so .gitignore needs
+//     no maintenance.
+//   - <projectRoot>/.gitignore missing: create it with the single entry
+//     `.tillsyn/spawns/` followed by a trailing newline. Permissions 0o644
+//     so the dev's normal repo workflow (cat, edit, git diff) is unaffected.
+//   - <projectRoot>/.gitignore exists, contains exact line `.tillsyn/spawns/`
+//     OR `/.tillsyn/spawns/` (anchored variant): no-op, return nil.
+//   - <projectRoot>/.gitignore exists without the entry: append. If the
+//     existing file does NOT end with a newline, prefix the appended entry
+//     with one so the new line is properly terminated; always end the
+//     resulting file with a trailing newline.
+//
+// Atomicity: the write path uses the write-temp-then-rename pattern so a
+// crash mid-write cannot leave a half-truncated .gitignore. The temp file
+// shares the target's directory so the rename is atomic per POSIX
+// rename(2).
+//
+// Concurrency: callers gate this with a sync.Once (or equivalent
+// once-per-process primitive) so the disk read+write fires exactly once
+// per dispatch session regardless of spawn count. The function itself does
+// no internal locking — concurrent calls on the same projectRoot race the
+// rename but the write-temp-then-rename pattern guarantees no torn writes.
+//
+// Error contract: returned errors are wrapped with descriptive prefixes
+// (`dispatcher: read .gitignore: ...`, etc.) but are NOT routed through
+// ErrInvalidBundleInput — the failure modes here are transient I/O
+// (permissions, disk full) rather than schema errors, and callers (today:
+// BuildSpawnCommand) treat the failure as a non-fatal log-and-continue.
+// A future droplet may promote the failure to a fatal spawn-construction
+// error once the per-project .gitignore policy is locked down.
+func EnsureSpawnsGitignored(projectRoot, spawnTempRoot string) error {
+	if spawnTempRoot != SpawnTempRootProject {
+		return nil
+	}
+	if strings.TrimSpace(projectRoot) == "" {
+		return fmt.Errorf("%w: projectRoot is empty (required for project mode gitignore maintenance)", ErrInvalidBundleInput)
+	}
+
+	gitignorePath := filepath.Join(projectRoot, ".gitignore")
+	existing, err := os.ReadFile(gitignorePath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// Create with the single entry. Atomic via write-temp-then-rename so
+		// a crash mid-create can't leave a partial file.
+		return writeGitignoreAtomic(gitignorePath, []byte(gitignoreSpawnsEntry+"\n"))
+	case err != nil:
+		return fmt.Errorf("dispatcher: read .gitignore at %s: %w", gitignorePath, err)
+	}
+
+	if gitignoreContainsSpawnsEntry(existing) {
+		// Idempotent: entry already recognized in unanchored or anchored
+		// form. No write needed.
+		return nil
+	}
+
+	// Append. Ensure the existing file ends with a newline before adding the
+	// new entry so we don't accidentally concatenate the new entry onto a
+	// previous unterminated line. The result always ends in a trailing
+	// newline so future appends remain well-formed.
+	var buf bytes.Buffer
+	buf.Write(existing)
+	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
+		buf.WriteByte('\n')
+	}
+	buf.WriteString(gitignoreSpawnsEntry)
+	buf.WriteByte('\n')
+
+	return writeGitignoreAtomic(gitignorePath, buf.Bytes())
+}
+
+// gitignoreContainsSpawnsEntry reports whether the supplied .gitignore body
+// already lists the spawn-bundles directory in either the unanchored
+// (`.tillsyn/spawns/`) or anchored (`/.tillsyn/spawns/`) form. Match is
+// line-exact after trimming trailing whitespace — a partial-prefix line
+// like `.tillsyn/spawns/foo` does NOT count as a match because git would
+// interpret it as a more-specific rule rather than the directory wildcard
+// the dispatcher needs.
+//
+// The function operates on []byte so callers can pass os.ReadFile results
+// directly without an intermediate string allocation.
+func gitignoreContainsSpawnsEntry(contents []byte) bool {
+	for _, raw := range bytes.Split(contents, []byte{'\n'}) {
+		// Trim trailing CR (CRLF line endings on Windows checkouts) and
+		// surrounding whitespace so a line like `  .tillsyn/spawns/  \r`
+		// still matches.
+		line := strings.TrimSpace(string(bytes.TrimRight(raw, "\r")))
+		if line == gitignoreSpawnsEntry || line == gitignoreSpawnsEntryAnchored {
+			return true
+		}
+	}
+	return false
+}
+
+// writeGitignoreAtomic writes contents to gitignorePath using the
+// write-temp-then-rename pattern. Mirrors writeManifestAtomic but with
+// 0o644 perms because .gitignore is a normal repo-tracked file the dev
+// reads/edits directly — 0o600 would surprise users who expect their
+// .gitignore to behave like every other file in the repo.
+//
+// The temp file lives alongside the target so the rename is atomic on
+// POSIX filesystems. fsync ordering matches the manifest writer: write
+// payload → fsync temp → close → rename.
+func writeGitignoreAtomic(gitignorePath string, contents []byte) error {
+	tmpPath := gitignorePath + ".tmp"
+	f, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("dispatcher: open .gitignore temp file: %w", err)
+	}
+	if _, err := f.Write(contents); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("dispatcher: write .gitignore payload: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("dispatcher: fsync .gitignore temp file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("dispatcher: close .gitignore temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, gitignorePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("dispatcher: rename .gitignore into place: %w", err)
 	}
 	return nil
 }

@@ -669,3 +669,206 @@ func TestNewBundleSpawnIDsUnique(t *testing.T) {
 		t.Errorf("two NewBundle calls produced same Root %q", b1.Paths.Root)
 	}
 }
+
+// TestEnsureSpawnsGitignoredOSTempIsNoop covers the F.7.7 behavior matrix's
+// short-circuit row: when spawn_temp_root resolves to OS-temp mode the
+// helper returns nil without inspecting the worktree or creating any
+// .gitignore. Pins the contract that os_tmp mode never modifies project
+// state.
+func TestEnsureSpawnsGitignoredOSTempIsNoop(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	// Empty string and explicit "os_tmp" should both short-circuit.
+	for _, mode := range []string{"", dispatcher.SpawnTempRootOSTmp} {
+		mode := mode
+		t.Run("mode="+mode, func(t *testing.T) {
+			t.Parallel()
+			if err := dispatcher.EnsureSpawnsGitignored(projectRoot, mode); err != nil {
+				t.Fatalf("EnsureSpawnsGitignored(%q, %q) error = %v, want nil", projectRoot, mode, err)
+			}
+			gitignorePath := filepath.Join(projectRoot, ".gitignore")
+			if _, err := os.Stat(gitignorePath); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("os.Stat(%q) error = %v; want os.ErrNotExist (os_tmp must not create .gitignore)", gitignorePath, err)
+			}
+		})
+	}
+}
+
+// TestEnsureSpawnsGitignoredCreatesWhenMissing covers the project-mode happy
+// path with no pre-existing .gitignore: the helper creates one with the
+// canonical entry and a trailing newline.
+func TestEnsureSpawnsGitignoredCreatesWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	if err := dispatcher.EnsureSpawnsGitignored(projectRoot, dispatcher.SpawnTempRootProject); err != nil {
+		t.Fatalf("EnsureSpawnsGitignored() error = %v, want nil", err)
+	}
+
+	gitignorePath := filepath.Join(projectRoot, ".gitignore")
+	contents, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) error = %v, want .gitignore created", gitignorePath, err)
+	}
+	got := string(contents)
+	want := ".tillsyn/spawns/\n"
+	if got != want {
+		t.Errorf(".gitignore contents = %q, want %q", got, want)
+	}
+}
+
+// TestEnsureSpawnsGitignoredIdempotentRecall verifies the second invocation
+// produces no observable change — file mtime + contents stay identical.
+func TestEnsureSpawnsGitignoredIdempotentRecall(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	if err := dispatcher.EnsureSpawnsGitignored(projectRoot, dispatcher.SpawnTempRootProject); err != nil {
+		t.Fatalf("first EnsureSpawnsGitignored() error = %v, want nil", err)
+	}
+	gitignorePath := filepath.Join(projectRoot, ".gitignore")
+	firstContents, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("first os.ReadFile() error = %v", err)
+	}
+
+	if err := dispatcher.EnsureSpawnsGitignored(projectRoot, dispatcher.SpawnTempRootProject); err != nil {
+		t.Fatalf("second EnsureSpawnsGitignored() error = %v, want nil", err)
+	}
+	secondContents, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("second os.ReadFile() error = %v", err)
+	}
+
+	if string(firstContents) != string(secondContents) {
+		t.Errorf(".gitignore contents drifted across re-call:\nfirst:  %q\nsecond: %q",
+			firstContents, secondContents)
+	}
+	// Should still be exactly the canonical single-line form, NOT doubled.
+	want := ".tillsyn/spawns/\n"
+	if string(secondContents) != want {
+		t.Errorf("after idempotent re-call, .gitignore = %q, want %q (no double-append)",
+			secondContents, want)
+	}
+}
+
+// TestEnsureSpawnsGitignoredAppendsToExistingEntries verifies that a project
+// with a pre-populated .gitignore retains every existing entry and gets the
+// new one appended at the end with proper newline framing.
+func TestEnsureSpawnsGitignoredAppendsToExistingEntries(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	gitignorePath := filepath.Join(projectRoot, ".gitignore")
+	preExisting := "*.log\nnode_modules/\n.DS_Store\n"
+	if err := os.WriteFile(gitignorePath, []byte(preExisting), 0o644); err != nil {
+		t.Fatalf("seed os.WriteFile: %v", err)
+	}
+
+	if err := dispatcher.EnsureSpawnsGitignored(projectRoot, dispatcher.SpawnTempRootProject); err != nil {
+		t.Fatalf("EnsureSpawnsGitignored() error = %v, want nil", err)
+	}
+
+	contents, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	got := string(contents)
+	want := preExisting + ".tillsyn/spawns/\n"
+	if got != want {
+		t.Errorf(".gitignore contents = %q, want %q", got, want)
+	}
+
+	// Each pre-existing entry is still recognizable line-for-line.
+	for _, entry := range []string{"*.log", "node_modules/", ".DS_Store", ".tillsyn/spawns/"} {
+		if !strings.Contains(got, entry+"\n") {
+			t.Errorf("post-append .gitignore missing entry %q\nfull contents:\n%s", entry, got)
+		}
+	}
+}
+
+// TestEnsureSpawnsGitignoredRecognizesAnchoredVariant verifies the
+// idempotency check treats `/.tillsyn/spawns/` (the leading-slash anchored
+// form devs sometimes hand-write) as already-ignored. Without this the
+// helper would double-append the unanchored form alongside.
+func TestEnsureSpawnsGitignoredRecognizesAnchoredVariant(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	gitignorePath := filepath.Join(projectRoot, ".gitignore")
+	preExisting := "*.log\n/.tillsyn/spawns/\nbuild/\n"
+	if err := os.WriteFile(gitignorePath, []byte(preExisting), 0o644); err != nil {
+		t.Fatalf("seed os.WriteFile: %v", err)
+	}
+
+	if err := dispatcher.EnsureSpawnsGitignored(projectRoot, dispatcher.SpawnTempRootProject); err != nil {
+		t.Fatalf("EnsureSpawnsGitignored() error = %v, want nil", err)
+	}
+
+	contents, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if string(contents) != preExisting {
+		t.Errorf(".gitignore contents = %q, want unchanged %q (anchored form already present)",
+			contents, preExisting)
+	}
+	// Must NOT have appended an unanchored duplicate.
+	if strings.Count(string(contents), ".tillsyn/spawns/") != 1 {
+		t.Errorf("expected exactly 1 occurrence of .tillsyn/spawns/, got %d:\n%s",
+			strings.Count(string(contents), ".tillsyn/spawns/"), contents)
+	}
+}
+
+// TestEnsureSpawnsGitignoredHandlesMissingTrailingNewline verifies the
+// append path correctly inserts a newline before the new entry when the
+// existing file does NOT end with one — without this guard the new entry
+// would be concatenated onto the previous line.
+func TestEnsureSpawnsGitignoredHandlesMissingTrailingNewline(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	gitignorePath := filepath.Join(projectRoot, ".gitignore")
+	// Note: NO trailing newline.
+	preExisting := "*.log\nnode_modules/"
+	if err := os.WriteFile(gitignorePath, []byte(preExisting), 0o644); err != nil {
+		t.Fatalf("seed os.WriteFile: %v", err)
+	}
+
+	if err := dispatcher.EnsureSpawnsGitignored(projectRoot, dispatcher.SpawnTempRootProject); err != nil {
+		t.Fatalf("EnsureSpawnsGitignored() error = %v, want nil", err)
+	}
+
+	contents, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	got := string(contents)
+	// "node_modules/" must be terminated by a newline before ".tillsyn/spawns/"
+	// — the bug this guards against would produce "node_modules/.tillsyn/spawns/".
+	want := "*.log\nnode_modules/\n.tillsyn/spawns/\n"
+	if got != want {
+		t.Errorf(".gitignore contents = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "node_modules/.tillsyn/spawns/") {
+		t.Errorf("regression: missing-newline guard failed; got concatenated entry:\n%s", got)
+	}
+}
+
+// TestEnsureSpawnsGitignoredRejectsEmptyProjectRootInProjectMode verifies the
+// input-validation guard for project mode: an empty projectRoot is a
+// programming error (the dispatcher should always have a worktree when
+// project-mode bundles are in use), so the helper returns
+// ErrInvalidBundleInput rather than silently writing to filesystem root.
+func TestEnsureSpawnsGitignoredRejectsEmptyProjectRootInProjectMode(t *testing.T) {
+	t.Parallel()
+
+	err := dispatcher.EnsureSpawnsGitignored("", dispatcher.SpawnTempRootProject)
+	if err == nil {
+		t.Fatalf("EnsureSpawnsGitignored() error = nil, want ErrInvalidBundleInput")
+	}
+	if !errors.Is(err, dispatcher.ErrInvalidBundleInput) {
+		t.Fatalf("EnsureSpawnsGitignored() error = %v, want errors.Is(ErrInvalidBundleInput)", err)
+	}
+}
