@@ -119,12 +119,14 @@ func TestTemplateTOMLRoundTrip(t *testing.T) {
 		Gates: map[domain.Kind][]GateKind{
 			domain.KindBuild: {GateKindMageCI, GateKindMageTestPkg},
 		},
-		// Drop 4c F.7.18.2: every Tillsyn field populated so the round-trip
-		// exercises the new top-level struct's TOML tags symmetrically with
-		// the existing Template fields.
+		// Drop 4c F.7.18.2 + F.7-CORE F.7.1: every Tillsyn field populated so
+		// the round-trip exercises the top-level struct's TOML tags
+		// symmetrically with the existing Template fields. SpawnTempRoot
+		// added by F.7-CORE F.7.1.
 		Tillsyn: Tillsyn{
 			MaxContextBundleChars: 200000,
 			MaxAggregatorDuration: Duration(2 * time.Second),
+			SpawnTempRoot:         "project",
 		},
 		StewardSeeds: []StewardSeed{
 			{Title: "DISCUSSIONS", Description: "Cross-cutting discussion topics."},
