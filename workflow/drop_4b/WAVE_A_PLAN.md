@@ -78,7 +78,7 @@ Wave A's job: ship the gate runner + two of the three gate implementations + sch
 
 ## Pre-MVP DB Action
 
-4b.1 changes `templates.Template` (adds `Gates` field, retires `GateRulesRaw` consumption). The `KindCatalogJSON` envelope baked into `domain.Project.KindCatalogJSON` at project-creation time **does not currently embed Gates** — it lands here. **Dev fresh-DBs `~/.tillsyn/tillsyn.db` BEFORE `mage ci`** so existing project rows re-bake their catalog with the new `Gates` field. No Go migration logic; no `till migrate` CLI; pre-MVP rule (memory `feedback_no_migration_logic_pre_mvp.md`).
+4b.1 changes `templates.Template` (adds `Gates` field; `GateRulesRaw` reserved seam preserved untouched). **`KindCatalog.Gates` baking is NOT in 4b.1's scope** (per plan-QA-falsification F1 correction, 2026-05-04) — the gate runner reads `Template.Gates` directly via the `Run(ctx, item, project, tpl)` signature in 4b.2. If a future droplet decides the catalog should snapshot gates for performance reasons, it lands separately. **Dev fresh-DBs `~/.tillsyn/tillsyn.db` BEFORE `mage ci`** out of conservatism: existing project rows have `KindCatalogJSON` envelopes baked from a `Template` shape WITHOUT the `Gates` field; JSON unmarshal produces nil `Gates` map → harmless ("no gates per kind"), but fresh-DB matches "no migration logic" rule (memory `feedback_no_migration_logic_pre_mvp.md`).
 
 4b.2/4b.3/4b.4 are pure-Go additions with no schema touch — no fresh-DB needed for those alone.
 
