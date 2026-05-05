@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -96,6 +95,80 @@ var ErrInvalidSpawnInput = errors.New("dispatcher: invalid spawn input")
 // additional entry. Callers detect via errors.Is and route the action item
 // to a "no agent configured" failure (same disposition as ErrNoAgentBinding).
 var ErrUnsupportedCLIKind = errors.New("dispatcher: unsupported CLIKind")
+
+// BundleRenderFunc is the signature of the per-spawn bundle-render hook
+// the claude adapter's render package registers via init(). Drop 4c
+// F.7-CORE F.7.3b ships the seam:
+//
+//   - render package imports dispatcher (for Bundle / BindingResolved /
+//     domain types).
+//   - dispatcher CANNOT import render directly (would form a cycle).
+//   - render package's init() calls RegisterBundleRenderFunc to inject
+//     itself; BuildSpawnCommand looks the hook up at spawn time.
+//
+// The seam mirrors the CLIAdapter registry pattern (RegisterAdapter +
+// lookupAdapter) — same import-cycle resolution, same concurrency
+// primitives, same test-substitution affordance.
+//
+// The hook returns the rendered system-prompt body alongside any error
+// so BuildSpawnCommand can mirror the body into SpawnDescriptor.Prompt
+// without re-reading from disk. On error the body is the empty string.
+//
+// When no render function is registered (e.g. the dispatcher boots
+// without the cli_claude/render side-effect import) BuildSpawnCommand
+// returns ErrNoBundleRenderFunc so callers see a clean failure rather
+// than a missing system-prompt.md file.
+type BundleRenderFunc func(
+	bundle Bundle,
+	item domain.ActionItem,
+	project domain.Project,
+	binding BindingResolved,
+) (string, error)
+
+// renderMu guards bundleRenderFunc. RegisterBundleRenderFunc is rare
+// (init-time once); BuildSpawnCommand reads the hook on every spawn,
+// which is hot — RWMutex matches the read-heavy access pattern.
+var renderMu sync.RWMutex
+
+// bundleRenderFunc holds the registered per-spawn render hook. nil
+// when no render package has been imported for side-effects;
+// BuildSpawnCommand surfaces that as ErrNoBundleRenderFunc.
+var bundleRenderFunc BundleRenderFunc
+
+// RegisterBundleRenderFunc wires fn into the spawn pipeline as the
+// per-spawn bundle-render hook. The cli_claude/render package calls
+// this from init() so production binaries that side-effect-import the
+// package see the hook populated before the dispatcher dispatches
+// anything.
+//
+// Repeat registrations under the same call overwrite — last writer
+// wins. Tests use this to substitute their own render hook for fault
+// injection (e.g. simulating a render failure in BuildSpawnCommand
+// integration tests).
+func RegisterBundleRenderFunc(fn BundleRenderFunc) {
+	renderMu.Lock()
+	defer renderMu.Unlock()
+	bundleRenderFunc = fn
+}
+
+// lookupBundleRenderFunc returns the registered render hook, or nil +
+// false when no render package has been imported.
+func lookupBundleRenderFunc() (BundleRenderFunc, bool) {
+	renderMu.RLock()
+	defer renderMu.RUnlock()
+	if bundleRenderFunc == nil {
+		return nil, false
+	}
+	return bundleRenderFunc, true
+}
+
+// ErrNoBundleRenderFunc is returned by BuildSpawnCommand when no
+// render hook has been registered via RegisterBundleRenderFunc.
+// Production wiring side-effect-imports cli_claude/render at
+// process start; if a build path skips that import, this error
+// surfaces at the first spawn rather than a confusing
+// "missing system-prompt.md" downstream failure.
+var ErrNoBundleRenderFunc = errors.New("dispatcher: no bundle render function registered")
 
 // adaptersMu guards adaptersMap. RegisterAdapter / lookupAdapter are
 // concurrency-safe so wiring code can populate the registry from package
@@ -287,15 +360,23 @@ func BuildSpawnCommand(
 	}
 	bundlePaths := bundle.Paths
 
-	// Render the spawn prompt body and write it to disk so claude's adapter
-	// can pick it up via `--system-prompt-file`. 0o600 perms are deliberate:
-	// the bundle directory is per-spawn and tooling-private — the prompt
-	// body may carry action-item structural data the dev should not have to
-	// scrub. Wider perms can come later if a use-case surfaces.
-	prompt := assemblePrompt(item, project, authBundle)
-	if err := os.WriteFile(bundlePaths.SystemPromptPath, []byte(prompt), 0o600); err != nil {
+	// Render the per-spawn bundle subtree (system-prompt.md cross-CLI +
+	// claude-specific plugin/ subtree per spawn architecture memory §2)
+	// via the registered hook. The cli_claude/render package wires itself
+	// in at init time; production binaries side-effect-import the package
+	// alongside cli_claude itself. F.7.17.5's provisional minimal prompt
+	// block is REPLACED by this hook — Render owns system-prompt.md from
+	// here forward and additionally writes plugin.json / agents/<name>.md
+	// / .mcp.json / settings.json under <bundle.Root>/plugin/.
+	render, ok := lookupBundleRenderFunc()
+	if !ok {
 		_ = bundle.Cleanup()
-		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: write system prompt: %w", err)
+		return nil, SpawnDescriptor{}, fmt.Errorf("%w (kind=%q)", ErrNoBundleRenderFunc, item.Kind)
+	}
+	prompt, err := render(bundle, item, project, resolved)
+	if err != nil {
+		_ = bundle.Cleanup()
+		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: render spawn bundle: %w", err)
 	}
 
 	// TODO(F.7-CORE): replace context.Background() with the outer dispatcher
@@ -356,59 +437,10 @@ func derefFloat64(p *float64) float64 {
 	return *p
 }
 
-// assemblePrompt produces the spawn prompt body the agent receives via
-// `--system-prompt-file`. The body is opaque to the dispatcher contract —
-// only the structural fields (task_id, project_dir, move-state directive)
-// are asserted by tests.
-//
-// Hylla awareness was deliberately removed in Drop 4c F.7.10: Hylla is a
-// dev-local tool, NOT part of Tillsyn's shipped cascade. Adopters who opt
-// into Hylla MCP can surface the project's HyllaArtifactRef via their own
-// system-prompt template (F.7.2 system_prompt_template_path). The data
-// field domain.Project.HyllaArtifactRef and project.metadata.hylla_artifact_ref
-// stay because adopter-local templates legitimately consume them.
-//
-// Drop 4c F.7.17.5 extends the body with paths + packages when set on the
-// action item — those are write-scope / lock-domain primitives the agent
-// needs to honor (declared edit scope) and were already on the action item
-// per Drop 4a Wave 1. Empty slices stay omitted from the body so non-paths
-// items render cleanly.
-//
-// Wave 3 will fold authBundle session/lease IDs into the prompt under the
-// "Auth credentials" line; today the bundle is the empty-struct stub.
-func assemblePrompt(item domain.ActionItem, project domain.Project, _ AuthBundle) string {
-	var b strings.Builder
-	b.WriteString("task_id: ")
-	b.WriteString(item.ID)
-	b.WriteString("\n")
-	b.WriteString("project_id: ")
-	b.WriteString(project.ID)
-	b.WriteString("\n")
-	b.WriteString("project_dir: ")
-	b.WriteString(project.RepoPrimaryWorktree)
-	b.WriteString("\n")
-	b.WriteString("kind: ")
-	b.WriteString(string(item.Kind))
-	b.WriteString("\n")
-	if item.Title != "" {
-		b.WriteString("title: ")
-		b.WriteString(item.Title)
-		b.WriteString("\n")
-	}
-	if len(item.Paths) > 0 {
-		b.WriteString("paths: ")
-		b.WriteString(strings.Join(item.Paths, ", "))
-		b.WriteString("\n")
-	}
-	if len(item.Packages) > 0 {
-		b.WriteString("packages: ")
-		b.WriteString(strings.Join(item.Packages, ", "))
-		b.WriteString("\n")
-	}
-	// Move-state directive — every spawn prompt instructs the agent to take
-	// ownership of its lifecycle transitions.
-	b.WriteString("move-state directive: Move the action item to in_progress on start. ")
-	b.WriteString("On success set metadata.outcome=\"success\" and move to complete. ")
-	b.WriteString("On blocking findings record them in metadata + a closing comment and return.\n")
-	return b.String()
-}
+// assemblePrompt is removed in Drop 4c F.7-CORE F.7.3b. The per-spawn
+// system-prompt body now ships from cli_claude/render's Render function
+// — registered into the dispatcher via RegisterBundleRenderFunc and
+// consumed by BuildSpawnCommand's render-hook lookup. Adopters who want
+// custom per-kind prompt templates use the binding's
+// SystemPromptTemplatePath field (F.7.2) which will plumb through
+// render in a follow-up droplet.

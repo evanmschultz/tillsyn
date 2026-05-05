@@ -1,9 +1,11 @@
 package dispatcher
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -446,4 +448,229 @@ func formatFailureReason(outcome TerminationOutcome) string {
 		return "agent process crashed: signal: " + outcome.Signal
 	}
 	return fmt.Sprintf("agent process crashed: exit code %d", outcome.ExitCode)
+}
+
+// =============================================================================
+// Stream-JSON Monitor (F.7-CORE F.7.4)
+// =============================================================================
+//
+// The Monitor type below is the CLI-agnostic stream-JSON consumer the
+// dispatcher uses to read a spawn's <bundle>/stream.jsonl line-by-line and
+// surface terminal reports + tool-denial events to upstream consumers (the
+// F.7.5b TUI handshake, the spawn descriptor's actual_cost_usd update, and the
+// post-spawn outcome pipeline).
+//
+// CLI-AGNOSTIC RULE (F.7-CORE F.7.4 + master PLAN.md L11): the Monitor source
+// MUST NOT contain CLI-specific wire-format event-type literals — no claude
+// init-shortcut strings, no terminal-event string-match against the wire
+// format, no MockAdapter terminal-token literals baked into the routing.
+// Every event-family decision is made by the injected adapter via
+// StreamEvent.Type + IsTerminal; the Monitor itself only knows the canonical
+// shape declared in cli_adapter.go.
+//
+// Two-axis decoupling (REV-7 supersession of F.7.17.9):
+//
+//  1. CLIAdapter abstracts the wire format. The Monitor does not know which
+//     adapter-private terminal-event token its CLI emits; only the canonical
+//     IsTerminal flag matters.
+//  2. The sink channel + logger callback abstract the destination. The
+//     Monitor does not know whether the consumer is the TUI permission-denial
+//     dialog, the dispatcher's metadata.actual_cost_usd writer, or a forensic
+//     tee.
+//
+// Algorithm (per droplet 4c.F.7.4 acceptance):
+//
+//   - Wrap reader in bufio.Scanner with a 1 MiB max-token to absorb large
+//     assistant-event blobs (claude can emit single events past the default
+//     64 KiB limit).
+//   - For each scanned line: skip empty / whitespace-only lines silently;
+//     decode via adapter.ParseStreamEvent. Decode errors log a warning and
+//     continue — claude streams may emit interleaved progress lines the
+//     canonical taxonomy doesn't yet cover, and forward-compat trumps
+//     halt-on-malformed.
+//   - Forward every successfully-parsed event to the optional sink channel
+//     via a non-blocking send (select default) so a slow consumer cannot
+//     deadlock the reader. Dropped events are counted via a debug log line.
+//   - On IsTerminal == true: extract the TerminalReport via the adapter and
+//     remember the most recent one. Continue reading until EOF — the
+//     terminal event SHOULD be the last line in a well-formed stream, but
+//     the Monitor is defensive against trailing noise (multiple terminal
+//     events, post-result heartbeats) and returns the LAST seen report.
+//   - On ctx.Done(): return (zero TerminalReport, ctx.Err()).
+//   - On EOF: return (last seen TerminalReport, nil). When no terminal
+//     event was seen, the returned TerminalReport is the zero value and the
+//     error is nil — the caller distinguishes "spawn ended without a
+//     terminal report" from "spawn was cut off by ctx" via the error.
+
+// MonitorLogger is the narrow logging seam the stream-JSON Monitor uses to
+// surface malformed-line warnings and slow-sink drops. Production callers
+// inject a charmbracelet/log adapter at the dispatcher boundary; the Monitor
+// itself depends only on the Printf-shaped interface so the dispatcher's
+// logger choice stays at the call site, not in this file.
+//
+// A nil MonitorLogger is treated as "discard" — see Monitor.log for the
+// guard. Tests pass a slice-capturing logger so log-line assertions stay
+// deterministic.
+type MonitorLogger interface {
+	Printf(format string, args ...any)
+}
+
+// Monitor reads a spawn's stream.jsonl and dispatches every parsed event
+// through the supplied CLIAdapter, forwarding canonical StreamEvent values to
+// an optional sink channel and remembering the last seen terminal report for
+// the Run return value. The Monitor is single-shot — call Run exactly once
+// per Monitor; subsequent Run calls on a Monitor whose reader has already hit
+// EOF return the zero TerminalReport + nil immediately.
+//
+// CLI-agnostic by construction: every event-family decision goes through the
+// adapter. The Monitor source contains no CLI-specific event-type literals.
+type Monitor struct {
+	adapter CLIAdapter
+	reader  io.Reader
+	sink    chan<- StreamEvent
+	logger  MonitorLogger
+}
+
+// NewMonitor constructs a Monitor bound to adapter + reader. sink is optional
+// — pass nil to suppress event forwarding (the Run terminal-report return
+// value still works). logger is optional — pass nil to discard the warning
+// stream.
+//
+// adapter and reader MUST be non-nil; Run returns ErrInvalidMonitorConfig
+// when either is nil so misuse fails loudly.
+func NewMonitor(adapter CLIAdapter, reader io.Reader, sink chan<- StreamEvent, logger MonitorLogger) *Monitor {
+	return &Monitor{
+		adapter: adapter,
+		reader:  reader,
+		sink:    sink,
+		logger:  logger,
+	}
+}
+
+// ErrInvalidMonitorConfig is returned by Run when the Monitor was constructed
+// with a nil adapter or nil reader. Callers detect via errors.Is.
+var ErrInvalidMonitorConfig = errors.New("dispatcher: invalid stream monitor config")
+
+// monitorScannerMaxBytes caps the bufio.Scanner per-line buffer at 1 MiB.
+// claude's --output-format stream-json can emit single assistant events
+// larger than the default 64 KiB scanner buffer (long thinking blocks, large
+// tool inputs, multi-paragraph text). The 1 MiB ceiling is generous enough
+// for every recorded fixture in repo and small enough that a runaway stream
+// cannot exhaust process memory before the adapter's parser surfaces the
+// problem.
+const monitorScannerMaxBytes = 1 << 20
+
+// Run reads from the configured reader until EOF or context cancellation.
+// Returns the last-seen TerminalReport on clean EOF (zero value if no
+// terminal event was observed) plus a nil error. On context cancellation
+// returns (zero TerminalReport, ctx.Err()). On reader error returns (zero
+// TerminalReport, wrapped error).
+//
+// Concurrency: Run is intended to be called from a single goroutine per
+// Monitor. The optional sink channel is sent to via a non-blocking select
+// (with a debug-log fallback) so a slow consumer does not deadlock the
+// reader.
+func (m *Monitor) Run(ctx context.Context) (TerminalReport, error) {
+	if m == nil {
+		return TerminalReport{}, fmt.Errorf("%w: nil monitor", ErrInvalidMonitorConfig)
+	}
+	if m.adapter == nil {
+		return TerminalReport{}, fmt.Errorf("%w: nil adapter", ErrInvalidMonitorConfig)
+	}
+	if m.reader == nil {
+		return TerminalReport{}, fmt.Errorf("%w: nil reader", ErrInvalidMonitorConfig)
+	}
+
+	scanner := bufio.NewScanner(m.reader)
+	// Replace the default 64 KiB buffer with one capped at 1 MiB so claude's
+	// largest documented event payloads round-trip without truncation.
+	scanner.Buffer(make([]byte, 0, 64*1024), monitorScannerMaxBytes)
+
+	var (
+		lastReport    TerminalReport
+		seenTerminal  bool
+		droppedEvents int
+	)
+
+	for scanner.Scan() {
+		// Honor cancellation between iterations — Scan itself does not
+		// observe the context, but checking before each parse keeps Run
+		// responsive at line granularity.
+		select {
+		case <-ctx.Done():
+			return TerminalReport{}, ctx.Err()
+		default:
+		}
+
+		line := scanner.Bytes()
+		// Skip empty / whitespace-only lines silently — many stream
+		// producers emit a trailing newline after the terminal event and
+		// some CLIs blank-pad between events.
+		if len(strings.TrimSpace(string(line))) == 0 {
+			continue
+		}
+
+		// Copy line so the StreamEvent.Raw retained inside the adapter
+		// detaches from the scanner's reusable buffer. Adapters that
+		// already copy (claude, mock) absorb the extra alloc; adapters
+		// that don't are protected from a buffer-aliasing bug.
+		buf := make([]byte, len(line))
+		copy(buf, line)
+
+		event, parseErr := m.adapter.ParseStreamEvent(buf)
+		if parseErr != nil {
+			m.log("monitor: skip malformed stream line: %v", parseErr)
+			continue
+		}
+
+		// Forward to sink (non-blocking) BEFORE extracting terminal
+		// report — downstream consumers may want to observe terminal
+		// events too (for the TUI's permission-denial handshake the
+		// terminal IS the point).
+		if m.sink != nil {
+			select {
+			case m.sink <- event:
+			default:
+				droppedEvents++
+				m.log("monitor: sink full, dropped event type=%q (total dropped=%d)", event.Type, droppedEvents)
+			}
+		}
+
+		if event.IsTerminal {
+			report, ok := m.adapter.ExtractTerminalReport(event)
+			if ok {
+				lastReport = report
+				seenTerminal = true
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		// Distinguish reader error from clean EOF. ErrInvalidMonitorConfig
+		// is reserved for setup errors; reader errors get a fresh wrap so
+		// callers can errors.Is the underlying io error.
+		return TerminalReport{}, fmt.Errorf("monitor: read stream: %w", err)
+	}
+
+	// Final cancellation check — if ctx was cancelled exactly as the
+	// reader hit EOF, prefer the cancellation signal so the caller sees a
+	// non-nil error.
+	if err := ctx.Err(); err != nil {
+		return TerminalReport{}, err
+	}
+
+	if !seenTerminal {
+		return TerminalReport{}, nil
+	}
+	return lastReport, nil
+}
+
+// log writes a formatted line to the configured logger when one is set.
+// A nil logger silently discards — production callers always inject one,
+// tests inject a capturing fake when log assertions matter.
+func (m *Monitor) log(format string, args ...any) {
+	if m == nil || m.logger == nil {
+		return
+	}
+	m.logger.Printf(format, args...)
 }
