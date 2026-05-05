@@ -1334,3 +1334,88 @@ func TestSnapshotProjectFirstClassFieldsLegacyFormatCompatibility(t *testing.T) 
 		t.Fatalf("hydrated legacy snapshot fields not empty: %+v", hydrated)
 	}
 }
+
+// TestImportSnapshotPublishesActionItemChangedPerProject asserts
+// Service.ImportSnapshot emits exactly ONE LiveWaitEventActionItemChanged
+// event per distinct project_id touched by the import — not per imported
+// action item. Droplet 4b.8 / Drop 4a refinement R2 closure.
+//
+// ImportSnapshot writes via s.repo.* directly, bypassing the publishing
+// CreateActionItem / UpdateActionItem paths, so it would otherwise leave
+// the dispatcher subscriber unaware that imported items exist. The fix is
+// a single bulk publish per project at end of successful import; the
+// dispatcher subscriber re-walks the tree on any wakeup so a single signal
+// per project is sufficient and avoids N-amplification.
+//
+// Test fixture imports two projects (p1, p2), each with two action items
+// (so per-item amplification would produce 4 events). After import, each
+// project's broker.Latest carries exactly one stamped sequence, and a
+// fresh Wait observes the cursor advance for both projects.
+func TestImportSnapshotPublishesActionItemChangedPerProject(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)
+	broker := NewInProcessLiveWaitBroker()
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{LiveWaitBroker: broker})
+
+	snap := Snapshot{
+		Version: SnapshotVersion,
+		Projects: []SnapshotProject{
+			{ID: "p1", Name: "Project One", Slug: "project-one", CreatedAt: now, UpdatedAt: now},
+			{ID: "p2", Name: "Project Two", Slug: "project-two", CreatedAt: now, UpdatedAt: now},
+		},
+		Columns: []SnapshotColumn{
+			{ID: "c1", ProjectID: "p1", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
+			{ID: "c2", ProjectID: "p2", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now},
+		},
+		ActionItems: []SnapshotActionItem{
+			{ID: "t1a", ProjectID: "p1", ColumnID: "c1", Position: 0, Title: "p1 first", Priority: domain.PriorityLow, Kind: domain.KindPlan, CreatedAt: now, UpdatedAt: now},
+			{ID: "t1b", ProjectID: "p1", ColumnID: "c1", Position: 1, Title: "p1 second", Priority: domain.PriorityLow, Kind: domain.KindPlan, CreatedAt: now, UpdatedAt: now},
+			{ID: "t2a", ProjectID: "p2", ColumnID: "c2", Position: 0, Title: "p2 first", Priority: domain.PriorityLow, Kind: domain.KindPlan, CreatedAt: now, UpdatedAt: now},
+			{ID: "t2b", ProjectID: "p2", ColumnID: "c2", Position: 1, Title: "p2 second", Priority: domain.PriorityLow, Kind: domain.KindPlan, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+
+	if err := svc.ImportSnapshot(context.Background(), snap); err != nil {
+		t.Fatalf("ImportSnapshot() error = %v", err)
+	}
+
+	// Each project's Latest stamp must carry exactly one event with
+	// Sequence == 1 (the in-process broker counts per (eventType, key)).
+	// If ImportSnapshot were publishing per-item the sequences would land
+	// at 2 per project, so the equality check is the N-amplification gate.
+	p1Latest, ok, err := broker.Latest(context.Background(), LiveWaitEventActionItemChanged, "p1")
+	if err != nil {
+		t.Fatalf("broker.Latest(p1) error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected one Latest event for project p1; got none")
+	}
+	if p1Latest.Sequence != 1 {
+		t.Fatalf("p1 Latest Sequence = %d, want 1 (per-item amplification regression?)", p1Latest.Sequence)
+	}
+
+	p2Latest, ok, err := broker.Latest(context.Background(), LiveWaitEventActionItemChanged, "p2")
+	if err != nil {
+		t.Fatalf("broker.Latest(p2) error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected one Latest event for project p2; got none")
+	}
+	if p2Latest.Sequence != 1 {
+		t.Fatalf("p2 Latest Sequence = %d, want 1 (per-item amplification regression?)", p2Latest.Sequence)
+	}
+
+	// Sanity: a Wait with afterSequence=0 returns immediately for both
+	// projects (not a timeout). This catches a regression where the bulk
+	// publish stamps Latest but never fans out to the waiter pool.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := broker.Wait(ctx, LiveWaitEventActionItemChanged, "p1", 0); err != nil {
+		t.Fatalf("broker.Wait(p1, 0) error = %v", err)
+	}
+	if _, err := broker.Wait(ctx, LiveWaitEventActionItemChanged, "p2", 0); err != nil {
+		t.Fatalf("broker.Wait(p2, 0) error = %v", err)
+	}
+}

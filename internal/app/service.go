@@ -1160,6 +1160,7 @@ func (s *Service) RestoreActionItem(ctx context.Context, actionItemID string) (d
 	if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "task_restored"); err != nil {
 		return domain.ActionItem{}, err
 	}
+	s.publishActionItemChanged(actionItem.ProjectID)
 	return actionItem, nil
 }
 
@@ -1193,6 +1194,7 @@ func (s *Service) RenameActionItem(ctx context.Context, actionItemID, title stri
 	}, false, "task_renamed"); err != nil && !errors.Is(err, ErrNotFound) {
 		return domain.ActionItem{}, err
 	}
+	s.publishActionItemChanged(actionItem.ProjectID)
 	return actionItem, nil
 }
 
@@ -1406,7 +1408,11 @@ func (s *Service) DeleteActionItem(ctx context.Context, actionItemID string, mod
 		}
 		actionItem.Archive(s.clock())
 		applyMutationActorToActionItem(ctx, &actionItem)
-		return s.repo.UpdateActionItem(ctx, actionItem)
+		if err := s.repo.UpdateActionItem(ctx, actionItem); err != nil {
+			return err
+		}
+		s.publishActionItemChanged(actionItem.ProjectID)
+		return nil
 	case DeleteModeHard:
 		actionItem, err := s.repo.GetActionItem(ctx, actionItemID)
 		if err != nil {
@@ -1452,6 +1458,7 @@ func (s *Service) DeleteActionItem(ctx context.Context, actionItemID string, mod
 				}
 			}
 		}
+		s.publishActionItemChanged(actionItem.ProjectID)
 		return nil
 	default:
 		return ErrInvalidDeleteMode
@@ -1729,6 +1736,7 @@ func (s *Service) ReparentActionItem(ctx context.Context, actionItemID, parentID
 	if err := s.repo.UpdateActionItem(ctx, actionItem); err != nil {
 		return domain.ActionItem{}, err
 	}
+	s.publishActionItemChanged(actionItem.ProjectID)
 	return actionItem, nil
 }
 
