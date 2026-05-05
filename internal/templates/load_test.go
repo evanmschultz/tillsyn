@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
@@ -647,6 +648,182 @@ schema_version = "v1"
 [agent_bindings.build]
 agent_name = "go-builder-agent"
 model = "opus"
+bogus_field = true
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownTemplateKey; got nil")
+	}
+	if !errors.Is(err, ErrUnknownTemplateKey) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownTemplateKey) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "bogus_field") {
+		t.Fatalf("Load: err = %q; want offending field %q in message", err.Error(), "bogus_field")
+	}
+}
+
+// TestLoadTillsynHappyPath verifies a Template TOML stream declaring the new
+// Drop 4c F.7.18.2 [tillsyn] table with both fields populated decodes cleanly:
+// MaxContextBundleChars and MaxAggregatorDuration land on tpl.Tillsyn with
+// their declared values and validateTillsyn does not fire.
+func TestLoadTillsynHappyPath(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+max_context_bundle_chars = 200000
+max_aggregator_duration = "2s"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if got, want := tpl.Tillsyn.MaxContextBundleChars, 200000; got != want {
+		t.Fatalf("tpl.Tillsyn.MaxContextBundleChars = %d; want %d", got, want)
+	}
+	if got, want := time.Duration(tpl.Tillsyn.MaxAggregatorDuration), 2*time.Second; got != want {
+		t.Fatalf("tpl.Tillsyn.MaxAggregatorDuration = %s; want %s", got, want)
+	}
+}
+
+// TestLoadTillsynEmptyTableDecodes verifies a [tillsyn] table present in TOML
+// but with all fields omitted loads cleanly with the zero-value Tillsyn
+// struct. This pins the empty-table contract — the table itself is OK; only
+// the field-level negative checks fire.
+func TestLoadTillsynEmptyTableDecodes(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if tpl.Tillsyn.MaxContextBundleChars != 0 {
+		t.Fatalf("tpl.Tillsyn.MaxContextBundleChars = %d; want 0 (omitted-field zero value)",
+			tpl.Tillsyn.MaxContextBundleChars)
+	}
+	if time.Duration(tpl.Tillsyn.MaxAggregatorDuration) != 0 {
+		t.Fatalf("tpl.Tillsyn.MaxAggregatorDuration = %s; want 0 (omitted-field zero value)",
+			time.Duration(tpl.Tillsyn.MaxAggregatorDuration))
+	}
+}
+
+// TestLoadTillsynOmittedTableZeroValue verifies a Template TOML stream WITHOUT
+// any [tillsyn] table loads cleanly with the zero-value Tillsyn struct. The
+// engine-time default-substitution layer (F.7.18.4) reads the zero value and
+// substitutes its own bundle-global default, so omission is the canonical
+// "use defaults" sentinel at the schema layer.
+func TestLoadTillsynOmittedTableZeroValue(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if tpl.Tillsyn.MaxContextBundleChars != 0 {
+		t.Fatalf("tpl.Tillsyn.MaxContextBundleChars = %d; want 0 (absent-table zero value)",
+			tpl.Tillsyn.MaxContextBundleChars)
+	}
+	if time.Duration(tpl.Tillsyn.MaxAggregatorDuration) != 0 {
+		t.Fatalf("tpl.Tillsyn.MaxAggregatorDuration = %s; want 0 (absent-table zero value)",
+			time.Duration(tpl.Tillsyn.MaxAggregatorDuration))
+	}
+}
+
+// TestLoadTillsynZeroValuesAllowed verifies that explicitly setting both
+// fields to zero in TOML loads cleanly — zero is the engine-time-default
+// sentinel per master PLAN L14/L15, not a rejected value. This pins the
+// "zero is legal" contract against accidental drift to a `> 0` validator.
+func TestLoadTillsynZeroValuesAllowed(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+max_context_bundle_chars = 0
+max_aggregator_duration = "0s"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: explicit zero values must load cleanly; err = %v", err)
+	}
+	if tpl.Tillsyn.MaxContextBundleChars != 0 {
+		t.Fatalf("tpl.Tillsyn.MaxContextBundleChars = %d; want 0", tpl.Tillsyn.MaxContextBundleChars)
+	}
+	if time.Duration(tpl.Tillsyn.MaxAggregatorDuration) != 0 {
+		t.Fatalf("tpl.Tillsyn.MaxAggregatorDuration = %s; want 0",
+			time.Duration(tpl.Tillsyn.MaxAggregatorDuration))
+	}
+}
+
+// TestLoadTillsynRejectsNegativeMaxContextBundleChars verifies validateTillsyn
+// rejects a negative MaxContextBundleChars value with ErrInvalidTillsynGlobals.
+// The error message names the offending value verbatim for UX.
+func TestLoadTillsynRejectsNegativeMaxContextBundleChars(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+max_context_bundle_chars = -1
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrInvalidTillsynGlobals; got nil")
+	}
+	if !errors.Is(err, ErrInvalidTillsynGlobals) {
+		t.Fatalf("Load: errors.Is(_, ErrInvalidTillsynGlobals) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "max_context_bundle_chars") {
+		t.Fatalf("Load: err = %q; want substring %q", err.Error(), "max_context_bundle_chars")
+	}
+	if !strings.Contains(err.Error(), "-1") {
+		t.Fatalf("Load: err = %q; want offending value %q in message", err.Error(), "-1")
+	}
+}
+
+// TestLoadTillsynRejectsNegativeMaxAggregatorDuration verifies validateTillsyn
+// rejects a negative MaxAggregatorDuration value with ErrInvalidTillsynGlobals.
+// The error message names the offending duration string verbatim for UX.
+func TestLoadTillsynRejectsNegativeMaxAggregatorDuration(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+max_aggregator_duration = "-1s"
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrInvalidTillsynGlobals; got nil")
+	}
+	if !errors.Is(err, ErrInvalidTillsynGlobals) {
+		t.Fatalf("Load: errors.Is(_, ErrInvalidTillsynGlobals) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "max_aggregator_duration") {
+		t.Fatalf("Load: err = %q; want substring %q", err.Error(), "max_aggregator_duration")
+	}
+	if !strings.Contains(err.Error(), "-1s") {
+		t.Fatalf("Load: err = %q; want offending value %q in message", err.Error(), "-1s")
+	}
+}
+
+// TestLoadTillsynStrictDecodeUnknownFieldRejected is the REV-3 contract test:
+// a [tillsyn] table with an unknown key MUST fail load with
+// ErrUnknownTemplateKey. This proves the closed-struct unknown-key rejection
+// from load.go step 3 (DisallowUnknownFields) actually fires for the new
+// top-level table, so the F.7-CORE F.7.1 + F.7.6 extenders inherit the
+// rejection automatically per pelletier/go-toml v2 semantics.
+func TestLoadTillsynStrictDecodeUnknownFieldRejected(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[tillsyn]
+max_context_bundle_chars = 200000
 bogus_field = true
 `
 	_, err := Load(strings.NewReader(src))
