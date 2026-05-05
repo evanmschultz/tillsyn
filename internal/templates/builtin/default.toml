@@ -387,6 +387,22 @@ commit_agent = "commit-message-agent"
 blocked_retries = 0
 blocked_retry_cooldown = "30s"
 
+# Default-template context seed for the plan binding (F.7.18.5; SKETCH:195-199).
+# Planners walk UP the parent chain only — `ancestors_by_kind = ["plan"]` lets
+# a sub-plan see its enclosing plan parent. NO `descendants_by_kind` in the
+# default seed — fix-planners + tree-pruners are an adopter opt-in (the
+# schema per F.7.18.1 accepts the field; the default just doesn't seed it).
+#
+# FLEXIBLE-not-REQUIRED framing per master PLAN.md L13: adopters who fork
+# this template MAY remove this `[context]` block for fully-agentic plan
+# spawns. Both modes are first-class.
+[agent_bindings.plan.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
 [agent_bindings.research]
 agent_name = "go-research-agent"
 model = "opus"
@@ -413,6 +429,28 @@ commit_agent = "commit-message-agent"
 blocked_retries = 0
 blocked_retry_cooldown = "30s"
 
+# Default-template context seed for the build binding (F.7.18.5; SKETCH:195-199).
+# Builder lens — `parent_git_diff = true` reduces redundant tool calls during
+# implementation by pre-staging the diff between the parent's start_commit and
+# end_commit (Drop 4a Wave 1 first-class fields on domain.ActionItem).
+#
+# Per F.7.18 REV-4: ONLY the build binding gets `parent_git_diff = true` in
+# the default seed. The QA bindings (build-qa-proof, build-qa-falsification)
+# DO NOT pre-stage the diff — independent verification is load-bearing for
+# cascade-on-itself trustworthiness; pre-staging would bias QA toward the
+# builder's framing.
+#
+# FLEXIBLE-not-REQUIRED framing per master PLAN.md L13: adopters who fork
+# this template MAY remove this `[context]` block for fully-agentic build
+# spawns. Both modes are first-class.
+[agent_bindings.build.context]
+parent = true
+parent_git_diff = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
 [agent_bindings.plan-qa-proof]
 agent_name = "go-qa-proof-agent"
 model = "opus"
@@ -425,6 +463,20 @@ auto_push = false
 commit_agent = "commit-message-agent"
 blocked_retries = 0
 blocked_retry_cooldown = "30s"
+
+# Default-template context seed for the plan-qa-proof binding
+# (F.7.18.5; SKETCH:195-199). Plan-QA reviews planning artifacts; no diff
+# needed — there is no `parent_git_diff` rule for plan-QA bindings.
+#
+# FLEXIBLE-not-REQUIRED framing per master PLAN.md L13: adopters who fork
+# this template MAY remove this `[context]` block for fully-agentic plan-QA
+# spawns. Both modes are first-class.
+[agent_bindings.plan-qa-proof.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
 
 [agent_bindings.plan-qa-falsification]
 agent_name = "go-qa-falsification-agent"
@@ -439,6 +491,20 @@ commit_agent = "commit-message-agent"
 blocked_retries = 0
 blocked_retry_cooldown = "30s"
 
+# Default-template context seed for the plan-qa-falsification binding
+# (F.7.18.5; SKETCH:195-199). Identical shape to plan-qa-proof — both
+# review planning artifacts; neither needs a git diff.
+#
+# FLEXIBLE-not-REQUIRED framing per master PLAN.md L13: adopters who fork
+# this template MAY remove this `[context]` block for fully-agentic plan-QA
+# spawns. Both modes are first-class.
+[agent_bindings.plan-qa-falsification.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
 [agent_bindings.build-qa-proof]
 agent_name = "go-qa-proof-agent"
 model = "opus"
@@ -452,6 +518,27 @@ commit_agent = "commit-message-agent"
 blocked_retries = 0
 blocked_retry_cooldown = "30s"
 
+# Default-template context seed for the build-qa-proof binding
+# (F.7.18.5; SKETCH:195-199).
+#
+# REV-4 (F.7.18 REVISIONS POST-AUTHORING): NO `parent_git_diff` rule.
+# QA verifies independently by running `git diff` itself via Bash + Read
+# tools. Pre-staging the diff would bias QA toward the builder's framing —
+# independent verification is load-bearing for cascade-on-itself
+# trustworthiness. The companion test in embed_test.go asserts
+# `tpl.AgentBindings[domain.KindBuildQAProof].Context.ParentGitDiff == false`
+# to catch regressions where someone re-adds the field.
+#
+# FLEXIBLE-not-REQUIRED framing per master PLAN.md L13: adopters who fork
+# this template MAY remove this `[context]` block for fully-agentic
+# build-QA spawns. Both modes are first-class.
+[agent_bindings.build-qa-proof.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
 [agent_bindings.build-qa-falsification]
 agent_name = "go-qa-falsification-agent"
 model = "opus"
@@ -464,6 +551,25 @@ auto_push = false
 commit_agent = "commit-message-agent"
 blocked_retries = 0
 blocked_retry_cooldown = "30s"
+
+# Default-template context seed for the build-qa-falsification binding
+# (F.7.18.5; SKETCH:195-199). Identical shape to build-qa-proof per REV-4.
+#
+# REV-4 (F.7.18 REVISIONS POST-AUTHORING): NO `parent_git_diff` rule —
+# same independence rule as build-qa-proof. The companion test in
+# embed_test.go asserts
+# `tpl.AgentBindings[domain.KindBuildQAFalsification].Context.ParentGitDiff
+# == false` to catch regressions where someone re-adds the field.
+#
+# FLEXIBLE-not-REQUIRED framing per master PLAN.md L13: adopters who fork
+# this template MAY remove this `[context]` block for fully-agentic
+# build-QA spawns. Both modes are first-class.
+[agent_bindings.build-qa-falsification.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
 
 [agent_bindings.closeout]
 # Orchestrator-managed today (CLAUDE.md "Agent Bindings" table). Binding
