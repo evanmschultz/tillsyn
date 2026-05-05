@@ -632,6 +632,29 @@ func (t *ActionItem) Restore(now time.Time) {
 	t.UpdatedAt = now.UTC()
 }
 
+// AppendSpawnHistory appends a single dispatcher-spawn lifecycle entry to
+// the action item's audit trail in memory. Callers persist the mutation by
+// passing the action item through the existing UpdateActionItem path —
+// atomicity is inherited from the action-item-scoped lock (Drop 4a Wave 2
+// lock manager). UpdatedAt is bumped to `now` so concurrent readers can
+// detect the change.
+//
+// The entry's string + time fields are canonicalized (trimmed / UTC-ified)
+// before append so callers do not need to pre-normalize. Order is
+// preserved across appends — the slice reads chronologically. The audit
+// trail is never deduped; see SpawnHistory's doc-comment for the
+// audit-only role and the round-history-deferred decision (Drop 4c F.7.18
+// REV-9) that motivates the no-dedupe rule.
+func (t *ActionItem) AppendSpawnHistory(entry SpawnHistoryEntry, now time.Time) {
+	entry.SpawnID = strings.TrimSpace(entry.SpawnID)
+	entry.BundlePath = strings.TrimSpace(entry.BundlePath)
+	entry.Outcome = strings.TrimSpace(entry.Outcome)
+	entry.StartedAt = entry.StartedAt.UTC()
+	entry.TerminatedAt = entry.TerminatedAt.UTC()
+	t.Metadata.SpawnHistory = append(t.Metadata.SpawnHistory, entry)
+	t.UpdatedAt = now.UTC()
+}
+
 // normalizeDueAt normalizes due at.
 func normalizeDueAt(dueAt *time.Time) *time.Time {
 	if dueAt == nil {

@@ -14946,6 +14946,16 @@ func TestActionItemMetadataSchemaCoverageIsExplicit(t *testing.T) {
 		"ContextBlocks":            {},
 		"KindPayload":              {},
 		"Outcome":                  {},
+		// SpawnBundlePath / SpawnHistory / ActualCostUSD are Drop 4c F.7.9
+		// dispatcher-spawn metadata fields — written by the Drop 4c F.7.4
+		// monitor on dispatch + terminal-state transition. The TUI does
+		// NOT render or edit them today; surfacing in the dashboard /
+		// ledger is a Drop 4.5+ refinement. Classified as internal
+		// scaffolding for now so TestActionItemMetadataSchemaCoverageIsExplicit
+		// stays green without forcing premature TUI surface design.
+		"SpawnBundlePath": {},
+		"SpawnHistory":    {},
+		"ActualCostUSD":   {},
 	}
 	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.ActionItemMetadata{}), editable, readOnly, internal)
 }

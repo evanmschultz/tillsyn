@@ -3961,3 +3961,240 @@ func TestRepository_GetProjectBySlug(t *testing.T) {
 		t.Fatal("GetProjectBySlug(globalAuthProjectSlug) expected error, got nil")
 	}
 }
+
+// floatPtr is a test-only convenience for creating *float64 literals used in
+// the Drop 4c F.7.9 spawn-metadata round-trip tests below.
+func floatPtr(v float64) *float64 { return &v }
+
+// TestRepository_PersistsActionItemSpawnMetadata verifies the Drop 4c F.7.9
+// spawn-metadata fields (SpawnBundlePath, SpawnHistory, ActualCostUSD)
+// persist through SQLite via the JSON-encoded ActionItemMetadata blob and
+// read back deep-equal — including the edge cases of (a) zero values
+// (Drop-4a-era items with no spawn metadata round-trip without crashing
+// the JSON decoder), (b) a populated bundle path with empty history (just-
+// dispatched, never reached terminal), and (c) full populated metadata
+// with mixed-cost history entries (cost reported on first spawn, omitted
+// on second). REV-6: JSON-blob persistence — no new SQLite columns.
+func TestRepository_PersistsActionItemSpawnMetadata(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-spawnmeta", Name: "SpawnMetadata"}, now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c-spawnmeta", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	startedAt := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
+	terminatedAt := startedAt.Add(5 * time.Minute)
+
+	cases := []struct {
+		id   string
+		meta domain.ActionItemMetadata
+	}{
+		{
+			id:   "ai-empty-spawnmeta",
+			meta: domain.ActionItemMetadata{},
+		},
+		{
+			id: "ai-bundle-no-history",
+			meta: domain.ActionItemMetadata{
+				SpawnBundlePath: "/tmp/tillsyn/spawn-active/",
+			},
+		},
+		{
+			id: "ai-full-spawnmeta",
+			meta: domain.ActionItemMetadata{
+				SpawnBundlePath: "/tmp/tillsyn/spawn-current/",
+				SpawnHistory: []domain.SpawnHistoryEntry{
+					{
+						SpawnID:      "spawn-1",
+						BundlePath:   "/tmp/tillsyn/spawn-1/",
+						StartedAt:    startedAt,
+						TerminatedAt: terminatedAt,
+						Outcome:      "success",
+						TotalCostUSD: floatPtr(0.42),
+					},
+					{
+						SpawnID:      "spawn-2",
+						BundlePath:   "/tmp/tillsyn/spawn-2/",
+						StartedAt:    startedAt.Add(time.Hour),
+						TerminatedAt: terminatedAt.Add(time.Hour),
+						Outcome:      "failure",
+						TotalCostUSD: nil, // Edge: cost not reported.
+					},
+				},
+				ActualCostUSD: floatPtr(0.42),
+			},
+		},
+	}
+
+	for i, tc := range cases {
+		item, err := domain.NewActionItem(domain.ActionItemInput{
+			ID:             tc.id,
+			ProjectID:      project.ID,
+			ColumnID:       column.ID,
+			Kind:           domain.KindBuild,
+			StructuralType: domain.StructuralTypeDroplet,
+			Position:       i,
+			Title:          "spawn metadata " + tc.id,
+			Priority:       domain.PriorityMedium,
+			Metadata:       tc.meta,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewActionItem(%s) error = %v", tc.id, err)
+		}
+		if err := repo.CreateActionItem(ctx, item); err != nil {
+			t.Fatalf("CreateActionItem(%s) error = %v", tc.id, err)
+		}
+
+		loaded, err := repo.GetActionItem(ctx, tc.id)
+		if err != nil {
+			t.Fatalf("GetActionItem(%s) error = %v", tc.id, err)
+		}
+		assertSpawnMetadataEqual(t, tc.id, tc.meta, loaded.Metadata)
+	}
+
+	// Re-load via ListActionItems to exercise the second SELECT path.
+	listed, err := repo.ListActionItems(ctx, project.ID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	byID := map[string]domain.ActionItem{}
+	for _, item := range listed {
+		byID[item.ID] = item
+	}
+	for _, tc := range cases {
+		got, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("ListActionItems() missing %q", tc.id)
+		}
+		assertSpawnMetadataEqual(t, tc.id+" (list)", tc.meta, got.Metadata)
+	}
+
+	// Mutate the full-spawnmeta item: append a third history entry via
+	// AppendSpawnHistory + persist via UpdateActionItem. Verifies the
+	// full Drop 4c F.7.9 retry-on-failure flow round-trips through the
+	// SQLite UPDATE path.
+	target, err := repo.GetActionItem(ctx, "ai-full-spawnmeta")
+	if err != nil {
+		t.Fatalf("GetActionItem(ai-full-spawnmeta for update) error = %v", err)
+	}
+	tUpdate := now.Add(2 * time.Hour)
+	target.AppendSpawnHistory(domain.SpawnHistoryEntry{
+		SpawnID:      "spawn-3",
+		BundlePath:   "/tmp/tillsyn/spawn-3/",
+		StartedAt:    startedAt.Add(2 * time.Hour),
+		TerminatedAt: terminatedAt.Add(2 * time.Hour),
+		Outcome:      "success",
+		TotalCostUSD: floatPtr(1.25),
+	}, tUpdate)
+	target.Metadata.ActualCostUSD = floatPtr(1.25)
+	target.Metadata.SpawnBundlePath = "/tmp/tillsyn/spawn-3/"
+	if err := repo.UpdateActionItem(ctx, target); err != nil {
+		t.Fatalf("UpdateActionItem(append history) error = %v", err)
+	}
+
+	updated, err := repo.GetActionItem(ctx, "ai-full-spawnmeta")
+	if err != nil {
+		t.Fatalf("GetActionItem(after append) error = %v", err)
+	}
+	if len(updated.Metadata.SpawnHistory) != 3 {
+		t.Fatalf("after append+update: history length = %d, want 3", len(updated.Metadata.SpawnHistory))
+	}
+	if updated.Metadata.SpawnHistory[2].SpawnID != "spawn-3" {
+		t.Fatalf("after append+update: history[2].SpawnID = %q, want spawn-3 (preserved order)", updated.Metadata.SpawnHistory[2].SpawnID)
+	}
+	if updated.Metadata.SpawnBundlePath != "/tmp/tillsyn/spawn-3/" {
+		t.Fatalf("after append+update: SpawnBundlePath = %q, want updated", updated.Metadata.SpawnBundlePath)
+	}
+	if updated.Metadata.ActualCostUSD == nil || *updated.Metadata.ActualCostUSD != 1.25 {
+		t.Fatalf("after append+update: ActualCostUSD = %v, want 1.25", updated.Metadata.ActualCostUSD)
+	}
+
+	// Clear path: reset SpawnBundlePath + ActualCostUSD to zero values
+	// (terminal-state cleanup) and confirm the JSON blob round-trips
+	// without leaking the previous values.
+	cleared, err := repo.GetActionItem(ctx, "ai-full-spawnmeta")
+	if err != nil {
+		t.Fatalf("GetActionItem(for clear) error = %v", err)
+	}
+	cleared.Metadata.SpawnBundlePath = ""
+	cleared.Metadata.ActualCostUSD = nil
+	cleared.UpdatedAt = tUpdate.Add(time.Hour)
+	if err := repo.UpdateActionItem(ctx, cleared); err != nil {
+		t.Fatalf("UpdateActionItem(clear) error = %v", err)
+	}
+	clearedReloaded, err := repo.GetActionItem(ctx, "ai-full-spawnmeta")
+	if err != nil {
+		t.Fatalf("GetActionItem(after clear) error = %v", err)
+	}
+	if clearedReloaded.Metadata.SpawnBundlePath != "" {
+		t.Fatalf("after clear: SpawnBundlePath = %q, want empty", clearedReloaded.Metadata.SpawnBundlePath)
+	}
+	if clearedReloaded.Metadata.ActualCostUSD != nil {
+		t.Fatalf("after clear: ActualCostUSD = %v, want nil", *clearedReloaded.Metadata.ActualCostUSD)
+	}
+	// Spawn history must survive the clear — it is append-only audit data.
+	if len(clearedReloaded.Metadata.SpawnHistory) != 3 {
+		t.Fatalf("after clear: history length = %d, want 3 (audit-only, never cleared)", len(clearedReloaded.Metadata.SpawnHistory))
+	}
+}
+
+// assertSpawnMetadataEqual is a focused deep-equality helper for the Drop 4c
+// F.7.9 spawn-metadata fields. Avoids reflect.DeepEqual on the full
+// ActionItemMetadata struct so the failure messages name the specific
+// field that diverged.
+func assertSpawnMetadataEqual(t *testing.T, label string, want, got domain.ActionItemMetadata) {
+	t.Helper()
+	if got.SpawnBundlePath != want.SpawnBundlePath {
+		t.Fatalf("%s: SpawnBundlePath = %q, want %q", label, got.SpawnBundlePath, want.SpawnBundlePath)
+	}
+	switch {
+	case want.ActualCostUSD == nil && got.ActualCostUSD != nil:
+		t.Fatalf("%s: ActualCostUSD = %v, want nil", label, *got.ActualCostUSD)
+	case want.ActualCostUSD != nil && got.ActualCostUSD == nil:
+		t.Fatalf("%s: ActualCostUSD = nil, want %v", label, *want.ActualCostUSD)
+	case want.ActualCostUSD != nil && *got.ActualCostUSD != *want.ActualCostUSD:
+		t.Fatalf("%s: ActualCostUSD = %v, want %v", label, *got.ActualCostUSD, *want.ActualCostUSD)
+	}
+	if len(got.SpawnHistory) != len(want.SpawnHistory) {
+		t.Fatalf("%s: SpawnHistory length = %d, want %d", label, len(got.SpawnHistory), len(want.SpawnHistory))
+	}
+	for i := range want.SpawnHistory {
+		w, g := want.SpawnHistory[i], got.SpawnHistory[i]
+		if g.SpawnID != w.SpawnID {
+			t.Fatalf("%s: history[%d].SpawnID = %q, want %q", label, i, g.SpawnID, w.SpawnID)
+		}
+		if g.BundlePath != w.BundlePath {
+			t.Fatalf("%s: history[%d].BundlePath = %q, want %q", label, i, g.BundlePath, w.BundlePath)
+		}
+		if !g.StartedAt.Equal(w.StartedAt) {
+			t.Fatalf("%s: history[%d].StartedAt = %v, want %v", label, i, g.StartedAt, w.StartedAt)
+		}
+		if !g.TerminatedAt.Equal(w.TerminatedAt) {
+			t.Fatalf("%s: history[%d].TerminatedAt = %v, want %v", label, i, g.TerminatedAt, w.TerminatedAt)
+		}
+		if g.Outcome != w.Outcome {
+			t.Fatalf("%s: history[%d].Outcome = %q, want %q", label, i, g.Outcome, w.Outcome)
+		}
+		switch {
+		case w.TotalCostUSD == nil && g.TotalCostUSD != nil:
+			t.Fatalf("%s: history[%d].TotalCostUSD = %v, want nil", label, i, *g.TotalCostUSD)
+		case w.TotalCostUSD != nil && g.TotalCostUSD == nil:
+			t.Fatalf("%s: history[%d].TotalCostUSD = nil, want %v", label, i, *w.TotalCostUSD)
+		case w.TotalCostUSD != nil && *g.TotalCostUSD != *w.TotalCostUSD:
+			t.Fatalf("%s: history[%d].TotalCostUSD = %v, want %v", label, i, *g.TotalCostUSD, *w.TotalCostUSD)
+		}
+	}
+}

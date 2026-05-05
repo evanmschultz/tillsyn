@@ -1705,3 +1705,327 @@ func TestNewActionItemEndCommitTrim(t *testing.T) {
 		})
 	}
 }
+
+// floatPtr returns a pointer to the supplied float64. Convenience helper for
+// the Drop 4c F.7.9 spawn-metadata tests below — Go's no-pointer-literal
+// rule for basic types means every case statement would otherwise need a
+// named local. Test-only.
+func floatPtr(v float64) *float64 { return &v }
+
+// TestActionItemMetadataSpawnFieldsZeroValueRoundTrips verifies the Drop 4c
+// F.7.9 spawn-metadata fields (SpawnBundlePath, SpawnHistory, ActualCostUSD)
+// round-trip through JSON marshal/unmarshal at their zero values without
+// surfacing in the encoded form. The omitempty tags must hide them from
+// pre-Drop-4c readers — backward-compat with action items that never reach
+// the Drop 4c F.7.4 monitor (i.e. action items that pre-date the field
+// addition or were never dispatched).
+func TestActionItemMetadataSpawnFieldsZeroValueRoundTrips(t *testing.T) {
+	zero := ActionItemMetadata{}
+	encoded, err := json.Marshal(zero)
+	if err != nil {
+		t.Fatalf("json.Marshal(zero metadata) error = %v", err)
+	}
+	encodedStr := string(encoded)
+	for _, key := range []string{"spawn_bundle_path", "spawn_history", "actual_cost_usd"} {
+		if strings.Contains(encodedStr, key) {
+			t.Fatalf("encoded zero metadata contains %q (omitempty broken): %s", key, encodedStr)
+		}
+	}
+
+	var decoded ActionItemMetadata
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(zero metadata) error = %v", err)
+	}
+	if decoded.SpawnBundlePath != "" {
+		t.Fatalf("SpawnBundlePath after zero round-trip = %q, want empty", decoded.SpawnBundlePath)
+	}
+	if decoded.SpawnHistory != nil {
+		t.Fatalf("SpawnHistory after zero round-trip = %#v, want nil", decoded.SpawnHistory)
+	}
+	if decoded.ActualCostUSD != nil {
+		t.Fatalf("ActualCostUSD after zero round-trip = %v, want nil", *decoded.ActualCostUSD)
+	}
+}
+
+// TestActionItemMetadataSpawnFieldsPopulatedRoundTrip verifies populated
+// spawn-metadata fields survive a JSON round-trip with deep equality —
+// including the mixed nil-vs-non-nil TotalCostUSD case (Drop 4c F.7.9 edge
+// case: terminal event with `Cost = nil` round-trips as nil rather than
+// `*float64`-of-0).
+func TestActionItemMetadataSpawnFieldsPopulatedRoundTrip(t *testing.T) {
+	started := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
+	terminated := started.Add(5 * time.Minute)
+	original := ActionItemMetadata{
+		SpawnBundlePath: "/var/folders/tillsyn/spawn-abc/",
+		SpawnHistory: []SpawnHistoryEntry{
+			{
+				SpawnID:      "spawn-1",
+				BundlePath:   "/var/folders/tillsyn/spawn-1/",
+				StartedAt:    started,
+				TerminatedAt: terminated,
+				Outcome:      "success",
+				TotalCostUSD: floatPtr(0.42),
+			},
+			{
+				SpawnID:      "spawn-2",
+				BundlePath:   "/var/folders/tillsyn/spawn-2/",
+				StartedAt:    started.Add(time.Hour),
+				TerminatedAt: terminated.Add(time.Hour),
+				Outcome:      "failure",
+				TotalCostUSD: nil, // Edge case: cost not reported.
+			},
+		},
+		ActualCostUSD: floatPtr(0.42),
+	}
+
+	encoded, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var decoded ActionItemMetadata
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if decoded.SpawnBundlePath != original.SpawnBundlePath {
+		t.Fatalf("SpawnBundlePath = %q, want %q", decoded.SpawnBundlePath, original.SpawnBundlePath)
+	}
+	if len(decoded.SpawnHistory) != 2 {
+		t.Fatalf("SpawnHistory length = %d, want 2", len(decoded.SpawnHistory))
+	}
+	for i, want := range original.SpawnHistory {
+		got := decoded.SpawnHistory[i]
+		if got.SpawnID != want.SpawnID {
+			t.Fatalf("history[%d].SpawnID = %q, want %q", i, got.SpawnID, want.SpawnID)
+		}
+		if got.BundlePath != want.BundlePath {
+			t.Fatalf("history[%d].BundlePath = %q, want %q", i, got.BundlePath, want.BundlePath)
+		}
+		if !got.StartedAt.Equal(want.StartedAt) {
+			t.Fatalf("history[%d].StartedAt = %v, want %v", i, got.StartedAt, want.StartedAt)
+		}
+		if !got.TerminatedAt.Equal(want.TerminatedAt) {
+			t.Fatalf("history[%d].TerminatedAt = %v, want %v", i, got.TerminatedAt, want.TerminatedAt)
+		}
+		if got.Outcome != want.Outcome {
+			t.Fatalf("history[%d].Outcome = %q, want %q", i, got.Outcome, want.Outcome)
+		}
+		switch {
+		case want.TotalCostUSD == nil && got.TotalCostUSD != nil:
+			t.Fatalf("history[%d].TotalCostUSD = %v, want nil", i, *got.TotalCostUSD)
+		case want.TotalCostUSD != nil && got.TotalCostUSD == nil:
+			t.Fatalf("history[%d].TotalCostUSD = nil, want %v", i, *want.TotalCostUSD)
+		case want.TotalCostUSD != nil && *got.TotalCostUSD != *want.TotalCostUSD:
+			t.Fatalf("history[%d].TotalCostUSD = %v, want %v", i, *got.TotalCostUSD, *want.TotalCostUSD)
+		}
+	}
+	if decoded.ActualCostUSD == nil {
+		t.Fatalf("ActualCostUSD = nil, want %v", *original.ActualCostUSD)
+	}
+	if *decoded.ActualCostUSD != *original.ActualCostUSD {
+		t.Fatalf("ActualCostUSD = %v, want %v", *decoded.ActualCostUSD, *original.ActualCostUSD)
+	}
+}
+
+// TestNormalizeActionItemMetadataTrimsSpawnFields verifies the normalizer
+// strips surrounding whitespace from SpawnBundlePath and from each spawn
+// history entry's free-form string fields, plus canonicalizes per-entry
+// time fields to UTC. Empty SpawnHistory normalizes to nil so the
+// omitempty tag round-trips a never-dispatched item as a missing key.
+func TestNormalizeActionItemMetadataTrimsSpawnFields(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	startedLA := time.Date(2026, 5, 1, 10, 0, 0, 0, loc)
+	terminatedLA := startedLA.Add(time.Minute)
+
+	in := ActionItemMetadata{
+		SpawnBundlePath: "  /tmp/tillsyn/spawn-x/  ",
+		SpawnHistory: []SpawnHistoryEntry{
+			{
+				SpawnID:      "  spawn-pad  ",
+				BundlePath:   "  /tmp/tillsyn/spawn-pad/  ",
+				StartedAt:    startedLA,
+				TerminatedAt: terminatedLA,
+				Outcome:      "  success  ",
+				TotalCostUSD: floatPtr(0.10),
+			},
+		},
+	}
+
+	normalized, err := normalizeActionItemMetadata(in)
+	if err != nil {
+		t.Fatalf("normalizeActionItemMetadata: %v", err)
+	}
+	if normalized.SpawnBundlePath != "/tmp/tillsyn/spawn-x/" {
+		t.Fatalf("SpawnBundlePath = %q, want trimmed", normalized.SpawnBundlePath)
+	}
+	if len(normalized.SpawnHistory) != 1 {
+		t.Fatalf("SpawnHistory length = %d, want 1", len(normalized.SpawnHistory))
+	}
+	got := normalized.SpawnHistory[0]
+	if got.SpawnID != "spawn-pad" {
+		t.Fatalf("history[0].SpawnID = %q, want %q", got.SpawnID, "spawn-pad")
+	}
+	if got.BundlePath != "/tmp/tillsyn/spawn-pad/" {
+		t.Fatalf("history[0].BundlePath = %q, want trimmed", got.BundlePath)
+	}
+	if got.Outcome != "success" {
+		t.Fatalf("history[0].Outcome = %q, want trimmed", got.Outcome)
+	}
+	if got.StartedAt.Location() != time.UTC {
+		t.Fatalf("history[0].StartedAt location = %v, want UTC", got.StartedAt.Location())
+	}
+	if got.TerminatedAt.Location() != time.UTC {
+		t.Fatalf("history[0].TerminatedAt location = %v, want UTC", got.TerminatedAt.Location())
+	}
+	if !got.StartedAt.Equal(startedLA) {
+		t.Fatalf("history[0].StartedAt = %v, want %v (UTC-equivalent of LA-local input)", got.StartedAt, startedLA)
+	}
+
+	// Empty input returns nil (omitempty round-trip safety).
+	normalizedEmpty, err := normalizeActionItemMetadata(ActionItemMetadata{})
+	if err != nil {
+		t.Fatalf("normalizeActionItemMetadata(empty): %v", err)
+	}
+	if normalizedEmpty.SpawnHistory != nil {
+		t.Fatalf("empty SpawnHistory after normalize = %#v, want nil", normalizedEmpty.SpawnHistory)
+	}
+}
+
+// TestActionItemAppendSpawnHistoryAppendsInOrder verifies AppendSpawnHistory
+// appends entries in chronological order across multiple invocations, bumps
+// UpdatedAt on each call, and never dedupes — the audit trail records
+// every dispatch even when (spawn_id, bundle_path) tuples repeat. Acceptance
+// criteria from F.7.9: "starting empty, appending one entry, appending
+// second entry preserves order".
+func TestActionItemAppendSpawnHistoryAppendsInOrder(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	item, err := NewActionItem(ActionItemInput{
+		ID:             "ai-spawn-history",
+		ProjectID:      "p-1",
+		ColumnID:       "c-1",
+		Title:          "Spawn history append test",
+		Kind:           KindBuild,
+		StructuralType: StructuralTypeDroplet,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewActionItem: %v", err)
+	}
+	if item.Metadata.SpawnHistory != nil {
+		t.Fatalf("freshly-constructed action item: SpawnHistory = %#v, want nil", item.Metadata.SpawnHistory)
+	}
+
+	first := SpawnHistoryEntry{
+		SpawnID:      "spawn-1",
+		BundlePath:   "/tmp/tillsyn/spawn-1/",
+		StartedAt:    now,
+		TerminatedAt: now.Add(time.Minute),
+		Outcome:      "success",
+		TotalCostUSD: floatPtr(0.10),
+	}
+	tFirst := now.Add(time.Minute)
+	item.AppendSpawnHistory(first, tFirst)
+	if len(item.Metadata.SpawnHistory) != 1 {
+		t.Fatalf("after first append: history length = %d, want 1", len(item.Metadata.SpawnHistory))
+	}
+	if !item.UpdatedAt.Equal(tFirst) {
+		t.Fatalf("after first append: UpdatedAt = %v, want %v", item.UpdatedAt, tFirst)
+	}
+	if item.Metadata.SpawnHistory[0].SpawnID != "spawn-1" {
+		t.Fatalf("after first append: history[0].SpawnID = %q, want spawn-1", item.Metadata.SpawnHistory[0].SpawnID)
+	}
+
+	// Second append: a retry. Same SpawnID is permitted (no dedupe) — the
+	// audit trail records every dispatch.
+	second := SpawnHistoryEntry{
+		SpawnID:      "spawn-2",
+		BundlePath:   "/tmp/tillsyn/spawn-2/",
+		StartedAt:    now.Add(time.Hour),
+		TerminatedAt: now.Add(time.Hour + time.Minute),
+		Outcome:      "failure",
+		TotalCostUSD: nil, // Edge case: cost not reported.
+	}
+	tSecond := now.Add(2 * time.Hour)
+	item.AppendSpawnHistory(second, tSecond)
+	if len(item.Metadata.SpawnHistory) != 2 {
+		t.Fatalf("after second append: history length = %d, want 2", len(item.Metadata.SpawnHistory))
+	}
+	if !item.UpdatedAt.Equal(tSecond) {
+		t.Fatalf("after second append: UpdatedAt = %v, want %v", item.UpdatedAt, tSecond)
+	}
+	if item.Metadata.SpawnHistory[0].SpawnID != "spawn-1" {
+		t.Fatalf("after second append: history[0].SpawnID = %q, want spawn-1 (preserved order)", item.Metadata.SpawnHistory[0].SpawnID)
+	}
+	if item.Metadata.SpawnHistory[1].SpawnID != "spawn-2" {
+		t.Fatalf("after second append: history[1].SpawnID = %q, want spawn-2", item.Metadata.SpawnHistory[1].SpawnID)
+	}
+	if item.Metadata.SpawnHistory[1].TotalCostUSD != nil {
+		t.Fatalf("after second append: history[1].TotalCostUSD = %v, want nil (edge: cost not reported)", *item.Metadata.SpawnHistory[1].TotalCostUSD)
+	}
+
+	// Third append: duplicate SpawnID. Append never dedupes — the trail
+	// records every dispatch.
+	third := SpawnHistoryEntry{SpawnID: "spawn-1", Outcome: "killed"}
+	item.AppendSpawnHistory(third, tSecond.Add(time.Minute))
+	if len(item.Metadata.SpawnHistory) != 3 {
+		t.Fatalf("after third append (duplicate spawn_id): history length = %d, want 3 (no dedupe)", len(item.Metadata.SpawnHistory))
+	}
+	if item.Metadata.SpawnHistory[2].Outcome != "killed" {
+		t.Fatalf("after third append: history[2].Outcome = %q, want killed", item.Metadata.SpawnHistory[2].Outcome)
+	}
+}
+
+// TestActionItemAppendSpawnHistoryCanonicalizes verifies AppendSpawnHistory
+// trims surrounding whitespace from string fields and converts time fields
+// to UTC defensively, so callers don't need to pre-normalize.
+func TestActionItemAppendSpawnHistoryCanonicalizes(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	startedLA := time.Date(2026, 5, 1, 10, 0, 0, 0, loc)
+	terminatedLA := startedLA.Add(time.Minute)
+
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	item, err := NewActionItem(ActionItemInput{
+		ID:             "ai-canon",
+		ProjectID:      "p-1",
+		ColumnID:       "c-1",
+		Title:          "Canonicalize append",
+		Kind:           KindBuild,
+		StructuralType: StructuralTypeDroplet,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewActionItem: %v", err)
+	}
+
+	item.AppendSpawnHistory(SpawnHistoryEntry{
+		SpawnID:      "  spawn-pad  ",
+		BundlePath:   "  /tmp/tillsyn/spawn-pad/  ",
+		StartedAt:    startedLA,
+		TerminatedAt: terminatedLA,
+		Outcome:      "  success  ",
+	}, now)
+
+	got := item.Metadata.SpawnHistory[0]
+	if got.SpawnID != "spawn-pad" {
+		t.Fatalf("SpawnID = %q, want %q", got.SpawnID, "spawn-pad")
+	}
+	if got.BundlePath != "/tmp/tillsyn/spawn-pad/" {
+		t.Fatalf("BundlePath = %q, want trimmed", got.BundlePath)
+	}
+	if got.Outcome != "success" {
+		t.Fatalf("Outcome = %q, want trimmed", got.Outcome)
+	}
+	if got.StartedAt.Location() != time.UTC {
+		t.Fatalf("StartedAt location = %v, want UTC", got.StartedAt.Location())
+	}
+	if got.TerminatedAt.Location() != time.UTC {
+		t.Fatalf("TerminatedAt location = %v, want UTC", got.TerminatedAt.Location())
+	}
+	if !got.StartedAt.Equal(startedLA) {
+		t.Fatalf("StartedAt = %v, want %v (UTC-equivalent of LA-local input)", got.StartedAt, startedLA)
+	}
+}
