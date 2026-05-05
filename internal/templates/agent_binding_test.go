@@ -8,10 +8,12 @@ import (
 	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
+
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // fullyPopulatedAgentBinding returns a fresh AgentBinding with every one of
-// the 13 fields set to a non-zero, validation-passing value. Used as the
+// the 14 fields set to a non-zero, validation-passing value. Used as the
 // shared baseline for the round-trip test and as the start state for each
 // Validate table-row's targeted mutation.
 //
@@ -19,6 +21,14 @@ import (
 // assertion exercises the new TOML tags symmetrically with the original
 // 11 fields. CLIKind is set to the closed-enum literal "claude" (REV-1
 // closed enum: claude | codex; codex lands in Drop 4d).
+//
+// Drop 4c F.7.18.1 extension: Context is populated with every ContextRules
+// field set so the round-trip exercises the new sub-struct's TOML tags
+// symmetrically. The kind-walk slices (SiblingsByKind / AncestorsByKind /
+// DescendantsByKind) carry at least one valid closed-enum kind so the
+// validator does not surface ErrUnknownKindReference at Load time, and so
+// reflect.DeepEqual does not trip on the nil-vs-empty-slice asymmetry that
+// pelletier/go-toml/v2 introduces for empty arrays.
 func fullyPopulatedAgentBinding() AgentBinding {
 	return AgentBinding{
 		AgentName:            "go-builder-agent",
@@ -34,6 +44,16 @@ func fullyPopulatedAgentBinding() AgentBinding {
 		BlockedRetryCooldown: Duration(30 * time.Second),
 		Env:                  []string{"ANTHROPIC_API_KEY", "https_proxy", "HTTP_PROXY"},
 		CLIKind:              "claude",
+		Context: ContextRules{
+			Parent:            true,
+			ParentGitDiff:     true,
+			SiblingsByKind:    []domain.Kind{domain.KindBuildQAProof, domain.KindBuildQAFalsification},
+			AncestorsByKind:   []domain.Kind{domain.KindPlan},
+			DescendantsByKind: []domain.Kind{domain.KindBuild},
+			Delivery:          ContextDeliveryFile,
+			MaxChars:          50000,
+			MaxRuleDuration:   Duration(500 * time.Millisecond),
+		},
 	}
 }
 

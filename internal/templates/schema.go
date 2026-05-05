@@ -369,7 +369,123 @@ type AgentBinding struct {
 	// REV-1: companion to Env. The wrapper-interop knob (`Command` /
 	// `ArgsPrefix`) is GONE; adapters hardcode their CLI binary internally.
 	CLIKind string `toml:"cli_kind"`
+
+	// Context declares optional pre-staged context the dispatcher's aggregator
+	// renders into the spawn bundle before the CLI fires. Adopters may omit
+	// the [context] table entirely; the spawn then runs in fully agentic mode
+	// (the agent uses MCP for whatever context it needs). Both modes are
+	// equally first-class — neither is the recommended default.
+	//
+	// Per Drop 4c F.7.18 (master PLAN.md L13): the schema is FLEXIBLE not
+	// REQUIRED. Validation in templates.Load enforces field-shape +
+	// closed-enum-membership only; default-substitution for zero-valued
+	// caps + timeouts happens at engine-time in F.7.18.4 (the aggregator's
+	// greedy-fit + two-axis wall-clock wrapper).
+	//
+	// REV-3 (Drop 4c F.7.18 REVISIONS POST-AUTHORING): F.7.18.1 lands ONLY
+	// the Context sub-struct on AgentBinding. The companion top-level
+	// `Tillsyn` struct that supplies bundle-global caps + the aggregator
+	// engine itself land in F.7.18.2 + F.7.18.3 respectively.
+	Context ContextRules `toml:"context"`
 }
+
+// ContextRules is the closed sub-struct on AgentBinding declaring the
+// dispatcher aggregator's per-rule pre-staging directives. Every field is
+// optional; the zero-value struct (no `[context]` table at all) selects
+// fully-agentic mode where the spawned agent receives no pre-staged context
+// and uses MCP for whatever it needs (per master PLAN.md L13 — both modes
+// first-class).
+//
+// Closed-struct unknown-key rejection: every field carries an explicit TOML
+// tag so templates.Load's strict-decode chain (load.go step 3) rejects
+// unknown keys nested under `[agent_bindings.<kind>.context]` as
+// ErrUnknownTemplateKey at load time.
+//
+// Default-substitution semantics: a zero-valued MaxChars or MaxRuleDuration
+// is LEGAL at the schema layer; the aggregator engine substitutes the
+// bundle-global default at runtime (F.7.18.4 territory). Negative values are
+// rejected at load time by validateAgentBindingContext.
+//
+// Per Drop 4c F.7.18 plan acceptance criteria + REV-3.
+type ContextRules struct {
+	// Parent, when true, instructs the aggregator to render the parent
+	// action-item's identity + description into the pre-staged context.
+	// Plan-walks (`AncestorsByKind`/`DescendantsByKind`) start from the
+	// parent the spawned action-item is nested under.
+	Parent bool `toml:"parent"`
+
+	// ParentGitDiff, when true, instructs the aggregator to capture the
+	// `git diff <parent.start_commit>..<parent.end_commit>` payload when the
+	// parent action-item carries non-empty start_commit + end_commit fields
+	// (Drop 4a Wave 1 first-class fields per PLAN.md). When the parent has
+	// no commit anchors the rule renders a marker instead of failing the
+	// spawn — the field's purpose is "if this is observable, give it to me."
+	ParentGitDiff bool `toml:"parent_git_diff"`
+
+	// SiblingsByKind selects sibling action-items (same parent) by kind for
+	// pre-staging. The aggregator emits the LATEST round only — superseded
+	// predecessors are skipped — so the spawn sees the most recent sibling
+	// artifact for each entry in the closed-12-kind enum.
+	SiblingsByKind []domain.Kind `toml:"siblings_by_kind"`
+
+	// AncestorsByKind walks UP the parent chain and captures the FIRST
+	// ancestor whose Kind matches an entry in this slice. The walk respects
+	// declaration order: `["plan", "build"]` returns the nearest plan ancestor
+	// when one exists, falling back to the nearest build ancestor otherwise.
+	AncestorsByKind []domain.Kind `toml:"ancestors_by_kind"`
+
+	// DescendantsByKind walks DOWN the cascade subtree and captures every
+	// direct + transitive descendant whose Kind matches an entry in this
+	// slice. Usually empty in default-template seeds — adopters writing
+	// fix-planners or tree-pruners explicitly opt in.
+	//
+	// Per master PLAN.md F.7.18 + plan acceptance: NO schema rule against
+	// `descendants_by_kind` on `kind=plan`. Template authors trusted; if
+	// the use case is illegitimate, the planner simply does the right thing.
+	DescendantsByKind []domain.Kind `toml:"descendants_by_kind"`
+
+	// Delivery selects how the aggregator surfaces rendered context to the
+	// spawned agent. Closed-enum string values:
+	//   - "" (omitted): consumer-time default = "file" (F.7.18.3 engine
+	//     resolves the empty string to file-mode at Resolve-time).
+	//   - "inline": rendered context is appended to the spawn's
+	//     system-append.md.
+	//   - "file": rendered context is written into <bundle>/context/<rule>.md
+	//     and the agent uses Read to load on demand.
+	// validateAgentBindingContext rejects any other value at load time.
+	Delivery string `toml:"delivery"`
+
+	// MaxChars caps the rendered byte count for THIS binding's per-rule
+	// renderers. Engine-time default = 50000 when zero (F.7.18.3 territory).
+	// Negative values are rejected at load time. The bundle-global cap
+	// (max_context_bundle_chars under [tillsyn]) is layered on top in
+	// F.7.18.4's greedy-fit cap algorithm; this per-rule cap localizes
+	// truncation to a single rule before the bundle-cap considers skipping.
+	MaxChars int `toml:"max_chars"`
+
+	// MaxRuleDuration caps the per-rule wall-clock budget. Engine-time
+	// default = 500ms when zero (F.7.18.4 wires context.WithTimeout per
+	// rule). Negative values are rejected at load time. The per-bundle cap
+	// (max_aggregator_duration under [tillsyn]) wraps the entire rule
+	// iteration; this per-rule cap ensures one slow rule cannot starve the
+	// remaining rules.
+	MaxRuleDuration Duration `toml:"max_rule_duration"`
+}
+
+// Closed-enum delivery vocabulary for ContextRules.Delivery. The empty string
+// is permitted at the schema layer and resolves to ContextDeliveryFile at
+// engine-time (F.7.18.3) per master PLAN.md L13's "consumer-time default"
+// framing.
+const (
+	// ContextDeliveryInline marks rendered context for inline append into
+	// the spawn's system-append.md.
+	ContextDeliveryInline = "inline"
+
+	// ContextDeliveryFile marks rendered context for file-mode write into
+	// <bundle>/context/<rule>.md. The aggregator's resolver substitutes this
+	// for an omitted Delivery value at Resolve-time.
+	ContextDeliveryFile = "file"
+)
 
 // Validate reports field-level errors on an AgentBinding. Returns nil if all
 // fields are within acceptable bounds.

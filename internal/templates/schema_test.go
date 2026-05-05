@@ -85,6 +85,19 @@ func TestTemplateTOMLRoundTrip(t *testing.T) {
 				BlockedRetryCooldown: Duration(30 * time.Second),
 				Env:                  []string{"ANTHROPIC_API_KEY", "https_proxy"},
 				CLIKind:              "claude",
+				// Drop 4c F.7.18.1: every ContextRules field populated so
+				// the round-trip exercises the new sub-struct's TOML tags
+				// symmetrically with the existing AgentBinding fields.
+				Context: ContextRules{
+					Parent:            true,
+					ParentGitDiff:     true,
+					SiblingsByKind:    []domain.Kind{domain.KindBuildQAProof},
+					AncestorsByKind:   []domain.Kind{domain.KindPlan},
+					DescendantsByKind: []domain.Kind{domain.KindBuild},
+					Delivery:          ContextDeliveryFile,
+					MaxChars:          50000,
+					MaxRuleDuration:   Duration(500 * time.Millisecond),
+				},
 			},
 		},
 		Gates: map[domain.Kind][]GateKind{
