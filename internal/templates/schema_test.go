@@ -83,6 +83,8 @@ func TestTemplateTOMLRoundTrip(t *testing.T) {
 				CommitAgent:          "commit-agent",
 				BlockedRetries:       2,
 				BlockedRetryCooldown: Duration(30 * time.Second),
+				Env:                  []string{"ANTHROPIC_API_KEY", "https_proxy"},
+				CLIKind:              "claude",
 			},
 		},
 		Gates: map[domain.Kind][]GateKind{
