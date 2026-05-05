@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
 
@@ -51,6 +52,11 @@ import (
 //     AgentBinding.Env slice matches the closed env-var name regex
 //     (`^[A-Za-z][A-Za-z0-9_]*$`), is non-empty, contains no `=`, and
 //     is unique within its binding (Drop 4c F.7.17.1 hook).
+//     g. validateAgentBindingContext — assert every AgentBinding.Context
+//     sub-struct satisfies the closed delivery enum, non-negative MaxChars
+//     and MaxRuleDuration, and that every kind referenced by the kind-walk
+//     fields (SiblingsByKind / AncestorsByKind / DescendantsByKind) is a
+//     member of the closed 12-value Kind enum. Drop 4c F.7.18.1 hook.
 //
 // Sentinel errors at package scope wrap the underlying failure so callers
 // can use errors.Is for routing without reaching into pelletier/go-toml/v2
@@ -120,6 +126,9 @@ func Load(r io.Reader) (Template, error) {
 	if err := validateAgentBindingEnvNames(tpl); err != nil {
 		return Template{}, err
 	}
+	if err := validateAgentBindingContext(tpl); err != nil {
+		return Template{}, err
+	}
 
 	return tpl, nil
 }
@@ -180,6 +189,27 @@ var (
 	// callers using `errors.Is(err, ErrInvalidAgentBinding)` continue to
 	// work.
 	ErrInvalidAgentBindingEnv = fmt.Errorf("%w: env", ErrInvalidAgentBinding)
+
+	// ErrInvalidContextRules is returned by validateAgentBindingContext when an
+	// AgentBinding.Context sub-struct contains a field that fails the closed
+	// rule contract (Drop 4c F.7.18.1 acceptance criteria):
+	//
+	//   - Delivery is set to a value outside the closed enum
+	//     {"", "inline", "file"}.
+	//   - MaxChars is negative (zero is legal — engine-time default applies).
+	//   - MaxRuleDuration is negative (zero is legal — engine-time default
+	//     applies).
+	//
+	// Kind references inside SiblingsByKind / AncestorsByKind /
+	// DescendantsByKind are validated against the closed 12-value
+	// domain.Kind enum and surface as ErrUnknownKindReference (consistent
+	// with the existing kinds-map / child-rules / agent-bindings-map
+	// vocabulary checks).
+	//
+	// The error wraps ErrInvalidAgentBinding so callers using
+	// `errors.Is(err, ErrInvalidAgentBinding)` continue to route correctly
+	// without reaching for the context-specific sentinel.
+	ErrInvalidContextRules = fmt.Errorf("%w: context", ErrInvalidAgentBinding)
 )
 
 // validateMapKeys asserts every key in Template.Kinds,
@@ -391,6 +421,102 @@ func validateAgentBindingEnvNames(tpl Template) error {
 				return fmt.Errorf("%w: agent_bindings[%q].env entry %q is duplicated", ErrInvalidAgentBindingEnv, kind, entry)
 			}
 			seen[entry] = struct{}{}
+		}
+	}
+	return nil
+}
+
+// validContextDeliveryValues lists the closed-enum values accepted by
+// ContextRules.Delivery. The empty string is included because omission is
+// legal at the schema layer — the F.7.18.3 aggregator engine substitutes
+// ContextDeliveryFile at Resolve-time per master PLAN.md L13's "consumer-time
+// default" framing.
+var validContextDeliveryValues = []string{
+	"",
+	ContextDeliveryInline,
+	ContextDeliveryFile,
+}
+
+// validateAgentBindingContext asserts every AgentBinding.Context sub-struct
+// satisfies the Drop 4c F.7.18.1 closed contract:
+//
+//   - Delivery is one of {"", "inline", "file"} — closed enum. Empty string
+//     resolves to "file" at engine-time (NOT at validation-time).
+//   - MaxChars is non-negative. Zero is legal and means "use bundle-global
+//     default at engine-time" (F.7.18.3 substitutes 50000).
+//   - MaxRuleDuration is non-negative. Zero is legal and means "use
+//     bundle-global default at engine-time" (F.7.18.4 substitutes 500ms).
+//   - Every kind in SiblingsByKind / AncestorsByKind / DescendantsByKind is a
+//     member of the closed 12-value domain.Kind enum. Empty slices are
+//     legal.
+//
+// NO schema rule against `descendants_by_kind` on `kind=plan`. Per master
+// PLAN.md L13's flexibility framing the schema trusts template authors;
+// fix-planners + tree-pruners are legitimate uses for a planner that walks
+// down. This is enforced by an explicit allow-test in load_test.go.
+//
+// All non-nil returns wrap ErrInvalidContextRules (which itself wraps
+// ErrInvalidAgentBinding) so callers using
+// `errors.Is(err, ErrInvalidAgentBinding)` route correctly without reaching
+// for the context-specific sentinel. Kind-reference failures wrap
+// ErrUnknownKindReference for consistency with the existing kinds-map /
+// child-rules / agent-bindings-map vocabulary checks.
+//
+// The validator returns on the FIRST offending field to keep the error
+// surface bounded; outer-map iteration order is non-deterministic but the
+// inner per-binding checks run in a stable field order
+// (Delivery → MaxChars → MaxRuleDuration → SiblingsByKind → AncestorsByKind
+// → DescendantsByKind).
+func validateAgentBindingContext(tpl Template) error {
+	for kind, binding := range tpl.AgentBindings {
+		ctx := binding.Context
+		if !isValidContextDelivery(ctx.Delivery) {
+			return fmt.Errorf("%w: agent_bindings[%q].context.delivery %q not in {%q, %q, %q}",
+				ErrInvalidContextRules, kind, ctx.Delivery, "", ContextDeliveryInline, ContextDeliveryFile)
+		}
+		if ctx.MaxChars < 0 {
+			return fmt.Errorf("%w: agent_bindings[%q].context.max_chars must be >= 0 (got %d)",
+				ErrInvalidContextRules, kind, ctx.MaxChars)
+		}
+		if time.Duration(ctx.MaxRuleDuration) < 0 {
+			return fmt.Errorf("%w: agent_bindings[%q].context.max_rule_duration must be >= 0 (got %s)",
+				ErrInvalidContextRules, kind, time.Duration(ctx.MaxRuleDuration))
+		}
+		if err := validateContextKindList(kind, "siblings_by_kind", ctx.SiblingsByKind); err != nil {
+			return err
+		}
+		if err := validateContextKindList(kind, "ancestors_by_kind", ctx.AncestorsByKind); err != nil {
+			return err
+		}
+		if err := validateContextKindList(kind, "descendants_by_kind", ctx.DescendantsByKind); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isValidContextDelivery reports whether v is a member of the closed
+// {"", "inline", "file"} delivery-vocabulary. Exact-match — no whitespace
+// trimming or case folding, mirroring the IsValidGateKind rationale (silent
+// case-fold matching would mask "Inline" / "FILE" typos at load time).
+func isValidContextDelivery(v string) bool {
+	for _, candidate := range validContextDeliveryValues {
+		if v == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+// validateContextKindList asserts every entry in a kind-walk slice is a
+// member of the closed 12-value domain.Kind enum. fieldName is the TOML key
+// name (e.g. "siblings_by_kind") used in the error UX so adopters see the
+// exact line they need to fix.
+func validateContextKindList(kind domain.Kind, fieldName string, kinds []domain.Kind) error {
+	for _, k := range kinds {
+		if !domain.IsValidKind(k) {
+			return fmt.Errorf("%w: agent_bindings[%q].context.%s entry %q",
+				ErrUnknownKindReference, kind, fieldName, k)
 		}
 	}
 	return nil
