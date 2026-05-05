@@ -812,6 +812,400 @@ max_aggregator_duration = "-1s"
 	}
 }
 
+// TestLoadAgentBindingToolGatingHappyPath verifies a Template TOML stream
+// declaring an [agent_bindings.<kind>] row with the new Drop 4c F.7.2 fields
+// (tools_allowed, tools_disallowed, system_prompt_template_path, [sandbox.*])
+// decodes cleanly and validateAgentBindingToolGating does not fire. Every
+// field is populated with at least one entry so the assertion exercises each
+// validator branch end-to-end.
+func TestLoadAgentBindingToolGatingHappyPath(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+tools_allowed = ["Read", "Grep"]
+tools_disallowed = ["WebFetch", "Bash(curl *)"]
+system_prompt_template_path = "prompts/build.md"
+
+[agent_bindings.build.sandbox.filesystem]
+allow_write = ["/Users/me/repo"]
+deny_read = ["/etc/secrets"]
+
+[agent_bindings.build.sandbox.network]
+allowed_domains = ["github.com", "*.npmjs.org"]
+denied_domains = ["badactor.example"]
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	binding, ok := tpl.AgentBindings[domain.KindBuild]
+	if !ok {
+		t.Fatalf("AgentBindings[%q] missing", domain.KindBuild)
+	}
+	if got, want := binding.ToolsAllowed, []string{"Read", "Grep"}; !equalStringSlices(got, want) {
+		t.Fatalf("binding.ToolsAllowed = %v; want %v", got, want)
+	}
+	if got, want := binding.ToolsDisallowed, []string{"WebFetch", "Bash(curl *)"}; !equalStringSlices(got, want) {
+		t.Fatalf("binding.ToolsDisallowed = %v; want %v", got, want)
+	}
+	if got, want := binding.SystemPromptTemplatePath, "prompts/build.md"; got != want {
+		t.Fatalf("binding.SystemPromptTemplatePath = %q; want %q", got, want)
+	}
+	if got, want := binding.Sandbox.Filesystem.AllowWrite, []string{"/Users/me/repo"}; !equalStringSlices(got, want) {
+		t.Fatalf("binding.Sandbox.Filesystem.AllowWrite = %v; want %v", got, want)
+	}
+	if got, want := binding.Sandbox.Filesystem.DenyRead, []string{"/etc/secrets"}; !equalStringSlices(got, want) {
+		t.Fatalf("binding.Sandbox.Filesystem.DenyRead = %v; want %v", got, want)
+	}
+	if got, want := binding.Sandbox.Network.AllowedDomains, []string{"github.com", "*.npmjs.org"}; !equalStringSlices(got, want) {
+		t.Fatalf("binding.Sandbox.Network.AllowedDomains = %v; want %v", got, want)
+	}
+	if got, want := binding.Sandbox.Network.DeniedDomains, []string{"badactor.example"}; !equalStringSlices(got, want) {
+		t.Fatalf("binding.Sandbox.Network.DeniedDomains = %v; want %v", got, want)
+	}
+}
+
+// TestLoadAgentBindingToolGatingOmittedFields verifies a binding declared
+// without ANY tool-gating / system-prompt-template / sandbox fields loads
+// cleanly and the resulting AgentBinding carries the zero value for each.
+// This pins the back-compat contract for templates authored before Drop 4c
+// F.7.2 — they continue to load without modification.
+func TestLoadAgentBindingToolGatingOmittedFields(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	binding, ok := tpl.AgentBindings[domain.KindBuild]
+	if !ok {
+		t.Fatalf("AgentBindings[%q] missing", domain.KindBuild)
+	}
+	if binding.ToolsAllowed != nil {
+		t.Fatalf("binding.ToolsAllowed = %v; want nil (omitted field zero value)", binding.ToolsAllowed)
+	}
+	if binding.ToolsDisallowed != nil {
+		t.Fatalf("binding.ToolsDisallowed = %v; want nil (omitted field zero value)", binding.ToolsDisallowed)
+	}
+	if binding.SystemPromptTemplatePath != "" {
+		t.Fatalf("binding.SystemPromptTemplatePath = %q; want empty string (omitted field zero value)", binding.SystemPromptTemplatePath)
+	}
+	if binding.Sandbox.Filesystem.AllowWrite != nil {
+		t.Fatalf("binding.Sandbox.Filesystem.AllowWrite = %v; want nil", binding.Sandbox.Filesystem.AllowWrite)
+	}
+	if binding.Sandbox.Filesystem.DenyRead != nil {
+		t.Fatalf("binding.Sandbox.Filesystem.DenyRead = %v; want nil", binding.Sandbox.Filesystem.DenyRead)
+	}
+	if binding.Sandbox.Network.AllowedDomains != nil {
+		t.Fatalf("binding.Sandbox.Network.AllowedDomains = %v; want nil", binding.Sandbox.Network.AllowedDomains)
+	}
+	if binding.Sandbox.Network.DeniedDomains != nil {
+		t.Fatalf("binding.Sandbox.Network.DeniedDomains = %v; want nil", binding.Sandbox.Network.DeniedDomains)
+	}
+}
+
+// TestLoadAgentBindingToolGatingRejectionTable exhausts every reject case
+// declared by the Drop 4c F.7.2 spec for tool-gating / system-prompt-template
+// / sandbox fields. Every row declares a single offending construct so the
+// failure mode under test is unambiguous. Each rejection wraps
+// ErrInvalidAgentBindingToolGating (which itself wraps ErrInvalidAgentBinding);
+// both sentinel routings are asserted.
+func TestLoadAgentBindingToolGatingRejectionTable(t *testing.T) {
+	tests := []struct {
+		name       string
+		fragment   string // TOML fragment appended after the binding header
+		wantSubstr string
+	}{
+		{
+			name:       "reject empty entry in tools_allowed",
+			fragment:   `tools_allowed = [""]`,
+			wantSubstr: "tools_allowed entry is empty",
+		},
+		{
+			name:       "reject duplicate entry in tools_allowed",
+			fragment:   `tools_allowed = ["Read", "Read"]`,
+			wantSubstr: `tools_allowed entry "Read" is duplicated`,
+		},
+		{
+			name:       "reject empty entry in tools_disallowed",
+			fragment:   `tools_disallowed = ["WebFetch", ""]`,
+			wantSubstr: "tools_disallowed entry is empty",
+		},
+		{
+			name:       "reject duplicate entry in tools_disallowed",
+			fragment:   `tools_disallowed = ["WebFetch", "WebFetch"]`,
+			wantSubstr: `tools_disallowed entry "WebFetch" is duplicated`,
+		},
+		{
+			name:       "reject shell-metachar semicolon in system_prompt_template_path",
+			fragment:   `system_prompt_template_path = "x; rm -rf /"`,
+			wantSubstr: `shell metacharacter ";"`,
+		},
+		{
+			name:       "reject shell-metachar pipe in system_prompt_template_path",
+			fragment:   `system_prompt_template_path = "a|b"`,
+			wantSubstr: `shell metacharacter "|"`,
+		},
+		{
+			name:       "reject shell-metachar ampersand in system_prompt_template_path",
+			fragment:   `system_prompt_template_path = "a&b"`,
+			wantSubstr: `shell metacharacter "&"`,
+		},
+		{
+			name:       "reject shell-metachar backtick in system_prompt_template_path",
+			fragment:   "system_prompt_template_path = \"a`b\"",
+			wantSubstr: "shell metacharacter \"`\"",
+		},
+		{
+			name:       "reject shell-metachar dollar in system_prompt_template_path",
+			fragment:   `system_prompt_template_path = "a$b"`,
+			wantSubstr: `shell metacharacter "$"`,
+		},
+		{
+			name:       "reject traversal in system_prompt_template_path",
+			fragment:   `system_prompt_template_path = "../etc/passwd"`,
+			wantSubstr: "contains '..' traversal segment",
+		},
+		{
+			name:       "reject absolute system_prompt_template_path",
+			fragment:   `system_prompt_template_path = "/etc/passwd"`,
+			wantSubstr: "is absolute",
+		},
+		{
+			name: "reject relative sandbox allow_write",
+			fragment: `[agent_bindings.build.sandbox.filesystem]
+allow_write = ["relative/path"]`,
+			wantSubstr: "must be an absolute path",
+		},
+		{
+			name: "reject empty entry in sandbox allow_write",
+			fragment: `[agent_bindings.build.sandbox.filesystem]
+allow_write = [""]`,
+			wantSubstr: "allow_write entry is empty",
+		},
+		{
+			name: "reject traversal in sandbox allow_write",
+			fragment: `[agent_bindings.build.sandbox.filesystem]
+allow_write = ["/abs/../etc"]`,
+			wantSubstr: "contains '..' traversal segment",
+		},
+		{
+			name: "reject double-slash in sandbox allow_write",
+			fragment: `[agent_bindings.build.sandbox.filesystem]
+allow_write = ["/abs//etc"]`,
+			wantSubstr: "contains '//'",
+		},
+		{
+			name: "reject relative sandbox deny_read",
+			fragment: `[agent_bindings.build.sandbox.filesystem]
+deny_read = ["secrets/file"]`,
+			wantSubstr: "must be an absolute path",
+		},
+		{
+			name: "reject URL-scheme allowed_domains https",
+			fragment: `[agent_bindings.build.sandbox.network]
+allowed_domains = ["https://github.com"]`,
+			wantSubstr: "contains URL scheme",
+		},
+		{
+			name: "reject URL-scheme allowed_domains http",
+			fragment: `[agent_bindings.build.sandbox.network]
+allowed_domains = ["http://github.com"]`,
+			wantSubstr: "contains URL scheme",
+		},
+		{
+			name: "reject empty entry in allowed_domains",
+			fragment: `[agent_bindings.build.sandbox.network]
+allowed_domains = [""]`,
+			wantSubstr: "allowed_domains entry is empty",
+		},
+		{
+			name: "reject URL-scheme denied_domains",
+			fragment: `[agent_bindings.build.sandbox.network]
+denied_domains = ["https://badactor.example"]`,
+			wantSubstr: "contains URL scheme",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+` + tc.fragment + "\n"
+			_, err := Load(strings.NewReader(src))
+			if err == nil {
+				t.Fatalf("Load: expected error for fragment %q; got nil", tc.fragment)
+			}
+			if !errors.Is(err, ErrInvalidAgentBindingToolGating) {
+				t.Fatalf("Load: errors.Is(_, ErrInvalidAgentBindingToolGating) = false; err = %v", err)
+			}
+			if !errors.Is(err, ErrInvalidAgentBinding) {
+				t.Fatalf("Load: errors.Is(_, ErrInvalidAgentBinding) = false; err = %v", err)
+			}
+			if tc.wantSubstr != "" && !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Fatalf("Load: err = %q; want substring %q", err.Error(), tc.wantSubstr)
+			}
+		})
+	}
+}
+
+// TestLoadAgentBindingToolGatingAllowsGlobDomain verifies the leading-glob
+// `*` form (e.g. `*.npmjs.org`) is permitted in allowed_domains /
+// denied_domains. Tightening the validator to reject `*` would defeat the
+// canonical adopter use case (corporate npm/pip mirrors live under wildcard
+// subdomains).
+func TestLoadAgentBindingToolGatingAllowsGlobDomain(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+
+[agent_bindings.build.sandbox.network]
+allowed_domains = ["*.npmjs.org", "*.pypi.org"]
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: glob domains must be permitted; err = %v", err)
+	}
+	binding := tpl.AgentBindings[domain.KindBuild]
+	if got, want := binding.Sandbox.Network.AllowedDomains, []string{"*.npmjs.org", "*.pypi.org"}; !equalStringSlices(got, want) {
+		t.Fatalf("binding.Sandbox.Network.AllowedDomains = %v; want %v", got, want)
+	}
+}
+
+// TestLoadAgentBindingToolGatingStrictDecodeUnknownFieldRejected verifies
+// the strict-decode chain (load.go step 3) rejects a `bogus_tool_field`
+// nested inside [agent_bindings.<kind>] after Drop 4c F.7.2 widens
+// AgentBinding with the new fields. The closed-struct contract from
+// F.7.17.1 must continue to fire — adding ToolsAllowed / ToolsDisallowed /
+// SystemPromptTemplatePath / Sandbox does NOT relax strict decode for any
+// other key.
+func TestLoadAgentBindingToolGatingStrictDecodeUnknownFieldRejected(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+bogus_tool_field = true
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownTemplateKey; got nil")
+	}
+	if !errors.Is(err, ErrUnknownTemplateKey) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownTemplateKey) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "bogus_tool_field") {
+		t.Fatalf("Load: err = %q; want offending field %q in message", err.Error(), "bogus_tool_field")
+	}
+}
+
+// TestLoadAgentBindingToolGatingStrictDecodeUnknownSandboxFieldRejected
+// verifies the closed-struct contract on the new SandboxFilesystem /
+// SandboxNetwork sub-structs — an unknown key nested inside
+// [agent_bindings.<kind>.sandbox.filesystem] or
+// [agent_bindings.<kind>.sandbox.network] surfaces as ErrUnknownTemplateKey
+// at Load time.
+func TestLoadAgentBindingToolGatingStrictDecodeUnknownSandboxFieldRejected(t *testing.T) {
+	tests := []struct {
+		name      string
+		src       string
+		wantField string
+	}{
+		{
+			name: "unknown sandbox.filesystem key rejected",
+			src: `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+
+[agent_bindings.build.sandbox.filesystem]
+allow_write = ["/Users/me/repo"]
+bogus_filesystem_key = true
+`,
+			wantField: "bogus_filesystem_key",
+		},
+		{
+			name: "unknown sandbox.network key rejected",
+			src: `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+
+[agent_bindings.build.sandbox.network]
+allowed_domains = ["github.com"]
+bogus_network_key = true
+`,
+			wantField: "bogus_network_key",
+		},
+		{
+			name: "unknown sandbox key rejected",
+			src: `
+schema_version = "v1"
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+
+[agent_bindings.build.sandbox]
+bogus_sandbox_key = true
+`,
+			wantField: "bogus_sandbox_key",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(strings.NewReader(tc.src))
+			if err == nil {
+				t.Fatalf("Load: expected ErrUnknownTemplateKey; got nil")
+			}
+			if !errors.Is(err, ErrUnknownTemplateKey) {
+				t.Fatalf("Load: errors.Is(_, ErrUnknownTemplateKey) = false; err = %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantField) {
+				t.Fatalf("Load: err = %q; want offending field %q in message", err.Error(), tc.wantField)
+			}
+		})
+	}
+}
+
+// equalStringSlices reports whether two []string values have identical
+// length and element-by-element equality. The function is local to this
+// test file to avoid pulling reflect.DeepEqual into the round-trip
+// assertions (which would conceal nil-vs-empty asymmetries the explicit
+// length+index check surfaces verbatim).
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestLoadTillsynStrictDecodeUnknownFieldRejected is the REV-3 contract test:
 // a [tillsyn] table with an unknown key MUST fail load with
 // ErrUnknownTemplateKey. This proves the closed-struct unknown-key rejection

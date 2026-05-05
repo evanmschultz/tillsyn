@@ -13,8 +13,8 @@ import (
 )
 
 // fullyPopulatedAgentBinding returns a fresh AgentBinding with every one of
-// the 14 fields set to a non-zero, validation-passing value. Used as the
-// shared baseline for the round-trip test and as the start state for each
+// the populated fields set to a non-zero, validation-passing value. Used as
+// the shared baseline for the round-trip test and as the start state for each
 // Validate table-row's targeted mutation.
 //
 // Drop 4c F.7.17.1 extension: Env + CLIKind are populated so the round-trip
@@ -29,6 +29,13 @@ import (
 // validator does not surface ErrUnknownKindReference at Load time, and so
 // reflect.DeepEqual does not trip on the nil-vs-empty-slice asymmetry that
 // pelletier/go-toml/v2 introduces for empty arrays.
+//
+// Drop 4c F.7.2 extension: ToolsAllowed / ToolsDisallowed /
+// SystemPromptTemplatePath / Sandbox are populated with non-zero,
+// validator-passing values so the round-trip exercises the new TOML tags
+// symmetrically. Sandbox carries one entry per slice (one allow_write, one
+// deny_read, one allowed_domains, one denied_domains) for the same nil-vs-
+// empty asymmetry rationale documented above.
 func fullyPopulatedAgentBinding() AgentBinding {
 	return AgentBinding{
 		AgentName:            "go-builder-agent",
@@ -53,6 +60,19 @@ func fullyPopulatedAgentBinding() AgentBinding {
 			Delivery:          ContextDeliveryFile,
 			MaxChars:          50000,
 			MaxRuleDuration:   Duration(500 * time.Millisecond),
+		},
+		ToolsAllowed:             []string{"Read", "Edit", "Bash(mage *)"},
+		ToolsDisallowed:          []string{"WebFetch", "Bash(curl *)"},
+		SystemPromptTemplatePath: "prompts/build.md",
+		Sandbox: SandboxRules{
+			Filesystem: SandboxFilesystem{
+				AllowWrite: []string{"/Users/me/repo"},
+				DenyRead:   []string{"/etc/secrets"},
+			},
+			Network: SandboxNetwork{
+				AllowedDomains: []string{"github.com", "*.npmjs.org"},
+				DeniedDomains:  []string{"badactor.example"},
+			},
 		},
 	}
 }
