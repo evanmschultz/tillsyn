@@ -687,7 +687,14 @@ func TestBuildSpawnCommandRenderHookFailureCleansUpBundle(t *testing.T) {
 
 	// Capture the real hook so we can restore it after the failure path.
 	var capturedBundleRoot string
-	faulty := func(bundle dispatcher.Bundle, item domain.ActionItem, project domain.Project, binding dispatcher.BindingResolved) (string, error) {
+	faulty := func(
+		_ context.Context,
+		bundle dispatcher.Bundle,
+		_ domain.ActionItem,
+		_ domain.Project,
+		_ dispatcher.BindingResolved,
+		_ any,
+	) (string, error) {
 		capturedBundleRoot = bundle.Paths.Root
 		return "", errors.New("render: fault-injected failure")
 	}
@@ -695,15 +702,34 @@ func TestBuildSpawnCommandRenderHookFailureCleansUpBundle(t *testing.T) {
 	// The cli_claude blank-import in spawn_test.go's import list registers
 	// the real Render via render's init(). Substitute the faulty hook,
 	// run the test, then restore the real one by re-importing render's
-	// Render directly. Using the dispatcher's lookup helper isn't
-	// available (lowercase); we restore by re-registering after the test
-	// via a deferred RegisterBundleRenderFunc.
+	// adaptRender (production hook) afterwards. adaptRender is unexported
+	// so we cannot reference it directly; restore by re-running render's
+	// init() — Go does not re-run inits, so we wrap clauderender.Render
+	// in the same any→PermissionGrantsLister adapter inline.
 	dispatcher.RegisterBundleRenderFunc(faulty)
 	t.Cleanup(func() {
 		// Restore the real render hook so subsequent tests in this
 		// package see the production wiring. The clauderender named
-		// import above gives us direct access to the Render symbol.
-		dispatcher.RegisterBundleRenderFunc(clauderender.Render)
+		// import above gives us access to the Render symbol; we wrap it
+		// in the same adapter shape adaptRender uses.
+		dispatcher.RegisterBundleRenderFunc(func(
+			ctx context.Context,
+			bundle dispatcher.Bundle,
+			item domain.ActionItem,
+			project domain.Project,
+			binding dispatcher.BindingResolved,
+			grantsLister any,
+		) (string, error) {
+			var lister clauderender.PermissionGrantsLister
+			if grantsLister != nil {
+				typed, ok := grantsLister.(clauderender.PermissionGrantsLister)
+				if !ok {
+					return "", clauderender.ErrInvalidGrantsLister
+				}
+				lister = typed
+			}
+			return clauderender.Render(ctx, bundle, item, project, binding, lister)
+		})
 	})
 
 	_, _, err := dispatcher.BuildSpawnCommand(fixtureBuildItem(), fixtureProject(), fixtureCatalog(goBuilderBinding()), dispatcher.AuthBundle{})

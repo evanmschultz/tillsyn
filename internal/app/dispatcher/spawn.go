@@ -98,7 +98,9 @@ var ErrUnsupportedCLIKind = errors.New("dispatcher: unsupported CLIKind")
 
 // BundleRenderFunc is the signature of the per-spawn bundle-render hook
 // the claude adapter's render package registers via init(). Drop 4c
-// F.7-CORE F.7.3b ships the seam:
+// F.7-CORE F.7.3b ships the seam; F.7.5c extends the signature with
+// ctx + a permission-grants lister so previously approved tool grants
+// merge into settings.json:
 //
 //   - render package imports dispatcher (for Bundle / BindingResolved /
 //     domain types).
@@ -110,6 +112,15 @@ var ErrUnsupportedCLIKind = errors.New("dispatcher: unsupported CLIKind")
 // lookupAdapter) — same import-cycle resolution, same concurrency
 // primitives, same test-substitution affordance.
 //
+// grantsLister is `any` rather than a concrete interface because the
+// dispatcher must not import render (cycle); render exposes its
+// PermissionGrantsLister interface and the production wiring passes a
+// value that satisfies it. nil is the documented graceful-skip path —
+// render's settings.json renders binding.ToolsAllowed only when the
+// lister is nil. F.7.5c ships nil-only at the BuildSpawnCommand
+// callsite; a follow-up droplet plumbs the production
+// app.PermissionGrantsStore handle through.
+//
 // The hook returns the rendered system-prompt body alongside any error
 // so BuildSpawnCommand can mirror the body into SpawnDescriptor.Prompt
 // without re-reading from disk. On error the body is the empty string.
@@ -119,10 +130,12 @@ var ErrUnsupportedCLIKind = errors.New("dispatcher: unsupported CLIKind")
 // returns ErrNoBundleRenderFunc so callers see a clean failure rather
 // than a missing system-prompt.md file.
 type BundleRenderFunc func(
+	ctx context.Context,
 	bundle Bundle,
 	item domain.ActionItem,
 	project domain.Project,
 	binding BindingResolved,
+	grantsLister any,
 ) (string, error)
 
 // renderMu guards bundleRenderFunc. RegisterBundleRenderFunc is rare
@@ -429,12 +442,25 @@ func BuildSpawnCommand(
 	// block is REPLACED by this hook — Render owns system-prompt.md from
 	// here forward and additionally writes plugin.json / agents/<name>.md
 	// / .mcp.json / settings.json under <bundle.Root>/plugin/.
+	//
+	// Drop 4c F.7.5c: the render hook accepts a permission-grants lister
+	// (any-typed at this seam to keep dispatcher cycle-free of the render
+	// package's concrete interface). BuildSpawnCommand passes nil today —
+	// deferred plumbing of the production app.PermissionGrantsStore handle
+	// lands in a follow-up droplet that adds a service-locator field to
+	// dispatcher.AuthBundle (or its Wave-3 successor). Render's
+	// settings.json gracefully renders binding.ToolsAllowed only when the
+	// lister is nil.
 	render, ok := lookupBundleRenderFunc()
 	if !ok {
 		_ = bundle.Cleanup()
 		return nil, SpawnDescriptor{}, fmt.Errorf("%w (kind=%q)", ErrNoBundleRenderFunc, item.Kind)
 	}
-	prompt, err := render(bundle, item, project, resolved)
+	// TODO(F.7-CORE): replace context.Background() with the outer dispatcher
+	// ctx so cancellation propagates through the bundle render. Same TODO
+	// is open for adapter.BuildCommand below — both seams need the same
+	// plumbing landed together.
+	prompt, err := render(context.Background(), bundle, item, project, resolved, nil)
 	if err != nil {
 		_ = bundle.Cleanup()
 		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: render spawn bundle: %w", err)
