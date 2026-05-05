@@ -448,6 +448,24 @@ func (r *Repository) migrate(ctx context.Context) error {
 			resolution_note TEXT NOT NULL DEFAULT '',
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
+		// permission_grants — Drop 4c F.7.17.7 — durable tool-permission
+		// grant substrate the dispatcher reads when assembling per-spawn
+		// permission sets so previously-approved rules do not re-prompt
+		// the dev. UNIQUE composite (project_id, kind, rule, cli_kind)
+		// gives idempotent inserts; the lookup index covers the
+		// (project_id, kind, cli_kind) read path. Pre-MVP: no migration
+		// logic — dev fresh-DBs ~/.tillsyn/tillsyn.db when this lands.
+		`CREATE TABLE IF NOT EXISTS permission_grants (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			rule TEXT NOT NULL,
+			cli_kind TEXT NOT NULL,
+			granted_by TEXT NOT NULL,
+			granted_at TEXT NOT NULL,
+			UNIQUE (project_id, kind, rule, cli_kind),
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_columns_project_position ON columns_v1(project_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_action_items_project_column_position ON action_items(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_action_items_project_parent ON action_items(project_id, parent_id);`,
@@ -467,6 +485,10 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_handoffs_project_status_updated_at ON handoffs(project_id, status, updated_at DESC, id DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_handoffs_project_scope_created_at ON handoffs(project_id, scope_type, scope_id, updated_at DESC, id DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_handoffs_project_target_scope_created_at ON handoffs(project_id, target_scope_type, target_scope_id, updated_at DESC, id DESC);`,
+		// idx_permission_grants_lookup — Drop 4c F.7.17.7 — covers the
+		// dispatcher's primary read pattern: "what rules are pre-approved
+		// for this (project, kind) under this CLI?".
+		`CREATE INDEX IF NOT EXISTS idx_permission_grants_lookup ON permission_grants (project_id, kind, cli_kind);`,
 	}
 
 	for _, stmt := range stmts {
