@@ -1,6 +1,7 @@
 package render_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -14,6 +15,37 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_claude/render"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
+
+// stubGrantsLister is the minimal in-memory PermissionGrantsLister used
+// by F.7.5c grants-merge tests. It records the (projectID, kind, cliKind)
+// tuple it was called with so tests can assert dispatch correctness, and
+// returns the canned slice + err set by the constructor.
+type stubGrantsLister struct {
+	grants []domain.PermissionGrant
+	err    error
+
+	// Recorded call arguments (last call wins). Tests assert these to
+	// confirm the render layer dispatches with the right tuple.
+	gotProjectID string
+	gotKind      domain.Kind
+	gotCLIKind   string
+	callCount    int
+}
+
+// ListGrantsForKind satisfies render.PermissionGrantsLister.
+func (s *stubGrantsLister) ListGrantsForKind(_ context.Context, projectID string, kind domain.Kind, cliKind string) ([]domain.PermissionGrant, error) {
+	s.gotProjectID = projectID
+	s.gotKind = kind
+	s.gotCLIKind = cliKind
+	s.callCount++
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.grants == nil {
+		return []domain.PermissionGrant{}, nil
+	}
+	return s.grants, nil
+}
 
 // fixtureBundle returns a Bundle with paths rooted under t.TempDir() so
 // each test's writes land in an isolated directory cleaned up by the
@@ -82,7 +114,7 @@ func TestRenderHappyPathWritesAllFiveFiles(t *testing.T) {
 	t.Parallel()
 
 	bundle := fixtureBundle(t)
-	if _, err := render.Render(bundle, fixtureItem(), fixtureProject(), fixtureBinding()); err != nil {
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), fixtureBinding(), nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil", err)
 	}
 
@@ -115,7 +147,7 @@ func TestRenderSystemPromptContainsStructuralTokens(t *testing.T) {
 	bundle := fixtureBundle(t)
 	item := fixtureItem()
 	project := fixtureProject()
-	promptBody, err := render.Render(bundle, item, project, fixtureBinding())
+	promptBody, err := render.Render(context.Background(), bundle, item, project, fixtureBinding(), nil)
 	if err != nil {
 		t.Fatalf("Render() error = %v, want nil", err)
 	}
@@ -158,7 +190,7 @@ func TestRenderPluginManifestExactShape(t *testing.T) {
 	t.Parallel()
 
 	bundle := fixtureBundle(t)
-	if _, err := render.Render(bundle, fixtureItem(), fixtureProject(), fixtureBinding()); err != nil {
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), fixtureBinding(), nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil", err)
 	}
 
@@ -187,7 +219,7 @@ func TestRenderMCPConfigExactShape(t *testing.T) {
 	t.Parallel()
 
 	bundle := fixtureBundle(t)
-	if _, err := render.Render(bundle, fixtureItem(), fixtureProject(), fixtureBinding()); err != nil {
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), fixtureBinding(), nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil", err)
 	}
 
@@ -224,7 +256,7 @@ func TestRenderSettingsPermissions(t *testing.T) {
 
 	bundle := fixtureBundle(t)
 	binding := fixtureBinding()
-	if _, err := render.Render(bundle, fixtureItem(), fixtureProject(), binding); err != nil {
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil", err)
 	}
 
@@ -274,7 +306,7 @@ func TestRenderSettingsExplicitEmptyArraysWhenBindingEmpty(t *testing.T) {
 		ToolsAllowed:    nil, // explicit nil
 		ToolsDisallowed: nil, // explicit nil
 	}
-	if _, err := render.Render(bundle, fixtureItem(), fixtureProject(), binding); err != nil {
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil", err)
 	}
 
@@ -305,7 +337,7 @@ func TestRenderAgentFileFrontmatter(t *testing.T) {
 
 	bundle := fixtureBundle(t)
 	binding := fixtureBinding()
-	if _, err := render.Render(bundle, fixtureItem(), fixtureProject(), binding); err != nil {
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil", err)
 	}
 
@@ -344,7 +376,7 @@ func TestRenderAgentFileWithoutToolGating(t *testing.T) {
 		CLIKind:   dispatcher.CLIKindClaude,
 		// No ToolsAllowed / ToolsDisallowed.
 	}
-	if _, err := render.Render(bundle, fixtureItem(), fixtureProject(), binding); err != nil {
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil", err)
 	}
 
@@ -394,7 +426,7 @@ func TestRenderRollbackOnAgentDirFailure(t *testing.T) {
 		t.Fatalf("seed blocker file: %v", err)
 	}
 
-	_, err := render.Render(bundle, fixtureItem(), fixtureProject(), fixtureBinding())
+	_, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), fixtureBinding(), nil)
 	if err == nil {
 		t.Fatalf("Render() error = nil, want non-nil (agents-dir-creation should fail)")
 	}
@@ -423,7 +455,7 @@ func TestRenderRejectsEmptyBundleRoot(t *testing.T) {
 		SpawnID: "spawn-fixture",
 		// Paths.Root deliberately empty.
 	}
-	_, err := render.Render(bundle, fixtureItem(), fixtureProject(), fixtureBinding())
+	_, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), fixtureBinding(), nil)
 	if err == nil {
 		t.Fatalf("Render() error = nil, want ErrInvalidRenderInput")
 	}
@@ -442,7 +474,7 @@ func TestRenderRejectsEmptyAgentName(t *testing.T) {
 	binding := fixtureBinding()
 	binding.AgentName = "" // corrupted
 
-	_, err := render.Render(bundle, fixtureItem(), fixtureProject(), binding)
+	_, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, nil)
 	if err == nil {
 		t.Fatalf("Render() error = nil, want ErrInvalidRenderInput")
 	}
@@ -469,7 +501,7 @@ func TestRenderRejectsAgentNameWithPathSeparator(t *testing.T) {
 			binding := fixtureBinding()
 			binding.AgentName = name
 
-			_, err := render.Render(bundle, fixtureItem(), fixtureProject(), binding)
+			_, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, nil)
 			if err == nil {
 				t.Fatalf("Render() error = nil, want ErrInvalidRenderInput for %q", name)
 			}
@@ -493,7 +525,7 @@ func TestRenderOmitsOptionalSystemPromptFields(t *testing.T) {
 		Kind: domain.KindBuild,
 		// Title, Paths, Packages all empty.
 	}
-	if _, err := render.Render(bundle, item, fixtureProject(), fixtureBinding()); err != nil {
+	if _, err := render.Render(context.Background(), bundle, item, fixtureProject(), fixtureBinding(), nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil", err)
 	}
 
@@ -519,6 +551,209 @@ func TestRenderOmitsOptionalSystemPromptFields(t *testing.T) {
 	}
 	if !strings.Contains(str, "move-state directive:") {
 		t.Errorf("system-prompt.md missing move-state directive\nfull body:\n%s", str)
+	}
+}
+
+// readSettingsAllow reads the rendered <plugin>/settings.json under
+// bundle.Paths.Root and returns permissions.allow. Test helper for the
+// F.7.5c grants-merge cases.
+func readSettingsAllow(t *testing.T, bundle dispatcher.Bundle) []string {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join(bundle.Paths.Root, "plugin", "settings.json"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(settings.json) error = %v", err)
+	}
+	var parsed struct {
+		Permissions struct {
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal(contents, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal settings.json error = %v\ncontents:\n%s", err, contents)
+	}
+	return parsed.Permissions.Allow
+}
+
+// grantFixture returns one PermissionGrant with the supplied rule. The
+// non-rule fields use stable test values; the lookup tuple
+// (projectID, kind, cliKind) carried by the grant is whatever the
+// caller passes via the lister stub — render.go reads only Rule off
+// each grant when merging.
+func grantFixture(rule string) domain.PermissionGrant {
+	return domain.PermissionGrant{
+		ID:        "grant-" + rule,
+		ProjectID: "proj-fixture",
+		Kind:      domain.KindBuild,
+		Rule:      rule,
+		CLIKind:   "claude",
+		GrantedBy: "dev-test",
+		GrantedAt: time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+// TestRenderSettingsNilListerSkipsGrantsLookup asserts the
+// deferred-plumbing path: a nil grantsLister causes Render to render
+// settings.json with binding.ToolsAllowed only — no lister call, no
+// error.
+func TestRenderSettingsNilListerSkipsGrantsLookup(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	binding := fixtureBinding()
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	got := readSettingsAllow(t, bundle)
+	want := []string{"Read", "Grep"}
+	if !equalStringSlice(got, want) {
+		t.Errorf("permissions.allow = %v, want %v (binding entries only)", got, want)
+	}
+}
+
+// TestRenderSettingsListerZeroGrantsLeavesBindingOnly asserts the
+// no-stored-grants path: a non-nil lister that returns an empty slice
+// leaves the rendered allow list equal to binding.ToolsAllowed.
+func TestRenderSettingsListerZeroGrantsLeavesBindingOnly(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	binding := fixtureBinding()
+	stub := &stubGrantsLister{grants: []domain.PermissionGrant{}}
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, stub); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	got := readSettingsAllow(t, bundle)
+	want := []string{"Read", "Grep"}
+	if !equalStringSlice(got, want) {
+		t.Errorf("permissions.allow = %v, want %v (binding entries only)", got, want)
+	}
+	if stub.callCount != 1 {
+		t.Errorf("lister callCount = %d, want 1", stub.callCount)
+	}
+	if got, want := stub.gotProjectID, fixtureProject().ID; got != want {
+		t.Errorf("lister projectID = %q, want %q", got, want)
+	}
+	if got, want := stub.gotKind, fixtureItem().Kind; got != want {
+		t.Errorf("lister kind = %q, want %q", got, want)
+	}
+	if got, want := stub.gotCLIKind, string(binding.CLIKind); got != want {
+		t.Errorf("lister cliKind = %q, want %q", got, want)
+	}
+}
+
+// TestRenderSettingsListerThreeGrantsAppendedAfterBinding asserts the
+// happy path: lister returns 3 distinct grants → the rendered
+// permissions.allow contains binding.ToolsAllowed first, then the 3
+// grants in lister-supplied order.
+func TestRenderSettingsListerThreeGrantsAppendedAfterBinding(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	binding := fixtureBinding() // ToolsAllowed: ["Read", "Grep"]
+	stub := &stubGrantsLister{
+		grants: []domain.PermissionGrant{
+			grantFixture("Bash(git status)"),
+			grantFixture("Bash(mage check)"),
+			grantFixture("WebFetch(github.com/*)"),
+		},
+	}
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, stub); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	got := readSettingsAllow(t, bundle)
+	want := []string{
+		"Read", "Grep", // binding first
+		"Bash(git status)", "Bash(mage check)", "WebFetch(github.com/*)", // grants after
+	}
+	if !equalStringSlice(got, want) {
+		t.Errorf("permissions.allow = %v, want %v", got, want)
+	}
+}
+
+// TestRenderSettingsListerDuplicateRuleDeduped asserts the dedup
+// invariant: a grant whose Rule already appears in binding.ToolsAllowed
+// is dropped from the merged list (single entry, binding-position
+// preserved).
+func TestRenderSettingsListerDuplicateRuleDeduped(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	binding := fixtureBinding() // ToolsAllowed: ["Read", "Grep"]
+	stub := &stubGrantsLister{
+		grants: []domain.PermissionGrant{
+			grantFixture("Read"),         // dup with binding
+			grantFixture("Bash(ls -la)"), // new
+			grantFixture("Grep"),         // dup with binding
+		},
+	}
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, stub); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	got := readSettingsAllow(t, bundle)
+	want := []string{"Read", "Grep", "Bash(ls -la)"}
+	if !equalStringSlice(got, want) {
+		t.Errorf("permissions.allow = %v, want %v (duplicates of binding entries collapsed)", got, want)
+	}
+}
+
+// TestRenderSettingsListerErrorWrapsAndRollsBack asserts the
+// failure-propagation path: a lister error fails Render with an error
+// that wraps the underlying lister error AND triggers the bundle
+// rollback (system-prompt.md + plugin/ subtree all gone).
+func TestRenderSettingsListerErrorWrapsAndRollsBack(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	listerErr := errors.New("storage: connection refused")
+	stub := &stubGrantsLister{err: listerErr}
+
+	_, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), fixtureBinding(), stub)
+	if err == nil {
+		t.Fatalf("Render() error = nil, want lister error")
+	}
+	if !errors.Is(err, listerErr) {
+		t.Errorf("Render() error = %v, want errors.Is(listerErr)", err)
+	}
+
+	// Rollback: all artifacts Render created must be gone.
+	gone := []string{
+		filepath.Join(bundle.Paths.Root, "system-prompt.md"),
+		filepath.Join(bundle.Paths.Root, "plugin"),
+	}
+	for _, p := range gone {
+		if _, statErr := os.Stat(p); !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("path %q still exists after lister-error rollback (statErr=%v)", p, statErr)
+		}
+	}
+}
+
+// TestRenderSettingsEmptyCLIKindSkipsLookup asserts the storage-key
+// short-circuit: a binding with empty CLIKind never hits the lister
+// because the storage UNIQUE composite forbids "" cli_kind.
+func TestRenderSettingsEmptyCLIKindSkipsLookup(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	binding := fixtureBinding()
+	binding.CLIKind = ""
+	stub := &stubGrantsLister{
+		grants: []domain.PermissionGrant{grantFixture("Bash(should-not-appear)")},
+	}
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), fixtureProject(), binding, stub); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	got := readSettingsAllow(t, bundle)
+	want := []string{"Read", "Grep"}
+	if !equalStringSlice(got, want) {
+		t.Errorf("permissions.allow = %v, want %v (binding only — empty CLIKind skips lister)", got, want)
+	}
+	if stub.callCount != 0 {
+		t.Errorf("lister callCount = %d, want 0 (empty CLIKind must not invoke lister)", stub.callCount)
 	}
 }
 

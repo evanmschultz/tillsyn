@@ -23,6 +23,7 @@
 package render
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,32 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
+
+// PermissionGrantsLister is the narrower read-only view of
+// app.PermissionGrantsStore the render package consumes. Drop 4c F.7.5c
+// adds it so previously approved tool-permission grants from F.7.5b's TUI
+// handshake (persisted via F.7.17.7's storage adapter) merge into the
+// rendered settings.json without re-prompting the dev.
+//
+// Structural typing means callers wire the full app.PermissionGrantsStore
+// and Go satisfies this narrower interface implicitly — render does not
+// import the app package, breaking the otherwise-unavoidable cycle
+// (app would need dispatcher → render → app).
+//
+// A nil lister is the documented graceful-skip path: Render proceeds with
+// binding.ToolsAllowed only and emits no error. That keeps the spawn
+// pipeline functional during the deferred plumbing window between F.7.5c
+// (this droplet) and the follow-up that wires the production
+// app.PermissionGrantsStore handle through BuildSpawnCommand.
+type PermissionGrantsLister interface {
+	// ListGrantsForKind returns every grant matching the supplied
+	// (projectID, kind, cliKind) triple. Matches the signature on
+	// app.PermissionGrantsStore.ListGrantsForKind verbatim so the
+	// production storage adapter satisfies this interface without an
+	// adapter shim. cliKind is matched case-insensitively per the
+	// storage adapter's lowercase normalization.
+	ListGrantsForKind(ctx context.Context, projectID string, kind domain.Kind, cliKind string) ([]domain.PermissionGrant, error)
+}
 
 // pluginSubdir is the conventional path under bundle.Root that the claude
 // adapter materializes for its plugin tree. Mirrors cli_claude.pluginSubdir
@@ -53,6 +80,14 @@ const agentsSubdir = "agents"
 // name, etc.) before any disk I/O. Callers detect via errors.Is and route
 // to ErrInvalidSpawnInput-equivalent failure.
 var ErrInvalidRenderInput = errors.New("render: invalid render input")
+
+// ErrInvalidGrantsLister is returned by the dispatcher-seam adapter
+// (init.go's adaptRender) when the `any`-typed grantsLister supplied by
+// BuildSpawnCommand is non-nil but does NOT satisfy
+// PermissionGrantsLister. The error surfaces a configuration mistake at
+// the spawn-pipeline boundary rather than panicking on the type
+// assertion.
+var ErrInvalidGrantsLister = errors.New("render: grants lister does not implement PermissionGrantsLister")
 
 // Render writes the per-spawn bundle artifacts the claude adapter needs:
 //
@@ -80,11 +115,20 @@ var ErrInvalidRenderInput = errors.New("render: invalid render input")
 // and binding.AgentName must be non-empty + free of path separators
 // (defensive against accidental path-injection through a corrupted catalog
 // — production AgentName values like "go-builder-agent" are safe).
+//
+// ctx is forwarded to grantsLister.ListGrantsForKind so the lister's
+// underlying storage call can honor cancellation. grantsLister MAY be nil
+// — render skips the grants-merge step and renders the binding's
+// ToolsAllowed only. This is the deferred-plumbing path used by Drop 4c
+// F.7.5c until the production app.PermissionGrantsStore handle reaches
+// BuildSpawnCommand.
 func Render(
+	ctx context.Context,
 	bundle dispatcher.Bundle,
 	item domain.ActionItem,
 	project domain.Project,
 	binding dispatcher.BindingResolved,
+	grantsLister PermissionGrantsLister,
 ) (string, error) {
 	if strings.TrimSpace(bundle.Paths.Root) == "" {
 		return "", fmt.Errorf("%w: bundle.Paths.Root is empty", ErrInvalidRenderInput)
@@ -124,8 +168,9 @@ func Render(
 		return "", fmt.Errorf("render: mcp config: %w", err)
 	}
 
-	// 5. plugin/settings.json
-	if err := renderSettings(bundle, binding); err != nil {
+	// 5. plugin/settings.json — F.7.5c merges previously stored
+	// permission grants into permissions.allow when grantsLister is non-nil.
+	if err := renderSettings(ctx, bundle, item, project, binding, grantsLister); err != nil {
 		rollback.run()
 		return "", fmt.Errorf("render: settings: %w", err)
 	}
@@ -390,23 +435,51 @@ type permissionsBlock struct {
 }
 
 // renderSettings writes <plugin>/settings.json. Permissions.allow is
-// sourced from binding.ToolsAllowed; permissions.deny from
-// binding.ToolsDisallowed. permissions.ask is unused today — F.7.5b's
-// TUI handshake will populate it via stored grants in a future droplet.
+// sourced from binding.ToolsAllowed PLUS any previously-stored
+// permission grants the lister returns for (project.ID, item.Kind,
+// binding.CLIKind); permissions.deny mirrors binding.ToolsDisallowed.
+// permissions.ask stays an explicit empty array — F.7.5b's TUI handshake
+// owns the in-flight ask vocabulary; persisted grants land in allow.
+//
+// Drop 4c F.7.5c grants-merge contract:
+//
+//   - grantsLister == nil → graceful skip; allow = binding.ToolsAllowed only.
+//   - binding.CLIKind == "" → grants lookup is skipped (the storage layer's
+//     UNIQUE composite requires a non-empty CLIKind, so the lookup would
+//     never match anyway).
+//   - lister returns an error → wrapped and returned; render's rollback
+//     cleans up the partially-written bundle.
+//   - Order: binding.ToolsAllowed entries first (preserved verbatim),
+//     then grants in the lister's storage order (granted_at-ASC per
+//     PermissionGrantsStore.ListGrantsForKind contract). Within each
+//     group, dedup is preserve-first-seen.
 //
 // Empty / nil slices on the binding render as `[]` (explicit empty)
 // rather than omitted JSON keys — claude's evaluation order is
 // deny → ask → allow with first-match-wins, so an explicit empty-allow
 // list is functionally identical to a missing-allow but more
 // debuggable when the dev opens the file.
-func renderSettings(bundle dispatcher.Bundle, binding dispatcher.BindingResolved) error {
+func renderSettings(
+	ctx context.Context,
+	bundle dispatcher.Bundle,
+	item domain.ActionItem,
+	project domain.Project,
+	binding dispatcher.BindingResolved,
+	grantsLister PermissionGrantsLister,
+) error {
 	dir := filepath.Join(bundle.Paths.Root, pluginSubdir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("mkdir plugin dir: %w", err)
 	}
+
+	allow, err := mergeAllowList(ctx, item, project, binding, grantsLister)
+	if err != nil {
+		return fmt.Errorf("merge allow list: %w", err)
+	}
+
 	settings := settingsFile{
 		Permissions: permissionsBlock{
-			Allow: nonNilStringSlice(binding.ToolsAllowed),
+			Allow: allow,
 			Ask:   []string{},
 			Deny:  nonNilStringSlice(binding.ToolsDisallowed),
 		},
@@ -416,6 +489,55 @@ func renderSettings(bundle dispatcher.Bundle, binding dispatcher.BindingResolved
 		return fmt.Errorf("marshal settings: %w", err)
 	}
 	return os.WriteFile(filepath.Join(dir, "settings.json"), payload, 0o600)
+}
+
+// mergeAllowList combines binding.ToolsAllowed with stored grants from
+// grantsLister, preserving binding-first-then-grants order and
+// deduplicating against the running set. Returned slice is always
+// non-nil (json.Marshal emits `[]` instead of `null`).
+//
+// Skip-conditions for the grants lookup:
+//
+//   - grantsLister == nil → deferred plumbing path; binding only.
+//   - binding.CLIKind == "" → the storage UNIQUE composite requires
+//     non-empty cli_kind so a lookup with "" would never match; we
+//     short-circuit rather than emit a no-op DB query.
+//
+// Errors from grantsLister.ListGrantsForKind propagate — render's
+// rollback cleans up the partially-written bundle.
+func mergeAllowList(
+	ctx context.Context,
+	item domain.ActionItem,
+	project domain.Project,
+	binding dispatcher.BindingResolved,
+	grantsLister PermissionGrantsLister,
+) ([]string, error) {
+	merged := make([]string, 0, len(binding.ToolsAllowed))
+	seen := make(map[string]struct{}, len(binding.ToolsAllowed))
+	for _, rule := range binding.ToolsAllowed {
+		if _, ok := seen[rule]; ok {
+			continue
+		}
+		seen[rule] = struct{}{}
+		merged = append(merged, rule)
+	}
+
+	if grantsLister == nil || strings.TrimSpace(string(binding.CLIKind)) == "" {
+		return merged, nil
+	}
+
+	grants, err := grantsLister.ListGrantsForKind(ctx, project.ID, item.Kind, string(binding.CLIKind))
+	if err != nil {
+		return nil, fmt.Errorf("list grants for kind %q cli %q: %w", item.Kind, binding.CLIKind, err)
+	}
+	for _, g := range grants {
+		if _, ok := seen[g.Rule]; ok {
+			continue
+		}
+		seen[g.Rule] = struct{}{}
+		merged = append(merged, g.Rule)
+	}
+	return merged, nil
 }
 
 // nonNilStringSlice returns []string{} when in is nil so json.Marshal
