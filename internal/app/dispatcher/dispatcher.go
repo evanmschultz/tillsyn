@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/app"
@@ -111,10 +112,21 @@ type Dispatcher interface {
 
 // Sentinel errors exposed by the dispatcher package.
 var (
-	// ErrNotImplemented is returned by Start and Stop until Drop 4b wires
-	// the continuous-mode loop. Callers detect this with errors.Is to
-	// distinguish "not yet wired" from real failures.
+	// ErrNotImplemented was returned by Start and Stop pre-Drop-4b.7 while
+	// the continuous-mode loop was a stub. Drop 4b.7 wires real Start/Stop
+	// bodies; the sentinel is preserved as a deprecated alias for backward
+	// compat with callers that still detect it via errors.Is.
+	//
+	// Deprecated: Drop 4b.7 wired Start/Stop. Use ErrAlreadyStarted to detect
+	// duplicate Start calls; clean Stop returns nil.
 	ErrNotImplemented = errors.New("dispatcher: continuous-mode not implemented in wave 2")
+	// ErrAlreadyStarted is returned by Start when the dispatcher's
+	// continuous-mode loop has already been started (and not yet stopped),
+	// or when the dispatcher has been stopped previously and a re-start is
+	// attempted. Callers detect with errors.Is so the till serve flow
+	// surfaces "dispatcher already running" cleanly rather than spawning
+	// duplicate subscriber goroutines.
+	ErrAlreadyStarted = errors.New("dispatcher: continuous-mode already started")
 	// ErrInvalidDispatcherConfig is returned by NewDispatcher when a required
 	// dependency is nil. Callers detect this with errors.Is to give the
 	// dev a precise misconfiguration message.
@@ -145,6 +157,16 @@ type actionItemReader interface {
 // structural field).
 type projectReader interface {
 	GetProject(ctx context.Context, projectID string) (domain.Project, error)
+}
+
+// projectLister is the narrow consumer-side view the continuous-mode loop
+// (Drop 4b.7 Start) uses to enumerate projects at startup. The subscriber
+// spins one goroutine per project ID returned by ListProjects; projects
+// added after Start are NOT picked up automatically — that is a Drop 4c /
+// Drop 5 dogfood refinement (would require a LiveWaitEventProjectCreated
+// event the broker does not yet publish).
+type projectLister interface {
+	ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error)
 }
 
 // listingService is the narrow view the dispatcher uses to read sibling
@@ -218,6 +240,11 @@ type dispatcher struct {
 	monitor *processMonitor
 	// cleanup releases locks + monitor entries on terminal state (4a.22).
 	cleanup *cleanupHook
+	// projectsLister enumerates projects at Start time so the continuous-mode
+	// loop (Drop 4b.7) can spin one subscriber goroutine per project.
+	// Production wiring assigns *app.Service; older tests that pre-date
+	// Drop 4b.7 leave this nil and never call Start.
+	projectsLister projectLister
 	// opts carries forward-compatible configuration. Wave 2 leaves it at
 	// zero value; later droplets read concrete fields.
 	opts Options
@@ -225,6 +252,16 @@ type dispatcher struct {
 	// fake clock through a non-exported helper (see dispatcher_test.go);
 	// production callers get time.Now via the constructor default.
 	clock func() time.Time
+
+	// Continuous-mode lifecycle state (Drop 4b.7). All four fields below are
+	// read/written under subMu; subMu must NOT be held while invoking any
+	// external surface (broker, walker, RunOnce) because those calls block on
+	// the subscriber's own goroutines.
+	subMu     sync.Mutex
+	started   bool
+	stopped   bool
+	subCancel context.CancelFunc
+	subWG     sync.WaitGroup
 }
 
 // NewDispatcher constructs a dispatcher wired with the full Wave-2 component
@@ -265,19 +302,20 @@ func NewDispatcher(svc *app.Service, broker app.LiveWaitBroker, opts Options) (*
 	}
 
 	return &dispatcher{
-		svc:       svc,
-		projects:  svc,
-		listing:   svc,
-		mutator:   adapter,
-		broker:    broker,
-		walker:    walker,
-		conflict:  conflict,
-		fileLocks: fileLocks,
-		pkgLocks:  pkgLocks,
-		monitor:   monitor,
-		cleanup:   cleanup,
-		opts:      opts,
-		clock:     time.Now,
+		svc:            svc,
+		projects:       svc,
+		listing:        svc,
+		mutator:        adapter,
+		broker:         broker,
+		walker:         walker,
+		conflict:       conflict,
+		fileLocks:      fileLocks,
+		pkgLocks:       pkgLocks,
+		monitor:        monitor,
+		cleanup:        cleanup,
+		projectsLister: svc,
+		opts:           opts,
+		clock:          time.Now,
 	}, nil
 }
 
@@ -810,16 +848,8 @@ func walkerIneligibilityReason(item domain.ActionItem, byID map[string]domain.Ac
 	return "walker eligibility predicate not satisfied"
 }
 
-// Start begins the continuous-mode dispatcher loop. Drop 4b implements this.
-func (d *dispatcher) Start(_ context.Context) error {
-	return ErrNotImplemented
-}
-
-// Stop tears down the continuous-mode dispatcher loop. Drop 4b implements
-// this.
-func (d *dispatcher) Stop(_ context.Context) error {
-	return ErrNotImplemented
-}
+// Start / Stop bodies live in subscriber.go (Drop 4b.7). They replace the
+// pre-Drop-4b.7 ErrNotImplemented stubs with real continuous-mode wiring.
 
 // now returns the dispatcher's current time, defaulting to time.Now when no
 // clock has been injected.

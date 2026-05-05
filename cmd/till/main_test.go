@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2467,6 +2468,117 @@ func TestRunServeCommandTreatsCanceledRunnerAsCleanShutdown(t *testing.T) {
 	if err := run(ctx, []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("run(serve canceled) error = %v, want nil clean shutdown", err)
 	}
+}
+
+// TestRunServeIntegrationStartsAndStopsDispatcher verifies the Drop 4b.7
+// wiring: runServe constructs a dispatcher via dispatcherFactoryFunc, calls
+// Start at boot, and calls Stop on shutdown. The test injects a stub
+// dispatcher that records both lifecycle calls so the assertion is
+// observable without standing up the subscriber graph.
+func TestRunServeIntegrationStartsAndStopsDispatcher(t *testing.T) {
+	origFactory := dispatcherFactoryFunc
+	origRunner := serveCommandRunner
+	t.Cleanup(func() {
+		dispatcherFactoryFunc = origFactory
+		serveCommandRunner = origRunner
+	})
+
+	stub := &stubDispatcherLifecycle{}
+	dispatcherFactoryFunc = func(_ *app.Service, _ app.LiveWaitBroker) (dispatcherLifecycle, error) {
+		return stub, nil
+	}
+	started := make(chan struct{})
+	serveCommandRunner = func(ctx context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "tillsyn.toml")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+	if err := run(ctx, []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(serve canceled) error = %v, want nil clean shutdown", err)
+	}
+
+	if got := stub.startCalls.Load(); got != 1 {
+		t.Fatalf("dispatcher Start calls = %d, want 1", got)
+	}
+	if got := stub.stopCalls.Load(); got != 1 {
+		t.Fatalf("dispatcher Stop calls = %d, want 1", got)
+	}
+}
+
+// TestRunServeIntegrationFailsOnDispatcherStartError verifies runServe
+// surfaces a dispatcher Start failure rather than booting the HTTP / MCP
+// servers — fail-loud is the MVP contract per Drop 4b.7's runServe
+// docstring.
+func TestRunServeIntegrationFailsOnDispatcherStartError(t *testing.T) {
+	origFactory := dispatcherFactoryFunc
+	origRunner := serveCommandRunner
+	t.Cleanup(func() {
+		dispatcherFactoryFunc = origFactory
+		serveCommandRunner = origRunner
+	})
+
+	startErr := errors.New("synthetic start failure")
+	stub := &stubDispatcherLifecycle{startReturn: startErr}
+	dispatcherFactoryFunc = func(_ *app.Service, _ app.LiveWaitBroker) (dispatcherLifecycle, error) {
+		return stub, nil
+	}
+	runnerInvoked := false
+	serveCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+		runnerInvoked = true
+		return nil
+	}
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "tillsyn.toml")
+	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("run(serve) error = nil, want wrapped dispatcher start failure")
+	}
+	if !errors.Is(err, startErr) {
+		t.Fatalf("run(serve) error = %v, want errors.Is(%v)", err, startErr)
+	}
+	if runnerInvoked {
+		t.Fatal("serveCommandRunner invoked despite dispatcher start failure; want fail-loud")
+	}
+	if got := stub.stopCalls.Load(); got != 0 {
+		t.Fatalf("dispatcher Stop calls = %d, want 0 (Stop must not fire when Start failed)", got)
+	}
+}
+
+// stubDispatcherLifecycle is a minimal dispatcherLifecycle test stub. The
+// startReturn / stopReturn fields control the sentinel surfaced by Start /
+// Stop; startCalls / stopCalls record invocation counts so tests assert the
+// runServe lifecycle wired both calls.
+type stubDispatcherLifecycle struct {
+	startCalls   atomic.Int32
+	stopCalls    atomic.Int32
+	startReturn  error
+	stopReturn   error
+	startObserve chan struct{}
+}
+
+func (s *stubDispatcherLifecycle) Start(_ context.Context) error {
+	s.startCalls.Add(1)
+	if s.startObserve != nil {
+		close(s.startObserve)
+	}
+	return s.startReturn
+}
+
+func (s *stubDispatcherLifecycle) Stop(_ context.Context) error {
+	s.stopCalls.Add(1)
+	return s.stopReturn
 }
 
 // TestRunServeCommandPropagatesErrors verifies serve runner failures are returned to callers.
