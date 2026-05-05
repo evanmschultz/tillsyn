@@ -18,14 +18,16 @@ import (
 //
 //  1. File-level locks acquired via fileLockManager (Wave 2.3 / droplet 4a.16).
 //  2. Package-level locks acquired via packageLockManager (Wave 2.4 / droplet 4a.17).
-//  3. Auth-bundle revoke — STUB in Wave 2. The real revoke is filled in by
-//     Drop 4c Theme F.7 (spawn pipeline redesign), which replaces the 4a.19
-//     spawn stub with a per-spawn temp-bundle architecture and wires real
-//     auth-bundle revoke through the till.auth_request(revoke) MCP path. See
-//     workflow/drop_4c/SKETCH.md § Theme F.7. The seam is documented loudly
-//     so the dev cleaning up after a manual-trigger CLI run today knows
-//     credentials are NOT yet auto revoked; see also spawn.go's AuthBundle
-//     stub for the matching seam on the spawn side.
+//  3. Auth-bundle revoke — wired in Drop 4b.5 to Service.RevokeSessionForActionItem
+//     (internal/app/auth_requests.go). The closure passed by NewDispatcher
+//     iterates every active session whose ApprovedPath resolves to the
+//     terminal action item's ID, calls authBackend.RevokeAuthSession on
+//     each, AND cascades to repo.RevokeCapabilityLeasesByScope for each
+//     matching scope tuple. Multi-session retries (fix-builder cycles)
+//     are revoked exhaustively per WC-A2; lease cascade is explicit
+//     because RevokeAuthSession does NOT touch capability leases per
+//     WC-A1. Drop 4c Theme F.7 (spawn pipeline redesign) replaces the
+//     temp-bundle architecture but leaves this seam intact.
 //  4. Process-monitor unsubscribe — removes the item's entry from the
 //     monitor's tracked-PID map. By the time cleanup runs the process has
 //     already exited (the monitor's runHandle goroutine is what drives the
@@ -93,12 +95,15 @@ type cleanupHook struct {
 	// releasePackageLocks runs second. Same lift-to-error rationale as
 	// releaseFileLocks.
 	releasePackageLocks func(actionItemID string) error
-	// revokeAuthBundle runs third. Wave 2 wires this to a no-op stub (see
-	// the package-level method below); Drop 4c Theme F.7 (spawn pipeline
-	// redesign) replaces the stub with a till.auth_request(revoke) call
-	// against the action item's session/lease. The function-typed shape lets
-	// the wiring change without touching cleanupHook.
-	revokeAuthBundle func(actionItemID string) error
+	// revokeAuthBundle runs third. Drop 4b.5 wires this to
+	// Service.RevokeSessionForActionItem via the authRevoker seam threaded
+	// through newCleanupHook. The closure receives the same ctx the
+	// terminal-state observer passed into OnTerminalState so backend calls
+	// (autent's RevokeAuthSession + sqlite's RevokeCapabilityLeasesByScope)
+	// honor the cleanup deadline. The function-typed shape lets the wiring
+	// change without touching cleanupHook (Drop 4c Theme F.7's per-spawn
+	// temp-bundle architecture rebinds this seam, not the field shape).
+	revokeAuthBundle func(ctx context.Context, actionItemID string) error
 	// unsubscribeMonitor runs fourth. Production wiring binds this to
 	// processMonitor.Unsubscribe (added in droplet 4a.23). Returns no error
 	// — see monitorUnsubscriber doc for the rationale.
@@ -115,12 +120,31 @@ type cleanupHook struct {
 	cleaned map[string]struct{}
 }
 
+// actionItemAuthRevoker is the consumer-side narrow view the cleanup hook
+// uses to revoke every auth session and capability lease bound to one
+// action item on terminal-state cleanup. *app.Service satisfies this
+// interface via its RevokeSessionForActionItem method (added in Drop 4b.5);
+// the test suite injects a deterministic stub via the function-typed
+// revokeAuthBundle field on cleanupHook for direct in-package construction.
+//
+// Method contract: RevokeSessionForActionItem MUST be idempotent (zero
+// matching sessions returns nil) and MUST iterate over EVERY matching
+// session — retries / fix-builder cycles can leave multiple sessions tied
+// to the same action item. See internal/app/auth_requests.go's
+// RevokeSessionForActionItem doc-comment for the full multi-session +
+// lease-cascade contract.
+type actionItemAuthRevoker interface {
+	RevokeSessionForActionItem(ctx context.Context, actionItemID string) error
+}
+
 // newCleanupHook constructs a cleanupHook bound to the dispatcher's lock
-// managers and process monitor. All three dependencies MUST be non-nil;
-// callers wire the production instances via the dispatcher constructor in
-// droplet 4a.23. The auth-bundle revoke seam is wired to the package-level
-// stub (revokeAuthBundleStub) here; Drop 4c Theme F.7 swaps it for the real
-// revoke without touching the call site.
+// managers, process monitor, and auth revoker. All four dependencies MUST
+// be non-nil; callers wire the production instances via the dispatcher
+// constructor in droplet 4a.23. The auth-bundle revoke seam is wired to
+// the supplied authRevoker; Drop 4b.5 lands *app.Service as the production
+// implementation. Tests can inject a stub authRevoker directly through
+// this constructor or build a cleanupHook struct literal in-package for
+// finer control over individual seams.
 //
 // The constructor lifts the lock managers' no-error Release methods into
 // error-returning closures so the cleanupHook's pipeline shape stays
@@ -132,7 +156,7 @@ type cleanupHook struct {
 // name when validation fails — the same wrap shape the rest of the package
 // uses (NewDispatcher, processMonitor.Track) so the dev sees a consistent
 // misconfiguration message.
-func newCleanupHook(fileLocks *fileLockManager, pkgLocks *packageLockManager, monitor monitorUnsubscriber) (*cleanupHook, error) {
+func newCleanupHook(fileLocks *fileLockManager, pkgLocks *packageLockManager, monitor monitorUnsubscriber, authRevoker actionItemAuthRevoker) (*cleanupHook, error) {
 	if fileLocks == nil {
 		return nil, errInvalidCleanupDep("fileLocks")
 	}
@@ -141,6 +165,9 @@ func newCleanupHook(fileLocks *fileLockManager, pkgLocks *packageLockManager, mo
 	}
 	if monitor == nil {
 		return nil, errInvalidCleanupDep("monitor")
+	}
+	if authRevoker == nil {
+		return nil, errInvalidCleanupDep("authRevoker")
 	}
 	return &cleanupHook{
 		releaseFileLocks: func(actionItemID string) error {
@@ -151,7 +178,9 @@ func newCleanupHook(fileLocks *fileLockManager, pkgLocks *packageLockManager, mo
 			pkgLocks.Release(actionItemID)
 			return nil
 		},
-		revokeAuthBundle: revokeAuthBundleStub,
+		revokeAuthBundle: func(ctx context.Context, actionItemID string) error {
+			return authRevoker.RevokeSessionForActionItem(ctx, actionItemID)
+		},
 		unsubscribeMonitor: func(actionItemID string) {
 			monitor.Unsubscribe(actionItemID)
 		},
@@ -196,7 +225,12 @@ func errInvalidCleanupDep(name string) error {
 // Reordering would change which downstream component sees freed locks first;
 // today the order is documented but not load-bearing because all four steps
 // always run before OnTerminalState returns.
-func (c *cleanupHook) OnTerminalState(_ context.Context, item domain.ActionItem) error {
+//
+// The ctx is forwarded into revokeAuthBundle so the auth-revoke seam (Drop
+// 4b.5: Service.RevokeSessionForActionItem) honors the cleanup deadline.
+// Lock release + monitor unsubscribe do not consume ctx because their
+// implementations are in-process and synchronous.
+func (c *cleanupHook) OnTerminalState(ctx context.Context, item domain.ActionItem) error {
 	if c == nil {
 		return nil
 	}
@@ -227,7 +261,7 @@ func (c *cleanupHook) OnTerminalState(_ context.Context, item domain.ActionItem)
 		}
 	}
 	if c.revokeAuthBundle != nil {
-		if err := c.revokeAuthBundle(item.ID); err != nil {
+		if err := c.revokeAuthBundle(ctx, item.ID); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -235,22 +269,4 @@ func (c *cleanupHook) OnTerminalState(_ context.Context, item domain.ActionItem)
 		c.unsubscribeMonitor(item.ID)
 	}
 	return errors.Join(errs...)
-}
-
-// revokeAuthBundleStub is the Wave-2 placeholder for the auth-bundle revoke
-// step. The body is intentionally empty because Wave 2 has no real auth
-// surface to revoke — droplet 4a.19 ships the AuthBundle{} stub on the spawn
-// side, and the symmetric stub here closes the loop on the cleanup side.
-//
-// Drop 4c Theme F.7 (spawn pipeline redesign) fills this in: it replaces the
-// 4a.19 spawn stub with a per-spawn temp-bundle architecture and wires this
-// stub to a till.auth_request(operation=revoke) call against the action
-// item's session and lease, surfacing the revoke error through the
-// cleanupHook's errors.Join aggregation. Until then the dev cleaning up
-// after a manual-trigger CLI run revokes manually via `till auth_request
-// revoke` — see WAVE_2_PLAN.md §2.9 mitigation paragraph and
-// workflow/drop_4c/SKETCH.md § Theme F.7.
-func revokeAuthBundleStub(_ string) error {
-	// Drop 4c Theme F.7 fills this in.
-	return nil
 }

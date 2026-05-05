@@ -864,6 +864,96 @@ func (s *Service) RevokeAuthSession(ctx context.Context, sessionID, reason strin
 	return s.authBackend.RevokeAuthSession(ctx, strings.TrimSpace(sessionID), strings.TrimSpace(reason))
 }
 
+// terminalStateCleanupRevokeReason is the audit-trail string written to every
+// session and lease revoked through RevokeSessionForActionItem. The constant
+// keeps the wording stable so post-mortem queries can grep for the exact
+// reason without depending on call-site formatting drift.
+const terminalStateCleanupRevokeReason = "terminal_state_cleanup"
+
+// RevokeSessionForActionItem revokes every active auth session AND every
+// capability lease bound to one action item, fired by the dispatcher's
+// cleanup hook (internal/app/dispatcher/cleanup.go) when the item enters a
+// terminal lifecycle state (StateComplete / StateFailed / StateArchived).
+//
+// Resolution path: the method calls ListAuthSessions with an empty filter
+// (we cannot filter by approved-path scope at the backend boundary) and then
+// parses every session's ApprovedPath through domain.ParseAuthRequestPath.
+// A session matches when path.ScopeID == actionItemID AND session.RevokedAt
+// is nil. Sessions whose ApprovedPath fails to parse are skipped silently —
+// malformed paths are an upstream-bug surface that is not this method's
+// concern, and a parse-failure must not block the rest of the cleanup
+// pipeline.
+//
+// Multi-session iteration (WC-A2): retries / fix-builder cycles can leave
+// multiple sessions tied to the same action item across the dispatcher's
+// lifetime. The method revokes EVERY matching session, not just the first.
+// Returning early on the first match would leak the rest, which would still
+// validate against the ApprovedPath until their TTL expired.
+//
+// Lease cascade (WC-A1): RevokeAuthSession only revokes the session row in
+// the autent backend; tillsyn-side capability leases live in a separate
+// table reachable through s.repo.RevokeCapabilityLeasesByScope. The method
+// invokes BOTH per session: first the session revoke through authBackend,
+// then the lease revoke through the repository scoped by
+// (path.ProjectID, path.ScopeType.ToCapabilityScopeType(), path.ScopeID).
+//
+// Error aggregation: every per-session attempt continues regardless of
+// individual failures. The final return value is errors.Join of every
+// non-nil err so the dispatcher's cleanup hook can record the aggregate
+// without short-circuiting on the first revoke failure. Returning nil on
+// zero-matching-sessions keeps the cleanup hook idempotent for items that
+// never claimed auth (orchestrator-driven creation, persistent / human-
+// verify items).
+//
+// No-ops: empty actionItemID or unconfigured authBackend return nil. Both
+// paths are reachable in test fixtures and in production for items that
+// never claimed auth — the cleanup hook treats this method as fire-and-
+// forget for those cases.
+func (s *Service) RevokeSessionForActionItem(ctx context.Context, actionItemID string) error {
+	actionItemID = strings.TrimSpace(actionItemID)
+	if actionItemID == "" {
+		return nil
+	}
+	if s.authBackend == nil {
+		return nil
+	}
+
+	sessions, err := s.authBackend.ListAuthSessions(ctx, AuthSessionFilter{})
+	if err != nil {
+		return fmt.Errorf("list auth sessions for action item %q: %w", actionItemID, err)
+	}
+
+	var errs []error
+	now := s.clock().UTC()
+	for _, session := range sessions {
+		if session.RevokedAt != nil {
+			continue
+		}
+		path, parseErr := domain.ParseAuthRequestPath(strings.TrimSpace(session.ApprovedPath))
+		if parseErr != nil {
+			// Malformed approved-path is an upstream bug; skip rather than
+			// abort cleanup.
+			continue
+		}
+		if path.ScopeID != actionItemID {
+			continue
+		}
+		if _, revokeErr := s.authBackend.RevokeAuthSession(ctx, session.SessionID, terminalStateCleanupRevokeReason); revokeErr != nil {
+			errs = append(errs, fmt.Errorf("revoke auth session %q: %w", session.SessionID, revokeErr))
+		}
+		// Cascade to capability leases bound to the same scope tuple.
+		// path.ScopeType is a domain.ScopeLevel; the lease layer takes a
+		// CapabilityScopeType. The conversion is total per
+		// ScopeLevel.ToCapabilityScopeType.
+		capScope := path.ScopeType.ToCapabilityScopeType()
+		projectID := strings.TrimSpace(path.ProjectID)
+		if leaseErr := s.repo.RevokeCapabilityLeasesByScope(ctx, projectID, capScope, path.ScopeID, now, terminalStateCleanupRevokeReason); leaseErr != nil {
+			errs = append(errs, fmt.Errorf("revoke capability leases for action item %q (project=%q scope=%s scope_id=%q): %w", actionItemID, projectID, capScope, path.ScopeID, leaseErr))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // authRequestAttentionItems builds mirrored user-action notifications for one pending auth request.
 func authRequestAttentionItems(req domain.AuthRequest, now time.Time) ([]domain.AttentionItem, error) {
 	attentionIDs, projectIDs := authRequestAttentionTargets(req)

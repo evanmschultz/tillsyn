@@ -37,6 +37,35 @@ func (s *stubMonitorUnsubscriber) gotCalls() []string {
 	return out
 }
 
+// stubAuthRevoker is the deterministic test fixture for the auth-bundle
+// revoke step (Drop 4b.5). It records every action-item ID handed to
+// RevokeSessionForActionItem and optionally returns a canned error so tests
+// can exercise both happy-path wiring and the errors.Join aggregation
+// path through the cleanup hook.
+type stubAuthRevoker struct {
+	mu     sync.Mutex
+	calls  []string
+	errOut error
+}
+
+// RevokeSessionForActionItem records the call and returns the configured
+// canned error.
+func (s *stubAuthRevoker) RevokeSessionForActionItem(_ context.Context, actionItemID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, actionItemID)
+	return s.errOut
+}
+
+// gotCalls returns a copy of the recorded call list under the mutex.
+func (s *stubAuthRevoker) gotCalls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.calls))
+	copy(out, s.calls)
+	return out
+}
+
 // TestCleanupReleasesFileAndPackageLocks asserts the happy-path baseline:
 // after the dispatcher pre-acquires file + package locks for an action item,
 // OnTerminalState frees BOTH locks so a sibling can acquire them on the
@@ -49,8 +78,9 @@ func TestCleanupReleasesFileAndPackageLocks(t *testing.T) {
 	fileLocks := newFileLockManager()
 	pkgLocks := newPackageLockManager()
 	monitor := &stubMonitorUnsubscriber{}
+	authRevoker := &stubAuthRevoker{}
 
-	hook, err := newCleanupHook(fileLocks, pkgLocks, monitor)
+	hook, err := newCleanupHook(fileLocks, pkgLocks, monitor, authRevoker)
 	if err != nil {
 		t.Fatalf("newCleanupHook: %v", err)
 	}
@@ -98,6 +128,14 @@ func TestCleanupReleasesFileAndPackageLocks(t *testing.T) {
 	if len(gotMonitor) != 1 || gotMonitor[0] != "item-1" {
 		t.Fatalf("expected monitor.Unsubscribe([item-1]), got %v", gotMonitor)
 	}
+
+	// Auth revoker must have fired exactly once for item-1 (Drop 4b.5
+	// wired the cleanup hook to Service.RevokeSessionForActionItem via the
+	// authRevoker seam threaded through newCleanupHook).
+	gotAuth := authRevoker.gotCalls()
+	if len(gotAuth) != 1 || gotAuth[0] != "item-1" {
+		t.Fatalf("expected authRevoker.RevokeSessionForActionItem([item-1]), got %v", gotAuth)
+	}
 }
 
 // TestCleanupIsIdempotent asserts that calling OnTerminalState a second time
@@ -118,7 +156,7 @@ func TestCleanupIsIdempotent(t *testing.T) {
 			pkgCalls.Add(1)
 			return nil
 		},
-		revokeAuthBundle: func(_ string) error {
+		revokeAuthBundle: func(_ context.Context, _ string) error {
 			authCalls.Add(1)
 			return nil
 		},
@@ -170,7 +208,7 @@ func TestCleanupOnArchivedAlsoFires(t *testing.T) {
 			pkgCalls.Add(1)
 			return nil
 		},
-		revokeAuthBundle: func(_ string) error {
+		revokeAuthBundle: func(_ context.Context, _ string) error {
 			authCalls.Add(1)
 			return nil
 		},
@@ -228,7 +266,7 @@ func TestCleanupContinuesPastIndividualFailure(t *testing.T) {
 			pkgCalled.Store(true)
 			return pkgErr
 		},
-		revokeAuthBundle: func(_ string) error {
+		revokeAuthBundle: func(_ context.Context, _ string) error {
 			authCalled.Store(true)
 			return authErr
 		},
@@ -286,7 +324,7 @@ func TestCleanupEmptyActionItemIDIsNoop(t *testing.T) {
 			return nil
 		},
 		releasePackageLocks: func(_ string) error { return nil },
-		revokeAuthBundle:    func(_ string) error { return nil },
+		revokeAuthBundle:    func(_ context.Context, _ string) error { return nil },
 		unsubscribeMonitor:  func(_ string) {},
 	}
 
@@ -309,22 +347,25 @@ func TestNewCleanupHookValidatesDependencies(t *testing.T) {
 	fileLocks := newFileLockManager()
 	pkgLocks := newPackageLockManager()
 	monitor := &stubMonitorUnsubscriber{}
+	authRevoker := &stubAuthRevoker{}
 
 	cases := []struct {
-		name      string
-		fileLocks *fileLockManager
-		pkgLocks  *packageLockManager
-		monitor   monitorUnsubscriber
-		wantSub   string
+		name        string
+		fileLocks   *fileLockManager
+		pkgLocks    *packageLockManager
+		monitor     monitorUnsubscriber
+		authRevoker actionItemAuthRevoker
+		wantSub     string
 	}{
-		{"nil fileLocks", nil, pkgLocks, monitor, "fileLocks"},
-		{"nil pkgLocks", fileLocks, nil, monitor, "pkgLocks"},
-		{"nil monitor", fileLocks, pkgLocks, nil, "monitor"},
+		{"nil fileLocks", nil, pkgLocks, monitor, authRevoker, "fileLocks"},
+		{"nil pkgLocks", fileLocks, nil, monitor, authRevoker, "pkgLocks"},
+		{"nil monitor", fileLocks, pkgLocks, nil, authRevoker, "monitor"},
+		{"nil authRevoker", fileLocks, pkgLocks, monitor, nil, "authRevoker"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := newCleanupHook(tc.fileLocks, tc.pkgLocks, tc.monitor)
+			_, err := newCleanupHook(tc.fileLocks, tc.pkgLocks, tc.monitor, tc.authRevoker)
 			if err == nil {
 				t.Fatalf("expected error for %s, got nil", tc.name)
 			}
@@ -345,18 +386,84 @@ func TestNewCleanupHookValidatesDependencies(t *testing.T) {
 	}
 }
 
-// TestRevokeAuthBundleStubReturnsNil pins the Wave-2 contract that the
-// stub is a no-op success. Wave 3 will replace the stub with a real revoke;
-// at that point this test will need to assert against the populated
-// AuthBundle shape instead of the empty-string ID. The test exists so the
-// stub replacement is loud rather than silent.
-func TestRevokeAuthBundleStubReturnsNil(t *testing.T) {
+// TestCleanupHookCallsRevokeSessionForActionItem pins the Drop 4b.5 wiring
+// contract: the cleanup hook's revokeAuthBundle seam, when constructed via
+// newCleanupHook, must invoke actionItemAuthRevoker.RevokeSessionForActionItem
+// with the action item's ID. This is the integration assertion that
+// confirms newCleanupHook's closure actually delegates to the supplied
+// revoker (the unit-level `func(ctx, id)` invariant is covered by other
+// tests; this one verifies the constructor wiring).
+func TestCleanupHookCallsRevokeSessionForActionItem(t *testing.T) {
 	t.Parallel()
 
-	if err := revokeAuthBundleStub("any-id"); err != nil {
-		t.Fatalf("revokeAuthBundleStub: want nil, got %v", err)
+	fileLocks := newFileLockManager()
+	pkgLocks := newPackageLockManager()
+	monitor := &stubMonitorUnsubscriber{}
+	authRevoker := &stubAuthRevoker{}
+
+	hook, err := newCleanupHook(fileLocks, pkgLocks, monitor, authRevoker)
+	if err != nil {
+		t.Fatalf("newCleanupHook: %v", err)
 	}
-	if err := revokeAuthBundleStub(""); err != nil {
-		t.Fatalf("revokeAuthBundleStub empty ID: want nil, got %v", err)
+
+	item := domain.ActionItem{
+		ID:             "wired-item",
+		LifecycleState: domain.StateComplete,
+	}
+	if err := hook.OnTerminalState(context.Background(), item); err != nil {
+		t.Fatalf("OnTerminalState: %v", err)
+	}
+
+	got := authRevoker.gotCalls()
+	if len(got) != 1 || got[0] != "wired-item" {
+		t.Fatalf("expected authRevoker.RevokeSessionForActionItem([wired-item]), got %v", got)
+	}
+}
+
+// TestCleanupHookAggregatesAuthRevokeError verifies that an error returned
+// from the wired auth revoker propagates through OnTerminalState's
+// errors.Join aggregation rather than short-circuiting the rest of the
+// pipeline. This locks the contract that lock release + monitor unsubscribe
+// still fire even when auth revoke fails — a load-bearing safety property
+// for the dispatcher's terminal-state cleanup.
+func TestCleanupHookAggregatesAuthRevokeError(t *testing.T) {
+	t.Parallel()
+
+	fileLocks := newFileLockManager()
+	pkgLocks := newPackageLockManager()
+	monitor := &stubMonitorUnsubscriber{}
+	revokeErr := errors.New("auth revoke exploded")
+	authRevoker := &stubAuthRevoker{errOut: revokeErr}
+
+	hook, err := newCleanupHook(fileLocks, pkgLocks, monitor, authRevoker)
+	if err != nil {
+		t.Fatalf("newCleanupHook: %v", err)
+	}
+
+	if _, _, err := fileLocks.Acquire("err-item", []string{"x.go"}); err != nil {
+		t.Fatalf("fileLocks.Acquire: %v", err)
+	}
+
+	item := domain.ActionItem{
+		ID:             "err-item",
+		LifecycleState: domain.StateFailed,
+	}
+	gotErr := hook.OnTerminalState(context.Background(), item)
+	if gotErr == nil {
+		t.Fatalf("expected non-nil aggregated error, got nil")
+	}
+	if !errors.Is(gotErr, revokeErr) {
+		t.Fatalf("expected aggregated err to wrap revokeErr, got %v", gotErr)
+	}
+
+	// Monitor unsubscribe must still have fired.
+	gotMonitor := monitor.gotCalls()
+	if len(gotMonitor) != 1 || gotMonitor[0] != "err-item" {
+		t.Fatalf("expected monitor.Unsubscribe([err-item]) despite auth-revoke failure, got %v", gotMonitor)
+	}
+
+	// File lock must have been released — a sibling can re-acquire it.
+	if _, conflicts, err := fileLocks.Acquire("sibling", []string{"x.go"}); err != nil || len(conflicts) != 0 {
+		t.Fatalf("expected sibling re-acquire after err-item cleanup, got conflicts=%v err=%v", conflicts, err)
 	}
 }
