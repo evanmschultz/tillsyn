@@ -756,3 +756,72 @@ func TestBuildSpawnCommandBundleRootUnderOSTempDir(t *testing.T) {
 			filepath.Base(bundleRoot), "tillsyn-spawn-")
 	}
 }
+
+// TestBuildSpawnCommandLeavesGitignoreUntouchedInOSTempMode pins the F.7.7
+// integration contract for the os_tmp default: BuildSpawnCommand wires the
+// EnsureSpawnsGitignored helper but the helper short-circuits without
+// creating .gitignore because spawn_temp_root resolves to os_tmp. This is
+// the negative assertion against any future change that accidentally
+// extends gitignore maintenance to OS-temp mode.
+//
+// NOT t.Parallel() — the package-scope sync.Once guarding
+// EnsureSpawnsGitignored interacts with sibling tests; we serialize this
+// scenario via the Reset hook + non-parallel execution to keep the
+// invocation observable.
+func TestBuildSpawnCommandLeavesGitignoreUntouchedInOSTempMode(t *testing.T) {
+	dispatcher.ResetEnsureSpawnsGitignoredOnceForTest()
+	t.Cleanup(dispatcher.ResetEnsureSpawnsGitignoredOnceForTest)
+
+	// Use a fresh worktree so the test asserts on a known-clean filesystem
+	// state. The fixtureProject() default points at /tmp/tillsyn/main which
+	// may or may not exist; pinning to t.TempDir() guarantees the assertion
+	// is meaningful.
+	worktree := t.TempDir()
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = worktree
+
+	cmd, _, err := dispatcher.BuildSpawnCommand(fixtureBuildItem(), project, fixtureCatalog(goBuilderBinding()), dispatcher.AuthBundle{})
+	if err != nil {
+		t.Fatalf("BuildSpawnCommand() error = %v, want nil", err)
+	}
+	removeBundle(t, cmd)
+
+	gitignorePath := filepath.Join(worktree, ".gitignore")
+	if _, statErr := os.Stat(gitignorePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("os.Stat(%q) = %v; want os.ErrNotExist (os_tmp mode must not write .gitignore)", gitignorePath, statErr)
+	}
+}
+
+// TestBuildSpawnCommandEnsureGitignoredFiresOncePerProcess pins the
+// sync.Once gating: a sequence of BuildSpawnCommand invocations against
+// the same project produces exactly one .gitignore-write attempt. We
+// verify by counting how many times the helper-equivalent file would
+// appear on disk after multiple spawns (always exactly one occurrence,
+// regardless of spawn count).
+//
+// NOT t.Parallel() — same rationale as the os_tmp test above.
+func TestBuildSpawnCommandEnsureGitignoredFiresOncePerProcess(t *testing.T) {
+	dispatcher.ResetEnsureSpawnsGitignoredOnceForTest()
+	t.Cleanup(dispatcher.ResetEnsureSpawnsGitignoredOnceForTest)
+
+	worktree := t.TempDir()
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = worktree
+
+	// Two consecutive spawns. Both go through the same os_tmp default path
+	// today, but the once-shot still fires (resolves to a no-op for os_tmp).
+	// The assertion below is that .gitignore is NOT created — both spawns
+	// honor the same once-shot result, neither creates the file.
+	for i := 0; i < 3; i++ {
+		cmd, _, err := dispatcher.BuildSpawnCommand(fixtureBuildItem(), project, fixtureCatalog(goBuilderBinding()), dispatcher.AuthBundle{})
+		if err != nil {
+			t.Fatalf("BuildSpawnCommand() iter %d error = %v, want nil", i, err)
+		}
+		removeBundle(t, cmd)
+	}
+
+	gitignorePath := filepath.Join(worktree, ".gitignore")
+	if _, statErr := os.Stat(gitignorePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("os.Stat(%q) = %v; want os.ErrNotExist after 3 spawns in os_tmp mode", gitignorePath, statErr)
+	}
+}

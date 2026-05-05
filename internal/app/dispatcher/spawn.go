@@ -170,6 +170,52 @@ func lookupBundleRenderFunc() (BundleRenderFunc, bool) {
 // "missing system-prompt.md" downstream failure.
 var ErrNoBundleRenderFunc = errors.New("dispatcher: no bundle render function registered")
 
+// ensureSpawnsGitignoredOnce gates the per-process EnsureSpawnsGitignored
+// invocation. .gitignore maintenance is dispatch-session scoped, not
+// per-spawn — once a process has appended `.tillsyn/spawns/` to a
+// project's .gitignore the file stays valid for every subsequent spawn in
+// that process, so re-reading the file on every spawn is wasted I/O.
+//
+// The Once is keyed at package scope rather than per-Dispatcher because
+// today's BuildSpawnCommand is a free function (no receiver). When the
+// dispatcher grows a struct receiver, this lifts onto the receiver to
+// scope the once-shot to one Dispatcher instance — multi-tenant test
+// runners can then exercise multiple Dispatchers without cross-tenant
+// gating interference. Drop 4c F.7.7 ships the package-scope form to
+// keep the diff minimal; the Drop 4d / Drop 5 dispatcher-as-struct
+// refactor moves it.
+//
+// The companion ensureSpawnsGitignoredErr captures the call's outcome so
+// subsequent spawns see the same error the first invocation produced
+// (rather than silently succeeding because the Once already fired).
+// Callers that want a fresh attempt after a transient failure must
+// restart the process — a deliberate design choice that lets us treat
+// gitignore maintenance as boot-time setup rather than a hot-path retry
+// loop.
+var (
+	ensureSpawnsGitignoredOnce sync.Once
+	ensureSpawnsGitignoredErr  error
+)
+
+// ResetEnsureSpawnsGitignoredOnceForTest re-arms the package-scope sync.Once
+// so test isolation works across multiple BuildSpawnCommand invocations
+// inside the same test binary. Production code never calls this — the
+// lifecycle is "once per process" by design — but tests in the dispatcher_test
+// external package need a way to re-verify the helper fires per fresh
+// project root.
+//
+// The exported `…ForTest` suffix signals test-only intent without requiring
+// an export_test.go indirection (no such file exists in this package and
+// adding one is out of scope for this droplet). Production callers that
+// invoke this function fall outside the dispatcher's documented contract;
+// `go vet` won't catch the misuse but the suffix is the convention the rest
+// of the dispatcher package uses for the same purpose (see
+// `RegisterAdapter` test substitution patterns elsewhere in the package).
+func ResetEnsureSpawnsGitignoredOnceForTest() {
+	ensureSpawnsGitignoredOnce = sync.Once{}
+	ensureSpawnsGitignoredErr = nil
+}
+
 // adaptersMu guards adaptersMap. RegisterAdapter / lookupAdapter are
 // concurrency-safe so wiring code can populate the registry from package
 // init() in any order, and tests can register/swap adapters without races.
@@ -343,7 +389,22 @@ func BuildSpawnCommand(
 	// the manifest is non-fatal here only because the F.7.8 orphan scan
 	// will treat a manifest-absent bundle as orphaned and reap it; we
 	// surface the error to the caller for diagnostic visibility.
-	bundle, err := NewBundle(item, "", project.RepoPrimaryWorktree)
+	spawnTempRoot := ""
+	// F.7.7: ensure project-mode bundles are gitignored so the worktree
+	// stays clean across drops. The call is gated by a package-scope
+	// sync.Once so multiple spawns in the same process don't repeatedly
+	// re-read+re-write the same .gitignore. In os_tmp mode (today's
+	// hardcoded default) the helper returns nil immediately without
+	// touching disk, so the gating is essentially free for the common
+	// path; the work fires the first time a project-mode template lands
+	// here once the catalog→Tillsyn plumbing follow-up ships.
+	ensureSpawnsGitignoredOnce.Do(func() {
+		ensureSpawnsGitignoredErr = EnsureSpawnsGitignored(project.RepoPrimaryWorktree, spawnTempRoot)
+	})
+	if ensureSpawnsGitignoredErr != nil {
+		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: ensure spawns gitignored: %w", ensureSpawnsGitignoredErr)
+	}
+	bundle, err := NewBundle(item, spawnTempRoot, project.RepoPrimaryWorktree)
 	if err != nil {
 		return nil, SpawnDescriptor{}, fmt.Errorf("dispatcher: create spawn bundle: %w", err)
 	}
