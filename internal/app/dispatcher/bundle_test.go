@@ -645,6 +645,155 @@ func TestUpdateManifestPIDPreservesOtherFields(t *testing.T) {
 	}
 }
 
+// TestBundleWriteManifestPreservesCLIKind pins the F.7.17.6 round-trip
+// contract: WriteManifest with CLIKind="claude" → ReadManifest returns
+// CLIKind="claude". F.7.8's orphan scan keys adapter-specific liveness
+// checks off this field, so any silent drop on the JSON boundary would
+// break orphan-scan routing.
+func TestBundleWriteManifestPreservesCLIKind(t *testing.T) {
+	t.Parallel()
+
+	bundle, err := dispatcher.NewBundle(fixtureBundleItem(), "", "")
+	if err != nil {
+		t.Fatalf("NewBundle() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = bundle.Cleanup() })
+
+	payload := dispatcher.ManifestMetadata{
+		SpawnID:      bundle.SpawnID,
+		ActionItemID: "ai-clikind-roundtrip",
+		Kind:         domain.KindBuild,
+		CLIKind:      "claude",
+		StartedAt:    bundle.StartedAt,
+		Paths:        []string{"a.go"},
+	}
+	if err := bundle.WriteManifest(payload); err != nil {
+		t.Fatalf("WriteManifest() error = %v, want nil", err)
+	}
+
+	decoded, err := dispatcher.ReadManifest(bundle.Paths.Root)
+	if err != nil {
+		t.Fatalf("ReadManifest() error = %v, want nil", err)
+	}
+	if decoded.CLIKind != "claude" {
+		t.Errorf("decoded.CLIKind = %q, want %q", decoded.CLIKind, "claude")
+	}
+
+	// Pin the wire-format JSON key explicitly — the spawn architecture memory
+	// §2 mandates `cli_kind` (snake_case) and any silent rename to e.g.
+	// `cliKind` would break the cross-CLI manifest contract.
+	contents, err := os.ReadFile(bundle.Paths.ManifestPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile: %v", err)
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(contents, &generic); err != nil {
+		t.Fatalf("json.Unmarshal: %v\ncontents:\n%s", err, contents)
+	}
+	if got, ok := generic["cli_kind"]; !ok {
+		t.Errorf("manifest missing JSON key %q\nfull payload:\n%s", "cli_kind", contents)
+	} else if got != "claude" {
+		t.Errorf("manifest cli_kind = %v, want %q", got, "claude")
+	}
+}
+
+// TestBundleWriteManifestEmptyCLIKindIsExplicit pins the F.7.17.6 contract
+// that an empty CLIKind round-trips as the empty string AND the JSON key
+// stays present. The struct tag deliberately omits `omitempty` so legacy
+// bundles authored before this field landed surface an explicit empty
+// string to F.7.8's orphan scan rather than a missing key. A silent drift
+// to `omitempty` would break the orphan scan's "missing CLI" detection.
+func TestBundleWriteManifestEmptyCLIKindIsExplicit(t *testing.T) {
+	t.Parallel()
+
+	bundle, err := dispatcher.NewBundle(fixtureBundleItem(), "", "")
+	if err != nil {
+		t.Fatalf("NewBundle() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = bundle.Cleanup() })
+
+	payload := dispatcher.ManifestMetadata{
+		SpawnID:      bundle.SpawnID,
+		ActionItemID: "ai-empty-clikind",
+		Kind:         domain.KindBuild,
+		CLIKind:      "", // explicit empty — not "claude"
+		StartedAt:    bundle.StartedAt,
+		Paths:        []string{"a.go"},
+	}
+	if err := bundle.WriteManifest(payload); err != nil {
+		t.Fatalf("WriteManifest() error = %v, want nil", err)
+	}
+
+	decoded, err := dispatcher.ReadManifest(bundle.Paths.Root)
+	if err != nil {
+		t.Fatalf("ReadManifest() error = %v, want nil", err)
+	}
+	if decoded.CLIKind != "" {
+		t.Errorf("decoded.CLIKind = %q, want %q (empty string round-trip)", decoded.CLIKind, "")
+	}
+
+	// The JSON key MUST be present even though the value is empty — the
+	// no-omitempty contract is what makes legacy-bundle detection sound.
+	contents, err := os.ReadFile(bundle.Paths.ManifestPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile: %v", err)
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(contents, &generic); err != nil {
+		t.Fatalf("json.Unmarshal: %v\ncontents:\n%s", err, contents)
+	}
+	got, ok := generic["cli_kind"]
+	if !ok {
+		t.Fatalf("manifest missing JSON key %q (no-omitempty contract violated)\nfull payload:\n%s", "cli_kind", contents)
+	}
+	if got != "" {
+		t.Errorf("manifest cli_kind = %v, want %q", got, "")
+	}
+}
+
+// TestUpdateManifestPIDPreservesCLIKind pins the F.7.17.6 contract that
+// UpdateManifestPID's read-mutate-write cycle preserves CLIKind verbatim.
+// Without this, the orphan scan (F.7.8) would lose adapter-routing
+// information the moment the dispatcher's monitor wrote a real PID into
+// the manifest after `cmd.Start()`.
+func TestUpdateManifestPIDPreservesCLIKind(t *testing.T) {
+	t.Parallel()
+
+	bundle, err := dispatcher.NewBundle(fixtureBundleItem(), "", "")
+	if err != nil {
+		t.Fatalf("NewBundle() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = bundle.Cleanup() })
+
+	if err := bundle.WriteManifest(dispatcher.ManifestMetadata{
+		SpawnID:      bundle.SpawnID,
+		ActionItemID: "ai-clikind-pid",
+		Kind:         domain.KindBuild,
+		CLIKind:      "claude",
+		StartedAt:    bundle.StartedAt,
+		Paths:        []string{"a.go"},
+	}); err != nil {
+		t.Fatalf("WriteManifest() error = %v, want nil", err)
+	}
+
+	const wantPID = 31415
+	if err := bundle.UpdateManifestPID(wantPID); err != nil {
+		t.Fatalf("UpdateManifestPID(%d) error = %v, want nil", wantPID, err)
+	}
+
+	decoded, err := dispatcher.ReadManifest(bundle.Paths.Root)
+	if err != nil {
+		t.Fatalf("ReadManifest() error = %v, want nil", err)
+	}
+	if decoded.ClaudePID != wantPID {
+		t.Errorf("decoded.ClaudePID = %d, want %d", decoded.ClaudePID, wantPID)
+	}
+	if decoded.CLIKind != "claude" {
+		t.Errorf("decoded.CLIKind = %q, want %q (UpdateManifestPID must preserve CLIKind)",
+			decoded.CLIKind, "claude")
+	}
+}
+
 // TestNewBundleSpawnIDsUnique verifies two calls in the same process produce
 // distinct SpawnIDs — defensive sanity check on the UUID generator.
 func TestNewBundleSpawnIDsUnique(t *testing.T) {

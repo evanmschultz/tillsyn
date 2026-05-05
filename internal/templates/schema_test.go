@@ -149,11 +149,11 @@ func TestTemplateTOMLRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGateKindClosedEnum verifies the three Drop 4b Wave A GateKind constants
-// are members of the closed enum (IsValidGateKind returns true) and that
-// Drop-4c-future values ("commit", "push") plus arbitrary garbage and the
-// empty string are rejected. Adding "commit" / "push" in Drop 4c flips the
-// commit/push assertions; this test pins the Wave A vocabulary explicitly.
+// TestGateKindClosedEnum verifies the Drop 4b Wave A + Drop 4c F.7.13 GateKind
+// constants are members of the closed enum (IsValidGateKind returns true) and
+// that the still-future "push" value plus arbitrary garbage and the empty
+// string are rejected. Adding "push" in its Drop 4c follow-up droplet flips
+// the push assertion; this test pins the F.7.13 vocabulary explicitly.
 func TestGateKindClosedEnum(t *testing.T) {
 	t.Parallel()
 
@@ -161,6 +161,7 @@ func TestGateKindClosedEnum(t *testing.T) {
 		GateKindMageCI,
 		GateKindMageTestPkg,
 		GateKindHyllaReingest,
+		GateKindCommit, // Drop 4c F.7.13.
 	}
 	for _, g := range validCases {
 		t.Run("valid_"+string(g), func(t *testing.T) {
@@ -172,8 +173,7 @@ func TestGateKindClosedEnum(t *testing.T) {
 	}
 
 	invalidCases := []GateKind{
-		GateKind("commit"),    // Drop 4c will accept this; Wave A rejects.
-		GateKind("push"),      // Drop 4c will accept this; Wave A rejects.
+		GateKind("push"),      // Drop 4c will accept this; F.7.13 rejects.
 		GateKind(""),          // Empty string is never valid.
 		GateKind("garbage"),   // Arbitrary unknown value.
 		GateKind("MAGE_CI"),   // Case mismatch — exact match enforced.
