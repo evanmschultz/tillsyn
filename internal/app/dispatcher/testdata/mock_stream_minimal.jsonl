@@ -1,0 +1,3 @@
+{"type":"mock_chunk","text":"hello"}
+{"type":"mock_chunk","text":"world"}
+{"type":"mock_terminal","cost":0.5,"reason":"ok","denials":[{"tool_name":"Bash","tool_input":{"cmd":"rm -rf /"}}],"errors":[]}
