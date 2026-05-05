@@ -92,6 +92,12 @@ type ServiceConfig struct {
 	SearchSemanticCandidates int
 	AuthBackend              AuthBackend
 	LiveWaitBroker           LiveWaitBroker
+	// GitStatusChecker overrides the default `git status --porcelain` pre-
+	// check used by Service.CreateActionItem (droplet 4b.6). Production
+	// callers leave this nil so NewService wires defaultGitStatusChecker;
+	// tests inject a stub directly via the struct field for deterministic,
+	// process-isolated pre-check semantics.
+	GitStatusChecker GitStatusChecker
 }
 
 // StateTemplate represents state template data used by this package.
@@ -133,6 +139,11 @@ type Service struct {
 	searchSemanticK    int
 	authBackend        AuthBackend
 	liveWait           LiveWaitBroker
+	// gitStatusChecker is the pre-check seam called by CreateActionItem
+	// when input.Paths is non-empty. Defaults to defaultGitStatusChecker;
+	// tests overwrite this field directly (same package) to inject deterministic
+	// fakes that never spawn `git`.
+	gitStatusChecker GitStatusChecker
 }
 
 // NewService constructs a new value for this package.
@@ -179,6 +190,10 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 	if liveWait == nil {
 		liveWait = NewInProcessLiveWaitBroker()
 	}
+	gitChecker := cfg.GitStatusChecker
+	if gitChecker == nil {
+		gitChecker = defaultGitStatusChecker
+	}
 
 	return &Service{
 		repo:               repo,
@@ -202,6 +217,7 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 		searchSemanticK:    semanticCandidates,
 		authBackend:        cfg.AuthBackend,
 		liveWait:           liveWait,
+		gitStatusChecker:   gitChecker,
 	}
 }
 
@@ -940,6 +956,22 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 		return domain.ActionItem{}, err
 	}
 
+	// Droplet 4b.6 — git-status pre-check. When the constructed action item
+	// declares write-scope paths, verify each one is clean in the project's
+	// primary worktree BEFORE the repo write so a dirty-tree reject never
+	// mutates state. Runs on the post-domain-validation Paths slice so
+	// malformed inputs (empty / whitespace / backslash entries) reject with
+	// domain.ErrInvalidPaths above before any git subprocess fires. The
+	// check is skipped on empty Paths (degenerate input) and on projects
+	// with empty RepoPrimaryWorktree (legacy / unbootstrapped projects per
+	// droplet 4b.6 acceptance criterion 2). Always-on per REVISION_BRIEF
+	// L4: bypass requires the post-MVP supersede CLI.
+	if len(actionItem.Paths) > 0 {
+		if err := s.runGitStatusPreCheck(ctx, actionItem.ProjectID, actionItem.Paths); err != nil {
+			return domain.ActionItem{}, err
+		}
+	}
+
 	if err := s.repo.CreateActionItem(ctx, actionItem); err != nil {
 		return domain.ActionItem{}, err
 	}
@@ -961,6 +993,50 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 	}
 	s.publishActionItemChanged(actionItem.ProjectID)
 	return actionItem, nil
+}
+
+// runGitStatusPreCheck enforces the droplet 4b.6 invariant that no action
+// item with declared write-scope paths is created on top of a dirty tree.
+// Caller has already verified len(paths) > 0.
+//
+// Skip cases (return nil silently):
+//   - Project lookup fails — defer to the upstream `s.repo.ListColumns`
+//     call inside CreateActionItem which already surfaces a typed error
+//     for non-existent projects; pre-check is best-effort here.
+//   - Project.RepoPrimaryWorktree is empty — pre-MVP escape valve per
+//     droplet 4b.6 acceptance criterion 2. A project that hasn't been
+//     bootstrapped to a checkout layout cannot enforce a dirty-tree gate.
+//
+// Reject cases:
+//   - The configured GitStatusChecker reports one or more dirty paths;
+//     wrap ErrPathsDirty with a comma-joined list of dirty paths.
+//   - The checker returns a non-nil error (git missing on PATH, ctx
+//     cancellation, pathspec out-of-worktree); propagate verbatim.
+func (s *Service) runGitStatusPreCheck(ctx context.Context, projectID string, paths []string) error {
+	if s.gitStatusChecker == nil {
+		// Defensive: should never happen because NewService wires a default,
+		// but treat nil as "skip" rather than panicking on an unset seam.
+		return nil
+	}
+	project, err := s.repo.GetProject(ctx, projectID)
+	if err != nil {
+		// Project lookup races / non-existent projects surface via the
+		// downstream repo write — keep the pre-check as a best-effort
+		// guard rather than a second source of "not found" errors.
+		return nil
+	}
+	worktree := strings.TrimSpace(project.RepoPrimaryWorktree)
+	if worktree == "" {
+		return nil
+	}
+	dirty, err := s.gitStatusChecker(ctx, worktree, paths)
+	if err != nil {
+		return fmt.Errorf("git status pre-check: %w", err)
+	}
+	if len(dirty) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrPathsDirty, strings.Join(dirty, ", "))
 }
 
 // MoveActionItem moves actionItem.

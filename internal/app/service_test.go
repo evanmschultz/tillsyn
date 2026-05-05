@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -4874,5 +4876,285 @@ func TestMoveActionItemFromFailedIdempotentAllowed(t *testing.T) {
 	}
 	if moved.LifecycleState != domain.StateFailed {
 		t.Fatalf("expected failed lifecycle state, got %q", moved.LifecycleState)
+	}
+}
+
+// recordingGitChecker is a stub GitStatusChecker used by the droplet 4b.6
+// CreateActionItem pre-check tests. Callers configure dirtyPaths + err to
+// shape the response; calls capture the (worktree, paths) tuple so tests
+// can assert the pre-check was invoked exactly when expected.
+type recordingGitChecker struct {
+	dirtyPaths []string
+	err        error
+	calls      []recordingGitCheckerCall
+}
+
+// recordingGitCheckerCall captures one invocation of the stub checker so
+// tests can assert call count + the worktree/paths arguments.
+type recordingGitCheckerCall struct {
+	worktree string
+	paths    []string
+}
+
+// check is the GitStatusChecker function adapter so the stub can be
+// installed via direct field assignment on Service.gitStatusChecker.
+func (r *recordingGitChecker) check(_ context.Context, worktree string, paths []string) ([]string, error) {
+	r.calls = append(r.calls, recordingGitCheckerCall{worktree: worktree, paths: append([]string(nil), paths...)})
+	if r.err != nil {
+		return nil, r.err
+	}
+	return append([]string(nil), r.dirtyPaths...), nil
+}
+
+// newDirtyPathTestService wires a Service backed by a fakeRepo with one
+// project (RepoPrimaryWorktree configurable per-test) + one column, ready
+// for CreateActionItem. The recordingGitChecker is installed via direct
+// field assignment so the production checker never fires.
+func newDirtyPathTestService(t *testing.T, worktree string, checker *recordingGitChecker) (*Service, *fakeRepo, domain.Project, domain.Column) {
+	t.Helper()
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	ids := []string{"p1", "c1", "t1", "t2"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time { return now }, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+	if checker != nil {
+		svc.gitStatusChecker = checker.check
+	}
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name:                "Pre-Check Project",
+		RepoPrimaryWorktree: worktree,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	return svc, repo, project, column
+}
+
+// TestCreateActionItemRejectsDirtyPath asserts the droplet 4b.6 happy
+// reject path: one declared path is dirty, the checker reports it, and
+// CreateActionItem returns a wrapped ErrPathsDirty whose message names the
+// dirty path. No row is written.
+func TestCreateActionItemRejectsDirtyPath(t *testing.T) {
+	checker := &recordingGitChecker{dirtyPaths: []string{"internal/foo/bar.go"}}
+	svc, repo, project, column := newDirtyPathTestService(t, "/tmp/worktree", checker)
+
+	_, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Dirty path build",
+		Priority:       domain.PriorityMedium,
+		Paths:          []string{"internal/foo/bar.go"},
+		Packages:       []string{"internal/foo"},
+		StructuralType: domain.StructuralTypeDroplet,
+	})
+	if !errors.Is(err, ErrPathsDirty) {
+		t.Fatalf("CreateActionItem err = %v, want wrapped ErrPathsDirty", err)
+	}
+	if !strings.Contains(err.Error(), "internal/foo/bar.go") {
+		t.Fatalf("err = %v, must name the dirty path 'internal/foo/bar.go'", err)
+	}
+	if len(checker.calls) != 1 {
+		t.Fatalf("checker calls = %d, want 1", len(checker.calls))
+	}
+	if checker.calls[0].worktree != "/tmp/worktree" {
+		t.Fatalf("checker worktree = %q, want /tmp/worktree", checker.calls[0].worktree)
+	}
+	if len(repo.tasks) != 0 {
+		t.Fatalf("repo.tasks = %d, want 0 (creation must reject before persist)", len(repo.tasks))
+	}
+}
+
+// TestCreateActionItemAcceptsCleanPaths asserts the happy success path:
+// the checker reports no dirty paths, CreateActionItem succeeds, and the
+// resulting row carries the declared Paths verbatim.
+func TestCreateActionItemAcceptsCleanPaths(t *testing.T) {
+	checker := &recordingGitChecker{}
+	svc, _, project, column := newDirtyPathTestService(t, "/tmp/worktree", checker)
+
+	created, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Clean path build",
+		Priority:       domain.PriorityMedium,
+		Paths:          []string{"internal/foo/bar.go", "internal/foo/baz.go"},
+		Packages:       []string{"internal/foo"},
+		StructuralType: domain.StructuralTypeDroplet,
+	})
+	if err != nil {
+		t.Fatalf("CreateActionItem err = %v, want nil", err)
+	}
+	if len(created.Paths) != 2 {
+		t.Fatalf("created.Paths = %v, want 2 entries", created.Paths)
+	}
+	if len(checker.calls) != 1 {
+		t.Fatalf("checker calls = %d, want 1", len(checker.calls))
+	}
+	gotPaths := checker.calls[0].paths
+	if len(gotPaths) != 2 || gotPaths[0] != "internal/foo/bar.go" || gotPaths[1] != "internal/foo/baz.go" {
+		t.Fatalf("checker paths = %v, want [bar.go, baz.go]", gotPaths)
+	}
+}
+
+// TestCreateActionItemRejectsMultipleDirtyPaths asserts that when several
+// paths are dirty the wrapped ErrPathsDirty message lists every dirty
+// path so the dev can fix them all in one pass. Paths are joined in input
+// order so the message is deterministic.
+func TestCreateActionItemRejectsMultipleDirtyPaths(t *testing.T) {
+	checker := &recordingGitChecker{dirtyPaths: []string{"alpha.go", "gamma.go"}}
+	svc, _, project, column := newDirtyPathTestService(t, "/tmp/worktree", checker)
+
+	_, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Multi-dirty build",
+		Priority:       domain.PriorityMedium,
+		Paths:          []string{"alpha.go", "beta.go", "gamma.go"},
+		Packages:       []string{"top"},
+		StructuralType: domain.StructuralTypeDroplet,
+	})
+	if !errors.Is(err, ErrPathsDirty) {
+		t.Fatalf("CreateActionItem err = %v, want wrapped ErrPathsDirty", err)
+	}
+	if !strings.Contains(err.Error(), "alpha.go") {
+		t.Fatalf("err = %v, must name alpha.go", err)
+	}
+	if !strings.Contains(err.Error(), "gamma.go") {
+		t.Fatalf("err = %v, must name gamma.go", err)
+	}
+	if strings.Contains(err.Error(), "beta.go") {
+		t.Fatalf("err = %v, must NOT name clean beta.go", err)
+	}
+}
+
+// TestCreateActionItemHandlesEmptyPaths asserts the degenerate-input fast
+// path: when input.Paths is nil/empty, the pre-check is skipped entirely
+// (zero checker invocations) and the existing creation path runs unchanged.
+// This pins backwards-compatible behavior for every caller that doesn't
+// declare write-scope paths.
+func TestCreateActionItemHandlesEmptyPaths(t *testing.T) {
+	checker := &recordingGitChecker{}
+	svc, _, project, column := newDirtyPathTestService(t, "/tmp/worktree", checker)
+
+	_, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "No paths build",
+		Priority:       domain.PriorityMedium,
+		StructuralType: domain.StructuralTypeDroplet,
+	})
+	if err != nil {
+		t.Fatalf("CreateActionItem err = %v, want nil", err)
+	}
+	if len(checker.calls) != 0 {
+		t.Fatalf("checker calls = %d, want 0 (empty Paths must skip pre-check)", len(checker.calls))
+	}
+}
+
+// TestCreateActionItemSkipsCheckOnEmptyWorktree asserts the pre-MVP escape
+// valve from droplet 4b.6 acceptance criterion 2: a project with empty
+// RepoPrimaryWorktree (legacy / unbootstrapped) silently skips the check
+// rather than blocking creation. This keeps existing test fixtures and
+// pre-Drop-4a projects working through the cascade migration.
+func TestCreateActionItemSkipsCheckOnEmptyWorktree(t *testing.T) {
+	checker := &recordingGitChecker{dirtyPaths: []string{"would-be-dirty.go"}}
+	svc, _, project, column := newDirtyPathTestService(t, "", checker)
+
+	_, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Worktree-less build",
+		Priority:       domain.PriorityMedium,
+		Paths:          []string{"would-be-dirty.go"},
+		Packages:       []string{"top"},
+		StructuralType: domain.StructuralTypeDroplet,
+	})
+	if err != nil {
+		t.Fatalf("CreateActionItem err = %v, want nil (empty worktree skips check)", err)
+	}
+	if len(checker.calls) != 0 {
+		t.Fatalf("checker calls = %d, want 0 (empty worktree must short-circuit pre-check)", len(checker.calls))
+	}
+}
+
+// TestCreateActionItemEnvIsolatesFromBareRoot asserts that the production
+// pre-check does not honor an inherited GIT_DIR pointed at a bogus path —
+// the env-isolation contract from gitdiff round-3 must hold for the
+// CreateActionItem hot path. Uses the production defaultGitStatusChecker
+// (NOT the stub) against a real fixture-built worktree, with t.Setenv
+// pre-poisoning GIT_DIR / GIT_INDEX_FILE the way a `git push` pre-push
+// hook would.
+func TestCreateActionItemEnvIsolatesFromBareRoot(t *testing.T) {
+	// No t.Parallel — t.Setenv requires non-parallel test.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not on PATH: %v", err)
+	}
+	fx := newGitStatusFixture(t)
+	fx.commit("internal/foo/bar.go", "package foo\n", "add bar")
+	fx.dirty("internal/foo/bar.go", "package foo\n\n// modified\n")
+
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "bogus.git"))
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(t.TempDir(), "bogus.index"))
+
+	// Wire the production checker (no stub) — the env-isolation behavior
+	// is exactly what we want to exercise.
+	svc, _, project, column := newDirtyPathTestService(t, fx.root, nil)
+
+	_, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Env-isolated build",
+		Priority:       domain.PriorityMedium,
+		Paths:          []string{"internal/foo/bar.go"},
+		Packages:       []string{"internal/foo"},
+		StructuralType: domain.StructuralTypeDroplet,
+	})
+	if !errors.Is(err, ErrPathsDirty) {
+		t.Fatalf("CreateActionItem err = %v, want wrapped ErrPathsDirty (env isolation must keep checker on fx.root, not GIT_DIR)", err)
+	}
+	if !strings.Contains(err.Error(), "internal/foo/bar.go") {
+		t.Fatalf("err = %v, must name internal/foo/bar.go", err)
+	}
+}
+
+// TestCreateActionItemRejectsMalformedPathsBeforePreCheck pins the
+// ordering invariant from droplet 4b.6 round-2 QA-Falsification finding
+// C1: domain.NewActionItem (which calls normalizeActionItemPaths) MUST
+// run BEFORE runGitStatusPreCheck so a malformed input like Paths=[""]
+// rejects with domain.ErrInvalidPaths rather than reaching `git status
+// --porcelain -- ""`. The recordingGitChecker proves the pre-check
+// never fired by asserting len(checker.calls) == 0.
+//
+// The fixture supplies one valid path AND one empty entry — the empty
+// entry is the malformed input. normalizeActionItemPaths short-circuits
+// at the first empty/whitespace/backslash entry per action_item.go:713.
+func TestCreateActionItemRejectsMalformedPathsBeforePreCheck(t *testing.T) {
+	checker := &recordingGitChecker{}
+	svc, repo, project, column := newDirtyPathTestService(t, "/tmp/worktree", checker)
+
+	_, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Malformed paths build",
+		Priority:       domain.PriorityMedium,
+		Paths:          []string{"internal/foo/bar.go", ""},
+		Packages:       []string{"internal/foo"},
+		StructuralType: domain.StructuralTypeDroplet,
+	})
+	if !errors.Is(err, domain.ErrInvalidPaths) {
+		t.Fatalf("CreateActionItem err = %v, want domain.ErrInvalidPaths (domain validation must run before git pre-check)", err)
+	}
+	if len(checker.calls) != 0 {
+		t.Fatalf("checker calls = %d, want 0 (pre-check must not fire on domain-invalid Paths)", len(checker.calls))
+	}
+	if len(repo.tasks) != 0 {
+		t.Fatalf("repo.tasks = %d, want 0 (malformed input must not persist)", len(repo.tasks))
 	}
 }
