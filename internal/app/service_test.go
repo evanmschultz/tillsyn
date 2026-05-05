@@ -5158,3 +5158,226 @@ func TestCreateActionItemRejectsMalformedPathsBeforePreCheck(t *testing.T) {
 		t.Fatalf("repo.tasks = %d, want 0 (malformed input must not persist)", len(repo.tasks))
 	}
 }
+
+// waitForActionItemChangedSinceCursor blocks up to 100 ms for one
+// LiveWaitEventActionItemChanged event published AFTER the supplied cursor
+// for the supplied projectID. Helper for droplet 4b.8 publisher-addition
+// tests; centralizes the broker-cursor + Wait-with-timeout pattern so the
+// per-method tests stay focused on the lifecycle method under test.
+//
+// The cursor is captured BEFORE the lifecycle call so the Wait afterSequence
+// value reliably ignores any pre-existing Latest stamp the broker may carry
+// from prior fixture wiring (today this is always zero since each test
+// constructs a fresh broker; the helper still threads the cursor through to
+// keep the contract robust against future fixture sharing).
+func waitForActionItemChangedSinceCursor(t *testing.T, broker LiveWaitBroker, projectID string, cursor int64) LiveWaitEvent {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	event, err := broker.Wait(ctx, LiveWaitEventActionItemChanged, projectID, cursor)
+	if err != nil {
+		t.Fatalf("broker.Wait(LiveWaitEventActionItemChanged, %q) error = %v (publish missing?)", projectID, err)
+	}
+	if event.Type != LiveWaitEventActionItemChanged {
+		t.Fatalf("event Type = %q, want %q", event.Type, LiveWaitEventActionItemChanged)
+	}
+	if event.Key != projectID {
+		t.Fatalf("event Key = %q, want %q", event.Key, projectID)
+	}
+	if event.Sequence <= cursor {
+		t.Fatalf("event Sequence = %d, want > cursor %d", event.Sequence, cursor)
+	}
+	return event
+}
+
+// captureActionItemChangedCursor returns the broker's Latest sequence for the
+// LiveWaitEventActionItemChanged event keyed on projectID. Returns 0 when no
+// prior event is stamped — the natural starting cursor for a fresh broker.
+func captureActionItemChangedCursor(t *testing.T, broker LiveWaitBroker, projectID string) int64 {
+	t.Helper()
+	event, ok, err := broker.Latest(context.Background(), LiveWaitEventActionItemChanged, projectID)
+	if err != nil {
+		t.Fatalf("broker.Latest error = %v", err)
+	}
+	if !ok {
+		return 0
+	}
+	return event.Sequence
+}
+
+// TestRestoreActionItemPublishesActionItemChanged asserts that
+// Service.RestoreActionItem emits one LiveWaitEventActionItemChanged event
+// keyed on the action item's project_id after the successful repo write.
+// Droplet 4b.8 / Drop 4a refinement R1 closure: the cascade dispatcher's
+// broker subscriber depends on this event firing for every action-item
+// write surface so the auto-promotion walker re-walks the tree on restore.
+func TestRestoreActionItemPublishesActionItemChanged(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+	archived, _ := domain.NewActionItemForTest(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "archived item",
+		Priority:  domain.PriorityLow,
+	}, now)
+	archivedAt := now.Add(time.Minute)
+	archived.ArchivedAt = &archivedAt
+	repo.tasks[archived.ID] = archived
+
+	broker := NewInProcessLiveWaitBroker()
+	svc := NewService(repo, nil, func() time.Time { return now.Add(2 * time.Minute) }, ServiceConfig{LiveWaitBroker: broker})
+
+	cursor := captureActionItemChangedCursor(t, broker, project.ID)
+	if _, err := svc.RestoreActionItem(context.Background(), archived.ID); err != nil {
+		t.Fatalf("RestoreActionItem() error = %v", err)
+	}
+	waitForActionItemChangedSinceCursor(t, broker, project.ID, cursor)
+}
+
+// TestRenameActionItemPublishesActionItemChanged asserts RenameActionItem
+// emits one LiveWaitEventActionItemChanged event keyed on the action item's
+// project_id after the successful repo write. Droplet 4b.8 / Drop 4a R1.
+func TestRenameActionItemPublishesActionItemChanged(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
+		ID:        "t1",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "old",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[actionItem.ID] = actionItem
+
+	broker := NewInProcessLiveWaitBroker()
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{LiveWaitBroker: broker})
+
+	cursor := captureActionItemChangedCursor(t, broker, actionItem.ProjectID)
+	if _, err := svc.RenameActionItem(context.Background(), actionItem.ID, "new title"); err != nil {
+		t.Fatalf("RenameActionItem() error = %v", err)
+	}
+	waitForActionItemChangedSinceCursor(t, broker, actionItem.ProjectID, cursor)
+}
+
+// TestDeleteActionItemArchivePublishesActionItemChanged asserts the
+// DeleteActionItem(mode=DeleteModeArchive) branch emits one
+// LiveWaitEventActionItemChanged event keyed on the action item's
+// project_id after the successful repo write. There is no separate
+// ArchiveActionItem method post-Drop-4a; the archive lifecycle lives
+// inside DeleteActionItem's archive branch — so droplet 4b.8 publishes
+// from BOTH the archive branch and the hard-delete branch (a hard delete
+// is also an action-item-changed surface the dispatcher subscriber cares
+// about). Droplet 4b.8 / Drop 4a R1.
+func TestDeleteActionItemArchivePublishesActionItemChanged(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
+		ID:        "t1",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "to archive",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[actionItem.ID] = actionItem
+
+	broker := NewInProcessLiveWaitBroker()
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{LiveWaitBroker: broker})
+
+	cursor := captureActionItemChangedCursor(t, broker, actionItem.ProjectID)
+	if err := svc.DeleteActionItem(context.Background(), actionItem.ID, DeleteModeArchive); err != nil {
+		t.Fatalf("DeleteActionItem(archive) error = %v", err)
+	}
+	waitForActionItemChangedSinceCursor(t, broker, actionItem.ProjectID, cursor)
+}
+
+// TestDeleteActionItemHardPublishesActionItemChanged asserts the
+// DeleteActionItem(mode=DeleteModeHard) branch emits one
+// LiveWaitEventActionItemChanged event after the successful repo delete.
+// Hard deletes are state changes the dispatcher subscriber must observe
+// (the action item disappears from the tree walk; subscribers re-walk on
+// every wakeup so the right action is taken). Droplet 4b.8 / Drop 4a R1.
+func TestDeleteActionItemHardPublishesActionItemChanged(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)
+	actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
+		ID:        "t1",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "to hard-delete",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[actionItem.ID] = actionItem
+
+	broker := NewInProcessLiveWaitBroker()
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{LiveWaitBroker: broker})
+
+	cursor := captureActionItemChangedCursor(t, broker, actionItem.ProjectID)
+	if err := svc.DeleteActionItem(context.Background(), actionItem.ID, DeleteModeHard); err != nil {
+		t.Fatalf("DeleteActionItem(hard) error = %v", err)
+	}
+	waitForActionItemChangedSinceCursor(t, broker, actionItem.ProjectID, cursor)
+}
+
+// TestReparentActionItemPublishesActionItemChanged asserts ReparentActionItem
+// emits one LiveWaitEventActionItemChanged event keyed on the action item's
+// project_id after the successful repo write. Droplet 4b.8 / Drop 4a R1.
+func TestReparentActionItemPublishesActionItemChanged(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+	parent, _ := domain.NewActionItemForTest(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
+		ID:        "parent",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewActionItemForTest(domain.ActionItemInput{
+		Kind:      domain.KindPlan,
+		ID:        "child",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "child",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[parent.ID] = parent
+	repo.tasks[child.ID] = child
+
+	broker := NewInProcessLiveWaitBroker()
+	svc := NewService(repo, nil, func() time.Time { return now.Add(2 * time.Minute) }, ServiceConfig{LiveWaitBroker: broker})
+
+	cursor := captureActionItemChangedCursor(t, broker, project.ID)
+	if _, err := svc.ReparentActionItem(context.Background(), child.ID, parent.ID); err != nil {
+		t.Fatalf("ReparentActionItem() error = %v", err)
+	}
+	waitForActionItemChangedSinceCursor(t, broker, project.ID, cursor)
+}

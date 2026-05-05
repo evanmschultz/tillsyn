@@ -346,6 +346,31 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 		return err
 	}
 
+	// Bulk publish per project_id touched by the import (droplet 4b.8).
+	// ImportSnapshot writes through s.repo.* directly rather than the
+	// publishing CreateActionItem / UpdateActionItem paths, so the live-
+	// wait subscriber never sees per-action-item events for an imported
+	// tree. Emit ONE LiveWaitEventActionItemChanged per distinct project
+	// ID at end of successful import (cheap, no N×amplification — the
+	// dispatcher subscriber re-walks the tree on any wakeup regardless of
+	// which action item triggered it). Closes Drop 4a refinement R2.
+	projectIDs := map[string]struct{}{}
+	for _, project := range snap.Projects {
+		id := strings.TrimSpace(project.ID)
+		if id != "" {
+			projectIDs[id] = struct{}{}
+		}
+	}
+	for _, actionItem := range snap.ActionItems {
+		id := strings.TrimSpace(actionItem.ProjectID)
+		if id != "" {
+			projectIDs[id] = struct{}{}
+		}
+	}
+	for projectID := range projectIDs {
+		s.publishActionItemChanged(projectID)
+	}
+
 	return nil
 }
 
