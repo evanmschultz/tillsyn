@@ -1219,8 +1219,15 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 //     cancellation, pathspec out-of-worktree); propagate verbatim.
 func (s *Service) runGitStatusPreCheck(ctx context.Context, projectID string, paths []string) error {
 	if s.gitStatusChecker == nil {
-		// Defensive: should never happen because NewService wires a default,
-		// but treat nil as "skip" rather than panicking on an unset seam.
+		// Defensive: tests may inject a nil seam to bypass the check (e.g.
+		// when a Service is constructed via direct struct-literal rather than
+		// NewService — see internal/app tests that pre-date the seam wiring
+		// and the dispatcher integration tests that opt out of the
+		// dirty-tree gate). Production wiring (NewService at line ~196)
+		// always populates defaultGitStatusChecker, so a nil seam in
+		// production would itself be a bug — but we treat nil as "skip"
+		// deliberately, NOT as "should never happen", because panicking
+		// here would break the test-injection contract.
 		return nil
 	}
 	project, err := s.repo.GetProject(ctx, projectID)

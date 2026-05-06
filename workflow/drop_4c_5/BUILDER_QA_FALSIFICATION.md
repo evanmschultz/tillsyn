@@ -1699,3 +1699,40 @@ N/A — filesystem-MD coordination mode; reviewed Go surfaces via Read + git dif
 T1. All seven attack categories REFUTED. Provenance-comment round-trip is benign (TOML strips `#`); `embeddedSourceForLanguage`'s empty-string default branch is unreachable today; live-walk respects 5.B.14 snapshot policy; both walks use the same candidate helper; strict decode + nil-guard wired correctly.
 T2. No counterexamples.
 T3. **PASS** — F.3.1 ready to commit.
+
+## Droplet E.9 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, opus)
+**Date:** 2026-05-06
+**Verdict:** PASS
+**Scope:** E.9-declared paths only — `internal/platform/gitenv/gitenv.go` (NEW), `internal/platform/gitenv/gitenv_test.go` (NEW), `internal/app/git_status.go`, `internal/app/git_status_test.go`, `internal/app/service.go` (doc-only at `runGitStatusPreCheck`), `internal/tui/gitdiff/exec_differ_test.go`, `workflow/drop_4c_5/THEME_CE_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`. F.3.2 sibling edits to `internal/adapters/server/mcpapi` are deliberately skipped per scoping note.
+
+### 1. Findings
+
+- **1.1 Filter-prefix correctness (Attack 1).** REFUTED. `gitenv.go:45` uses `strings.HasPrefix(e, "GIT_")` — the trailing underscore is load-bearing. `TestFilteredStripsAllGitPrefixVariants` (`gitenv_test.go:38-57`) sets `GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE`, `GIT_PREFIX` and asserts every variant is stripped. `mage test-pkg ./internal/platform/gitenv` → 3/3 passed. `GIT_AUTHOR_NAME`-style keys also match the prefix and are filtered (any `GIT_*` matches; no allowlist).
+- **1.2 No-aliasing (Attack 2).** REFUTED. `gitenv.go:42-50` allocates fresh storage via `make([]string, 0, len(src))` and copies via `append`. `TestFilteredReturnsFreshSliceSafeForAppend` (`gitenv_test.go:62-78`) appends `SENTINEL_NOT_IN_ENV=1` to the first call's result and asserts the second call's len matches the first AND the sentinel is absent — passes. The fresh-allocation contract is also stated in the doc-comment at `gitenv.go:34-36`.
+- **1.3 `runGitStatusPreCheck` nil-check (Attack 3).** REFUTED. `service.go:1219-1234` shows the doc-comment expanded to spec acceptance #4 wording verbatim ("tests may inject a nil seam … treat nil as 'skip' deliberately, NOT as 'should never happen'") with the `return nil` shape preserved. Code-shape unchanged; doc-only update as spec #4 required.
+- **1.4 `git_status_test.go` scope expansion (Attack 4).** REFUTED — not scope creep. Spec line 416 lists `exec_differ_test.go` but omits `git_status_test.go`; however, `git_status_test.go` is in package `app` and called the deleted `filteredGitEnv()` helper (the fixture's `git()` method at `git_status_test.go:55`). Deleting the helper from `git_status.go` mechanically forces this test file to switch to `gitenv.Filtered()` — the diff is exactly 2 lines (comment + call site), the minimum required to keep package `app` compiling. The spec under-specified; the builder's edit is forced, not opportunistic.
+- **1.5 Symlink to old helpers (Attack 5).** REFUTED. `grep -rn "filteredGitEnv|filteredEnv" --include="*.go" .` returned exit=1 (zero matches) — both helper names are fully retired across the tree. Only `gitenv.Filtered` references remain (5 usages across `git_status.go`, `git_status_test.go`, `exec_differ_test.go` plus the package itself).
+- **1.6 `GIT=foo` no-underscore edge case (Attack 6).** REFUTED. `strings.HasPrefix(e, "GIT_")` requires the underscore literally. An env entry `GIT=foo` (parses as `key=GIT`, `value=foo`) does NOT match the `GIT_` prefix and is preserved. Equivalent for `GITHUB_TOKEN`, `GITLAB_*`, etc. — they all start with `GIT` but not `GIT_`, so they survive (note: `GIT_ASKPASS` does start with `GIT_` and IS filtered, which is correct behavior). The implementation distinguishes the two correctly by construction.
+- **1.7 Bonus: doc-comment cross-reference accuracy.** REFUTED. `exec_differ_test.go:99` adds a one-paragraph note that E.9 consolidated the two prior copies; the round-3 motivation is preserved verbatim above it. `git_status.go:106-109` updates the env-isolation comment to point at `gitenv.Filtered()`. No stale references remain.
+
+### 2. Counterexamples
+
+None. All seven attacks REFUTED.
+
+### 3. Mage Verification
+
+- `mage test-pkg ./internal/platform/gitenv` → 3/3 passed.
+- `mage test-pkg ./internal/app` → 474/474 passed.
+- `mage test-pkg ./internal/tui/gitdiff` → 22/22 passed.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode; reviewed Go surfaces via Read + git diff + targeted Grep. No Hylla calls attempted.
+
+### TL;DR
+
+T1. All six declared attacks plus a bonus doc-cross-ref check REFUTED. New `gitenv` package is a clean lift, prefix-match is correctly underscore-anchored, no-aliasing is unit-tested, nil-check doc-update matches spec #4 verbatim, and old helper names are fully retired (zero residual references).
+T2. No counterexamples.
+T3. **PASS** — E.9 ready to commit.

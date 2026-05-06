@@ -3,9 +3,10 @@ package app
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/evanmschultz/tillsyn/internal/platform/gitenv"
 )
 
 // GitStatusChecker probes whether each declared write-scope path in a project
@@ -102,12 +103,14 @@ func defaultGitStatusChecker(ctx context.Context, repoRoot string, paths []strin
 // runGitStatusPath executes one `git status --porcelain <path>` invocation
 // and returns its stdout. Stderr is folded into the error message on
 // non-zero exit so a pathspec-out-of-worktree rejection surfaces verbatim
-// to the caller. Env isolation matches gitdiff.gitFixture (round-3 fix —
-// strip ALL GIT_*= keys before appending isolation overrides).
+// to the caller. Env isolation uses internal/platform/gitenv.Filtered() so
+// inherited GIT_*= keys are stripped before appending explicit isolation
+// overrides — the same shared helper used by internal/tui/gitdiff's
+// gitFixture (Drop 4c.5 E.9 consolidated the two prior local copies).
 func runGitStatusPath(ctx context.Context, repoRoot, path string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "--", path)
 	cmd.Dir = repoRoot
-	cmd.Env = append(filteredGitEnv(),
+	cmd.Env = append(gitenv.Filtered(),
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"HOME="+repoRoot,
@@ -136,21 +139,4 @@ func runGitStatusPath(ctx context.Context, repoRoot, path string) (string, error
 		return "", err
 	}
 	return stdout.String(), nil
-}
-
-// filteredGitEnv returns os.Environ() with every GIT_*=... entry removed.
-// See defaultGitStatusChecker's doc-comment for the motivation — the same
-// fix as internal/tui/gitdiff/exec_differ_test.go round 3 (strip all GIT_*
-// keys before appending explicit isolation values, otherwise an inherited
-// GIT_DIR completely overrides GIT_CEILING_DIRECTORIES).
-func filteredGitEnv() []string {
-	src := os.Environ()
-	out := make([]string, 0, len(src))
-	for _, e := range src {
-		if strings.HasPrefix(e, "GIT_") {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
 }

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/evanmschultz/tillsyn/internal/platform/gitenv"
 )
 
 // gitStatusFixture builds a throwaway git repo at t.TempDir() with a tiny
@@ -43,14 +45,14 @@ func newGitStatusFixture(t *testing.T) *gitStatusFixture {
 }
 
 // git runs a git subcommand inside the fixture, failing the test on any
-// non-zero exit. Env handling mirrors filteredGitEnv (strip GIT_*) and adds
+// non-zero exit. Env handling uses gitenv.Filtered (strip GIT_*) and adds
 // isolation overrides so the per-test invocation never touches the dev's
 // global config or an enclosing bare repo.
 func (f *gitStatusFixture) git(args ...string) string {
 	f.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = f.root
-	cmd.Env = append(filteredGitEnv(),
+	cmd.Env = append(gitenv.Filtered(),
 		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z",
 		"GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
 		"GIT_PAGER=cat",

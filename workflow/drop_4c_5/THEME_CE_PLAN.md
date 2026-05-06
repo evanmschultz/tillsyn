@@ -406,6 +406,8 @@
 
 ### E.9 — Git-status pre-check ergonomic NITs: shared `filteredGitEnv` + nil-checker decision
 
+**State:** done (round 1)
+
 **Source:** memory 4b R4 (Drop 4b 4b.6 NITs 4/5/7).
 
 **Files:**

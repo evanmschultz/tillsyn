@@ -1535,3 +1535,42 @@ PASS. All 10 acceptance points (7 spec acceptance criteria + the 3 directive-add
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All Go evidence resolved via `Read` + LSP-style `grep` (via `/usr/bin/grep`) on uncommitted state. The builder's `mage ci` 2891/2891 verdict trusted per directive.
+
+## Droplet E.9 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, no Tillsyn / no Hylla).
+**Verdict:** PASS.
+**Targets builder reported green:** `internal/platform/gitenv` 3/3, `internal/app` 474/474, `internal/tui/gitdiff` 22/22; `mage ci` failures observed in `internal/adapters/server/mcpapi` confirmed unrelated (F.3.x sibling churn, outside E.9 scope per spawn prompt scoping note).
+
+### Acceptance evidence
+
+- **Acceptance #1 (gitenv package + `Filtered() []string`).** `internal/platform/gitenv/gitenv.go:26` declares `package gitenv`; `:41-51` defines `Filtered()` returning `os.Environ()` minus every entry where `strings.HasPrefix(e, "GIT_")` matches; `:42-50` returns a fresh allocation (`make([]string, 0, len(src))` + append). Doc-comment (`:1-26`) names both production caller (`internal/app/git_status.go`) and test caller (`internal/tui/gitdiff/exec_differ_test.go`) plus the GIT_DIR-override-under-pre-push-hook motivation. PASS.
+- **Acceptance #2 (`internal/app/git_status.go` imports + uses; local helper deleted).** `git_status.go:9` imports `github.com/evanmschultz/tillsyn/internal/platform/gitenv`; `:113` calls `gitenv.Filtered()` in `cmd.Env = append(...)`. The local `filteredGitEnv` function is gone — `/usr/bin/grep "filteredGitEnv"` against the file returns no matches. The `os` import was correctly removed (only `os/exec` remains at `:6`). Doc-comment at `:106-109` cross-references the new shared helper + names the round-3 motivation. PASS.
+- **Acceptance #3 (`internal/tui/gitdiff/exec_differ_test.go` imports + uses; local helper deleted).** `exec_differ_test.go:13` imports the gitenv package; `:106` calls `gitenv.Filtered()` in the fixture's env-build. The local `filteredEnv` function is gone — `/usr/bin/grep "filteredEnv"` against the file returns no matches. Doc-comment at `:99-101` carries the explicit "Drop 4c.5 E.9 moved the filter" cross-reference. PASS.
+- **Acceptance #4 (`service.go` defensive nil-check + doc-only update).** `git diff HEAD -- internal/app/service.go` shows ONE chunk at `:1219-1232`: 2-line stub comment replaced with 9-line block documenting test-injection use case. The `if s.gitStatusChecker == nil { return nil }` shape is preserved verbatim — logic unchanged. Spec acceptance criterion #4 explicitly mandated this doc shape. PASS.
+- **Acceptance #5 (gitenv test: env contains `GIT_DIR=/foo`, `HOME=/bar` → drops GIT_DIR, retains HOME).** `gitenv_test.go:13-33` (`TestFilteredDropsGitKeysAndRetainsOthers`) sets exactly those two via `t.Setenv`, calls `Filtered()`, and asserts (a) no `GIT_*` survives, (b) `HOME=/bar` is in result, (c) `GIT_DIR=/foo` is NOT. Two bonus tests (`TestFilteredStripsAllGitPrefixVariants` covering GIT_INDEX_FILE / GIT_WORK_TREE / GIT_PREFIX, `TestFilteredReturnsFreshSliceSafeForAppend` pinning the no-aliasing contract) exceed the spec without scope creep. PASS.
+
+### Bonus: `internal/app/git_status_test.go`
+
+Not in spec but legitimately needed because the test file contained a sibling local `filteredGitEnv()` call. `git_status_test.go:12` imports gitenv; `:55` calls `gitenv.Filtered()` in the fixture's env-build; doc-comment at `:48-50` updated to name the new shared helper. `/usr/bin/grep "filteredGitEnv"` returns no matches. Builder correctly identified and fixed.
+
+### Worklog completeness
+
+`BUILDER_WORKLOG.md:1882-1918` (Droplet E.9 — Round 1) covers:
+
+- Files touched (5 Go + 2 MD), each named with the precise edit shape.
+- Targets run with pass counts (3/3, 474/474, 22/22) + `mage formatCheck` clean + `mage ci` partial-red disclosure with file-scope justification.
+- Design notes: package home rationale (`internal/platform` per CLAUDE.md "Project Structure"), single-export discipline, nil-check spec-driven choice, logic-equivalence verification, zero-behavior-change claim, doc-comment cross-reference strategy.
+- Hylla feedback marked None (filesystem-MD mode); Unknowns: none.
+
+### Certificate
+
+- **Premises:** five acceptance criteria + worklog completeness must be satisfied; builder's claimed targets reflect actual file state.
+- **Evidence:** `gitenv.go:1-51` (package + `Filtered`); `gitenv_test.go:1-78` (three tests including the spec-named contract); `git_status.go:9, 106-109, 113` (import + doc + usage); `git_status.go` no `filteredGitEnv` matches; `git_status_test.go:12, 48-50, 55` (import + doc + usage) + no `filteredGitEnv` matches; `exec_differ_test.go:13, 99-101, 106` (import + doc + usage) + no `filteredEnv` matches; `service.go` diff is doc-only at `:1219-1232`; `THEME_CE_PLAN.md:409` `**State:** done (round 1)`; `BUILDER_WORKLOG.md:1882-1918` complete.
+- **Trace or cases:** (a) prod git_status pre-check builds env via `gitenv.Filtered()` + isolation overrides → behavior identical to prior local helper. (b) gitdiff fixture builds env via `gitenv.Filtered()` + isolation overrides → behavior identical to prior local helper. (c) `Service.runGitStatusPreCheck` with nil seam → `return nil` (test-injection contract preserved). (d) gitenv unit tests pin contract under serial t.Setenv.
+- **Conclusion:** PASS.
+- **Unknowns:** mage ci red on `mcpapi` is sibling F.3.x churn, outside E.9 scope per spawn prompt; routed to orchestrator awareness, not an E.9 blocker.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All Go evidence resolved via `Read` + `/usr/bin/grep` on uncommitted state. Builder's mage testPkg verdicts (3/3 + 474/474 + 22/22) trusted per directive.
