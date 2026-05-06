@@ -331,12 +331,19 @@ description = "Perpetual Hylla-tooling refinement rollup — entries that came o
 #   - mage_ci          — `mage ci` in project's primary worktree (4b.3).
 #   - mage_test_pkg    — `mage testPkg <pkg>` per item.Packages (4b.4).
 #   - hylla_reingest   — drop-end Hylla reingest (4b.7).
+#   - commit           — F.7.13 commit gate (Drop 4c). Skipped at runtime
+#                        unless ProjectMetadata.DispatcherCommitEnabled = &true.
+#   - push             — F.7.14 push gate (Drop 4c). Skipped at runtime
+#                        unless ProjectMetadata.DispatcherPushEnabled = &true.
 #
-# Drop 4c expands the enum with "commit" and "push" and the build sequence
-# becomes ["mage_ci", "commit", "push"]. Drop 4b Wave A ships only mage_ci
-# in the build sequence per REVISION_BRIEF locked decision L6 — the closed
-# enum stays tight and the default template stays minimal until Drop 4c
-# lands the additional gate implementations.
+# Drop 4c F.7.16 expanded the build sequence from Drop 4b's ["mage_ci"] to
+# ["mage_ci", "commit", "push"]. Per master PLAN.md L20 the commit and push
+# gates SHIP IN THE LIST (declared) but each is INDEPENDENTLY GATED via
+# project-metadata toggles (`dispatcher_commit_enabled`,
+# `dispatcher_push_enabled`) which BOTH DEFAULT OFF (nil/false). So the gates
+# appear in the chain but no-op (skip = success per Drop 4b semantics) until
+# the dev flips the toggles per project. Toggle-flip is a one-line metadata
+# change for adopters; no template re-bake required.
 #
 # Absence of an entry for a given kind means "no gates" — the gate runner
 # returns Success: true immediately. NOT "all gates" (resolves WAVE_A_PLAN
@@ -348,7 +355,7 @@ description = "Perpetual Hylla-tooling refinement rollup — entries that came o
 # retry policy) without colliding with `gates`.
 
 [gates]
-build = ["mage_ci"]
+build = ["mage_ci", "commit", "push"]
 
 # -----------------------------------------------------------------------------
 # [agent_bindings] — closed 12-value Kind → agent spawn parameters.

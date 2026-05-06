@@ -344,12 +344,20 @@ func TestDefaultTemplateStewardOwnedKinds(t *testing.T) {
 }
 
 // TestDefaultTemplateLoadsWithGates asserts the embedded default.toml decodes
-// the Drop 4b Wave A 4b.1 [gates] section: [gates.build] = ["mage_ci"]. Per
-// REVISION_BRIEF locked decision L6 the build sequence stays minimal in
-// Drop 4b — Drop 4c expands to ["mage_ci", "commit", "push"]. Other kinds
-// (plan-qa-proof, build-qa-proof, closeout, etc.) are ABSENT from [gates.*];
-// the gate runner treats absence as "no gates" not "all gates" per the
-// 4b.2 doc-comment.
+// the [gates] section with the Drop 4c F.7.16 shape:
+// [gates.build] = ["mage_ci", "commit", "push"]. Drop 4b Wave A 4b.1 originally
+// shipped only ["mage_ci"]; Drop 4c F.7.16 expanded the sequence per master
+// PLAN.md L20 — commit + push gates ship in the LIST but are INDEPENDENTLY
+// GATED via ProjectMetadata.DispatcherCommitEnabled / DispatcherPushEnabled,
+// which both default OFF (nil/false). Slice ORDER is load-bearing because the
+// gate runner halts on first failure: mage_ci must run before commit (a green
+// build is a precondition for committing the work) and commit must run before
+// push (push without a fresh local commit on the working ref is a no-op or a
+// stale-state push).
+//
+// Other kinds (plan-qa-proof, build-qa-proof, closeout, etc.) are ABSENT from
+// [gates.*]; the gate runner treats absence as "no gates" not "all gates" per
+// the 4b.2 doc-comment.
 func TestDefaultTemplateLoadsWithGates(t *testing.T) {
 	t.Parallel()
 
@@ -357,13 +365,11 @@ func TestDefaultTemplateLoadsWithGates(t *testing.T) {
 
 	gateSeq, ok := tpl.Gates[domain.KindBuild]
 	if !ok {
-		t.Fatalf("Gates[%q] missing — Drop 4b Wave A 4b.1 ships [gates.build] = [\"mage_ci\"]", domain.KindBuild)
+		t.Fatalf("Gates[%q] missing — Drop 4c F.7.16 ships [gates.build] = [\"mage_ci\", \"commit\", \"push\"]", domain.KindBuild)
 	}
-	if len(gateSeq) != 1 {
-		t.Fatalf("Gates[%q] len = %d; want 1 (Drop 4b L6: only mage_ci ships in default; Drop 4c expands)", domain.KindBuild, len(gateSeq))
-	}
-	if gateSeq[0] != GateKindMageCI {
-		t.Fatalf("Gates[%q][0] = %q; want %q", domain.KindBuild, gateSeq[0], GateKindMageCI)
+	want := []GateKind{GateKindMageCI, GateKindCommit, GateKindPush}
+	if !slices.Equal(gateSeq, want) {
+		t.Fatalf("Gates[%q] = %v; want %v (Drop 4c F.7.16 — order is load-bearing: mage_ci then commit then push)", domain.KindBuild, gateSeq, want)
 	}
 
 	// Sibling kinds carry no gate sequence — the gate runner treats absence
@@ -383,8 +389,68 @@ func TestDefaultTemplateLoadsWithGates(t *testing.T) {
 	}
 	for _, kind := range absentKinds {
 		if _, present := tpl.Gates[kind]; present {
-			t.Fatalf("Gates[%q] should be absent in Drop 4b default — only build carries a gate sequence", kind)
+			t.Fatalf("Gates[%q] should be absent — only build carries a gate sequence in the default template", kind)
 		}
+	}
+}
+
+// TestDefaultTemplateGatesAllValidGateKinds asserts every entry in the
+// loaded [gates.build] sequence is a member of the closed GateKind enum
+// per IsValidGateKind. Drop 4c F.7.16 acceptance bullet #2: "Default loads
+// + validates clean (closed-enum gate kinds all valid post-F.7.13/14)."
+//
+// Regression guard against two distinct failure modes:
+//  1. Someone adds a new string to [gates.build] in default.toml without
+//     also extending the closed GateKind enum + validGateKinds in schema.go.
+//  2. Someone removes a GateKind constant in schema.go without checking
+//     that no template TOML still references it.
+//
+// Both modes would silently let an unknown gate kind survive load-time
+// validation if the template were authored before Drop 4b's validateGateKinds
+// chain was wired up. This test pins the post-F.7.16 invariant: every gate
+// the default template names is reachable by the gate runner's lookup.
+func TestDefaultTemplateGatesAllValidGateKinds(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	for kind, seq := range tpl.Gates {
+		for i, gk := range seq {
+			if !IsValidGateKind(gk) {
+				t.Fatalf("Gates[%q][%d] = %q; IsValidGateKind returned false (closed-enum violation)", kind, i, gk)
+			}
+		}
+	}
+}
+
+// TestDefaultTemplateNoProjectMetadataOverrides asserts the act of loading
+// the default template does NOT alter the project-metadata dispatcher-toggle
+// defaults — IsDispatcherCommitEnabled() and IsDispatcherPushEnabled() both
+// remain false on a zero-value ProjectMetadata. This pins master PLAN.md L20:
+// commit and push gates are LISTED in [gates.build] but each is GATED OFF by
+// default via project-metadata toggles. Adopter flips the toggle per project;
+// no template re-bake required.
+//
+// The test exists as a structural invariant — the Template type carries no
+// project-metadata-shaped fields, so loading it cannot produce overrides. A
+// future drop that adds template-side toggle defaults (e.g.
+// `[project_metadata]` sub-table) would have to break this test before
+// shipping, forcing the toggle-default contract to be re-confirmed.
+func TestDefaultTemplateNoProjectMetadataOverrides(t *testing.T) {
+	t.Parallel()
+
+	_ = loadDefaultOrFatal(t)
+
+	// A fresh ProjectMetadata{} (zero-valued) must report both dispatcher
+	// toggles as disabled. Loading the default template above is the
+	// regression hook — if a future change adds template-driven defaults
+	// that mutate project-metadata zero values, this assertion would need
+	// to be re-derived from the loaded template state.
+	var meta domain.ProjectMetadata
+	if meta.IsDispatcherCommitEnabled() {
+		t.Fatalf("IsDispatcherCommitEnabled() = true on zero ProjectMetadata; want false (master PLAN L20 default-OFF)")
+	}
+	if meta.IsDispatcherPushEnabled() {
+		t.Fatalf("IsDispatcherPushEnabled() = true on zero ProjectMetadata; want false (master PLAN L20 default-OFF)")
 	}
 }
 
