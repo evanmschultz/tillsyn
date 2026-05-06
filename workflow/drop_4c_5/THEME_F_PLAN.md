@@ -63,6 +63,7 @@
 
 ### Droplet F.1.2 — File-system walk: bare root → primary worktree → embedded
 
+**State:** done (round 1)
 **Title:** `4c.5.F.1.2 — loadProjectTemplate walks .tillsyn/template.toml candidates`.
 
 **Files / paths:**

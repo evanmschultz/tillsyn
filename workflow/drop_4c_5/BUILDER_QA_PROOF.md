@@ -1401,3 +1401,42 @@ N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden.
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All evidence resolved via `Read`, `rg`, `git diff`, and a single `mage test-pkg` run on the five declared files.
+
+## Droplet F.1.2 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode).
+**Date:** 2026-05-06.
+**Verdict:** PASS.
+
+### 1. Findings
+
+- **1.1 Acceptance #1 (walk order) — MET.** `service.go` `loadProjectTemplate` builds candidates in priority sequence: `if bareRoot != ""` → append `<bareRoot>/.tillsyn/template.toml`; `if primaryWorktree != ""` → append `<primaryWorktree>/.tillsyn/template.toml`; `for _, candidatePath := range candidates` iterates in insertion order; embedded `templates.LoadDefaultTemplateForLanguage(project.Language)` runs only after the loop exits without a hit. Order matches `<RepoBareRoot> → <RepoPrimaryWorktree> → embedded` exactly.
+- **1.2 Acceptance #2 (TOCTOU-safe `os.Open`, first nil-error wins) — MET.** `loadProjectTemplateCandidate` calls `os.Open(candidatePath)` directly (no separate `os.Stat`). On success: `templates.Load(file)` → `(tpl, true, nil)`. The walk loop returns `tpl, true, nil` on first `ok=true` so subsequent candidates are not consulted. The builder upgraded the spec's `os.Stat` mention to `os.Open`-only for TOCTOU safety; design note in worklog and code-comment justifies it.
+- **1.3 Acceptance #3 (error propagation) — MET.** Only `fs.ErrNotExist` on `os.Open` triggers fallthrough (`return zero, false, nil`). All other Open errors AND any `templates.Load` error are wrapped with `fmt.Errorf("template at %s: %w", candidatePath, err)` and returned. The walk loop's `if err != nil { return ..., err }` propagates without consulting the next candidate. `TestLoadProjectTemplate_BareRootSyntaxErrorPropagates` directly exercises this — bare-root malformed, primary-worktree valid; asserts `errors.Is(err, templates.ErrUnknownTemplateKey)`, asserts path appears in error string, asserts primary marker NOT in returned tpl.
+- **1.4 Acceptance #4 (empty `RepoBareRoot` skip) — MET.** Empty-skip is performed at candidate-list-build time (`if bareRoot != ""` guard before the `append`), so `filepath.Join("", ".tillsyn", "template.toml")` is never evaluated. `TestLoadProjectTemplate_RelativePathSafety` validates by `t.Chdir`-ing into a tempdir containing a marker fixture; the function still returns the embedded default (marker absent), proving no CWD-relative `os.Open` fired.
+- **1.5 Acceptance #5 (5 new tests) — MET.** All five present in `service_test.go`: `TestLoadProjectTemplate_BareRootWins` (priority order), `_PrimaryWorktreeFallback` (bare-root absent → primary loaded), `_BareRootSyntaxErrorPropagates` (criterion #3 + mitigation #2), `_BothAbsentEmbedded` (real dirs, no candidates → embedded fallback), `_RelativePathSafety` (mitigation #1, `t.Chdir` trap). Three test helpers (`mustReadDefaultGoTOML`, `withTillsynMarker`, `writeProjectTemplateFixture`) consolidate fixture authoring.
+- **1.6 Acceptance #6 (`mage test-pkg ./internal/app` green) — MET.** Reviewer-run `mage testPkg ./internal/app`: **471/471 PASS**, 0 failed, 0 skipped. Worklog claim of `mage ci` 2885/2885 trusted (post-build gate; reviewer did not re-run full ci).
+- **1.7 Path constants — MET.** `projectTemplateFilename = "template.toml"` and `projectTemplateDir = ".tillsyn"` declared as unexported package-level constants with doc-comments naming F.3.1/F.3.3 reuse rationale. Both used inside `filepath.Join` calls within `loadProjectTemplate`.
+- **1.8 Force-clear in pre-existing tests — MET.** Both `TestCreateActionItemKindPayloadValidation` (service_test.go:4870-4876) and `TestKindCatalogResolutionFallsBackToRepoOnEmpty` (kind_capability_catalog_test.go:38-44) clear `repo.projects[id].KindCatalogJSON = nil` immediately after project create, with multi-line CONSTRUCTION NOTE doc-comments naming the F.1.2 seam and the future-drop obsoletion path.
+- **1.9 Worklog completeness — MET.** § "Droplet F.1.2 — Round 1" in `BUILDER_WORKLOG.md` covers: outcome, files touched (4 files with per-file rationale), targets run (471/471 + 2885/2885), 8 design notes (TOCTOU rationale, permission-denied propagation, constants, helper extraction, fixture strategy, marker mechanics, force-clear pattern, relative-path implementation, `t.Chdir` choice), Hylla feedback (N/A), Unknowns (none).
+
+### 2. Missing Evidence
+
+- **2.1 Defense-in-depth: spec mitigation #1 mentioned `assert filepath.IsAbs(project.RepoBareRoot)` as an explicit guard; builder relied on empty-skip + domain-layer validation + `t.TempDir()`-is-absolute. Acceptance #4 (the actual empty-string footgun) is satisfied via empty-skip and `_RelativePathSafety`. The IsAbs guard against hand-edited DBs / fixtures supplying a non-empty-but-relative path is a defense-in-depth nit, not an acceptance gate. Observation only — does not block PASS. Could be added as a lightweight refinement note (single-line guard at candidate-build time wrapping a sentinel error) but not required by F.1.2 acceptance.
+- **2.2 None blocking.**
+
+### 3. Summary
+
+PASS. All six declared acceptance criteria, the two ancillary checks (path constants, force-clear), and worklog-completeness gate are satisfied. The builder's TOCTOU-safe `os.Open`-only walk is a strict improvement over the spec's `os.Stat`-then-`os.Open` sketch and is justified in code-comments + worklog. Error propagation is genuine (verified by the negative-fallthrough assertion in `_BareRootSyntaxErrorPropagates`). The 5 new tests cover all five spec scenarios; the 3 helpers + force-clear pattern keep fixture authoring DRY without introducing test-only coupling. Reviewer-run `mage testPkg ./internal/app` independently confirms 471/471 green on the touched package.
+
+### Proof Certificate
+
+- **Premises:** walk order bare→primary→embedded correct; first nil-error wins; non-not-exist errors propagate without fallthrough; empty `RepoBareRoot` and `RepoPrimaryWorktree` skip safely (no CWD-relative `os.Open`); 5 new walk tests + 3 helpers present; `mage test-pkg ./internal/app` 471/471; path constants declared; two pre-existing tests force-clear `KindCatalogJSON` with documented rationale; worklog complete.
+- **Evidence:** `service.go` diff lines around `loadProjectTemplate` (constants block + walk function + helper); `service_test.go` diff (5 new test functions + 3 helpers + `TestCreateActionItemKindPayloadValidation` clear); `kind_capability_catalog_test.go` diff (`TestKindCatalogResolutionFallsBackToRepoOnEmpty` clear + CONSTRUCTION NOTE); `THEME_F_PLAN.md` F.1.2 row state stamp; `BUILDER_WORKLOG.md` § "Droplet F.1.2 — Round 1"; reviewer-run `mage testPkg ./internal/app` 471/471 PASS.
+- **Trace or cases:** (a) bare-root present, primary present → loop iter 1 succeeds → `(tpl, true, nil)` with bare marker. (b) bare-root absent (no .tillsyn dir but root non-empty), primary present → iter 1 returns `(zero, false, nil)` via `fs.ErrNotExist` skip → iter 2 succeeds → primary marker. (c) bare-root malformed, primary present → iter 1 returns wrapped error → walk loop propagates without iter 2. (d) both roots present, neither has .tillsyn/template.toml → both iters skip → embedded fallback runs. (e) both roots empty → candidates list empty → embedded fallback runs unconditionally; `t.Chdir` trap shows no relative-path access.
+- **Conclusion:** PASS.
+- **Unknowns:** None blocking. Optional defense-in-depth `filepath.IsAbs` guard is a nice-to-have refinement, not an acceptance gate; spec acceptance #4 is fully met via empty-skip + relative-path-safety test.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All evidence resolved via `Read`, `git diff`, and a single `mage testPkg ./internal/app` run on the five declared files.

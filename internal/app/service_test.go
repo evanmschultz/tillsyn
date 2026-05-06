@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -4834,19 +4835,21 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 
 // TestCreateActionItemKindPayloadValidation verifies schema-based runtime validation for dynamic kinds.
 //
-// Drop 4c.5 droplet F.1.1 NOTE: the project is created with a non-empty
-// RepoPrimaryWorktree so loadProjectTemplate's F.1.2 seam preserves an
-// empty KindCatalogJSON. This routes resolveActionItemKindDefinition
-// through the legacy repo path, which is the seam UpsertKindDefinition
-// updates with the PayloadSchemaJSON below. Pre-F.1.1 every project
-// reached the empty-catalog branch via the Drop 3.14 stub; post-F.1.1
-// empty-path projects bake the embedded default whose synthesized
-// KindDefinition omits the upserted schema. Once F.1.2's filesystem
-// walk lands, this test should pin a path that has no on-disk
-// `.tillsyn/template.toml` so the walk falls through to the embedded
-// default — at which point the test will either need to seed the
-// schema into the catalog directly or assert payload validation moved
-// to a different surface.
+// Drop 4c.5 droplet F.1.2 NOTE: post-F.1.2 every freshly-created
+// project bakes a non-empty KindCatalogJSON from the embedded default
+// (when no on-disk .tillsyn/template.toml is found). The catalog-first
+// resolveActionItemKindDefinition path uses synthesizeKindDefinitionFromCatalog,
+// which deliberately leaves PayloadSchemaJSON = "" (per
+// kind_capability.go § synthesizeKindDefinitionFromCatalog doc-comment:
+// "templates v1 does not encode schemas; legacy repo path remains the
+// only schema source until a future drop"). To exercise the legacy
+// repo path that UpsertKindDefinition writes to, this test forcibly
+// clears project.KindCatalogJSON after CreateProjectWithMetadata —
+// this is the explicit "force legacy path" pattern that survives the
+// F.1.2 walk landing (which would otherwise auto-populate the
+// catalog). Future drops that fold PayloadSchemaJSON into the catalog
+// can drop the clear and assert directly against the catalog-baked
+// schema.
 func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "c1", "t1", "t2"}
@@ -4867,6 +4870,13 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
+	// Force the legacy repo-path resolution by clearing the F.1.2-baked
+	// catalog. UpsertKindDefinition below writes PayloadSchemaJSON to
+	// the repo's KindDefinition store; the legacy path reads from there
+	// when the catalog is empty.
+	stored := repo.projects[project.ID]
+	stored.KindCatalogJSON = nil
+	repo.projects[project.ID] = stored
 	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
 	if err != nil {
 		t.Fatalf("CreateColumn() error = %v", err)
@@ -6510,55 +6520,233 @@ func TestLoadProjectTemplate_NilProjectReturnsSkip(t *testing.T) {
 	}
 }
 
-// TestLoadProjectTemplate_NonEmptyPathPreservesSkip covers Drop 4c.5
-// droplet F.1.1's deliberate F.1.2 seam: non-empty repo paths preserve
-// the Drop 3.14 "skip template binding" behavior (ok=false) until F.1.2
-// lands the on-disk filesystem walk. The contract is asymmetric —
-// empty-path projects fall through to embedded-default; non-empty-path
-// projects defer template resolution until F.1.2's walk extends THIS
-// function with the candidate sequence.
-//
-// Once F.1.2 lands, this test should be REPLACED with positive walk-path
-// tests (`TestLoadProjectTemplate_BareRootWins`,
-// `TestLoadProjectTemplate_PrimaryWorktreeFallback`, etc. per
-// THEME_F_PLAN.md § F.1.2) since the "skip on non-empty path" behavior
-// disappears.
-func TestLoadProjectTemplate_NonEmptyPathPreservesSkip(t *testing.T) {
-	tests := []struct {
-		name    string
-		project domain.Project
-	}{
-		{
-			name:    "non-empty bare-root → skip until F.1.2",
-			project: domain.Project{RepoBareRoot: "/abs/path/to/bare", Language: "go"},
-		},
-		{
-			name:    "non-empty primary-worktree → skip until F.1.2",
-			project: domain.Project{RepoPrimaryWorktree: "/abs/path/to/worktree", Language: "go"},
-		},
-		{
-			name: "both paths non-empty → skip until F.1.2",
-			project: domain.Project{
-				RepoBareRoot:        "/abs/path/to/bare",
-				RepoPrimaryWorktree: "/abs/path/to/worktree",
-				Language:            "go",
-			},
-		},
+// mustReadDefaultGoTOML reads the on-disk byte content of the embedded
+// default-go.toml so F.1.2 walk fixtures can author valid v1 templates
+// without inlining ~hundred lines of TOML per test. The path is
+// relative to the test working directory (Go's `testing` package runs
+// each test with the package directory as cwd), so `../templates/...`
+// resolves to internal/templates/builtin/default-go.toml regardless of
+// where the test binary was built. Failure to read is a hard test
+// failure — the file MUST exist post-F.2.1 rename.
+func mustReadDefaultGoTOML(t *testing.T) []byte {
+	t.Helper()
+	path := filepath.Join("..", "templates", "builtin", "default-go.toml")
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read default-go.toml at %s: %v", path, err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			project := tc.project
-			tpl, ok, err := loadProjectTemplate(&project)
-			if err != nil {
-				t.Fatalf("loadProjectTemplate(): unexpected error = %v", err)
-			}
-			if ok {
-				t.Fatalf("loadProjectTemplate(): ok = true; want false (non-empty-path skip preserved until F.1.2)")
-			}
-			if tpl.SchemaVersion != "" {
-				t.Fatalf("loadProjectTemplate(): tpl.SchemaVersion = %q; want \"\" (zero-value Template on skip)", tpl.SchemaVersion)
-			}
-		})
+	return bytes
+}
+
+// withTillsynMarker returns a copy of base TOML with a `[tillsyn]` table
+// appended carrying max_context_bundle_chars set to marker. Used by
+// F.1.2 walk fixtures to author candidate templates whose loaded
+// Tillsyn.MaxContextBundleChars uniquely identifies which on-disk
+// candidate Load consumed. Validity is preserved — Tillsyn fields are
+// optional per templates.schema.go § Tillsyn doc-comment, and a
+// non-zero positive int passes validateTillsyn.
+//
+// Pre-condition: base must NOT already contain a `[tillsyn]` table
+// (the embedded default-go.toml does not, as of F.2.1). If a future
+// drop adds one to default-go.toml, this helper must be reworked to
+// in-place mutate rather than append.
+func withTillsynMarker(base []byte, marker int) []byte {
+	suffix := fmt.Sprintf("\n[tillsyn]\nmax_context_bundle_chars = %d\n", marker)
+	out := make([]byte, 0, len(base)+len(suffix))
+	out = append(out, base...)
+	out = append(out, []byte(suffix)...)
+	return out
+}
+
+// writeProjectTemplateFixture creates <root>/.tillsyn/template.toml with
+// the supplied content and fails the test on I/O error. Returns the
+// directory root (echoed for caller convenience) so the test can pass
+// it directly to domain.Project.RepoBareRoot or RepoPrimaryWorktree.
+func writeProjectTemplateFixture(t *testing.T, root string, content []byte) string {
+	t.Helper()
+	dir := filepath.Join(root, ".tillsyn")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "template.toml"), content, 0o644); err != nil {
+		t.Fatalf("write template.toml under %s: %v", dir, err)
+	}
+	return root
+}
+
+// TestLoadProjectTemplate_BareRootWins covers Drop 4c.5 droplet F.1.2's
+// core acceptance criterion #1.1 + #2: when both bare-root and
+// primary-worktree carry an on-disk template, the bare-root candidate
+// wins (priority order: bare → primary → embedded). Distinct
+// max_context_bundle_chars markers in the two fixtures let the
+// assertion verify which file Load actually consumed.
+func TestLoadProjectTemplate_BareRootWins(t *testing.T) {
+	const bareMarker = 7777
+	const primaryMarker = 8888
+	base := mustReadDefaultGoTOML(t)
+	bareRoot := writeProjectTemplateFixture(t, t.TempDir(), withTillsynMarker(base, bareMarker))
+	primaryWorktree := writeProjectTemplateFixture(t, t.TempDir(), withTillsynMarker(base, primaryMarker))
+	project := domain.Project{
+		RepoBareRoot:        bareRoot,
+		RepoPrimaryWorktree: primaryWorktree,
+		Language:            "go",
+	}
+	tpl, ok, err := loadProjectTemplate(&project)
+	if err != nil {
+		t.Fatalf("loadProjectTemplate(): unexpected error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("loadProjectTemplate(): ok = false; want true (bare-root candidate exists)")
+	}
+	if tpl.Tillsyn.MaxContextBundleChars != bareMarker {
+		t.Fatalf("Tillsyn.MaxContextBundleChars = %d; want %d (bare-root must win over primary-worktree)", tpl.Tillsyn.MaxContextBundleChars, bareMarker)
+	}
+}
+
+// TestLoadProjectTemplate_PrimaryWorktreeFallback covers Drop 4c.5
+// droplet F.1.2 acceptance criterion #1.2: when bare-root is non-empty
+// but the file is absent, the walk falls through to primary-worktree.
+// The bare-root directory exists and is non-empty (RepoBareRoot points
+// to a real path) — only the .tillsyn/template.toml file is missing.
+func TestLoadProjectTemplate_PrimaryWorktreeFallback(t *testing.T) {
+	const primaryMarker = 8888
+	base := mustReadDefaultGoTOML(t)
+	bareRoot := t.TempDir() // Real directory; no .tillsyn/template.toml inside.
+	primaryWorktree := writeProjectTemplateFixture(t, t.TempDir(), withTillsynMarker(base, primaryMarker))
+	project := domain.Project{
+		RepoBareRoot:        bareRoot,
+		RepoPrimaryWorktree: primaryWorktree,
+		Language:            "go",
+	}
+	tpl, ok, err := loadProjectTemplate(&project)
+	if err != nil {
+		t.Fatalf("loadProjectTemplate(): unexpected error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("loadProjectTemplate(): ok = false; want true (primary-worktree candidate exists)")
+	}
+	if tpl.Tillsyn.MaxContextBundleChars != primaryMarker {
+		t.Fatalf("Tillsyn.MaxContextBundleChars = %d; want %d (primary-worktree fallback must load when bare-root file absent)", tpl.Tillsyn.MaxContextBundleChars, primaryMarker)
+	}
+}
+
+// TestLoadProjectTemplate_BareRootSyntaxErrorPropagates covers Drop 4c.5
+// droplet F.1.2 acceptance criterion #3 + falsification mitigation #2:
+// when a candidate file EXISTS but templates.Load rejects it (here, a
+// strict-decode unknown-key rejection), the error PROPAGATES wrapped
+// with the offending path; the walk does NOT fall through to the
+// primary-worktree candidate. Silent fall-through would hide typos in
+// dev-authored templates, which is the explicit non-goal F.1.2's spec
+// names.
+//
+// The path-wrap format `template at <abs-path>: <wrapped>` lets
+// downstream callers continue routing on `errors.Is` against templates
+// package sentinels (asserted via templates.ErrUnknownTemplateKey
+// below) AND see the offending path in the error string (asserted via
+// strings.Contains).
+func TestLoadProjectTemplate_BareRootSyntaxErrorPropagates(t *testing.T) {
+	// Malformed template — schema_version is correct but a top-level
+	// unknown key trips strict decode → ErrUnknownTemplateKey. The
+	// primary-worktree fixture is valid; if fall-through happened, the
+	// test would falsely succeed.
+	bareRoot := writeProjectTemplateFixture(t, t.TempDir(), []byte("schema_version = \"v1\"\nunknown_top_key = \"oops\"\n"))
+	const primaryMarker = 8888
+	primaryWorktree := writeProjectTemplateFixture(t, t.TempDir(), withTillsynMarker(mustReadDefaultGoTOML(t), primaryMarker))
+	project := domain.Project{
+		RepoBareRoot:        bareRoot,
+		RepoPrimaryWorktree: primaryWorktree,
+		Language:            "go",
+	}
+	tpl, ok, err := loadProjectTemplate(&project)
+	if err == nil {
+		t.Fatalf("loadProjectTemplate(): err = nil; want wrapped ErrUnknownTemplateKey from bare-root candidate")
+	}
+	if !errors.Is(err, templates.ErrUnknownTemplateKey) {
+		t.Fatalf("loadProjectTemplate(): err = %v; want errors.Is(templates.ErrUnknownTemplateKey)", err)
+	}
+	expectedPath := filepath.Join(bareRoot, ".tillsyn", "template.toml")
+	if !strings.Contains(err.Error(), expectedPath) {
+		t.Fatalf("loadProjectTemplate(): err = %q; want substring %q (path-wrap surfaces offending file)", err.Error(), expectedPath)
+	}
+	if ok {
+		t.Fatalf("loadProjectTemplate(): ok = true on error; want false")
+	}
+	if tpl.SchemaVersion != "" {
+		t.Fatalf("loadProjectTemplate(): tpl = %+v; want zero-value Template on error", tpl)
+	}
+	// Falsification check: if the walk fell through to primary, the
+	// returned tpl would have the primary marker. We already asserted
+	// SchemaVersion=="" and ok=false above, so the marker would be
+	// zero anyway — but assert explicitly for clarity.
+	if tpl.Tillsyn.MaxContextBundleChars == primaryMarker {
+		t.Fatalf("loadProjectTemplate(): primary-worktree fallback was consulted on bare-root error; want propagation without fall-through")
+	}
+}
+
+// TestLoadProjectTemplate_BothAbsentEmbedded covers Drop 4c.5 droplet
+// F.1.2 acceptance criterion #1.3: when both repo-path fields are
+// non-empty but neither carries an on-disk .tillsyn/template.toml, the
+// walk falls through to the embedded default. Distinct from
+// TestLoadProjectTemplate_EmbeddedFallback (which exercises the
+// empty-string path branch); here both paths point to real
+// directories that simply don't contain the candidate file.
+func TestLoadProjectTemplate_BothAbsentEmbedded(t *testing.T) {
+	bareRoot := t.TempDir()
+	primaryWorktree := t.TempDir()
+	project := domain.Project{
+		RepoBareRoot:        bareRoot,
+		RepoPrimaryWorktree: primaryWorktree,
+		Language:            "go",
+	}
+	tpl, ok, err := loadProjectTemplate(&project)
+	if err != nil {
+		t.Fatalf("loadProjectTemplate(): unexpected error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("loadProjectTemplate(): ok = false; want true (embedded fallback when both candidates absent)")
+	}
+	if tpl.SchemaVersion != templates.SchemaVersionV1 {
+		t.Fatalf("Template.SchemaVersion = %q; want %q (embedded default loaded)", tpl.SchemaVersion, templates.SchemaVersionV1)
+	}
+	if tpl.Tillsyn.MaxContextBundleChars != 0 {
+		t.Fatalf("Tillsyn.MaxContextBundleChars = %d; want 0 (embedded default-go.toml ships without [tillsyn] table); marker collision suggests an on-disk fixture leaked into the walk", tpl.Tillsyn.MaxContextBundleChars)
+	}
+}
+
+// TestLoadProjectTemplate_RelativePathSafety covers Drop 4c.5 droplet
+// F.1.2 spec falsification mitigation #1: empty RepoBareRoot must NOT
+// cause loadProjectTemplate to open `.tillsyn/template.toml` relative
+// to the process CWD. Without the early-empty-skip guard,
+// filepath.Join("", ".tillsyn", "template.toml") produces the relative
+// path, which os.Open then resolves against CWD — leaking
+// CWD-dependent behavior into project create.
+//
+// Test technique: t.Chdir into a tempdir that contains a
+// `.tillsyn/template.toml` with a unique marker. If the implementation
+// accidentally opened the relative path, the test would observe the
+// marker. Empty-path projects must instead load the embedded default
+// (marker absent → MaxContextBundleChars == 0).
+func TestLoadProjectTemplate_RelativePathSafety(t *testing.T) {
+	const cwdMarker = 9999
+	cwdTrap := t.TempDir()
+	writeProjectTemplateFixture(t, cwdTrap, withTillsynMarker(mustReadDefaultGoTOML(t), cwdMarker))
+	t.Chdir(cwdTrap)
+	// Empty RepoBareRoot AND empty RepoPrimaryWorktree — must skip both
+	// candidate lookups (no relative-path os.Open) and fall through to
+	// the embedded language-default.
+	project := domain.Project{Language: "go"}
+	tpl, ok, err := loadProjectTemplate(&project)
+	if err != nil {
+		t.Fatalf("loadProjectTemplate(): unexpected error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("loadProjectTemplate(): ok = false; want true (empty paths fall through to embedded)")
+	}
+	if tpl.Tillsyn.MaxContextBundleChars == cwdMarker {
+		t.Fatalf("loadProjectTemplate(): observed cwd-relative marker %d; empty RepoBareRoot must NOT trigger os.Open(\".tillsyn/template.toml\") relative to CWD", cwdMarker)
+	}
+	if tpl.SchemaVersion != templates.SchemaVersionV1 {
+		t.Fatalf("Template.SchemaVersion = %q; want %q (embedded default loaded, not cwd trap)", tpl.SchemaVersion, templates.SchemaVersionV1)
 	}
 }
 
@@ -6616,27 +6804,34 @@ func TestBakeProjectKindCatalog_EmbeddedFallbackPopulatesCatalog(t *testing.T) {
 	}
 }
 
-// TestBakeProjectKindCatalog_NonEmptyPathSkipsBakeUntilF12 mirrors the
-// loadProjectTemplate non-empty-path test from the bake-helper side:
-// projects that declare a checkout layout (bare-root or primary-worktree)
-// preserve the Drop 3.14 empty-catalog behavior until F.1.2's filesystem
-// walk lands. This locks the F.1.1/F.1.2 seam at the bake boundary too.
-//
-// Once F.1.2 lands, this test flips polarity: non-empty paths will load
-// from on-disk candidates AND fall through to embedded default when no
-// candidate matches, so KindCatalogJSON becomes non-empty in both
-// branches. Replace this test with the F.1.2 walk-path scenarios at
-// that time.
-func TestBakeProjectKindCatalog_NonEmptyPathSkipsBakeUntilF12(t *testing.T) {
+// TestBakeProjectKindCatalog_NonEmptyPathFallsThroughToEmbedded mirrors
+// the loadProjectTemplate non-empty-path test from the bake-helper
+// side post-F.1.2: when the repo paths are non-empty but neither
+// carries an on-disk .tillsyn/template.toml (real directories
+// resolved by t.TempDir() but empty of the candidate file), the walk
+// falls through to the embedded language-default and the catalog is
+// populated. Pre-F.1.2 this branch silently produced an empty catalog;
+// post-F.1.2 silent-empty is no longer reachable through this path.
+func TestBakeProjectKindCatalog_NonEmptyPathFallsThroughToEmbedded(t *testing.T) {
 	project := domain.Project{
-		RepoBareRoot:        "/abs/path/to/bare",
-		RepoPrimaryWorktree: "/abs/path/to/worktree",
+		RepoBareRoot:        t.TempDir(),
+		RepoPrimaryWorktree: t.TempDir(),
 		Language:            "go",
 	}
 	if err := bakeProjectKindCatalog(&project); err != nil {
 		t.Fatalf("bakeProjectKindCatalog(): unexpected error = %v", err)
 	}
-	if len(project.KindCatalogJSON) != 0 {
-		t.Fatalf("project.KindCatalogJSON length = %d; want 0 (non-empty-path skip preserved until F.1.2)", len(project.KindCatalogJSON))
+	if len(project.KindCatalogJSON) == 0 {
+		t.Fatalf("project.KindCatalogJSON is empty; F.1.2 walk must fall through to embedded default when no on-disk candidate matches")
+	}
+	var catalog templates.KindCatalog
+	if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
+		t.Fatalf("json.Unmarshal(KindCatalogJSON): unexpected error = %v", err)
+	}
+	if catalog.SchemaVersion != templates.SchemaVersionV1 {
+		t.Fatalf("decoded catalog.SchemaVersion = %q; want %q", catalog.SchemaVersion, templates.SchemaVersionV1)
+	}
+	if len(catalog.Kinds) == 0 {
+		t.Fatalf("decoded catalog.Kinds is empty; embedded fallback must populate the closed kind catalog")
 	}
 }

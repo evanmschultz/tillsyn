@@ -1593,4 +1593,38 @@ T1. All six attack categories REFUTED — behavior change is intentional and doc
 T2. No counterexamples constructed.
 T3. **PASS** — `mage ci` green; F.1.1 ready to commit.
 
+## Droplet F.1.2 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, opus)
+**Date:** 2026-05-06
+**Verdict:** PASS
+**Scope:** F.1.2-declared paths only — `internal/app/service.go`, `internal/app/service_test.go`, `internal/app/kind_capability_catalog_test.go`, `workflow/drop_4c_5/THEME_F_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`.
+
+### 1. Findings
+
+- **1.1 Walk-order correctness (Attack 1).** REFUTED. `service.go:533-539` constructs `candidates` in priority order: bareRoot append at L535 BEFORE primaryWorktree append at L538. The walk loop at L540-548 iterates `candidates` in slice order via `range`, returning on the first `ok=true`. Both fixtures present → bare-root wins. Verified by `TestLoadProjectTemplate_BareRootWins` (service_test.go:6583) using distinct `MaxContextBundleChars` markers (7777 vs 8888) — assertion at L6601 pins the bare marker.
+- **1.2 TOCTOU safety (Attack 2).** REFUTED. `loadProjectTemplateCandidate` (service.go:575-592) opens via `os.Open` directly — NO `os.Stat` precedes it. The not-exist signal is `errors.Is(err, fs.ErrNotExist)` on the Open's returned error (L578), not a separate Stat call. There is no Stat-then-Open race window. `defer file.Close()` at L586 runs only on the successful-open path (after the error-branch returns), avoiding nil-file close.
+- **1.3 Permission-denied semantics (Attack 3).** REFUTED. The candidate-load helper's error branch at L577-585 wraps ANY non-`fs.ErrNotExist` Open error as `fmt.Errorf("template at %s: %w", candidatePath, err)` and returns it. Only `errors.Is(err, fs.ErrNotExist)` triggers the silent skip-and-continue at L582. Permission-denied (`fs.ErrPermission` / `EACCES`) propagates wrapped, NOT skipped. Doc-comment paragraph "File-not-exist vs other open errors" (L484-490) names this contract explicitly.
+- **1.4 Force-clear surgery isolation (Attack 4).** REFUTED. The two pre-existing test surgeries (`kind_capability_catalog_test.go:44-46`, `service_test.go:4877-4879`) each operate on a **per-test** `newFakeRepo()` instance (constructed at the top of each test function — confirmed via `rg "newFakeRepo"`). The pattern `stored := repo.projects[id]; stored.KindCatalogJSON = nil; repo.projects[id] = stored` mutates a local copy of the struct value (Go map indexing returns a copy) and re-stores. No package-level state, no t.Parallel sharing, no leakage to sibling tests. Each test's fakeRepo dies at scope end.
+- **1.5 Empty-path safety (Attack 5).** REFUTED. `service.go:534-539` guards each `filepath.Join` behind `if bareRoot != ""` / `if primaryWorktree != ""`. Empty-skip happens BEFORE `filepath.Join` is ever called, so `filepath.Join("", ".tillsyn", "template.toml")` → `".tillsyn/template.toml"` relative-CWD footgun never materializes. Trim is at L527-528 (TrimSpace then compare to ""), so whitespace-only also empty-skips. `TestLoadProjectTemplate_RelativePathSafety` (service_test.go:6729) validates by `t.Chdir`-ing into a tempdir containing a marked `.tillsyn/template.toml` and asserting the marker is NOT observed (asserts MaxContextBundleChars != cwdMarker at L6745).
+- **1.6 Constant placement (Attack 6).** REFUTED. `projectTemplateFilename` and `projectTemplateDir` (service.go:438, 443) are unexported package-level constants in `package app`. F.3.1's `get` op (planned in `internal/app/template_service.go` per THEME_F_PLAN.md L417) and F.3.3's `set` op (same package, planned at L495) both live in `package app` per their declared paths — so unexported scope is correct: same-package callers reach the constants directly without re-export. Worklog L1737 documents this intent. Doc-comments at L433-437 + L440-443 already cross-reference F.3.3's `set` writing to the same name.
+
+### 2. Counterexamples
+
+None constructed. All six attack vectors exercised — implementation behavior matches spec invariants.
+
+### 3. Summary
+
+PASS. Walk-order, TOCTOU, permission-propagation, surgery-isolation, empty-path-safety, and constant-scope are all correct. The implementation is a clean extension of F.1.1's seam.
+
+### Hylla Feedback
+
+N/A — action item touched non-Go files only via THEME_F_PLAN.md / BUILDER_WORKLOG.md inspection; the Go surface (`service.go`, two test files) was reviewed via `Read` + `Grep` directly per filesystem-MD coordination mode. No Hylla calls attempted.
+
+### TL;DR
+
+T1. All six attacks REFUTED — bare→primary→embedded walk order correct, os.Open-only is TOCTOU-safe, permission-denied propagates wrapped, force-clear surgeries are per-test-fakeRepo-local, empty-path checked BEFORE filepath.Join, and unexported package-level constants are right-scoped for F.3.1/F.3.3 reuse in `package app`.
+T2. No counterexamples constructed.
+T3. **PASS** — F.1.2 ready to commit.
+
 

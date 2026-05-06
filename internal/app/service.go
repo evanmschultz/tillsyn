@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -381,22 +384,23 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 //     default-generic.toml fallback (rebadged + extended by Drop 4c.5
 //     droplets F.2.1 and F.2.2; selected per project Language axis).
 //
-// RELEASE NOTE — Drop 4c.5 droplet F.1.1 BEHAVIOR CHANGE: prior to F.1.1
-// this helper was a no-op for every project (loadProjectTemplate returned
-// ok=false unconditionally per the Drop 3.14 deferral), so KindCatalogJSON
-// stayed empty and resolveActionItemKindDefinition routed through the
-// legacy repo fallback. Post-F.1.1, projects whose RepoBareRoot AND
-// RepoPrimaryWorktree are both empty NOW receive a non-empty catalog
-// baked from the embedded language-default (selected by project.Language).
-// This is safe because downstream callers
+// RELEASE NOTE — Drop 4c.5 droplets F.1.1 + F.1.2 BEHAVIOR CHANGE: prior
+// to F.1.1 this helper was a no-op for every project (loadProjectTemplate
+// returned ok=false unconditionally per the Drop 3.14 deferral), so
+// KindCatalogJSON stayed empty and resolveActionItemKindDefinition routed
+// through the legacy repo fallback. Post-F.1.1 + F.1.2, EVERY project
+// receives a non-empty catalog at create time: F.1.2's filesystem walk
+// inspects (1) <RepoBareRoot>/.tillsyn/template.toml then (2)
+// <RepoPrimaryWorktree>/.tillsyn/template.toml, and falls through to the
+// embedded language-default (F.1.1 + F.1.3) when neither candidate
+// matches. This is safe because downstream callers
 // (initializeProjectAllowedKinds in CreateProjectWithMetadata, the
 // kind-catalog-aware resolveActionItemKindDefinition path, the
 // dispatcher's spawn-command builder) all already handle non-empty
-// catalogs since Drop 3.14 — F.1.1 just stops feeding them the empty
-// branch when no on-disk template is present. Adopters who relied on the
-// empty-catalog branch (none today; pre-MVP) can opt out by authoring an
-// explicit minimal `<project_root>/.tillsyn/template.toml` once F.1.2's
-// filesystem walk lands.
+// catalogs since Drop 3.14. Pre-MVP no project relied on the
+// empty-catalog branch; the only escape hatch today is authoring a
+// minimal `<repo_root>/.tillsyn/template.toml` to override the embedded
+// default at create time.
 //
 // The helper accepts a *domain.Project so 3.14 can substitute a real
 // implementation without touching the call site in CreateProjectWithMetadata.
@@ -426,34 +430,80 @@ func bakeProjectKindCatalog(project *domain.Project) error {
 	return nil
 }
 
+// projectTemplateFilename is the canonical filename loadProjectTemplate
+// looks for under the project's bare-root and primary-worktree
+// .tillsyn/ directories. Hard-coded here rather than exported because
+// adopters do not configure this name today; renaming requires a deliberate
+// drop touching every consumer (F.3.3's `set` op writes to the same name).
+const projectTemplateFilename = "template.toml"
+
+// projectTemplateDir is the canonical sub-directory under each candidate
+// repo root that loadProjectTemplate walks. Same hard-coded rationale as
+// projectTemplateFilename.
+const projectTemplateDir = ".tillsyn"
+
 // loadProjectTemplate resolves the Template that CreateProjectWithMetadata
 // bakes into a project's KindCatalog.
 //
-// Drop 4c.5 droplet F.1.1 wires the EMBEDDED-DEFAULT fallback that Drop
-// 3.14's stub had deferred. Today's contract:
+// Drop 4c.5 droplet F.1.2 extends F.1.1's empty-path embedded fallback
+// with the on-disk filesystem walk Drop 3.14 had deferred. Today's
+// resolution order, in priority sequence:
 //
-//   - When both project.RepoBareRoot and project.RepoPrimaryWorktree are
-//     empty (after trimming whitespace), the function returns the parsed
-//     embedded template selected by project.Language via
-//     templates.LoadDefaultTemplateForLanguage. ok=true, err=nil on
-//     success.
-//   - When either repo path is non-empty, F.1.1 preserves the prior
-//     "skip template binding" behavior (ok=false) — the on-disk
-//     filesystem walk lands in F.1.2. This is a deliberate seam: F.1.2
-//     extends THIS function with the candidate walk
-//     (<bare>/.tillsyn/template.toml, then <primary>/.tillsyn/template.toml,
-//     then this embedded fallback) without touching the F.1.1 contract
-//     for empty-path projects.
-//   - Embedded-template parse errors (programmer-error path; the file is
-//     compiled into the binary) propagate as (zero, false, err) so the
-//     project-create boundary surfaces them rather than silently falling
-//     through to the empty-catalog branch. Per F.1.1 spec falsification
-//     mitigation #2.
+//  1. <project.RepoBareRoot>/.tillsyn/template.toml — when RepoBareRoot
+//     (after whitespace trim) is non-empty AND the file exists. The bare
+//     root is the orchestration root in a bare-repo + worktree layout
+//     (e.g. /Users/.../hylla/tillsyn/ for the tillsyn dogfood project)
+//     and is checked first because it survives worktree recreation.
+//  2. <project.RepoPrimaryWorktree>/.tillsyn/template.toml — when
+//     RepoPrimaryWorktree (after whitespace trim) is non-empty AND the
+//     file exists. Adopters that do not use a bare-root layout author
+//     their template here.
+//  3. Embedded `default-<lang>.toml` selected by project.Language via
+//     templates.LoadDefaultTemplateForLanguage (F.1.3's resolver). This
+//     is the unconditional final fallback whenever no on-disk candidate
+//     matches, including when both repo-path fields are empty.
 //
-// Empty-path zero-value collision (F.1.1 spec falsification mitigation
-// #3): F.1.1 deliberately collapses "no path declared" and "explicitly
-// empty path" under "use embedded default." Pre-MVP no project ships
-// explicit empty-path-meaning-skip semantics, so the collapse is safe.
+// First-candidate-wins on success: as soon as a candidate file exists
+// AND templates.Load returns nil error, the function returns. Subsequent
+// candidates are NOT consulted. This is deliberate — once the dev has
+// authored a template at any candidate path, that authored content is
+// authoritative.
+//
+// Error propagation on candidate-load failure (F.1.2 spec falsification
+// mitigation #2): if a candidate file EXISTS but templates.Load returns
+// an error (typo, malformed TOML, schema-version mismatch, validator
+// rejection), the error PROPAGATES wrapped with the offending path —
+// the function does NOT fall through to the next candidate. Silent
+// fall-through would hide typos in dev-authored templates and let
+// apparently-correct project creates run against unintended embedded
+// defaults. The wrapping format is `template at <abs-path>: <wrapped>`
+// so callers retain `errors.Is(err, ErrUnknownTemplateKey)` /
+// `errors.Is(err, ErrLanguageNotSupported)` etc. against the templates
+// package sentinels AND see the offending path.
+//
+// File-not-exist vs other open errors: only fs.ErrNotExist on os.Open
+// triggers fallthrough to the next candidate. Permission-denied or any
+// other I/O failure propagates as a wrapped error so the dev sees the
+// actual root cause rather than silently inheriting the embedded
+// default. (TOCTOU note: by routing through os.Open + ErrNotExist
+// rather than os.Stat-then-Open, we avoid the race window where a
+// candidate file is removed between Stat and Open.)
+//
+// Relative-path safety (F.1.2 spec falsification mitigation #1): empty
+// RepoBareRoot and empty RepoPrimaryWorktree skip their respective
+// candidate lookups outright. Without the early-return, filepath.Join("",
+// ".tillsyn", "template.toml") would produce the relative path
+// `.tillsyn/template.toml`, which os.Open would then resolve against
+// the process's current working directory — leaking CWD-dependent
+// behavior into project create. The early-empty-skip is the canonical
+// guard.
+//
+// Symlink policy (F.1.2 spec falsification mitigation #3): os.Open
+// follows symlinks transparently. A `.tillsyn/template.toml` that is a
+// symlink to an authored TOML elsewhere is honored. Aggressive symlink
+// hardening (e.g. rejecting links that escape the repo root) is
+// deferred to a future refinement; pre-MVP, the dev controls both ends
+// of the chain.
 //
 // Project nil-guard: bakeProjectKindCatalog already nil-checks before
 // calling, but this function nil-guards too so an accidental direct
@@ -466,26 +516,79 @@ func bakeProjectKindCatalog(project *domain.Project) error {
 // from the KindCatalog-bake fallback semantics. See seedStewardAnchors
 // below. Drop 4c.5 droplet F.2.4 audits that caller and redirects to
 // the language-explicit form.
+//
+// Per Drop 3 finding 5.B.14: edits to the on-disk template AFTER project
+// creation are ignored — the catalog is the create-time snapshot.
+// Re-baking on every lookup is explicitly out of scope.
 func loadProjectTemplate(project *domain.Project) (templates.Template, bool, error) {
 	if project == nil {
 		return templates.Template{}, false, nil
 	}
 	bareRoot := strings.TrimSpace(project.RepoBareRoot)
 	primaryWorktree := strings.TrimSpace(project.RepoPrimaryWorktree)
-	if bareRoot == "" && primaryWorktree == "" {
-		tpl, err := templates.LoadDefaultTemplateForLanguage(project.Language)
-		if err != nil {
-			return templates.Template{}, false, fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)
-		}
-		return tpl, true, nil
+	// Build the candidate list in priority order. Empty paths are
+	// dropped here so the walk loop never feeds filepath.Join an empty
+	// root (which would silently produce a CWD-relative path). See the
+	// "Relative-path safety" doc-comment paragraph above.
+	candidates := make([]string, 0, 2)
+	if bareRoot != "" {
+		candidates = append(candidates, filepath.Join(bareRoot, projectTemplateDir, projectTemplateFilename))
 	}
-	// F.1.2 will replace this branch with the bare-root → primary-worktree
-	// filesystem walk, falling through to the embedded default above when
-	// no on-disk candidate matches. Until F.1.2 lands, non-empty paths
-	// preserve the Drop 3.14 "skip template binding" behavior so the
-	// existing repo-fallback resolveActionItemKindDefinition path stays
-	// untouched for projects that explicitly declare a checkout layout.
-	return templates.Template{}, false, nil
+	if primaryWorktree != "" {
+		candidates = append(candidates, filepath.Join(primaryWorktree, projectTemplateDir, projectTemplateFilename))
+	}
+	for _, candidatePath := range candidates {
+		tpl, ok, err := loadProjectTemplateCandidate(candidatePath)
+		if err != nil {
+			return templates.Template{}, false, err
+		}
+		if ok {
+			return tpl, true, nil
+		}
+	}
+	// All on-disk candidates absent (or no candidates at all because both
+	// repo-path fields are empty). Fall through to the language-aware
+	// embedded default per F.1.3.
+	tpl, err := templates.LoadDefaultTemplateForLanguage(project.Language)
+	if err != nil {
+		return templates.Template{}, false, fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)
+	}
+	return tpl, true, nil
+}
+
+// loadProjectTemplateCandidate opens and parses a single on-disk template
+// candidate at the given absolute path. Return contract:
+//
+//   - (tpl, true, nil): file exists and templates.Load succeeded.
+//   - (zero, false, nil): file does not exist (fs.ErrNotExist on Open).
+//     Caller continues the candidate walk.
+//   - (zero, false, err): file exists but Load failed, OR Open failed
+//     for a reason other than not-exist (permission denied, I/O error).
+//     Error is wrapped with the offending path so callers retain
+//     errors.Is routing against templates package sentinels while seeing
+//     the source location. Caller MUST propagate without falling through
+//     to subsequent candidates.
+//
+// Helper extraction keeps loadProjectTemplate's walk loop a clean
+// sequence of "(skip / win / fail)" without an inline open+defer
+// dance per iteration.
+func loadProjectTemplateCandidate(candidatePath string) (templates.Template, bool, error) {
+	file, err := os.Open(candidatePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// File-not-exist is the canonical "skip and try next
+			// candidate" signal. Other open errors (permission,
+			// I/O) propagate so the dev sees the actual cause.
+			return templates.Template{}, false, nil
+		}
+		return templates.Template{}, false, fmt.Errorf("template at %s: %w", candidatePath, err)
+	}
+	defer file.Close()
+	tpl, err := templates.Load(file)
+	if err != nil {
+		return templates.Template{}, false, fmt.Errorf("template at %s: %w", candidatePath, err)
+	}
+	return tpl, true, nil
 }
 
 // UpdateProjectInput holds input values for update project operations.
