@@ -59,7 +59,7 @@ Droplets are grouped by package-lock chain. Within each chain droplets serialize
 | F.6.1 | Inline `mergeActionItemMetadataWithKindTemplate`    | `service.go:897`, `kind_capability.go:1002`                                      | `THEME_F_PLAN.md`          | E.8                     |
 | F.1.1 | Wire `loadProjectTemplate` embedded fallback        | `service.go` (427), `service_test.go`                                            | `THEME_F_PLAN.md`          | F.6.1, F.2.1            |
 | F.1.2 | `loadProjectTemplate` filesystem walk               | `service.go` (extend F.1.1), tests                                               | `THEME_F_PLAN.md`          | F.1.1, F.1.3            |
-| F.2.4 | Caller audit + cross-package tests for language-aware loading | `service.go` callers, tests                                            | `THEME_F_PLAN.md`          | F.1.2, F.2.1, F.2.2     |
+| F.2.4 | Caller audit + cross-package tests for language-aware loading | `service.go` callers, tests                                            | `THEME_F_PLAN.md`          | F.1.3, F.2.1, F.2.2 (transitively F.1.2 via Chain 1) |
 | E.9   | Git-status pre-check NITs + `internal/platform/gitenv` | `git_status.go`, `service.go` (1015-1019), new `internal/platform/gitenv/` | `THEME_CE_PLAN.md`         | F.2.4                   |
 
 #### Chain 2 — `internal/adapters/server/mcpapi` package-lock chain (6 droplets)
@@ -94,11 +94,18 @@ Droplets are grouped by package-lock chain. Within each chain droplets serialize
 | F.5.1 | `validateAgentBindingFiles` (warn-only) + `validateRequiredChildRules`        | `load.go`, `load_test.go`                                | `THEME_F_PLAN.md`  | E.6         |
 | F.5.2 | `validateChildRuleReachability` + `validateKindStructuralCoherence`           | `load.go`, `load_test.go`                                | `THEME_F_PLAN.md`  | F.5.1       |
 
+#### Chain 5 — `internal/adapters/server/common/app_service_adapter_mcp.go` file-lock chain (1 droplet, plus A.1 + B.1 cross-chain)
+
+A.1 and B.1 (already in Chain 1) ALSO edit `internal/adapters/server/common/app_service_adapter_mcp.go` as secondary file. C.1's primary edits target this file. Per CLAUDE.md "File- and package-level blocking" — droplets sharing a file MUST have explicit `blocked_by`. C.1 lands AFTER both A.1 and B.1 to avoid mechanical merge conflicts on this file.
+
+| ID    | Title (short)                                                          | Files (primary)                                                                                              | Source PLAN MD     | Blocked by                              |
+| ----- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------ | --------------------------------------- |
+| C.1   | Extend `assertOwnerStateGateUpdateFields` to Persistent / DevGated     | `app_service_adapter_mcp.go`, `app_service_adapter_steward_gate_test.go` (`internal/adapters/server/common`) | `THEME_CE_PLAN.md` | B.1 (transitively A.1 via Chain 1)      |
+
 #### Independent (no package-lock collision)
 
 | ID    | Title (short)                                                            | Files (primary)                                                | Source PLAN MD     | Blocked by |
 | ----- | ------------------------------------------------------------------------ | -------------------------------------------------------------- | ------------------ | ---------- |
-| C.1   | Extend `assertOwnerStateGateUpdateFields` to Persistent / DevGated       | `app_service_adapter_mcp.go`, `app_service_adapter_steward_gate_test.go` (`internal/adapters/server/common`) | `THEME_CE_PLAN.md` | —          |
 | C.4   | WIKI Cross-Subtree Exception kind-choice clarification                   | `WIKI.md` (markdown only)                                      | `THEME_CE_PLAN.md` | —          |
 | D.1   | Strip non-fantasy-fork `go.mod` `replace` directives                     | `go.mod`, `go.sum`, possibly `third_party/teatest_v2/`         | `THEME_BD_PLAN.md` | —          |
 | D.2   | Sweep accumulated vet / gopls / `mage ci` hints                          | `D2_HINT_SWEEP.md` (NEW per-droplet) + TBD per sweep          | `THEME_BD_PLAN.md` | D.1        |
@@ -107,32 +114,33 @@ Droplets are grouped by package-lock chain. Within each chain droplets serialize
 ### Cross-Theme Blocked-By Justifications
 
 - **A.2 → A.1.** Both touch the wire-format for action-item update (A.1 makes `description` distinguishable absent-vs-empty via `*string`; A.2 strict-decoder must NOT reject null-pointer fields from A.1's struct shape change). Cross-chain blocker because A.1 is in the `internal/app` chain and A.2 is in the `mcpapi` chain.
+- **C.1 → B.1 (cross-chain Chain 1 → Chain 5).** A.1 + B.1 both edit `internal/adapters/server/common/app_service_adapter_mcp.go` as secondary surface (UpdateActionItem mapping in A.1; SupersedeActionItem passthrough in B.1). C.1's primary surface is the same file (`assertOwnerStateGateUpdateFields` body + caller). File-collision rule per CLAUDE.md "Paths and Packages" requires explicit `blocked_by`. Chosen ordering: C.1 lands after B.1 (which transitively follows A.1 in Chain 1), so the adapter file is in stable A+B shape before C.1's gate-extension edits. Per Theme C+E plan acceptance #3, C.1 also semantically depends on A.1's pointer-sentinel framework: "Caller (`UpdateActionItem` at line 845) extends pre-fetch trigger to include `in.Persistent != nil || in.DevGated != nil`."
 - **E.6 → F.1.3 (cross-chain Theme F → Theme E).** F.1.3 lands the language-aware resolver that loads embedded TOML files; E.6's canonicalization changes the validator chain that runs during `Load`. E.6 lands AFTER F.1.3 to avoid the canonicalization touching F.1.3's walk semantics. Could potentially flip; plan-QA assesses.
 - **F.5.1 → E.6.** Both edit `internal/templates/load.go` validator chain; sequential edits to avoid merge conflict.
+- **F.5.1 transitively → F.2.1.** F.5.1's tests load the embedded default; the rebadge from `default.toml` → `default-go.toml` (F.2.1) must land first. Transitive via E.6 → F.1.3 → F.2.1, but called out for traceability.
 - **F.1.1 → F.6.1 (intra-Chain-1).** Inserted in the `internal/app` chain after F.6.1 lands; F.6.1's small refactor lands first since it has no pre-Chain-1 dependencies.
 - **F.1.1 → F.2.1 (cross-chain Templates → App).** F.1.1's `LoadDefaultTemplate()` thin-wrapper depends on F.2.1's rename (`default.toml` → `default-go.toml`) so the embedded fallback resolves correctly.
+- **F.2.4 → F.1.3 + F.2.1 + F.2.2 (cross-chain Chain 4 → Chain 1).** F.2.4's caller audit redirects every `LoadDefaultTemplate()` call to `LoadDefaultTemplateForLanguage(...)` (F.1.3); requires the rebadge (F.2.1) and generic template (F.2.2) to exist.
 - **F.3.1 → F.2.1 + F.2.2 + F.1.2 (cross-chain).** `till.template list_builtin` enumerates the renamed files; `get` op's bake-source provenance string depends on F.1.2's walk landing.
 - **F.3.2 → F.5.1 (cross-chain).** `validate` op surfaces F.5.1's warn-logger output in its envelope.
 - **F.3.3 → F.1.2 (cross-chain).** `set` op's atomic-install path writes to the same destination F.1.2's walk reads from.
 
 ### Wave Structure (Plan-QA Refines)
 
-- **Wave A — Foundation parallel-launches** (no cross-chain blockers; all `blocked_by: —`):
+- **Wave A — Foundation parallel-launches** (no `blocked_by` edges; all 5 are true Wave A heads):
   - A.1 (Chain 1 head)
-  - C.1 (independent)
-  - C.4 (markdown only)
+  - C.4 (markdown only, no code edits)
   - D.1 (go.mod, no Go package)
   - E.1 (Chain 3 head)
   - F.2.1 (Chain 4 head)
-  - F.2.3 (independent — but blocked_by F.2.1 since it copies the rebadged content; lands in Wave B)
 
-- **Wave B — Sequential builds where Chain heads have moved to second nodes:**
-  - A.4 (Chain 1 progresses)
+- **Wave B — Second-tier launches** (depends only on Wave A items):
+  - A.4 (Chain 1 progresses; blocked_by: A.1)
   - A.2 (Chain 2 head, blocked_by: A.1)
-  - C.4 + D.1 + C.1 likely complete in Wave A; D.2 launches in this wave (blocked_by: D.1)
-  - E.2 (Chain 3 progresses)
-  - F.2.2 (Chain 4 progresses)
-  - F.2.3 (independent, can land any time after F.2.1)
+  - D.2 (blocked_by: D.1)
+  - E.2 (Chain 3 progresses; blocked_by: E.1)
+  - F.2.2 (Chain 4 progresses; blocked_by: F.2.1)
+  - F.2.3 (independent of chains; blocked_by: F.2.1)
 
 - **Wave C — Mid-drop sequential:**
   - B.1, B.2 progressing in Chain 1
@@ -148,8 +156,9 @@ Droplets are grouped by package-lock chain. Within each chain droplets serialize
 
 - **Wave E — Final:**
   - C.2, C.3, E.8 in Chain 1 (remaining mid-chain droplets — see chain ordering above)
+  - C.1 (Chain 5; blocked_by: B.1 — must follow B.1's adapter-file edits)
 
-(Wave structure is approximate; cross-chain blockers create natural barriers. Plan-QA may re-sequence.)
+(Wave structure is approximate; cross-chain blockers create natural barriers. Plan-QA may re-sequence. Chain 1's serial path through 12 droplets is the wall-clock bottleneck.)
 
 ## Notes
 
@@ -174,3 +183,41 @@ Builders run `model: opus`. Filesystem-MD mode, no Tillsyn-runtime per-droplet p
 ### Locked Architectural Decisions (inherited from Drop 4c, REVISION_BRIEF §5)
 
 L1 (no secrets), L2 (no command override), L3 (POSIX-only), L4 (closed env baseline), L11 (CLI-agnostic monitor), L13 (context aggregator OPTIONAL), L20 (commit + push gates default OFF). All non-negotiable.
+
+### Builder Spawn-Prompt Template
+
+Each builder spawn for a Drop 4c.5 droplet uses this template. Substitute `<X>` placeholders per droplet.
+
+```
+You are the builder for droplet <DROPLET_ID> of Drop 4c.5 in the Tillsyn repo (`/Users/evanschultz/Documents/Code/hylla/tillsyn/main`). HEAD `<CURRENT_HEAD_SHA>` on `main`.
+
+**Paradigm override:** filesystem-MD coordination mode. NO Tillsyn runtime calls. NO Hylla calls (stale post-Drop-4c-merge until reingest). Use Read / Grep / Glob / LSP / Bash / git diff for evidence.
+
+**REQUIRED PRE-WORK READING:**
+1. `workflow/drop_4c_5/PLAN.md` (master plan).
+2. `workflow/drop_4c_5/<SOURCE_THEME_PLAN>.md` — your droplet's source-of-truth spec.
+3. `workflow/drop_4c_5/REVISION_BRIEF.md` § <RELEVANT_SECTION>.
+4. `CLAUDE.md` for orchestration discipline.
+
+**YOUR DROPLET:** `<DROPLET_ID>` — `<DROPLET_TITLE>`.
+- Source spec: `<SOURCE_THEME_PLAN>.md` § "<DROPLET_HEADING>".
+- Files to modify: `<FILES>` (per spec).
+- Packages: `<PACKAGES>` (per spec).
+- Acceptance: see source spec; the spec is authoritative.
+- Test scenarios: implement every entry in the source spec's table-driven scenarios.
+- Falsification mitigations: pre-empt every mitigation listed in the source spec.
+
+**HARD RULES:**
+- Builders run `model: opus` (already set on this spawn).
+- DO NOT commit. DO NOT push. Orchestrator drives commits AFTER QA pair returns green (per F.7-CORE REV-13).
+- NEVER raw `go test` / `go build` / `go vet` / `mage install`. Always `mage <target>` (discover via `mage -l`).
+- Single-line conventional commits ≤72 chars (orchestrator uses this format when committing your work).
+- Append `## Droplet <DROPLET_ID> — Round <N>` section to `workflow/drop_4c_5/BUILDER_WORKLOG.md` documenting files touched + targets run + design notes + Hylla feedback (or "None — Hylla unused this droplet").
+- Set droplet `state: in_progress` at start, `state: done` at end. Mutate the source theme PLAN MD's droplet row directly.
+
+**Render your response beginning with a `# Section 0 — SEMI-FORMAL REASONING` block containing `## Proposal`, `## QA Proof`, `## QA Falsification`, `## Convergence` passes. Each pass uses the 5-field certificate (Premises / Evidence / Trace or cases / Conclusion / Unknowns) where applicable. Convergence must declare (a) QA Falsification found no unmitigated counterexample, (b) QA Proof confirmed evidence completeness, (c) remaining Unknowns are routed back to the orchestrator. Section 0 stays in your response only — NEVER write Section 0 into PLAN/WORKLOG/QA artifacts.**
+
+**Tillsyn-flow output style** for your final response: numbered sections + addressable bullets + TL;DR.
+```
+
+QA spawn prompts mirror this shape with the role swapped to qa-proof or qa-falsification, target output paths swapped to `BUILDER_QA_PROOF.md` / `BUILDER_QA_FALSIFICATION.md`, and instructions to NOT edit production code.
