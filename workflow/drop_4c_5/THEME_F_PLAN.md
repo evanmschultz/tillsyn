@@ -26,6 +26,7 @@
 
 ### Droplet F.1.1 — Wire `loadProjectTemplate` to embedded fallback
 
+**State:** done (round 1)
 **Title:** `4c.5.F.1.1 — wire loadProjectTemplate embedded default fallback`.
 
 **Files / paths:**

@@ -377,14 +377,26 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 //   - <project_root>/.tillsyn/template.toml when an explicit per-project
 //     template exists (file-system source resolution lands in droplet 3.14
 //     alongside the embedded default), OR
-//   - the embedded internal/templates/builtin/default.toml fallback that
-//     droplet 3.14 introduces.
+//   - the embedded internal/templates/builtin/default-go.toml or
+//     default-generic.toml fallback (rebadged + extended by Drop 4c.5
+//     droplets F.2.1 and F.2.2; selected per project Language axis).
 //
-// Until 3.14 lands, neither source is available from this droplet and the
-// helper is a no-op: KindCatalogJSON stays empty (length 0). Per droplet
-// 3.12 acceptance criterion an empty envelope routes through the legacy
-// repo fallback in resolveActionItemKindDefinition, preserving Drop 2.8
-// universal-nesting boot compatibility.
+// RELEASE NOTE — Drop 4c.5 droplet F.1.1 BEHAVIOR CHANGE: prior to F.1.1
+// this helper was a no-op for every project (loadProjectTemplate returned
+// ok=false unconditionally per the Drop 3.14 deferral), so KindCatalogJSON
+// stayed empty and resolveActionItemKindDefinition routed through the
+// legacy repo fallback. Post-F.1.1, projects whose RepoBareRoot AND
+// RepoPrimaryWorktree are both empty NOW receive a non-empty catalog
+// baked from the embedded language-default (selected by project.Language).
+// This is safe because downstream callers
+// (initializeProjectAllowedKinds in CreateProjectWithMetadata, the
+// kind-catalog-aware resolveActionItemKindDefinition path, the
+// dispatcher's spawn-command builder) all already handle non-empty
+// catalogs since Drop 3.14 — F.1.1 just stops feeding them the empty
+// branch when no on-disk template is present. Adopters who relied on the
+// empty-catalog branch (none today; pre-MVP) can opt out by authoring an
+// explicit minimal `<project_root>/.tillsyn/template.toml` once F.1.2's
+// filesystem walk lands.
 //
 // The helper accepts a *domain.Project so 3.14 can substitute a real
 // implementation without touching the call site in CreateProjectWithMetadata.
@@ -398,7 +410,7 @@ func bakeProjectKindCatalog(project *domain.Project) error {
 	if project == nil {
 		return nil
 	}
-	tpl, ok, err := loadProjectTemplate()
+	tpl, ok, err := loadProjectTemplate(project)
 	if err != nil {
 		return err
 	}
@@ -414,17 +426,65 @@ func bakeProjectKindCatalog(project *domain.Project) error {
 	return nil
 }
 
-// loadProjectTemplate is the future hook for resolving the Template that
-// CreateProjectWithMetadata bakes into a project's KindCatalog. Droplet
-// 3.14 fills this in with file-system + embedded TOML resolution. Until
-// then it returns (zero, false, nil), which routes the create path through
-// the empty-catalog branch.
+// loadProjectTemplate resolves the Template that CreateProjectWithMetadata
+// bakes into a project's KindCatalog.
 //
-// Note: droplet 3.20's STEWARD-seed auto-generator does NOT depend on this
-// helper — it loads the embedded default template independently via
-// templates.LoadDefaultTemplate so seed materialization is decoupled from
-// the KindCatalog-bake fallback semantics. See seedStewardAnchors below.
-func loadProjectTemplate() (templates.Template, bool, error) {
+// Drop 4c.5 droplet F.1.1 wires the EMBEDDED-DEFAULT fallback that Drop
+// 3.14's stub had deferred. Today's contract:
+//
+//   - When both project.RepoBareRoot and project.RepoPrimaryWorktree are
+//     empty (after trimming whitespace), the function returns the parsed
+//     embedded template selected by project.Language via
+//     templates.LoadDefaultTemplateForLanguage. ok=true, err=nil on
+//     success.
+//   - When either repo path is non-empty, F.1.1 preserves the prior
+//     "skip template binding" behavior (ok=false) — the on-disk
+//     filesystem walk lands in F.1.2. This is a deliberate seam: F.1.2
+//     extends THIS function with the candidate walk
+//     (<bare>/.tillsyn/template.toml, then <primary>/.tillsyn/template.toml,
+//     then this embedded fallback) without touching the F.1.1 contract
+//     for empty-path projects.
+//   - Embedded-template parse errors (programmer-error path; the file is
+//     compiled into the binary) propagate as (zero, false, err) so the
+//     project-create boundary surfaces them rather than silently falling
+//     through to the empty-catalog branch. Per F.1.1 spec falsification
+//     mitigation #2.
+//
+// Empty-path zero-value collision (F.1.1 spec falsification mitigation
+// #3): F.1.1 deliberately collapses "no path declared" and "explicitly
+// empty path" under "use embedded default." Pre-MVP no project ships
+// explicit empty-path-meaning-skip semantics, so the collapse is safe.
+//
+// Project nil-guard: bakeProjectKindCatalog already nil-checks before
+// calling, but this function nil-guards too so an accidental direct
+// caller doesn't deref. Returns (zero, false, nil) on nil project to
+// match the prior "skip" behavior.
+//
+// Note: droplet 3.20's STEWARD-seed auto-generator does NOT depend on
+// this helper — it loads the embedded default template independently via
+// templates.LoadDefaultTemplate so seed materialization is decoupled
+// from the KindCatalog-bake fallback semantics. See seedStewardAnchors
+// below. Drop 4c.5 droplet F.2.4 audits that caller and redirects to
+// the language-explicit form.
+func loadProjectTemplate(project *domain.Project) (templates.Template, bool, error) {
+	if project == nil {
+		return templates.Template{}, false, nil
+	}
+	bareRoot := strings.TrimSpace(project.RepoBareRoot)
+	primaryWorktree := strings.TrimSpace(project.RepoPrimaryWorktree)
+	if bareRoot == "" && primaryWorktree == "" {
+		tpl, err := templates.LoadDefaultTemplateForLanguage(project.Language)
+		if err != nil {
+			return templates.Template{}, false, fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)
+		}
+		return tpl, true, nil
+	}
+	// F.1.2 will replace this branch with the bare-root → primary-worktree
+	// filesystem walk, falling through to the embedded default above when
+	// no on-disk candidate matches. Until F.1.2 lands, non-empty paths
+	// preserve the Drop 3.14 "skip template binding" behavior so the
+	// existing repo-fallback resolveActionItemKindDefinition path stays
+	// untouched for projects that explicitly declare a checkout layout.
 	return templates.Template{}, false, nil
 }
 

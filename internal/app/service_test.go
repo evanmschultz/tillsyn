@@ -14,6 +14,7 @@ import (
 
 	fantasyembed "github.com/evanmschultz/tillsyn/internal/adapters/embeddings/fantasy"
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
 // ptrTo returns a pointer to v. Test-only convenience for the
@@ -4832,6 +4833,20 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 }
 
 // TestCreateActionItemKindPayloadValidation verifies schema-based runtime validation for dynamic kinds.
+//
+// Drop 4c.5 droplet F.1.1 NOTE: the project is created with a non-empty
+// RepoPrimaryWorktree so loadProjectTemplate's F.1.2 seam preserves an
+// empty KindCatalogJSON. This routes resolveActionItemKindDefinition
+// through the legacy repo path, which is the seam UpsertKindDefinition
+// updates with the PayloadSchemaJSON below. Pre-F.1.1 every project
+// reached the empty-catalog branch via the Drop 3.14 stub; post-F.1.1
+// empty-path projects bake the embedded default whose synthesized
+// KindDefinition omits the upserted schema. Once F.1.2's filesystem
+// walk lands, this test should pin a path that has no on-disk
+// `.tillsyn/template.toml` so the walk falls through to the embedded
+// default — at which point the test will either need to seed the
+// schema into the catalog directly or assert payload validation moved
+// to a different surface.
 func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "c1", "t1", "t2"}
@@ -4844,9 +4859,13 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
 	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
 
-	project, err := svc.CreateProject(context.Background(), "Kinds", "")
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name:                "Kinds",
+		RepoPrimaryWorktree: "/abs/path/to/worktree",
+		Language:            "go",
+	})
 	if err != nil {
-		t.Fatalf("CreateProject() error = %v", err)
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
 	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
 	if err != nil {
@@ -6404,4 +6423,220 @@ func TestService_ListActionItemsByState(t *testing.T) {
 			t.Fatalf("got order = %v, want [f-b f-c] (id-asc tie-breaker)", ids)
 		}
 	})
+}
+
+// TestLoadProjectTemplate_EmbeddedFallback covers Drop 4c.5 droplet F.1.1's
+// core acceptance: when a project's RepoBareRoot AND RepoPrimaryWorktree
+// are both empty, loadProjectTemplate must return ok=true with a parsed
+// embedded template selected by the Language axis (NOT the prior Drop 3.14
+// stub's ok=false). Each row exercises a closed-enum Language value that
+// the embedded resolver supports today.
+//
+// Acceptance criteria covered:
+//   - #1: signature now accepts *domain.Project (compile-time check via
+//     direct call below).
+//   - #2: empty-path project returns ok=true.
+//   - #3: returned Template round-trips templates.Bake without panic and
+//     SchemaVersion == "v1".
+//   - #4: this is the canonical embedded-fallback test.
+//
+// F.1.1 spec falsification mitigation #3 ("empty-path zero-value
+// collision") is exercised by the whitespace-only row, which trims to
+// empty and routes through the same fallback.
+func TestLoadProjectTemplate_EmbeddedFallback(t *testing.T) {
+	tests := []struct {
+		name    string
+		project domain.Project
+	}{
+		{
+			name:    "zero-value project (Language empty) → generic embedded default",
+			project: domain.Project{},
+		},
+		{
+			name: "Language=go → go embedded default",
+			project: domain.Project{
+				Language: "go",
+			},
+		},
+		{
+			name: "whitespace-only RepoBareRoot trims to empty → embedded fallback",
+			project: domain.Project{
+				RepoBareRoot:        "   ",
+				RepoPrimaryWorktree: "\t  ",
+				Language:            "go",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			project := tc.project
+			tpl, ok, err := loadProjectTemplate(&project)
+			if err != nil {
+				t.Fatalf("loadProjectTemplate(): unexpected error = %v", err)
+			}
+			if !ok {
+				t.Fatalf("loadProjectTemplate(): ok = false; want true (empty-path fallback per F.1.1)")
+			}
+			if tpl.SchemaVersion != templates.SchemaVersionV1 {
+				t.Fatalf("Template.SchemaVersion = %q; want %q", tpl.SchemaVersion, templates.SchemaVersionV1)
+			}
+			// Round-trip Bake to satisfy acceptance criterion #3.
+			catalog := templates.Bake(tpl)
+			if catalog.SchemaVersion != templates.SchemaVersionV1 {
+				t.Fatalf("Bake(tpl).SchemaVersion = %q; want %q", catalog.SchemaVersion, templates.SchemaVersionV1)
+			}
+			if len(catalog.Kinds) == 0 {
+				t.Fatalf("Bake(tpl).Kinds is empty; embedded default must populate the closed kind catalog")
+			}
+		})
+	}
+}
+
+// TestLoadProjectTemplate_NilProjectReturnsSkip covers the nil-guard
+// branch added by Drop 4c.5 droplet F.1.1's defensive contract. Direct
+// callers (bakeProjectKindCatalog already nil-checks) get the same
+// "skip template binding" behavior as the pre-F.1.1 stub when invoked
+// with a nil project, so an accidental wiring mistake does not panic.
+func TestLoadProjectTemplate_NilProjectReturnsSkip(t *testing.T) {
+	tpl, ok, err := loadProjectTemplate(nil)
+	if err != nil {
+		t.Fatalf("loadProjectTemplate(nil): unexpected error = %v", err)
+	}
+	if ok {
+		t.Fatalf("loadProjectTemplate(nil): ok = true; want false (nil-guard skip)")
+	}
+	if tpl.SchemaVersion != "" {
+		t.Fatalf("loadProjectTemplate(nil): tpl.SchemaVersion = %q; want \"\" (zero-value Template on skip)", tpl.SchemaVersion)
+	}
+}
+
+// TestLoadProjectTemplate_NonEmptyPathPreservesSkip covers Drop 4c.5
+// droplet F.1.1's deliberate F.1.2 seam: non-empty repo paths preserve
+// the Drop 3.14 "skip template binding" behavior (ok=false) until F.1.2
+// lands the on-disk filesystem walk. The contract is asymmetric —
+// empty-path projects fall through to embedded-default; non-empty-path
+// projects defer template resolution until F.1.2's walk extends THIS
+// function with the candidate sequence.
+//
+// Once F.1.2 lands, this test should be REPLACED with positive walk-path
+// tests (`TestLoadProjectTemplate_BareRootWins`,
+// `TestLoadProjectTemplate_PrimaryWorktreeFallback`, etc. per
+// THEME_F_PLAN.md § F.1.2) since the "skip on non-empty path" behavior
+// disappears.
+func TestLoadProjectTemplate_NonEmptyPathPreservesSkip(t *testing.T) {
+	tests := []struct {
+		name    string
+		project domain.Project
+	}{
+		{
+			name:    "non-empty bare-root → skip until F.1.2",
+			project: domain.Project{RepoBareRoot: "/abs/path/to/bare", Language: "go"},
+		},
+		{
+			name:    "non-empty primary-worktree → skip until F.1.2",
+			project: domain.Project{RepoPrimaryWorktree: "/abs/path/to/worktree", Language: "go"},
+		},
+		{
+			name: "both paths non-empty → skip until F.1.2",
+			project: domain.Project{
+				RepoBareRoot:        "/abs/path/to/bare",
+				RepoPrimaryWorktree: "/abs/path/to/worktree",
+				Language:            "go",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			project := tc.project
+			tpl, ok, err := loadProjectTemplate(&project)
+			if err != nil {
+				t.Fatalf("loadProjectTemplate(): unexpected error = %v", err)
+			}
+			if ok {
+				t.Fatalf("loadProjectTemplate(): ok = true; want false (non-empty-path skip preserved until F.1.2)")
+			}
+			if tpl.SchemaVersion != "" {
+				t.Fatalf("loadProjectTemplate(): tpl.SchemaVersion = %q; want \"\" (zero-value Template on skip)", tpl.SchemaVersion)
+			}
+		})
+	}
+}
+
+// TestLoadProjectTemplate_UnsupportedLanguagePropagatesError covers Drop
+// 4c.5 droplet F.1.1's spec falsification mitigation #2: parse errors
+// from templates.LoadDefaultTemplateForLanguage propagate as
+// (zero, false, err) rather than silently falling through to the empty-
+// catalog branch. The "fe" language is the canonical not-yet-shipped
+// axis (per F.1.3 / Q1 resolution) — invoking loadProjectTemplate with
+// an empty-path FE project surfaces ErrLanguageNotSupported so the
+// project-create boundary can route the dev to author a project-local
+// template.
+func TestLoadProjectTemplate_UnsupportedLanguagePropagatesError(t *testing.T) {
+	project := domain.Project{Language: "fe"}
+	tpl, ok, err := loadProjectTemplate(&project)
+	if err == nil {
+		t.Fatalf("loadProjectTemplate(): err = nil; want wrapped ErrLanguageNotSupported")
+	}
+	if !errors.Is(err, templates.ErrLanguageNotSupported) {
+		t.Fatalf("loadProjectTemplate(): err = %v; want errors.Is(ErrLanguageNotSupported)", err)
+	}
+	if ok {
+		t.Fatalf("loadProjectTemplate(): ok = true on error; want false")
+	}
+	if tpl.SchemaVersion != "" {
+		t.Fatalf("loadProjectTemplate(): tpl = %+v; want zero-value Template on error", tpl)
+	}
+}
+
+// TestBakeProjectKindCatalog_EmbeddedFallbackPopulatesCatalog covers Drop
+// 4c.5 droplet F.1.1's downstream effect at the bake-helper boundary:
+// post-F.1.1 a project with empty repo paths receives a non-empty
+// KindCatalogJSON (the change vs Drop 3.14, where every project got
+// length-zero JSON). Round-trip-decodes the JSON to assert it is a valid
+// catalog envelope rather than just a non-empty byte slice. F.1.1 spec
+// falsification mitigation #1 (release-note discoverability) is
+// exercised here: the test name names the change explicitly.
+func TestBakeProjectKindCatalog_EmbeddedFallbackPopulatesCatalog(t *testing.T) {
+	project := domain.Project{Language: "go"}
+	if err := bakeProjectKindCatalog(&project); err != nil {
+		t.Fatalf("bakeProjectKindCatalog(): unexpected error = %v", err)
+	}
+	if len(project.KindCatalogJSON) == 0 {
+		t.Fatalf("project.KindCatalogJSON is empty; F.1.1 must populate from embedded default for empty-path projects")
+	}
+	var catalog templates.KindCatalog
+	if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
+		t.Fatalf("json.Unmarshal(KindCatalogJSON): unexpected error = %v", err)
+	}
+	if catalog.SchemaVersion != templates.SchemaVersionV1 {
+		t.Fatalf("decoded catalog.SchemaVersion = %q; want %q", catalog.SchemaVersion, templates.SchemaVersionV1)
+	}
+	if len(catalog.Kinds) == 0 {
+		t.Fatalf("decoded catalog.Kinds is empty; embedded default must populate the closed kind catalog")
+	}
+}
+
+// TestBakeProjectKindCatalog_NonEmptyPathSkipsBakeUntilF12 mirrors the
+// loadProjectTemplate non-empty-path test from the bake-helper side:
+// projects that declare a checkout layout (bare-root or primary-worktree)
+// preserve the Drop 3.14 empty-catalog behavior until F.1.2's filesystem
+// walk lands. This locks the F.1.1/F.1.2 seam at the bake boundary too.
+//
+// Once F.1.2 lands, this test flips polarity: non-empty paths will load
+// from on-disk candidates AND fall through to embedded default when no
+// candidate matches, so KindCatalogJSON becomes non-empty in both
+// branches. Replace this test with the F.1.2 walk-path scenarios at
+// that time.
+func TestBakeProjectKindCatalog_NonEmptyPathSkipsBakeUntilF12(t *testing.T) {
+	project := domain.Project{
+		RepoBareRoot:        "/abs/path/to/bare",
+		RepoPrimaryWorktree: "/abs/path/to/worktree",
+		Language:            "go",
+	}
+	if err := bakeProjectKindCatalog(&project); err != nil {
+		t.Fatalf("bakeProjectKindCatalog(): unexpected error = %v", err)
+	}
+	if len(project.KindCatalogJSON) != 0 {
+		t.Fatalf("project.KindCatalogJSON length = %d; want 0 (non-empty-path skip preserved until F.1.2)", len(project.KindCatalogJSON))
+	}
 }

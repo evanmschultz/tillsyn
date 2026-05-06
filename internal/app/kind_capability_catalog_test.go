@@ -12,22 +12,45 @@ import (
 
 // TestKindCatalogResolutionFallsBackToRepoOnEmpty covers droplet 3.12's
 // boot-compatibility acceptance criterion: a project carrying an empty
-// KindCatalogJSON envelope (the dominant case until 3.14's default.toml
-// ships) routes resolveActionItemKindDefinition through the legacy
-// repo.GetKindDefinition path. The fakeRepo pre-seeds the closed 12-value
-// Kind enum so the repo lookup succeeds, asserting the fallback returns
-// without calling any catalog code path.
+// KindCatalogJSON envelope routes resolveActionItemKindDefinition
+// through the legacy repo.GetKindDefinition path. The fakeRepo pre-seeds
+// the closed 12-value Kind enum so the repo lookup succeeds, asserting
+// the fallback returns without calling any catalog code path.
+//
+// REPLACEMENT NOTE — Drop 4c.5 droplet F.1.1: pre-F.1.1 every project
+// (regardless of repo paths) had an empty KindCatalogJSON because
+// loadProjectTemplate was a Drop 3.14 stub returning ok=false. Post-F.1.1
+// projects WITHOUT repo paths receive a non-empty catalog from the
+// embedded language-default; the empty-catalog branch is now reached
+// only by projects that DO declare repo paths AND whose F.1.2 walk
+// (lands in a future droplet) finds no on-disk template. Until F.1.2
+// lands, ANY project with non-empty RepoBareRoot or RepoPrimaryWorktree
+// preserves the empty-catalog behavior — that is the construction this
+// test now uses, swapping CreateProject (zero-value paths) for a
+// CreateProjectWithMetadata call that supplies a non-empty primary
+// worktree path. The legacy repo fallback path remains tested; the test
+// just no longer relies on the embedded-template fallback being absent.
+//
+// Once F.1.2 lands and replaces the non-empty-path branch with the
+// candidate walk, this test should pin a path that has no `.tillsyn/
+// template.toml` on disk so the walk falls through to the embedded
+// default — at which point this test stops asserting empty-catalog
+// behavior altogether and converts to a positive walk-fallthrough test.
 func TestKindCatalogResolutionFallsBackToRepoOnEmpty(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
 	svc := newDeterministicService(repo, now, ServiceConfig{})
 
-	project, err := svc.CreateProject(context.Background(), "Empty Catalog", "")
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name:                "Empty Catalog",
+		RepoPrimaryWorktree: "/abs/path/to/worktree",
+		Language:            "go",
+	})
 	if err != nil {
-		t.Fatalf("CreateProject() error = %v", err)
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
 	if len(project.KindCatalogJSON) != 0 {
-		t.Fatalf("CreateProject() left non-empty KindCatalogJSON pre-3.14: %s", string(project.KindCatalogJSON))
+		t.Fatalf("CreateProjectWithMetadata() left non-empty KindCatalogJSON; expected empty under F.1.1's non-empty-path skip seam (F.1.2 will replace this construction): %s", string(project.KindCatalogJSON))
 	}
 
 	def, err := svc.resolveActionItemKindDefinition(

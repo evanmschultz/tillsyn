@@ -1361,3 +1361,43 @@ F.6.1 declared files (per spawn prompt):
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All evidence resolved via `Read`, `rg`, and `git diff` on the five declared files plus a single repo-wide `rg "mergeActionItemMetadataWithKindTemplate\("` to confirm no surviving callers.
+
+## Droplet F.1.1 — Round 1
+
+**Reviewer:** go-qa-proof-agent.
+**Reviewed:** 2026-05-06.
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.1.1 — Wire `loadProjectTemplate` to embedded fallback".
+**Source worklog:** `workflow/drop_4c_5/BUILDER_WORKLOG.md` § "Droplet F.1.1 — Round 1".
+**Verdict:** PASS.
+
+### Acceptance Criteria Checks
+
+1. **#1 — Signature `loadProjectTemplate(project *domain.Project) (templates.Template, bool, error)`; caller updated.** PASS. `service.go:469` declares the new signature; sole caller `bakeProjectKindCatalog` at `service.go:413` passes `project` through (`tpl, ok, err := loadProjectTemplate(project)`). Repo-wide `rg "loadProjectTemplate"` shows only this caller and the test file — no orphan call sites.
+2. **#2 — Empty paths → embedded default via `LoadDefaultTemplateForLanguage(project.Language)` with `ok=true`.** PASS. `service.go:475-484` trims `RepoBareRoot` and `RepoPrimaryWorktree` via `strings.TrimSpace`; both empty → `templates.LoadDefaultTemplateForLanguage(project.Language)` → returns `(tpl, true, nil)`. `TestLoadProjectTemplate_EmbeddedFallback` asserts `ok==true` for zero-value, `Language="go"`, and whitespace-only rows.
+3. **#3 — Returned Template has `SchemaVersion == "v1"`; round-trips Bake.** PASS. `TestLoadProjectTemplate_EmbeddedFallback` asserts `tpl.SchemaVersion == templates.SchemaVersionV1` AND `templates.Bake(tpl).SchemaVersion == templates.SchemaVersionV1` AND `len(catalog.Kinds) > 0`. `templates.SchemaVersionV1 == "v1"` (`schema.go:28`).
+4. **#4 — `TestLoadProjectTemplate_EmbeddedFallback` exists.** PASS. `service_test.go:6447` (table-driven, 3 sub-tests).
+5. **#5 — Existing empty-catalog test updated/replaced.** PASS. `kind_capability_catalog_test.go:38-49` `TestKindCatalogResolutionFallsBackToRepoOnEmpty` switched from `svc.CreateProject(ctx, "Empty Catalog", "")` → `svc.CreateProjectWithMetadata(ctx, CreateProjectInput{Name: "Empty Catalog", RepoPrimaryWorktree: "/abs/path/to/worktree", Language: "go"})` so the F.1.2 seam preserves the empty-catalog branch under test. Multi-line REPLACEMENT NOTE block added at the doc-comment naming the F.1.1 / F.1.2 seam. Mirror update applied to `TestCreateActionItemKindPayloadValidation` in `service_test.go:4859-4868`.
+6. **#6 — `mage test-pkg ./internal/app` green.** PASS. Independently re-ran `mage test-pkg ./internal/app` during QA: 470/470 tests passed in 0.01s. Builder-reported `mage ci` 2884/2884 green is consistent with the pre-F.1.1 baseline + 12 new sub-tests.
+7. **F.1.3 interaction — uses `LoadDefaultTemplateForLanguage(project.Language)` not raw `LoadDefaultTemplate()`.** PASS. `service.go:478` calls `templates.LoadDefaultTemplateForLanguage(project.Language)`; F.1.3's resolver (`embed.go:130`) maps `""`/`"go"`/`"fe"` per the closed Language enum, with `"fe"` rejected via `ErrLanguageNotSupported`. F.1.1's error wrap `fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)` preserves the sentinel through `errors.Is` (verified by `TestLoadProjectTemplate_UnsupportedLanguagePropagatesError`).
+8. **RELEASE NOTE comment in `bakeProjectKindCatalog` doc.** PASS. `service.go:380-396` carries a multi-paragraph "RELEASE NOTE — Drop 4c.5 droplet F.1.1 BEHAVIOR CHANGE" block naming the prior empty-catalog default, the new embedded-fallback behavior, the three downstream callers (`initializeProjectAllowedKinds`, `resolveActionItemKindDefinition`, dispatcher spawn-command builder), and the F.1.2 future-state opt-out path. Spec falsification mitigation #1 ("one-line release-note") satisfied with intentional expansion to multi-paragraph; worklog Design Notes call out the rationale.
+9. **Worklog completeness.** PASS. `BUILDER_WORKLOG.md:1666-1712` covers Files touched (5 paths), Targets run (`mage test-pkg ./internal/app` + `mage ci` with pass counts), Design notes (7 entries covering seam preservation, whitespace trim, error wrapping, nil-guard, test replacement strategy, release-note expansion, F.1.3 interaction, zero scope expansion), Hylla feedback (N/A justified), and Unknowns (none). Plan row `THEME_F_PLAN.md:29` flipped to `**State:** done (round 1)`.
+
+### Bonus Coverage Beyond Spec
+
+- `TestLoadProjectTemplate_NilProjectReturnsSkip` — defensive nil-guard contract documented and tested.
+- `TestLoadProjectTemplate_NonEmptyPathPreservesSkip` (3 sub-tests) — locks the F.1.1/F.1.2 seam at the loader level.
+- `TestLoadProjectTemplate_UnsupportedLanguagePropagatesError` — exercises the FE-rejection path through F.1.1's error wrap, asserting `errors.Is(err, templates.ErrLanguageNotSupported)`.
+- `TestBakeProjectKindCatalog_EmbeddedFallbackPopulatesCatalog` — bake-helper-side mirror of the embedded-fallback path; round-trip-decodes `KindCatalogJSON` into `templates.KindCatalog`.
+- `TestBakeProjectKindCatalog_NonEmptyPathSkipsBakeUntilF12` — bake-helper-side mirror of the F.1.2 seam.
+
+### Proof Certificate
+
+- **Premises:** signature change applied; sole caller updated; empty-path branch loads embedded default via Language axis; non-empty path preserves Drop 3.14 skip until F.1.2; SchemaVersion v1; Bake round-trips non-empty Kinds; replacement test still asserts legacy-repo fallback under non-empty-path construction; release-note doc-comment present; mage ci green; worklog complete.
+- **Evidence:** `service.go:380-490` (RELEASE NOTE + new function body + caller update); `service_test.go:6447-6647` (5 new test functions); `service_test.go:4836-4868` (mirror update on `TestCreateActionItemKindPayloadValidation`); `kind_capability_catalog_test.go:14-50` (REPLACEMENT NOTE + non-empty-path construction); `embed.go:54,130-145` (F.1.3 surfaces verified); `schema.go:28` (`SchemaVersionV1`); `catalog.go:25,53` (`KindCatalog` + `Bake`); reviewer-run `mage test-pkg ./internal/app` 470/470 green.
+- **Trace:** `CreateProjectWithMetadata` → `bakeProjectKindCatalog(project)` → `loadProjectTemplate(project)` → trim paths → both empty → `templates.LoadDefaultTemplateForLanguage(project.Language)` → returns `(tpl, true, nil)` → `bakeProjectKindCatalog` JSON-marshals `templates.Bake(tpl)` into `project.KindCatalogJSON`. FE path: same trace until resolver returns `ErrLanguageNotSupported` → wrapped + propagated. Non-empty-path: trace stops at the F.1.2-seam early-return.
+- **Conclusion:** PASS. All 9 spec acceptance + interaction + worklog checks satisfied; no spec drift; bonus coverage strengthens the seam without expanding scope.
+- **Unknowns:** None.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All evidence resolved via `Read`, `rg`, `git diff`, and a single `mage test-pkg` run on the five declared files.

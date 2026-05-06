@@ -1559,3 +1559,38 @@ T1. All six attack categories REFUTED — pure refactor, behavior-identical, no 
 T2. No counterexamples constructed.
 T3. **PASS** — `mage test-pkg ./internal/app` 458/458 green; F.6.1 ready to commit.
 
+## Droplet F.1.1 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, opus)
+**Date:** 2026-05-06
+**Verdict:** PASS
+**Scope:** F.1.1-declared paths only — `internal/app/service.go`, `internal/app/service_test.go`, `internal/app/kind_capability_catalog_test.go`, `workflow/drop_4c_5/THEME_F_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`.
+
+### 1. Findings
+
+- **1.1 Behavior change for legacy callers (Attack 1).** REFUTED. Many `CreateProject` test sites exist (14 in `service_test.go`, 7 in `kind_capability_test.go`, 6 in `auto_generate_steward_test.go`, 4 in `attention_capture_test.go`). All pass `mage test-pkg ./internal/app` (470/470) plus adapters (`sqlite` 93/93, `common` 165/165, `mcpapi` 212/212, `httpapi` 56/56). `mage ci` green. Legacy `svc.CreateProject(ctx, "Name", "")` callers now bake a 12-kind catalog from `default-go.toml` (Language defaults to `""` → generic) — downstream consumers (`initializeProjectAllowedKinds`, `resolveActionItemKindDefinition`) handle non-empty catalogs correctly since Drop 3.14, exactly as the doc-comment claims.
+- **1.2 Language-unsupported error path (Attack 2).** REFUTED. `service.go:476-478` calls `templates.LoadDefaultTemplateForLanguage(project.Language)` which (per `internal/templates/embed.go:142`) returns a wrapped `ErrLanguageNotSupported` for `"fe"`. F.1.1 wraps again with `fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)` — the `%w` preserves the chain. `errors.Is(err, ErrLanguageNotSupported)` succeeds: verified by `TestLoadProjectTemplate_UnsupportedLanguagePropagatesError` (`service_test.go:6573-6588`). Note: this DOES change `CreateProjectWithMetadata{Language:"fe"}` from success-with-empty-catalog to error-on-create — but per F.1.1 spec mitigation #2 this is intentional, and pre-MVP no FE projects exist; doc-comment route-the-dev language matches `embed.go` deferral comment.
+- **1.3 Whitespace-trim-empty handling (Attack 3).** REFUTED. `service.go:473-475` applies `strings.TrimSpace` to BOTH `RepoBareRoot` and `RepoPrimaryWorktree` before the `bareRoot == "" && primaryWorktree == ""` check. `TestLoadProjectTemplate_EmbeddedFallback`'s third row pins `RepoBareRoot:"   "` + `RepoPrimaryWorktree:"\t  "` and asserts ok=true. Note: domain-layer `NewProjectFromInput` ALREADY trims (`internal/domain/project.go:242-243`), so the trim in `loadProjectTemplate` is redundant for production-path callers but load-bearing for direct callers constructing `domain.Project{}` literals (which the test does). Defensive duplication, not bug.
+- **1.4 F.1.2 seam preservation (Attack 4).** REFUTED. The non-empty-path branch returns `(zero, false, nil)` at `service.go:488` — exactly the prior Drop 3.14 stub contract. `TestLoadProjectTemplate_NonEmptyPathPreservesSkip` (`service_test.go:6510-6549`) pins three rows (bare-only, worktree-only, both) and asserts ok=false. F.1.2 will replace this branch with the bare-root → primary-worktree filesystem walk per `THEME_F_PLAN.md:64-95`. Seam intact.
+- **1.5 `bakeProjectKindCatalog` doc-comment release-note accuracy (Attack 5).** REFUTED. The release-note block at `service.go:384-399` correctly names: (a) pre-F.1.1 behavior (`loadProjectTemplate` returned `ok=false` unconditionally — verified against the prior stub body); (b) post-F.1.1 behavior (empty-path projects bake non-empty catalog); (c) downstream-caller safety (`initializeProjectAllowedKinds` handles non-empty catalogs since Drop 3.14 — confirmed at `service.go:258, 352`); (d) opt-out path via `.tillsyn/template.toml`. Drop 3.14 lineage cited correctly.
+- **1.6 Test reshape correctness (Attack 6).** REFUTED. `TestKindCatalogResolutionFallsBackToRepoOnEmpty` swaps `CreateProject(ctx, "Empty Catalog", "")` for `CreateProjectWithMetadata` with `RepoPrimaryWorktree:"/abs/path/to/worktree"` so the F.1.2 seam (non-empty path → skip) preserves the empty `KindCatalogJSON` invariant the test checks. Test concern unchanged: still asserts `len(KindCatalogJSON)==0` then exercises the legacy `repo.GetKindDefinition` path. Same shape for `TestCreateActionItemKindPayloadValidation` (`service_test.go:4862-4868`) — reshape preserves the `UpsertKindDefinition` + payload-validation flow. Both tests still test their original concerns.
+
+### 2. Counterexamples
+
+None.
+
+### 3. Summary
+
+PASS. All six attack vectors refuted. `mage ci` green: `internal/app` 470/470, adapters all green, coverage threshold met, build succeeds. F.1.1 ready to commit.
+
+### Hylla Feedback
+
+N/A — falsification ran in filesystem-MD coordination mode; Hylla calls were forbidden by paradigm override. No misses to report.
+
+### TL;DR
+
+T1. All six attack categories REFUTED — behavior change is intentional and documented; downstream consumers handle non-empty catalogs since Drop 3.14; whitespace trim defensively duplicated; F.1.2 seam preserved.
+T2. No counterexamples constructed.
+T3. **PASS** — `mage ci` green; F.1.1 ready to commit.
+
+
