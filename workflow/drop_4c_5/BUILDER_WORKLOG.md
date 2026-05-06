@@ -1587,3 +1587,41 @@ N/A — markdown-only edit. Per CLAUDE.md "Hylla Indexes Only Go Files Today" + 
 ### Unknowns routed back to dev
 
 - The HYLLA_FINDINGS choice (research vs refinement) was builder-orchestrator judgment per spec acceptance #2 ("clarify which"). The chosen interpretation is "research" because per-drop Hylla misses are investigation findings posted by subagents, not carry-forward refinement candidates; carry-forward Hylla items go to HYLLA_REFINEMENTS. If dev prefers a different mapping, single-table-row edit.
+
+## Droplet E.8 — Round 1
+
+**Date:** 2026-05-06.
+**Builder:** go-builder-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_CE_PLAN.md` § "E.8 — Auth auto-revoke: ScopeType guard + reason-string source decision".
+
+### Files touched
+
+- `internal/app/auth_requests.go` — (1) Expanded `terminalStateCleanupRevokeReason` constant doc-comment (lines 878-893 in the new layout). New comment names the lifecycle event class (`StateComplete / StateFailed / StateArchived`), explains the grep-friendly literal choice (stable lower-snake_case for cross-surface `grep` against autent `auth_sessions.revocation_reason` + tillsyn `capability_leases.revoked_reason`), and explicitly forbids reuse for non-terminal-state revokes. (2) Added ScopeType exclusion guard inside `RevokeSessionForActionItem` (after `ParseAuthRequestPath`, before the existing `ScopeID != actionItemID` check): `if path.ScopeType == domain.ScopeLevelProject { continue }`. The guard is a 13-line inline comment + 3-line predicate that excludes project-scope sessions before the ScopeID match — see "Spec deviation" below.
+- `internal/app/auth_revoke_for_action_item_test.go` — added two new tests: `TestRevokeActionItemAuthSessionsScopeTypeMismatchSkipped` (forces a project_id ↔ action_item id UUID-collision and asserts the project-scope session is NOT revoked while a sibling action-item-scoped session for the same id IS), and `TestRevokeActionItemAuthSessionsActionItemScopeRevoked` (explicit happy-path companion that pins the discrimination contract: the production action-item-scoped session shape — `path/<pid>/branch/<actionItemID>` per the pre-Drop-2 auth-path branch quirk — IS revoked with the expected `terminal_state_cleanup` reason).
+- `workflow/drop_4c_5/THEME_CE_PLAN.md` — set E.8 droplet `**State:** in_progress` at start, flipped to `**State:** done (round 1)` at end.
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — this entry.
+
+### Targets run
+
+- `mage test-pkg ./internal/app` — **458/458 PASS** (1.67s). Includes 7 pre-existing `RevokeSessionForActionItem*` tests plus the 2 new E.8 tests.
+
+### Design notes
+
+- **Spec deviation: `ScopeType == ScopeLevelProject` exclusion vs `ScopeType != ScopeLevelActionItem` allow-list.** The spec acceptance #1 wording was `if path.ScopeType != domain.ScopeLevelActionItem || path.ScopeID != actionItemID { continue }`. Implementing that literally would have broken every existing happy-path test in `auth_revoke_for_action_item_test.go` AND the production cleanup hook itself, because **action-item-scoped auth sessions today normalize to `ScopeLevelBranch`, not `ScopeLevelActionItem`**. Per memory `feedback_auth_path_branch_quirk.md`: drop-scoped auth path uses `/branch/<id>` even though level_1 drops are `kind=task, scope=task`; the parser at `internal/domain/auth_request.go:331-332` sets `ScopeType=ScopeLevelBranch, ScopeID=<branchID>`. The spec author verified `ScopeLevelActionItem` exists in the enum (`internal/domain/level.go:16`) but did not verify production paths actually USE it — they don't, pre-Drop-2. The spec's clearly-stated INTENT was "belt-and-suspenders defense against UUID-collision between project-scope session ID and action-item ID"; the exclusion-form `path.ScopeType == ScopeLevelProject` matches the intent without breaking production. The new tests are written against the exclusion form (project-scope skipped, branch-scope revoked). A future drop migrating action-item-scoped paths to `ScopeLevelActionItem` leaves this exclusion intact because the rule is "anything but project," not "must equal one specific level."
+- **Tests in `auth_revoke_for_action_item_test.go`, not `auth_requests_test.go`.** The spec named `auth_requests_test.go` but `RevokeSessionForActionItem`'s tests + fixtures (stubAuthBackend, makeBranchScopedSession, makeProjectScopedSession, newRevokeServiceFixture) all live in `auth_revoke_for_action_item_test.go`. Adding the new tests next to the existing fixtures is the obvious right answer; adding them to `auth_requests_test.go` would have required duplicating the stub backend or punching cross-file fixture imports.
+- **Test fixture choice.** Reused the existing `makeProjectScopedSession(sessionID, projectID)` helper for the project-scope mismatch case by passing the action-item id as the projectID. After `ParseAuthRequestPath("project/<actionItemID>")` + Normalize, the result is `ScopeType=ScopeLevelProject, ScopeID=<actionItemID>` — a forced UUID-collision that exercises the new guard's defense path without inventing new path syntax. Pairing the negative case with a happy-path test (sibling `makeBranchScopedSession` for the same id) pins the discrimination on `ScopeType`, not on `ScopeID`.
+- **Constant doc-comment scope.** Rather than adding a single-line "this is grep-friendly" remark, the expanded doc-comment names BOTH the audit-trail tables it reaches (`auth_sessions.revocation_reason` + `capability_leases.revoked_reason`) and explicitly forbids reuse for non-terminal-state revokes. The constant is the single contact-point for the entire terminal-state-cleanup pipeline; future readers debugging an audit-log query should be able to find the contract without paging through the function body.
+
+### Spec drift findings (return-to-orchestrator)
+
+1. **Spec acceptance #1 wording inverts production reality.** As above — `path.ScopeType != ScopeLevelActionItem` would break all existing tests + production. The intent is correct (defend against project-scope UUID-collision); the wording missed the auth-path branch quirk. Implemented the intent via `ScopeType == ScopeLevelProject` exclusion; documented inline in the production code comment so future maintainers don't re-narrow to `ScopeLevelActionItem` and silently drop the cleanup hook.
+2. **Spec test-file path drift.** Spec named `internal/app/auth_requests_test.go`; actual file is `internal/app/auth_revoke_for_action_item_test.go`. Tests added to the actual file. Worth a one-line fix to the spec next round.
+
+### Hylla feedback
+
+N/A — task touched non-Go files (worklog/MD plan) plus Go files in a package whose post-Drop-4c state is still pre-reingest (Hylla unused per CLAUDE.md "Hylla Indexes Only Go Files Today" + filesystem-MD mode).
+
+### Unknowns routed back to dev
+
+- **Spec form preference.** I implemented the exclusion-form (`ScopeType == ScopeLevelProject`) per the deviation rationale above. If the dev / plan-QA prefers strict-allow-list form (`ScopeType == ScopeLevelActionItem || ScopeType == ScopeLevelBranch`) once Drop 2 lands the auth-path migration, the test surface flips with no production-shape change. Routing this back so the Drop 2 planner sees the contract.
+- **`auth_requests_test.go` vs `auth_revoke_for_action_item_test.go` spec drift.** Pure documentation — the right behavior is to fix the spec wording. Logged here.

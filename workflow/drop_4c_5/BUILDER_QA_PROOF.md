@@ -1270,3 +1270,39 @@ The substitution rationale is documented loud both inline (test doc-comments) an
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode forbids Hylla calls per spawn prompt. All evidence resolved via `Read` on `internal/templates/load.go` (validators + sentinels + chain wire), `internal/templates/load_test.go` (4 new tests), `workflow/drop_4c_5/THEME_F_PLAN.md` (F.5.2 spec), `workflow/drop_4c_5/BUILDER_WORKLOG.md` (F.5.2 entry tail), and `Bash rg` for symbol/test/structural_type membership audits.
+
+## Droplet E.8 — Round 1
+
+**Reviewer:** go-qa-proof-agent
+**Date:** 2026-05-06
+**Verdict:** PASS
+
+### Trace Coverage
+
+1. **Acceptance #1 — ScopeType guard.** COVERED. `auth_requests.go:976-978` carries `if path.ScopeType == domain.ScopeLevelProject { continue }` placed AFTER `ParseAuthRequestPath` (line 957) and BEFORE the existing `path.ScopeID != actionItemID` check (line 979). Inline comment (lines 963-975) names the spec-drift rationale: pre-Drop-2 paths normalize to `ScopeLevelBranch` per `internal/domain/auth_request.go:331-332`, so allow-list-form would break production. Exclusion-form preserves intent (project-scope skip) and is forward-compatible with a future ScopeLevelActionItem migration.
+
+2. **Acceptance #2 — `terminalStateCleanupRevokeReason` doc expanded.** COVERED. `auth_requests.go:878-895` doc-comment names the lifecycle event class (`StateComplete / StateFailed / StateArchived`), explains the grep-friendly literal choice, identifies BOTH cross-surface tables it reaches (autent `auth_sessions.revocation_reason` + tillsyn `capability_leases.revoked_reason`), and explicitly forbids reuse for non-terminal-state revokes. Constant value unchanged at `"terminal_state_cleanup"`.
+
+3. **Acceptance #3 — new tests.** COVERED.
+   - `TestRevokeActionItemAuthSessionsScopeTypeMismatchSkipped` (`auth_revoke_for_action_item_test.go:421-457`) forces a UUID-collision via `makeProjectScopedSession("sess-project-collision", collidingID)` whose normalized path resolves to `ScopeType=ScopeLevelProject, ScopeID=collidingID`. Pairs the negative case with `makeBranchScopedSession("sess-action-item", collidingID, collidingID)` to pin discrimination on `ScopeType`, not `ScopeID`. Asserts exactly 1 revoke call (the action-item-scoped session) and explicitly checks the project-scoped session was NOT in the revoke list.
+   - `TestRevokeActionItemAuthSessionsActionItemScopeRevoked` (`auth_revoke_for_action_item_test.go:466-492`) is the explicit happy-path companion: branch-scoped session for matching action-item id IS revoked with `terminalStateCleanupRevokeReason`.
+
+4. **Acceptance #4 — `mage test-pkg ./internal/app` green.** COVERED. Worklog reports 458/458 PASS (1.67s); preserves 7 pre-existing `RevokeSessionForActionItem*` tests + adds 2 new E.8 tests. Pre-existing `TestRevokeSessionForActionItemNoMatchingSessions` (line 251) already exercised `makeProjectScopedSession` against a non-matching project id; the new guard does not regress that path because the project session's `ScopeID` (`proj-x`) still differs from the target action-item id (`ai-target`).
+
+5. **Spec-drift handling — both routed.**
+   a. **ScopeLevelActionItem-vs-Branch drift:** worklog "Spec drift findings" §1 + production code comment lines 963-975 both name the auth-path branch quirk and explain why exclusion-form was chosen over allow-list-form. Cross-references `feedback_auth_path_branch_quirk.md` memory + `internal/domain/auth_request.go:331-332` parser. Routed back as Unknown #1 for Drop 2 planner.
+   b. **Test-file location drift:** worklog "Spec drift findings" §2 names that the spec said `auth_requests_test.go` but actual fixtures (`stubAuthBackend`, `makeBranchScopedSession`, `makeProjectScopedSession`, `newRevokeServiceFixture`) live in `auth_revoke_for_action_item_test.go`. Tests added to the actual file co-located with fixtures. Routed back as Unknown #2 for spec wording fix.
+
+6. **Worklog completeness.** COVERED. Worklog (`BUILDER_WORKLOG.md:1591-1627`) carries Date / Builder / Source spec / Files touched (4 entries with line references) / Targets run / Design notes (4 entries naming spec deviation + test-fixture choice + constant-doc scope) / Spec drift findings (2 returned to orchestrator) / Hylla feedback (N/A) / Unknowns (2 routed to dev).
+
+### Certificate
+
+- **Premises:** ScopeType guard added, doc-comment expanded, 2 new tests added, mage green, drift routed.
+- **Evidence:** `auth_requests.go:878-895` (doc), `auth_requests.go:976-978` (guard), `auth_revoke_for_action_item_test.go:421-492` (2 tests), worklog 458/458 PASS, `internal/domain/auth_request.go:331-332` (path normalization confirms exclusion-form rationale).
+- **Trace:** project-scope session (ScopeType=Project, ScopeID=collidingID) → guard skips → not revoked; branch-scope session (ScopeType=Branch, ScopeID=actionItemID) → falls through guard → ScopeID match → revoked with terminal_state_cleanup reason; lease cascade unchanged.
+- **Conclusion:** PASS. All 4 acceptance items satisfied; both spec drifts routed with explicit rationale; production correctness preserved (existing 7 tests still pass).
+- **Unknowns:** Drop 2 auth-path migration may want to revisit exclusion-vs-allow-list (worklog Unknown #1) — not blocking.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode forbids Hylla calls per spawn prompt. All evidence resolved via `Read` on `internal/app/auth_requests.go` (constant doc + RevokeSessionForActionItem body), `internal/app/auth_revoke_for_action_item_test.go` (full file including 2 new tests + existing fixtures), `internal/domain/auth_request.go:320-338` (Normalize switch confirming pre-Drop-2 branch quirk), `workflow/drop_4c_5/THEME_CE_PLAN.md` (E.8 spec), `workflow/drop_4c_5/BUILDER_WORKLOG.md` (E.8 entry).

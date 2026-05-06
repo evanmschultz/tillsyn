@@ -405,3 +405,88 @@ func TestRevokeSessionForActionItemSkipsMalformedApprovedPath(t *testing.T) {
 		t.Fatalf("expected only sess-good to be revoked (sess-bad has malformed path), got %v", got)
 	}
 }
+
+// TestRevokeActionItemAuthSessionsScopeTypeMismatchSkipped verifies the E.8
+// belt-and-suspenders ScopeType guard. A project-scoped session whose
+// normalized ScopeID happens to UUID-collide with the action-item id MUST
+// NOT be revoked during action-item terminal-state cleanup — revoking the
+// orchestrator's project-level auth on an unrelated action-item lifecycle
+// transition would punch through the entire project session.
+//
+// The test constructs a project-scoped session whose ScopeID equals the
+// action-item id (path "project/<actionItemID>" → after Normalize:
+// ScopeType=ScopeLevelProject, ScopeID=actionItemID). The guard inspects
+// ScopeType, sees ScopeLevelProject, and skips the session BEFORE the
+// ScopeID equality check that would otherwise match.
+func TestRevokeActionItemAuthSessionsScopeTypeMismatchSkipped(t *testing.T) {
+	t.Parallel()
+
+	// Single id used for BOTH the project's UUID and the action-item id.
+	// In production these are independently generated UUIDv4s and the
+	// collision probability is ~10^-37. We force the collision in-test
+	// to exercise the guard's defense path explicitly.
+	const collidingID = "ai-and-proj-collide"
+
+	sessions := []AuthSession{
+		// Project-scoped session whose ScopeID normalizes to collidingID.
+		makeProjectScopedSession("sess-project-collision", collidingID),
+		// Branch-scoped session for the SAME action-item id — must still
+		// be revoked. Pairs the negative case with a happy path so the
+		// test pins discrimination on ScopeType, not just on ScopeID.
+		makeBranchScopedSession("sess-action-item", collidingID, collidingID),
+	}
+
+	svc, _, auth := newRevokeServiceFixture(t, sessions, nil)
+
+	if err := svc.RevokeSessionForActionItem(context.Background(), collidingID); err != nil {
+		t.Fatalf("RevokeSessionForActionItem: %v", err)
+	}
+
+	got := auth.gotRevokeCalls()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 revoke call (project-scope must be skipped), got %d: %v", len(got), got)
+	}
+	if got[0].SessionID != "sess-action-item" {
+		t.Fatalf("expected sess-action-item to be revoked, got %q (project-scope leaked through guard?)", got[0].SessionID)
+	}
+	for _, call := range got {
+		if call.SessionID == "sess-project-collision" {
+			t.Fatalf("project-scoped session sess-project-collision was revoked but the ScopeType guard must skip it: %v", got)
+		}
+	}
+}
+
+// TestRevokeActionItemAuthSessionsActionItemScopeRevoked is the explicit
+// happy-path companion to TestRevokeActionItemAuthSessionsScopeTypeMismatchSkipped.
+// It verifies that a branch-scoped session (the production shape for
+// action-item-scoped auth pre-Drop-2 per the auth-path branch quirk) whose
+// normalized ScopeID matches the action-item id IS revoked. The pair
+// together pins the discrimination contract: ScopeType must NOT be
+// ScopeLevelProject AND ScopeID must equal actionItemID.
+func TestRevokeActionItemAuthSessionsActionItemScopeRevoked(t *testing.T) {
+	t.Parallel()
+
+	const actionItemID = "ai-happy"
+	const projectID = "proj-happy"
+
+	sessions := []AuthSession{
+		makeBranchScopedSession("sess-happy", projectID, actionItemID),
+	}
+
+	svc, _, auth := newRevokeServiceFixture(t, sessions, nil)
+
+	if err := svc.RevokeSessionForActionItem(context.Background(), actionItemID); err != nil {
+		t.Fatalf("RevokeSessionForActionItem: %v", err)
+	}
+
+	got := auth.gotRevokeCalls()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 revoke call for the matching action-item-scoped session, got %d: %v", len(got), got)
+	}
+	if got[0].SessionID != "sess-happy" {
+		t.Fatalf("expected sess-happy to be revoked, got %q", got[0].SessionID)
+	}
+	if got[0].Reason != terminalStateCleanupRevokeReason {
+		t.Fatalf("revoke reason = %q, want %q", got[0].Reason, terminalStateCleanupRevokeReason)
+	}
+}

@@ -876,9 +876,23 @@ func (s *Service) RevokeAuthSession(ctx context.Context, sessionID, reason strin
 }
 
 // terminalStateCleanupRevokeReason is the audit-trail string written to every
-// session and lease revoked through RevokeSessionForActionItem. The constant
-// keeps the wording stable so post-mortem queries can grep for the exact
-// reason without depending on call-site formatting drift.
+// session and lease revoked through RevokeSessionForActionItem when the
+// dispatcher's cleanup hook fires on an action-item terminal-state transition
+// (StateComplete / StateFailed / StateArchived).
+//
+// Grep-friendly choice: the value is a stable lower-snake_case literal so a
+// post-mortem operator can `grep "terminal_state_cleanup"` across audit logs,
+// the autent backend's `auth_sessions.revocation_reason` column, and the
+// tillsyn-side `capability_leases.revoked_reason` column to recover every
+// session and lease the cleanup hook touched. Embedding the action-item ID
+// or transition timestamp into the reason would defeat that grep, so the
+// constant deliberately encodes only the lifecycle event class.
+//
+// Lifecycle role: this is the ONLY revocation reason emitted by terminal-
+// state cleanup. Other revoke pathways (manual revoke through
+// RevokeAuthSession, dispatcher restart sweeps, lease TTL expiry) carry
+// their own distinct reason strings so audit-trail queries can distinguish
+// the cause. Do NOT reuse this constant for non-terminal-state revokes.
 const terminalStateCleanupRevokeReason = "terminal_state_cleanup"
 
 // RevokeSessionForActionItem revokes every active auth session AND every
@@ -944,6 +958,22 @@ func (s *Service) RevokeSessionForActionItem(ctx context.Context, actionItemID s
 		if parseErr != nil {
 			// Malformed approved-path is an upstream bug; skip rather than
 			// abort cleanup.
+			continue
+		}
+		// ScopeType guard (E.8 belt-and-suspenders): a project-scoped
+		// session's normalized ScopeID is the project_id, NOT an action-
+		// item id. Even if a project_id UUID were to collide with an
+		// action-item id (probability ~10^-37 across UUIDv4), revoking
+		// project-scope sessions during action-item terminal-state
+		// cleanup would punch through the orchestrator's project-level
+		// auth. The check is cheap and the failure mode is severe, so
+		// exclude project-scope sessions explicitly before the ScopeID
+		// equality check below. Action-item-scoped sessions today
+		// normalize to ScopeLevelBranch via the pre-Drop-2 auth-path
+		// branch quirk (project/<pid>/branch/<actionItemID>); a future
+		// drop migrating to ScopeLevelActionItem leaves this exclusion
+		// intact because the new positive list is "anything but project."
+		if path.ScopeType == domain.ScopeLevelProject {
 			continue
 		}
 		if path.ScopeID != actionItemID {

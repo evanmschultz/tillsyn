@@ -374,6 +374,8 @@
 
 ### E.8 — Auth auto-revoke: ScopeType guard + reason-string source decision
 
+**State:** done (round 1)
+
 **Source:** memory 4b R3 (Drop 4b 4b.5 A2 + A14).
 
 **Files:**
