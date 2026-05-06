@@ -465,13 +465,13 @@ func TestMonitorConcurrentTrackHandlesAreIndependent(t *testing.T) {
 	bin := buildFakeAgent(t)
 	svc := newStubMonitorService()
 	const n = 5
-	for i := 0; i < n; i++ {
+	for i := range n {
 		svc.seed(seedTodoActionItem(idForIndex(i)))
 	}
 
 	monitor := newProcessMonitor(svc, nil)
 	handles := make([]*Handle, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// Mix exit0 and exit1 so the test exercises both branches
 		// concurrently. Items i%2==0 exit cleanly; odd-indexed crash.
 		mode := "exit0"

@@ -680,3 +680,52 @@ PASS. F.1.3 ships the language-aware resolver precisely as scoped: closed-enum s
 - T3 — Five new tests landed at `embed_test.go:887`, 921, 952, 981, 1010; all assertions match spec scenarios.
 - T4 — Helper rewire at `embed_test.go:32` (`loadDefaultOrFatal` → `"go"`) + canary at `embed_test.go:51` keep ~14 existing catalog-shape tests targeting default-go.toml; 386/386 PASS confirms no regression.
 - T5 — Worklog at `BUILDER_WORKLOG.md:699-769` covers all required sections including the SEMANTIC SHIFT documentation, F.2.4 caller-redirect linkage, and routed unknowns.
+
+## Droplet D.2 — Round 1
+
+**Date:** 2026-05-05.
+**Reviewer:** go-qa-proof-agent (filesystem-MD coordination mode).
+**Source spec:** `workflow/drop_4c_5/THEME_BD_PLAN.md` § "Droplet D.2 — Accumulated Vet / Gopls / `mage ci` Hint Sweep".
+**Verdict:** **PASS.**
+
+### Acceptance Trace
+
+| # | Acceptance criterion | Status | Evidence |
+| --- | --- | --- | --- |
+| 1 | `D2_HINT_SWEEP.md` exists with `## Captured Hints` + `## Fix-Now Bucket` + `## Routed-to-Refinement Bucket` | **MET** | File present at `workflow/drop_4c_5/D2_HINT_SWEEP.md` (196 lines). § 2 "Captured Hints" + § 3 "Fix-Now Bucket" + § 4 "Routed-to-Refinement Bucket" all present (with deeper subsections); § 1 methodology + § 5 verification + § 6 summary table + § 7-9 file lists/references included. |
+| 2 | Each Fix-Now entry maps to an inline fix | **MET** | (a) `instructions_explainer.go:354` + `:358` — verified via `Read`: both call sites now invoke `capitalizeASCIIScope(string(actionItem.Scope))`; new helper defined at lines 660-669; no remaining `strings.Title` in the file. (b) `monitor_test.go:468` + `:474` — verified via `git diff HEAD`: both `for i := 0; i < n; i++` lines now read `for i := range n`. |
+| 3 | Routed-to-Refinement entries carry rationales | **MET** | D2-R1 (`D2_HINT_SWEEP.md` § 4.1): scope-creep into Drop-1 R1 (`internal/tui/model.go` 22kLOC split list) + acceptance-#5 forbidden file (`cmd/till/main_test.go`); follow-up plan = fold into Drop-1 R1 split + standalone refinement droplet for non-tui sites. D2-R2 (§ 4.2): contract-touching ctx-propagation refactor exceeds one-liner; follow-up = Drop 5+ daemon-mode dispatcher polish. Both entries name consumers + cost shape. |
+| 4 | Reduced warnings post-fix | **MET (trust builder)** | Spawn-prompt directive: "trust builder." `mage testPkg ./internal/adapters/server/mcpapi` 202/202 + `./internal/app/dispatcher` 356/356; `mage formatCheck` clean. No new warnings introduced; sibling-induced `mage ci` failure attributed to A.3 (`client_type` test-fixture omission), not D.2 — D.2 did not touch `internal/app/auth_requests*`. |
+| 5 | No fix touches `cmd/till/main.go`, `cmd/till/main_test.go`, or `internal/app/service.go` for refactor-style cleanup | **MET** | `git diff --stat` of D.2-declared files shows ONLY `internal/adapters/server/mcpapi/instructions_explainer.go` (+18/-2) + `internal/app/dispatcher/monitor_test.go` (+2/-2). The 3 forbidden files appear in `git status` only via concurrent-sibling work (A.1 / A.2 / A.4 / B.1 / B.2), not D.2. Sweep table § 2.3 explicitly marks `cmd/till/main_test.go:94` as "Routed (forbidden file per acceptance #5)" + the 5 `internal/tui/model.go` sites (Drop-1 R1 territory) as Routed. |
+| 6 | Coverage stays ≥ 70% on touched packages | **MET** | `D2_HINT_SWEEP.md` § 5.3: `internal/adapters/server/mcpapi` 73.9% (helper has 100% coverage via new test); `internal/app/dispatcher` 76.1% (unchanged — range-int modernization touches no production code). Both above 70% project minimum. |
+| 7 | Worklog completeness | **MET** | `BUILDER_WORKLOG.md` § "Droplet D.2 — Round 1" (lines 771-852) carries: source spec, files touched (production / tests / workflow MD splits), targets run, sweep findings (Fix-Now + Routed), sibling-induced failure note, falsification-mitigation status, design decisions, cross-droplet coordination, Hylla feedback, unknowns routed back to orchestrator. |
+
+### Premises / Evidence / Trace / Conclusion / Unknowns
+
+- **Premises:** D.2 must produce sweep MD with 3 sections; apply 4 inline Fix-Now hints (2× `strings.Title` swap + 2× `rangeint`); route remaining hints with rationales; not touch 3 forbidden files; preserve coverage ≥ 70%; pass tests on touched packages.
+- **Evidence:** `Read` of `D2_HINT_SWEEP.md`, `instructions_explainer.go`, `instructions_explainer_test.go`, `THEME_BD_PLAN.md`, `BUILDER_WORKLOG.md` § D.2; `git diff HEAD -- internal/app/dispatcher/monitor_test.go` confirming line 468/474 swap; `git diff --stat` confirming D.2's two-file scope; `git status --porcelain` confirming forbidden-file edits attribute to sibling droplets, not D.2.
+- **Trace:** Acceptance table above maps every criterion to a concrete artifact line or diff hunk. (a) Helper `capitalizeASCIIScope` defined at `instructions_explainer.go:660-669`; both call sites at 354 + 358 confirmed via direct read of the post-edit file (no `strings.Title` substring remains in file body). (b) `monitor_test.go` diff shows the two-line swap; structural-only change preserves iteration semantics. (c) Test file `instructions_explainer_test.go` ships 10 table-driven cases including the production-shape inputs (`"droplet"` → `"Droplet"`, `"plan"` → `"Plan"`) plus edge cases (empty / single letter / passthrough / leading non-letter / mixed case). (d) `D2_HINT_SWEEP.md` § 4 routes 39 indexed-loop sites + 3 spawn.go TODOs with rationale tied to scope guards.
+- **Conclusion:** PASS. All 7 acceptance criteria met. Builder followed scope guards (no forbidden-file refactors), captured the full hint surface (46 distinct items), classified each into Fix-Now / Routed / Ignore with rationale, applied the 4 Fix-Now fixes inline, and shipped a regression-pinning unit test for the new ASCII-helper.
+- **Unknowns:** None gating verdict. Methodology adaptation noted (static-grep substituted for `LSP` workspace diagnostics because the subagent's tool list lacks `LSP` and direct `gopls` bash is denied) — builder documented the substitution + flagged the surface ergonomic gap; routed back to orchestrator for tool-list refinement. Sibling-induced `mage ci` failure (A.3's `client_type` test-fixture omission) is correctly attributed to A.3, not D.2.
+
+### Falsification Hooks Considered
+
+- **`strings.Title` lingering elsewhere** — full-file read of `instructions_explainer.go` confirms no `strings.Title` substring remains; the `strings` import is still used by the rest of the file (TrimSpace / EqualFold / Join / Contains), so no dead-import.
+- **`for i := range n` compile risk** — Go 1.22+ supports `range int`; `mage testPkg ./internal/app/dispatcher` 356/356 PASS confirms the modernization compiles and runs identically.
+- **Test stub vs real assertions** — `instructions_explainer_test.go` ships 10 distinct cases with `t.Fatalf` on mismatch; not a stub.
+- **Forbidden-file scope creep** — verified via `git diff --stat`: D.2 touches only 2 Go files, neither in the forbidden list.
+- **Three-section sweep artifact** — confirmed via direct `Read`; § 3 ("Fix-Now Bucket") and § 4 ("Routed-to-Refinement Bucket") are the spec-named sections; § 2 ("Captured Hints") satisfies the third spec-named section with deeper sub-tables for stdlib + indexed-loop + TODO + Deprecated + nolint inventories.
+
+### Hylla Feedback
+
+N/A — D.2 review touched only Go source + workflow MDs in filesystem-MD mode (Hylla is Go-only today and stale post-Drop-4c-merge; the spawn-prompt directive forbids Hylla calls). No Hylla query was attempted, so no miss to log. The builder's worklog flagged the absent `LSP` MCP tool in the subagent surface as a methodology friction point — surfaced once already; not double-raising here.
+
+### TL;DR
+
+- T1 — PASS. All 7 acceptance criteria met.
+- T2 — Sweep artifact at `D2_HINT_SWEEP.md` ships the 3 required sections + methodology + verification + summary table.
+- T3 — 4 Fix-Now sites verified inline (`strings.Title` × 2 → `capitalizeASCIIScope` at `instructions_explainer.go:354,358`; rangeint × 2 at `monitor_test.go:468,474` confirmed via `git diff`).
+- T4 — Routed entries D2-R1 (39 sites in 16 files) and D2-R2 (3 spawn.go TODOs) carry scope-guard rationales and named follow-up consumers.
+- T5 — No forbidden file edited by D.2 (`cmd/till/main.go` / `main_test.go` / `internal/app/service.go` appear in `git status` only via concurrent-sibling droplets).
+- T6 — Coverage 73.9% (mcpapi) + 76.1% (dispatcher), both ≥ 70%.
+- T7 — Worklog at `BUILDER_WORKLOG.md:771-852` complete.

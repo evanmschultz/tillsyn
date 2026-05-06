@@ -20,6 +20,8 @@ Four droplets total. Theme B is sequenced — `B.2` reads `failed` items, which 
 
 **Title:** `B.1 — TILL ACTION_ITEM SUPERSEDE CLI`
 
+**State:** done
+
 **Goal:** Land the `till action_item supersede <id> --reason "..."` escape hatch. Marks a `failed` action item with `metadata.outcome = "superseded"` and transitions it `failed → complete`, bypassing the always-on terminal-state guard at `service.go:1079` (`domain.IsTerminalState(fromState) && fromState != toState`). Asserts dev intent at the binary boundary — bypasses parent-blocks-on-incomplete-child as a side effect (the superseded item is now `complete`, so it stops blocking its parent).
 
 **Files / paths to modify:**
@@ -173,6 +175,8 @@ Four droplets total. Theme B is sequenced — `B.2` reads `failed` items, which 
 ### Droplet D.2 — Accumulated Vet / Gopls / `mage ci` Hint Sweep
 
 **Title:** `D.2 — SWEEP ACCUMULATED VET + GOPLS HINTS`
+
+**State:** done
 
 **Goal:** REVISION_BRIEF §3.4 second bullet — capture every `mage ci` warning + every gopls/LSP diagnostic accumulated through 4a + 4b + 4c that has NOT been individually triaged. Classify each as (a) fix-now (one-line cleanup), (b) refinement-route-to-future-drop (real issue, but scope creep here), or (c) ignore (false positive / known accepted behavior). Fix the (a) bucket inline; route the (b) bucket to `project_drop_4c_5_refinements_raised.md` (memory) for the orchestrator to roll forward.
 

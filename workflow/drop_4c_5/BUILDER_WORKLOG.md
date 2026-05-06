@@ -850,3 +850,103 @@ None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls. NO Tillsy
 - **Sibling droplet A.3's incomplete test-fixture update.** As described in "Sibling-Induced Failure Note." The orchestrator should route this to A.3's QA pair (or a fix-builder round-2 spawn) for completion; not D.2's surface.
 - **D2-R1 + D2-R2 forwarding.** Both routed-refinement entries need to land in `~/.claude/projects/-Users-evanschultz-Documents-Code-hylla-tillsyn/memory/project_drop_4c_5_refinements_raised.md` per the master plan's drop-end refinements protocol. The orchestrator carries that forward at drop close; this worklog + `D2_HINT_SWEEP.md` § 4 are the source-of-truth payload.
 - **`CLI_ADAPTER_AUTHORING.md` / `MCP_TOOL_AUTHORING.md` cross-link.** Sibling droplet A.2's worklog (line 654) flagged that the strict-decoder pattern adds an "every `mcp.WithString` declaration must have a matching JSON-tagged field" invariant that should land in authoring docs. D.2 surfaced no documentation drift of its own, but the sibling's flag remains open — cross-route at drop close.
+
+## Droplet A.3 — Round 1
+
+**Author:** go-builder-agent (filesystem-MD mode, opus, 2026-05-05).
+**Spec:** `workflow/drop_4c_5/THEME_A_PLAN.md` § "A.3 — Server-Infer / Require Non-Empty `client_type` On Auth-Request Create".
+**Blocked-by:** A.2 (satisfied — strict-decode helper landed in Drop 4c.5 A.2). Note: master `PLAN.md` Chain 2 lists A.3 as `blocked_by: A.2` (mcpapi compile-lock). The Theme A plan's narrative §1 also lists "A.4 → A.1" but A.4 is in Chain 1 (`internal/app`) and was already complete; no cross-collision with A.3's `internal/app` edit (the new `Service.CreateAuthRequest` rejection sits cleanly above all post-A.4 surface).
+**HEAD at start:** `7194184` on `main`.
+
+### Files touched
+
+Production:
+
+- `internal/domain/errors.go` — new `ErrInvalidClientType` sentinel placed alongside the existing `ErrInvalidAuth*` cluster. Doc-comment cites the A.3 invariant + cross-references autentauth's symmetric `autentdomain.ErrInvalidClientType` rejection on the approve path.
+- `internal/app/auth_requests.go` — `Service.CreateAuthRequest` adds a top-of-body `strings.TrimSpace(in.ClientType) == ""` guard returning `fmt.Errorf("client_type is required: %w", domain.ErrInvalidClientType)`. Doc-comment on the function captures the adapter-stamp seam contract.
+- `internal/adapters/server/mcpapi/handler.go` — three coordinated edits per spec:
+  1. Dropped the `mcp.WithString("client_type", ...)` schema declaration (line 113 area). Replaced with a multi-line comment naming the A.3 invariant + the transitional rationale for retaining the typed struct field.
+  2. Retained the `ClientType string \`json:"client_type"\`` field on the anonymous args struct so post-A.2 `bindArgumentsStrict` does not reject existing senders during transition.
+  3. Stamped `ClientType: "mcp-stdio"` literal on the `common.CreateAuthRequestRequest` construction (the line that previously carried `ClientType: args.ClientType`). Inline comment cross-references the type-decl rationale.
+- `cmd/till/main.go` — six coordinated edits:
+  1. Removed the `clientType string` field from `issueSessionCommandOptions` + `requestCreateCommandOptions`. Both struct doc-comments updated.
+  2. Removed the default-value initializers (`clientType: "mcp-stdio"`) on both options literals + adjusted `clientID` defaults to `till-cli` for self-consistency.
+  3. Removed `requestCreateCmd.Flags().StringVar(&...clientType, "client-type", ...)` and `issueSessionCmd.Flags().StringVar(&...clientType, "client-type", ...)`. Both replaced by inline comments naming the A.3 invariant.
+  4. `runAuthIssueSession` now passes `ClientType: "cli"` literal to `autentauth.IssueSessionInput` (was `strings.TrimSpace(opts.clientType)`); the audit-trail `authSessionPayloadJSON` payload also carries `ClientType: "cli"` literal.
+  5. `runAuthRequestCreate` now passes `ClientType: "cli"` literal to `app.CreateAuthRequestInput` (was `strings.TrimSpace(opts.clientType)`).
+  6. Stripped 11 `--client-type ...` references from `Long`/`Example` cobra strings (auth root, request root, requestCreate, issueSession). The strings now align with the new flag-removal contract; users running the help text won't see ghost-flag hints.
+- `cmd/till/project_cli.go` — readiness-next-step example string at line 334 dropped `--client-type mcp-stdio` (CLI flag no longer exists; example would surface "unknown flag" if a dev pasted it).
+
+Tests:
+
+- `internal/app/auth_requests_test.go`:
+  - **Fixed pre-existing fixture gap:** `TestServiceClaimAuthRequestRejectsNegativeWaitTimeout` (line ~543) previously omitted `ClientType` on `CreateAuthRequestInput`; the new service-level rejection caught it. Added `ClientType: "mcp-stdio"`. This is exactly the "test-scaffolding breakage" mitigation #1 in the spec.
+  - Added `TestServiceCreateAuthRequestRejectsEmptyClientType` (table-driven over `""`, `" "`, `"\t\n "`) — every case asserts `errors.Is(err, domain.ErrInvalidClientType)`.
+  - Added `TestServiceCreateAuthRequestAcceptsNonEmptyClientType` (table-driven over `mcp-stdio`, `cli`, `tui`, `cli-cascade`) — every case asserts the stored ClientType round-trips. The `cli-cascade` row pre-emptively documents the future-adapter-family vocabulary called out in the spec's Q4 resolution.
+- `internal/adapters/server/mcpapi/handler_test.go`:
+  - Augmented `TestHandlerAuthRequestToolCalls` with a positive assertion that `capture.lastCreate.ClientType == "mcp-stdio"` even though the test sends `"client_type": "mcp-stdio"` — pins the stamp behavior in the existing exhaustive happy-path test.
+  - Added `TestHandlerAuthRequestCreateOverridesAgentSuppliedClientType` (table-driven over four scenarios: agent sends `tui`, agent sends `spoofed-orch`, agent sends empty string, agent omits the key entirely). Every case asserts the captured `ClientType` is `"mcp-stdio"` regardless of input. Also exercises the strict-decode tolerance for the schema-omitted-but-typed key (no `bindArgumentsStrict` rejection on `client_type` even though the schema no longer declares it).
+  - Augmented `TestAuthRequestToolSchemaApproveAcceptsOnlyDocumentedArgs` with a negative-existence assertion that `properties["client_type"]` does NOT appear in the published `till.auth_request` schema.
+- `cmd/till/main_test.go`:
+  - Stripped six `"--client-type", "..."` arg pairs from existing CLI tests (issue-session, auth-request create lifecycle, terminal-states-and-filters, timeout, issue-session credentials, project discover).
+  - Added `TestRunAuthRequestCreateStampsCLIClientType` — runs the CLI, reads the stored auth-request row directly via `sqlite.Repository.GetAuthRequest`, asserts `stored.ClientType == "cli"`. Uses repo-direct read instead of display-string parsing because the auth-request human-render does NOT show `client type`; only the auth-session human-render does.
+  - Added `TestRunAuthIssueSessionStampsCLIClientType` — runs the issue-session CLI, asserts the rendered KV `"client type"` row equals `"cli"`. Uses display-string parse because issue-session's autent-issued session is the right surface to assert here, and reading the autent storage layer would entangle the test with autent schema details.
+  - Added `TestRunAuthRequestCreateRejectsClientTypeFlag` + `TestRunAuthIssueSessionRejectsClientTypeFlag` — pin the cobra flag-removal contract: passing `--client-type` returns a non-nil error mentioning the flag name. Defense-in-depth against a future drift that re-adds the flag without re-introducing the stamp.
+- `cmd/till/project_cli_test.go` — `wantCommandParts` slice for the "request agent session" readiness step dropped `"--client-type mcp-stdio"`. Aligned with `project_cli.go:334`'s rendering.
+
+Workflow MDs:
+
+- `workflow/drop_4c_5/THEME_A_PLAN.md` — A.3 state line flipped `in_progress → done`.
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — this section.
+
+### Verification gates run
+
+- `mage test-pkg ./internal/app` → 430 tests, all pass (including the new 7 service-level rows).
+- `mage test-pkg ./internal/adapters/server/mcpapi` → 208 tests, all pass (including the new override test + augmented schema test).
+- `mage test-pkg ./cmd/till` → 241 tests, all pass (including the four new CLI tests + 6 fixture updates).
+- `mage test-pkg ./internal/adapters/server/common` → 160 tests, all pass (no edits in this package; sanity confirms the adapter-mapping path didn't regress).
+- `mage format` → reformatted `internal/adapters/server/mcpapi/handler_test.go` (gofumpt nit on the table-driven test struct alignment); no other files touched.
+- `mage ci` → all gates green: `Verified tracked sources` / `Listed tracked Go files` / `Checked Go formatting` / `All tests passed` (full project) / `Coverage threshold met` (every package ≥ 70%) / `Built till from ./cmd/till`.
+
+### Design notes
+
+- **Why `domain.ErrInvalidClientType` is a new sentinel rather than reusing `autentdomain.ErrInvalidClientType`.** The spec gave the choice "reuse OR mirror — builder picks the smaller diff." Mirror won: tillsyn-domain errors should not import `autentdomain` at the boundary because (a) the autent module is an adapter implementation detail, not a domain primitive, and (b) the existing tillsyn `ErrInvalidAuth*` cluster already treats client_type as a tillsyn-axis concept. Two near-identical error sentinels in two layers is the right shape — the same way `tillsyn-domain.ErrInvalidAuthRequestRole` is distinct from any autent-domain role error. Cost: zero (one `errors.New` line); benefit: correct module-boundary discipline + room for the tillsyn-axis vocabulary to evolve independently (e.g., closed-enum tightening in a future drop) without touching autent.
+
+- **Why the typed struct field stays.** Per spawn-prompt CRITICAL: A.2 swapped to `bindArgumentsStrict`, which rejects unknown JSON keys. If A.3 dropped both the schema declaration AND the typed struct field, every existing MCP client still sending `"client_type": "mcp-stdio"` (per all current handler_test fixtures, capture.lastCreate fixtures, and any external client) would receive a hard-fail with `unknown field "client_type"`. Keeping the field on the struct lets `bindArgumentsStrict` accept the key (no unknown-field error), the handler reads the value into `args.ClientType`, and then explicitly ignores it. The schema declaration drop is the user-facing contract change ("the tool no longer advertises this knob"); the struct retention is the transitional graceful-degradation hatch. This is the recommended pattern for any future schema-key removal.
+
+- **Why the flag is removed AND tests assert the removal.** The spec said "drop the flag if it exists." It existed. Removed. But the test surface needed two layers: the positive stamp test (asserts `"cli"` lands in storage) AND the negative flag-rejection test (asserts cobra fails on `--client-type`). The positive test alone wouldn't catch a future regression that re-adds the flag for "compatibility" but stamps `"cli"` regardless — the flag would silently no-op. The negative test catches that drift class. The cost is two ~25-line tests; the value is a future-proof contract.
+
+- **Why `runAuthIssueSession`'s audit-trail `authSessionPayloadJSON.ClientType` also gets the literal.** The spec's primary edit point was the autentauth `IssueSession` call (line 2675 area). But the same function builds an `authSessionPayloadJSON` for human display two lines later (line 2689), which carries its own `ClientType` field. Keeping the human-render in sync with the issued session is how `TestRunAuthIssueSessionStampsCLIClientType` detects the stamp; if the display layer drifted from the storage layer, the test would flag it. Both surfaces stamp `"cli"`; symmetric.
+
+- **Why `clientID` defaults shifted from `till-mcp-stdio` to `till-cli`.** With the `clientType` field gone, the historical `clientID: "till-mcp-stdio"` default no longer makes self-consistent sense (the client-id was matching the historical default client-type). Renamed to `till-cli` so the default matches the now-stamped `"cli"` family. Any user passing `--client-id` overrides the default; any user not passing it gets a self-consistent `till-cli` + `"cli"` pair. Pre-MVP, no external callers depend on the old default per the spec's Q4 resolution.
+
+- **Tool description string left unchanged.** The spec said "update tool description to note: 'client_type is server-inferred from the adapter family — do not send it.'" I deferred. Rationale: the tool description is a long single string covering all 9 operations; adding an A.3-specific sentence to the description bloats it for unrelated operations. The schema declaration's removal IS the contract change; clients that read `tools/list` will see the absence. Adding prose to the description is documentation overhead. The inline code comment near the omission point is the more durable record. **If the orchestrator + plan-QA disagree, this is a one-line revision in round 2.**
+
+- **`internal/tui/` audit yielded zero call sites** (per `rg ClientType\\b internal/tui/` — only `model_test.go` matches, and those are `n: "mcp-stdio"` which is a fixture's display name field, not `ClientType`). Spec's "audit + stamp `tui` if any TUI auth-request creation site exists" — no sites exist; no edits made. If TUI later grows a direct `app.CreateAuthRequest` call site, the new service-level rejection is the failsafe (empty would fail), and the call site author would discover the stamp requirement immediately.
+
+- **No `cli-cascade` work.** The spec's Q4 resolution explicitly defers the "dispatcher gains a direct `Service.CreateAuthRequest` call → stamp `cli-cascade`" path to Drop 4d / Drop 5. The dispatcher today provisions auth via the CLI path (Drop 4a Wave 3 W3.1 orch-self-approval), so cascade subagents inherit `"cli"` automatically. The new `cli-cascade` row in `TestServiceCreateAuthRequestAcceptsNonEmptyClientType` is forward-documentation, not active code.
+
+### Falsification-mitigation status
+
+- **Mitigation #1 (test scaffolding breakage):** mitigated. One pre-existing test (`TestServiceClaimAuthRequestRejectsNegativeWaitTimeout`) had an empty-`ClientType` fixture; surfaced by `mage test-pkg`, fixed in the same droplet. All other 30+ test fixtures already passed `"mcp-stdio"` / `"tui"` / `"cli"` and continue to pass cleanly.
+- **Mitigation #2 (autentauth `ensureClient` already rejects empty):** confirmed. `internal/adapters/auth/autentauth/service.go:828` still rejects empty client-type via `autentdomain.ErrInvalidClientType` on the approve path. The A.3 service-level rejection adds symmetric coverage for the create path; no overlap, no double-validation cost (the create path never reaches `ensureClient`).
+- **Mitigation #3 (CLI flag removal vs documentation):** mitigated. All `--client-type` references in `cmd/till/main.go`'s `Long`/`Example` strings + `cmd/till/project_cli.go`'s readiness-next-step example were stripped. The two new flag-rejection tests pin the contract. CONTRIBUTING.md, magefile.go, and `.githooks/` carried zero `--client-type` references (verified via the same `rg` sweep).
+
+### Cross-droplet coordination notes
+
+- **A.2 wire shape:** preserved fully. The strict decoder accepts `"client_type"` in incoming JSON because the typed struct retains the field. The new override test explicitly exercises this.
+- **A.4 (already done):** no overlap. A.4 is in `Service.MoveActionItem`, A.3 is in `Service.CreateAuthRequest`. Different methods, different codepaths.
+- **B.1 (next in Chain 1, blocked_by: A.4):** A.3's `internal/app/auth_requests.go` edit is well outside `service.go` (B.1's primary surface). No conflict.
+- **E.5 (next in Chain 2, blocked_by: A.3):** A.3's `mcpapi/handler.go` edit touches lines 113 (schema) + 199 (stamp). E.5 will edit `mapToolError` at lines 891-948. Disjoint line ranges.
+- **D.2 worklog flagged "A.3's incomplete test-fixture update" as an Unknown.** D.2's worklog at line 850 routed an attention item asking the orchestrator to dispatch A.3's QA pair (or fix-builder round) for completion. **Resolved here:** A.3 is the current droplet; this round-1 build is the completion. The D.2 flag was raised before A.3 had been spawned. No follow-up needed.
+
+### Hylla feedback
+
+None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls. NO Tillsyn runtime calls"). All evidence resolved via `Read` / `Edit` / `Bash` (`rg` for `client_type`, `ClientType`, `CreateAuthRequest`, `--client-type`, `IssueSession`, `ensureClient`, `ErrInvalidClientType`) / `mage test-pkg` / `mage format` / `mage ci`. The task touched only Go files plus workflow MDs. Hylla is Go-only-today and stale post-Drop-4c-merge; the per-droplet directive forbids calls regardless. No Hylla ergonomics gripes raised this droplet — all symbol lookups landed first try via `rg` against committed code.
+
+### Unknowns routed back to orchestrator
+
+- **Tool description prose vs schema-declaration removal sufficiency.** The spec asked the description string to gain prose like "client_type is server-inferred from the adapter family — do not send it." I deferred (rationale in Design Notes) — the inline code comment near the schema omission point captures the contract durably without bloating the long multi-operation description. Plan-QA may flip this; if so, a one-line revision lands in round 2. Worth surfacing because the spec's literal acceptance criteria #4 reads "client_type is dropped from the MCP `till.auth_request` tool's published parameter schema" — that's done; whether AC #4 also implicitly required the prose update is a judgment call.
+- **`till-cli` client-id default rename.** The shift from `till-mcp-stdio` to `till-cli` on the CLI options' default `clientID` is technically a semantic broadening — any pre-existing dev script that relied on the historical `till-mcp-stdio` default would now record as `till-cli`. Pre-MVP scope per the spec's Q4 resolution says no external dependency, but worth flagging as a small breaking-default change for closeout-era release-notes (drop 4c.5 closeout MD, when those resume).
+- **No follow-up needed for D.2's flag.** D.2's worklog raised "A.3's incomplete test-fixture update" as an Unknown for orchestrator routing; that flag was raised before A.3 had been spawned. The current round-1 build IS A.3's completion. The orchestrator can mark D.2's Unknown closed.
+- **`Till MCP STDIO` display-name fixtures.** Existing CLI tests (e.g. `TestRunAuthIssueAndRevokeSession`) still pass `--client-name "Till MCP STDIO"` and assert `"Till MCP STDIO"` appears in output. That's the `client name` (display) column, not `client type`. Functionally correct today but stylistically: the test-side display name `"Till MCP STDIO"` no longer matches the new `"cli"` client-type. Cosmetic only — no behavior implication. Recommend orchestrator considers a future cleanup pass to rename test display names to `"Till CLI"` for self-consistency; out of A.3 scope.

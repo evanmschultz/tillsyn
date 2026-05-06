@@ -351,11 +351,11 @@ func explainNodeInstructions(ctx context.Context, services instructionsExplainSe
 	}
 
 	return instructionsExplainResult{
-		Summary:       fmt.Sprintf("%s %q is explainable from node lineage and project standards.", strings.Title(string(actionItem.Scope)), actionItem.Title),
+		Summary:       fmt.Sprintf("%s %q is explainable from node lineage and project standards.", capitalizeASCIIScope(string(actionItem.Scope)), actionItem.Title),
 		ResolvedScope: resolved,
 		Explanation: instructionsToolExplanation{
 			Title:             strings.TrimSpace(actionItem.Title),
-			Overview:          fmt.Sprintf("%s %q belongs to project %q.", strings.Title(string(actionItem.Scope)), actionItem.Title, project.Name),
+			Overview:          fmt.Sprintf("%s %q belongs to project %q.", capitalizeASCIIScope(string(actionItem.Scope)), actionItem.Title, project.Name),
 			WhyItApplies:      why,
 			ScopedRules:       rules,
 			WorkflowContract:  workflow,
@@ -650,4 +650,20 @@ func joinKindScopes(scopes []domain.KindAppliesTo) string {
 		return "-"
 	}
 	return strings.Join(parts, ", ")
+}
+
+// capitalizeASCIIScope upper-cases the first ASCII letter of one scope-style
+// identifier. Inputs are the closed `KindAppliesTo` enum (`"build"`, `"plan"`,
+// `"droplet"`, etc.) — all pure ASCII — so a single-byte transform suffices and
+// avoids dragging in `golang.org/x/text/cases` for what `strings.Title`
+// (deprecated since Go 1.18) used to do here.
+func capitalizeASCIIScope(s string) string {
+	if s == "" {
+		return s
+	}
+	first := s[0]
+	if first >= 'a' && first <= 'z' {
+		return string(first-'a'+'A') + s[1:]
+	}
+	return s
 }
