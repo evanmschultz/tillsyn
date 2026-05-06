@@ -1,22 +1,37 @@
 package templates
 
 import (
+	"errors"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
-// loadDefaultOrFatal is the shared helper for embed tests. Centralizing the
-// LoadDefaultTemplate invocation keeps each test focused on its assertion and
-// gives a single failure point if the embed pipeline regresses (e.g. the
-// //go:embed directive falls out of sync with the on-disk file path).
+// loadDefaultOrFatal is the shared helper for embed tests asserting on the
+// GO-flavored embedded template. Centralizing the load invocation keeps each
+// test focused on its assertion and gives a single failure point if the
+// embed pipeline regresses (e.g. the //go:embed directive falls out of
+// sync with the on-disk file path).
+//
+// Drop 4c.5 droplet F.1.3 SEMANTIC SHIFT: prior to F.1.3 this helper called
+// `LoadDefaultTemplate()` which read default-go.toml directly. Post-F.1.3
+// `LoadDefaultTemplate()` is a thin wrapper around
+// `LoadDefaultTemplateForLanguage("")` and returns the language-AGNOSTIC
+// generic template (zero agent_bindings, no gates, no context blocks).
+// The catalog-shape assertions in this file (agent bindings cover 12
+// kinds, gates carry mage_ci/commit/push, context blocks for plan/build/
+// QA kinds, etc.) all target the GO template specifically, so the helper
+// now invokes `LoadDefaultTemplateForLanguage("go")` explicitly. Tests
+// asserting on the generic template use `loadGenericOrFatal`.
 func loadDefaultOrFatal(t *testing.T) Template {
 	t.Helper()
-	tpl, err := LoadDefaultTemplate()
+	tpl, err := LoadDefaultTemplateForLanguage("go")
 	if err != nil {
-		t.Fatalf("LoadDefaultTemplate(): unexpected error: %v", err)
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\"): unexpected error: %v", err)
 	}
 	return tpl
 }
@@ -27,13 +42,15 @@ func loadDefaultOrFatal(t *testing.T) Template {
 // reference, child-rule cycle) would surface here, so this is the canary
 // for the whole embed pipeline. Renamed from `TestDefaultTemplateLoadsCleanly`
 // in Drop 4c.5 droplet F.2.1 alongside the `default.toml` → `default-go.toml`
-// file rebadge.
+// file rebadge; rewired in Drop 4c.5 droplet F.1.3 to call
+// `LoadDefaultTemplateForLanguage("go")` directly because the
+// `LoadDefaultTemplate()` wrapper now resolves to the generic template.
 func TestDefaultTemplateGoLoadsCleanly(t *testing.T) {
 	t.Parallel()
 
-	tpl, err := LoadDefaultTemplate()
+	tpl, err := LoadDefaultTemplateForLanguage("go")
 	if err != nil {
-		t.Fatalf("LoadDefaultTemplate(): unexpected error: %v", err)
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\"): unexpected error: %v", err)
 	}
 	if tpl.SchemaVersion != SchemaVersionV1 {
 		t.Fatalf("SchemaVersion = %q; want %q", tpl.SchemaVersion, SchemaVersionV1)
@@ -853,5 +870,155 @@ func TestDefaultTemplatePlanContextHasNoDescendants(t *testing.T) {
 	}
 	if len(binding.Context.DescendantsByKind) != 0 {
 		t.Fatalf("AgentBindings[plan].Context.DescendantsByKind = %v; want empty (default planners walk UP only — adopter opt-in)", binding.Context.DescendantsByKind)
+	}
+}
+
+// TestLoadDefaultTemplateForLanguage_Generic asserts that the empty-string
+// language axis (the closed-enum zero value for `domain.Project.Language`)
+// resolves to `builtin/default-generic.toml` and parses cleanly through the
+// full validation chain.
+//
+// Drop 4c.5 droplet F.1.3 acceptance criterion #2 + #8. Mirrors the
+// generic-template content asserts in TestLoadDefaultGenericTemplate (F.2.2)
+// but exercises the resolver entry point rather than a direct embed.FS open.
+// The two together pin the resolver-to-content path: F.2.2's test asserts
+// the file content; this test asserts the resolver routes lang="" to that
+// file.
+func TestLoadDefaultTemplateForLanguage_Generic(t *testing.T) {
+	t.Parallel()
+
+	tpl, err := LoadDefaultTemplateForLanguage("")
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"\"): unexpected error: %v", err)
+	}
+	if tpl.SchemaVersion != SchemaVersionV1 {
+		t.Fatalf("SchemaVersion = %q; want %q", tpl.SchemaVersion, SchemaVersionV1)
+	}
+
+	// Generic template's load-bearing distinguishing feature vs default-go:
+	// zero agent_bindings (per F.2.2 acceptance criterion #2). If the
+	// resolver mistakenly routed lang="" to default-go.toml this assertion
+	// would fail because default-go ships 12 agent bindings.
+	if got := len(tpl.AgentBindings); got != 0 {
+		t.Fatalf("len(AgentBindings) = %d; want 0 (lang=\"\" must route to default-generic.toml; default-go ships 12 bindings)", got)
+	}
+}
+
+// TestLoadDefaultTemplateForLanguage_Go asserts that the `"go"` language
+// axis (the only currently-shipping non-empty closed-enum value per the
+// Q1 deferral of FE) resolves to `builtin/default-go.toml` and parses
+// cleanly through the full validation chain.
+//
+// Drop 4c.5 droplet F.1.3 acceptance criterion #3 + #8. The
+// content-shape canary across the resolver entry point: the Go template
+// is the catalog the dispatcher binds during pre-MVP dogfooding, so any
+// regression in the resolver-to-Go-file routing immediately surfaces.
+//
+// The Go-distinguishing assertion is the 12 agent bindings — the
+// generic file ships zero, default-go ships 12. The bindings count is
+// thus the cleanest discriminator without baking content drift into the
+// test.
+func TestLoadDefaultTemplateForLanguage_Go(t *testing.T) {
+	t.Parallel()
+
+	tpl, err := LoadDefaultTemplateForLanguage("go")
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\"): unexpected error: %v", err)
+	}
+	if tpl.SchemaVersion != SchemaVersionV1 {
+		t.Fatalf("SchemaVersion = %q; want %q", tpl.SchemaVersion, SchemaVersionV1)
+	}
+
+	// Go template's load-bearing distinguishing feature vs generic: 12
+	// agent bindings (one per closed-enum kind). If the resolver
+	// mistakenly routed lang="go" to default-generic.toml this
+	// assertion would fail.
+	if got, want := len(tpl.AgentBindings), len(allKinds); got != want {
+		t.Fatalf("len(AgentBindings) = %d; want %d (lang=\"go\" must route to default-go.toml; generic ships 0 bindings)", got, want)
+	}
+}
+
+// TestLoadDefaultTemplateForLanguage_FERejected asserts the `"fe"` axis
+// returns an error wrapping `ErrLanguageNotSupported` per the Q1 resolution
+// (workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5 — defer FE until an FE
+// adopter materializes).
+//
+// Drop 4c.5 droplet F.1.3 acceptance criterion #4 + #8. The error must
+// be `errors.Is`-routable via the closed sentinel so callers in
+// project-create boundaries can distinguish "no template for this lang"
+// from a TOML parse error or schema-version mismatch. The wrapped
+// message must include the offending lang value so the dev-facing
+// surface (CLI / MCP error envelope) names the input that failed.
+func TestLoadDefaultTemplateForLanguage_FERejected(t *testing.T) {
+	t.Parallel()
+
+	tpl, err := LoadDefaultTemplateForLanguage("fe")
+	if err == nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): err = nil; want wrapped ErrLanguageNotSupported")
+	}
+	if !errors.Is(err, ErrLanguageNotSupported) {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): err %v not errors.Is(ErrLanguageNotSupported); routing contract broken", err)
+	}
+	if got := err.Error(); !strings.Contains(got, `"fe"`) {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): error message = %q; want to contain offending lang value `\"fe\"`", got)
+	}
+	if tpl.SchemaVersion != "" || len(tpl.Kinds) != 0 {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): returned non-zero Template = %+v; want zero value on rejection", tpl)
+	}
+}
+
+// TestLoadDefaultTemplateForLanguage_UnknownRejected asserts an axis value
+// outside the closed `domain.Project.Language` enum (the test uses
+// `"rust"` as the canonical "obviously not yet supported" value) returns
+// an error wrapping `ErrLanguageNotSupported` with the offending value
+// in the message.
+//
+// Drop 4c.5 droplet F.1.3 acceptance criterion #5 + #8. The closed-enum
+// drift guard: a hand-rolled DB or a future drop that adds a new
+// `domain.Project.Language` value WITHOUT extending the resolver must
+// fail loud rather than silently returning the Go default. The sentinel
+// is the routing contract; the message carries the offending value.
+func TestLoadDefaultTemplateForLanguage_UnknownRejected(t *testing.T) {
+	t.Parallel()
+
+	tpl, err := LoadDefaultTemplateForLanguage("rust")
+	if err == nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"rust\"): err = nil; want wrapped ErrLanguageNotSupported")
+	}
+	if !errors.Is(err, ErrLanguageNotSupported) {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"rust\"): err %v not errors.Is(ErrLanguageNotSupported); closed-enum drift guard broken", err)
+	}
+	if got := err.Error(); !strings.Contains(got, `"rust"`) {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"rust\"): error message = %q; want to contain offending lang value `\"rust\"`", got)
+	}
+	if tpl.SchemaVersion != "" || len(tpl.Kinds) != 0 {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"rust\"): returned non-zero Template = %+v; want zero value on rejection", tpl)
+	}
+}
+
+// TestLoadDefaultTemplate_WrapsLanguageEmpty asserts the thin-wrapper
+// contract: `LoadDefaultTemplate()` returns the SAME Template (deep-equal)
+// as `LoadDefaultTemplateForLanguage("")`. Drop 4c.5 droplet F.1.3
+// acceptance criterion #6 — the cross-test that pins the wrapper
+// semantic.
+//
+// SEMANTIC SHIFT regression net: pre-F.1.3 `LoadDefaultTemplate()` read
+// default-go.toml directly. Post-F.1.3 it routes to default-generic.toml
+// via `LoadDefaultTemplateForLanguage("")`. Future drops that touch the
+// wrapper or the resolver must keep these two call paths in sync;
+// reflect.DeepEqual is the strict invariant.
+func TestLoadDefaultTemplate_WrapsLanguageEmpty(t *testing.T) {
+	t.Parallel()
+
+	wrapped, err := LoadDefaultTemplate()
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplate(): unexpected error: %v", err)
+	}
+	direct, err := LoadDefaultTemplateForLanguage("")
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"\"): unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(wrapped, direct) {
+		t.Fatalf("LoadDefaultTemplate() != LoadDefaultTemplateForLanguage(\"\"); wrapper-equality contract broken\nwrapped = %+v\ndirect  = %+v", wrapped, direct)
 	}
 }

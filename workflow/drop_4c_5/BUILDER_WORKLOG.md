@@ -695,3 +695,158 @@ None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evi
 ### Unknowns routed back to orchestrator
 
 None. Spec, files, line numbers, and acceptance criteria all matched the disk state on read. The doc-comment on `OverlapValue` lived at lines 89-93 as the spec promised (now extended to lines 89-99), and `TestDetectorFindsFileOverlapBetweenSiblings` lived at lines 56-100 (now 56-127 after extension). Test fixture already declared overlapping file AND package, so no fixture extension was needed beyond adding the package-overlap assertion against the existing data.
+
+## Droplet F.1.3 — Round 1
+
+**Author:** go-builder-agent (filesystem-MD mode, opus, 2026-05-05).
+
+**Spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.1.3 — Language-aware embedded resolver" (lines 104-141).
+
+**Blocked-by satisfied:** F.2.1 (default-go.toml rebadge), F.2.2 (default-generic.toml addition). Both shipped pre-F.1.3 in this drop's working tree per `**State:** done (round 1)` markers.
+
+### Files touched (production)
+
+- `internal/templates/embed.go` — full rewrite of the file's exported surface.
+  - Added new sentinel `var ErrLanguageNotSupported = errors.New("template language not supported")` exported for `errors.Is` routing.
+  - Added new function `LoadDefaultTemplateForLanguage(lang string) (Template, error)` with the closed-enum switch: `""` → `builtin/default-generic.toml`, `"go"` → `builtin/default-go.toml`, `"fe"` → wrapped `ErrLanguageNotSupported` per Q1 deferral, anything else → wrapped `ErrLanguageNotSupported` with offending value verbatim.
+  - Rewrote `LoadDefaultTemplate()` from a direct `default-go.toml` reader into a thin wrapper: `return LoadDefaultTemplateForLanguage("")`. Per spec acceptance criterion #6 + the SEMANTIC SHIFT note the spawn prompt called out: this changes the default behavior to return the GENERIC template (zero `[agent_bindings]`).
+  - Added `errors` + `fmt` imports for the sentinel + wrapped-error formatting; left `embed` import unchanged.
+  - Doc-comments cross-reference the closed `domain.Project.Language` enum at `internal/domain/project.go:25-49` (drift-guard pointer per spec falsification mitigation F3) and name F.2.4 as the caller-redirect droplet.
+
+### Files touched (tests)
+
+- `internal/templates/embed_test.go`:
+  - Added imports: `errors`, `reflect`, `strings`.
+  - Rewired `loadDefaultOrFatal` from `LoadDefaultTemplate()` → `LoadDefaultTemplateForLanguage("go")` so the catalog-shape assertions in this file (12 agent bindings, gates, context blocks, STEWARD-owned kinds, opus-builders rule, prohibition-allow-list shape) keep targeting the GO template even after the wrapper's semantic shift. Without this rewire, ~14 existing tests (`TestDefaultTemplateAgentBindingsCoverAllKinds`, `TestDefaultTemplateBuildersRunOpus`, `TestDefaultTemplateLoadsWithGates`, the context-seeded suite, etc.) would break because the generic template ships zero bindings and zero gates.
+  - Updated `TestDefaultTemplateGoLoadsCleanly` to call `LoadDefaultTemplateForLanguage("go")` directly — the test is named "Go" so calling the wrapper which now resolves to generic would be misleading.
+  - Added five new tests at file end:
+    1. `TestLoadDefaultTemplateForLanguage_Generic` — asserts `lang=""` → SchemaVersion `"v1"` AND `len(AgentBindings) == 0` (the generic template's load-bearing distinguishing feature vs default-go).
+    2. `TestLoadDefaultTemplateForLanguage_Go` — asserts `lang="go"` → SchemaVersion `"v1"` AND `len(AgentBindings) == len(allKinds)` (default-go ships 12 bindings; mismatched routing surfaces here).
+    3. `TestLoadDefaultTemplateForLanguage_FERejected` — asserts `lang="fe"` returns wrapped `ErrLanguageNotSupported`, the wrapped message contains literal `"fe"` (so dev surfaces can name the offending input), and the returned `Template` is the zero value.
+    4. `TestLoadDefaultTemplateForLanguage_UnknownRejected` — uses canonical `"rust"` test fixture; asserts wrapped `ErrLanguageNotSupported`, message contains `"rust"`, zero-value Template return.
+    5. `TestLoadDefaultTemplate_WrapsLanguageEmpty` — the wrapper-equality cross-test required by spec acceptance criterion #6: `reflect.DeepEqual(LoadDefaultTemplate(), LoadDefaultTemplateForLanguage(""))`. This is the strict regression net for the SEMANTIC SHIFT — any future drop that touches either the wrapper or the resolver must keep these two call paths in sync.
+
+### Targets run
+
+- `mage test-pkg ./internal/templates` → **386 passed / 0 failed / 0 skipped** (0.28s first run, 0.01s on cache-warm). Includes the five new resolver tests + the existing 381 templates-package tests, none of which regressed after the `loadDefaultOrFatal` rewire.
+- `mage formatCheck` → first run flagged `internal/templates/embed_test.go` (alongside three pre-existing tree-dirty files from sibling Theme A/CE droplets); ran `mage format` to apply gofumpt; second `mage formatCheck` clean.
+- `mage test-pkg ./internal/templates` (post-format rerun) → 386 passed.
+
+### Production caller status (F.2.4 deferral verified)
+
+The only production caller of `LoadDefaultTemplate()` is `seedStewardAnchors` at `internal/app/auto_generate_steward.go:44`. Per F.2.2 acceptance criterion #5, both default-go.toml and default-generic.toml ship the same six STEWARD seeds (DISCUSSIONS / HYLLA_FINDINGS / LEDGER / WIKI_CHANGELOG / REFINEMENTS / HYLLA_REFINEMENTS), so the SEMANTIC SHIFT does NOT change the materialized seed set today. F.2.4 will redirect this caller to the language-explicit form for clarity + future-proofing, but F.1.3's wrapper-pivot does not break anything in `internal/app` mid-flight.
+
+`mage test-pkg ./internal/app` was attempted as a sanity check; it surfaced one pre-existing failure (`TestServiceClaimAuthRequestRejectsNegativeWaitTimeout` failing with `client_type is required: invalid client type`) that traces to `internal/app/auth_requests.go` modifications from a sibling Theme A.x / E.x droplet in the working tree — NOT to F.1.3. F.1.3's edits are confined to `internal/templates/`; the pre-existing failure is the orchestrator's to route, not F.1.3's to fix.
+
+### Design decisions
+
+- **Sentinel is exported (`ErrLanguageNotSupported`), not package-internal.** Per spec acceptance criterion #4 + #5 the FE rejection AND the unknown-lang rejection both wrap the same sentinel; downstream callers in `internal/app` (project-create boundary) and `internal/adapters/server/mcpapi` (MCP error envelopes) need `errors.Is` routing across package boundaries to distinguish "no template for this lang" from a TOML parse error. Lowercase / unexported would have forced every caller to string-match the message, which is the brittle alternative.
+- **Closed-enum routing via `switch`, not a map.** Three cases plus default; a switch reads more naturally and keeps the FE / unknown branches' error-message phrasing distinct (FE gets the Q1-deferral hint; unknown gets "outside closed Project.Language enum"). A map literal would have collapsed the two error messages or required a sidecar map for messages.
+- **Error-message format includes lang value via `%q`, not bare.** Quoted-string formatting (`fmt.Errorf("language %q: ...: %w", lang, ErrLanguageNotSupported)`) makes the offending value unambiguous in dev surfaces — empty strings, whitespace-only strings, and shell-tricky strings like `"fe "` all render visibly distinguishable. Test assertions match against the quoted form (`strings.Contains(got, `"fe"`)`).
+- **Wrapper via thin one-line indirection, not a duplicate read.** `LoadDefaultTemplate() { return LoadDefaultTemplateForLanguage("") }` keeps a single source-of-truth read path. Tests assert `reflect.DeepEqual` between the two call paths so any future divergence is caught immediately.
+- **Doc-comment SEMANTIC SHIFT stamp.** The new `LoadDefaultTemplate` doc-comment names the shift loud, points at the F.2.4 caller-audit droplet, and explains why `seedStewardAnchors`'s materialized output happens to be unchanged today (same 6 STEWARD seeds across both files). A future reader who notices `seedStewardAnchors` calling the wrapper and wonders "wait, generic? wasn't this Go-flavored?" is one doc-comment paragraph away from the answer.
+- **`embed.FS` close handling unchanged.** The previous `defer f.Close()` pattern is preserved verbatim — `embed.FS.Open` returns `fs.File` which already has `Close()` in its method set. Considered a defensive type-assertion + error-discard wrapper but rejected as over-engineering vs the existing idiom in this file.
+
+### Falsification-mitigation status
+
+- **F1 ("FE rejection at the resolver leaves dev-FE-projects unable to create at all"):** mitigated. FE rejection bubbles through the sentinel; the dev's project-create boundary sees a clear `errors.Is(err, ErrLanguageNotSupported)` route and the wrapped message names `"fe"` verbatim. Pre-MVP no FE projects exist, so this is forward-looking instrumentation rather than a today-blocker.
+- **F2 ("Embedded resolver bypasses validation chain when re-using cached parsed Template"):** mitigated. Each call re-runs `Load(f)` against a fresh `embed.FS.Open` reader; no caching layer was introduced. Per-call cost is dominated by TOML parse + validator chain, not by the embed read itself.
+- **F3 ("Closed enum drift between domain.isValidProjectLanguage and LoadDefaultTemplateForLanguage"):** mitigated. `LoadDefaultTemplateForLanguage`'s doc-comment cross-references the domain validator at `internal/domain/project.go` and the unknown-lang branch wraps `ErrLanguageNotSupported` so any future `domain.Project.Language` extension that lands without extending the resolver fails LOUD on first use. `TestLoadDefaultTemplateForLanguage_UnknownRejected` is the regression net.
+
+### Cross-droplet coordination notes
+
+- **F.2.4 (next in chain, blocked_by F.1.3 + F.2.1 + F.2.2):** F.2.4 will redirect `seedStewardAnchors` (and any other `LoadDefaultTemplate()` consumer F.2.4's audit surfaces) from the wrapper to `LoadDefaultTemplateForLanguage(project.Language)`. F.1.3's preserved wrapper means F.2.4 can land without breaking the wrapper-equality test — F.2.4 just changes WHO calls which form, not the form's behavior.
+- **F.1.1 (separately blocked_by F.6.1 in Chain 1):** F.1.1 will rewire `loadProjectTemplate` in `internal/app/service.go` to call the embedded fallback. Per F.1.3 acceptance criterion #7, F.1.1 must call `LoadDefaultTemplateForLanguage(project.Language)` (NOT the unsuffixed wrapper), so the project's Language axis flows through to the resolver. F.1.3 ships the resolver in advance of F.1.1 so the call site is ready.
+- **F.5.x (load.go validator chain edits, blocked_by E.6 → F.1.3):** F.5.1 + F.5.2 add new validators. F.1.3 does not touch `load.go`; the validator chain runs identically against generic and Go content. Both files passed the existing chain pre-F.1.3 (per F.2.1 + F.2.2 worklogs) and continue to pass post-F.1.3 (per the 386-test green run above).
+
+### Hylla feedback
+
+None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evidence resolved via `Read` / `Edit` / `Write` / `Bash` (`grep` for caller audit + `wc` for line counts + `mage` invocations) / system `ls`. The task touched only Go files (Hylla-eligible in principle) but the per-droplet directive says no calls; sibling droplets in this drop have already logged Hylla-staleness as the rationale.
+
+### Unknowns routed back to orchestrator
+
+- **Wrapper preservation vs eventual deprecation.** `LoadDefaultTemplate()` is preserved per spec acceptance criterion #6, but post-F.2.4 every production caller will use `LoadDefaultTemplateForLanguage(...)` directly. The wrapper becomes a one-line bridge with no production reads — only the cross-test `TestLoadDefaultTemplate_WrapsLanguageEmpty` exercises it. Worth flagging for a future cleanup drop: either keep it as a documented compatibility shim or remove once F.2.4 lands and bake the cross-test into the resolver tests directly. F.1.3 makes no removal decision; the spec required preservation. Deferring to closeout / refinement triage.
+- **Pre-existing `TestServiceClaimAuthRequestRejectsNegativeWaitTimeout` failure.** Surfaced when running `mage test-pkg ./internal/app` as a sanity check. The failure is `client_type is required: invalid client type` from `CreateAuthRequest` — clearly a sibling Theme A.x or E.x droplet in the working tree added required `ClientType` validation without updating this test fixture. Out of F.1.3 scope; flagged here so the orchestrator can route to the correct sibling droplet's QA / fix-up cycle.
+
+## Droplet D.2 — Round 1
+
+**Droplet:** D.2 — SWEEP ACCUMULATED VET + GOPLS HINTS.
+**Source spec:** `workflow/drop_4c_5/THEME_BD_PLAN.md` § "Droplet D.2 — Accumulated Vet / Gopls / `mage ci` Hint Sweep".
+**Round:** 1 (single-pass; no QA-driven re-work yet).
+**Sweep artifact:** `workflow/drop_4c_5/D2_HINT_SWEEP.md` (NEW).
+
+### Files touched (production)
+
+- `internal/adapters/server/mcpapi/instructions_explainer.go` — replaced `strings.Title(string(actionItem.Scope))` × 2 (lines 354 + 358) with `capitalizeASCIIScope(string(actionItem.Scope))`. Added a 13-line ASCII-only helper at end of file (after `joinKindScopes`) with a doc-comment cross-referencing the Go 1.18 `strings.Title` deprecation and pinning the input contract (`KindAppliesTo` is a closed pure-ASCII enum). Net delta: +18 / −2 LOC.
+
+### Files touched (tests)
+
+- `internal/adapters/server/mcpapi/instructions_explainer_test.go` — NEW co-located test file. Adds `TestCapitalizeASCIIScope` — table-driven across 10 cases pinning empty input, single lowercase letter, all-lowercase ASCII word, already-capitalized passthrough, all-uppercase passthrough, leading-non-letter (digit / hyphen) passthrough, mixed-case preservation, and the actual production input shapes (`"droplet"` → `"Droplet"`, `"plan"` → `"Plan"`). 41 LOC.
+- `internal/app/dispatcher/monitor_test.go` — two old-style `for i := 0; i < n; i++` loops at lines 468 + 474 swapped to `for i := range n` (Go 1.22 range-int syntax). Net delta: 0 LOC. Explicit carry-forward from `~/.claude/projects/-Users-evanschultz-Documents-Code-hylla-tillsyn/memory/project_drop_4a_refinements_raised.md` R9 (the 4a memory cited 464/470; line numbers shifted post-4a refactor to 468/474).
+
+### Files touched (workflow MD)
+
+- `workflow/drop_4c_5/THEME_BD_PLAN.md` — D.2 droplet row state flipped `→ in_progress` at start, `→ done` at end.
+- `workflow/drop_4c_5/D2_HINT_SWEEP.md` — NEW. Three required sections (`## Captured Hints`, `## Fix-Now Bucket`, `## Routed-to-Refinement Bucket`) plus methodology, verification, and references. 46 captured hints, 4 Fix-Now sites in 2 files, 42 routed sites in 17 files, 3 ignored sites.
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — this entry (you are reading it).
+
+### Targets run
+
+- `mage ci` (baseline at sweep start, BEFORE any D.2 edits) → **GREEN.** 2750 tests passed across 24 packages, 1 pre-existing skip, all coverage above 70%. Output captured into `D2_HINT_SWEEP.md` § 2.1.
+- `mage testPkg ./internal/adapters/server/mcpapi` → **202 passed / 1 pre-existing skip** (was 191 pre-D.2; the +11 are `TestCapitalizeASCIIScope` sub-tests + the parent test).
+- `mage testPkg ./internal/app/dispatcher` → **356 passed** (unchanged count; range-int modernization is structural).
+- `mage formatCheck` → clean (no gofumpt rewrite needed; my 13-line helper + new test file already in gofumpt shape).
+- `mage ci` (final, AFTER D.2 edits) → **1 sibling-induced failure** (`TestServiceClaimAuthRequestRejectsNegativeWaitTimeout` in `internal/app`, surface text `client_type is required: invalid client type`). NOT caused by D.2 — see Sibling-Induced Failure Note below. The same failure was already logged by sibling droplet F.1.3 builder at line 769 of this worklog. D.2's touched packages (`internal/adapters/server/mcpapi` + `internal/app/dispatcher`) both pass cleanly in isolation.
+
+### Sweep findings — Fix-Now (4 sites, 2 files)
+
+1. **`instructions_explainer.go` `strings.Title` × 2** → `capitalizeASCIIScope` helper (Go 1.18 deprecation retirement).
+2. **`monitor_test.go` `for i := 0; i < n; i++` × 2** → `for i := range n` (4a R9 carry-forward; gopls `rangeint` modernizer hint).
+
+### Sweep findings — Routed-to-Refinement
+
+The full inventory is in `D2_HINT_SWEEP.md` § 4. Two routed groups:
+
+- **D2-R1: Mass `for i := range N` modernization across 39 sites in 16 files.** Routed because a single-droplet repo-wide modernization touching `internal/tui/model.go` (Drop-1 R1 split list, 22kLOC pre-split) and `cmd/till/main_test.go` (acceptance #5 forbidden file) would exceed scope guard. Follow-up: schedule alongside the Drop-1 R1 model.go split, plus a small refinement droplet for the non-tui sites.
+- **D2-R2: `internal/app/dispatcher/spawn.go` 3 F.7-CORE TODOs.** Routed because plumbing dispatcher `ctx` through `BuildSpawnCommand` is a contract-touching refactor (not a one-liner). Follow-up: Drop 5+ daemon-mode dispatcher polish work.
+
+### Sibling-Induced Failure Note
+
+`mage ci` at sweep END is NOT green. Diagnosis:
+
+- The sweep started with HEAD `7194184` and 4 modified files in working tree (sibling 4c.5 in-flight work).
+- Sweep baseline `mage ci` was GREEN at that point.
+- Between sweep start and sweep end, sibling droplets A.1/A.3/A.4/B.1/B.2/F.1.x landed substantial concurrent work (working tree at sweep end has 25 modified files, +1500 LOC across them).
+- One sibling change in `internal/app/auth_requests.go` added a `client_type` requirement to `CreateAuthRequest` without updating `TestServiceClaimAuthRequestRejectsNegativeWaitTimeout` (`auth_requests_test.go:556`). This test calls `CreateAuthRequest` with no `ClientType` field, so the validation now rejects the call.
+- D.2 did NOT touch `internal/app/auth_requests*.go` or any `cmd/till` file. The failure is fully attributable to sibling droplet **A.3** ("Server-infer / require non-empty `client_type`" — Chain 2 droplet per master plan).
+- Per spawn-prompt scope guard ("prefer routing to refinement rather than reopening recently-shipped droplets"), D.2 leaves the sibling failure for A.3 to address. Single-line fix on A.3's side: add `ClientType: "cli"` to the `CreateAuthRequestInput` literal at `auth_requests_test.go:546`.
+
+D.2 acceptance #4 ("`mage ci` passes. No new warnings introduced.") is satisfied with respect to D.2's own changes — D.2 introduces zero new warnings, zero new test failures, zero coverage regressions in its touched packages. The remaining `mage ci` failure clears once A.3 lands its test-fixture update.
+
+### Falsification-mitigation status
+
+- **Mitigation #1 (scope creep into Drop-1 R1 territory):** mitigated. D.2 deliberately did not touch `internal/tui/model.go` (8 indexed-loop sites + 5 in tests) — all routed under D2-R1 with explicit Drop-1 R1 cross-reference.
+- **Mitigation #2 (capture incompleteness from non-default builds):** partially mitigated. Static-grep against the known gopls-modernizer pattern set substituted for the originally-specced LSP workspace diagnostics call (the `LSP` MCP tool is not in this subagent's tool list and direct `gopls` bash invocation is denied by sandbox). The static-grep set covers the same diagnostic surface gopls would report — `strings.Title` deprecation, `rangeint` modernizer, `io/ioutil` deprecation, `Deprecated:` doc-comments, `//nolint` directives, TODO/FIXME markers. All 41 indexed-loop sites + 2 stdlib-deprecation sites + 5 informational annotations captured. Documented in `D2_HINT_SWEEP.md` § 1.
+- **Mitigation #3 (route-to-refinement becomes a punt):** mitigated. Both routed entries (D2-R1 and D2-R2) include site enumeration, rationale tied to scope guard, and follow-up plan with named consumer (Drop-1 R1 for D2-R1; Drop 5+ daemon-mode for D2-R2).
+
+### Design decisions
+
+- **`capitalizeASCIIScope` helper instead of `golang.org/x/text/cases`.** Inputs are the closed `KindAppliesTo` enum — pure ASCII. The single-byte first-letter transform is correct for the actual input domain. Adding `golang.org/x/text/cases` would require a `go get` + dev-shell coordination (the spawn prompt forbids me from initiating dependency adds), and would introduce a non-trivial transitive surface for what is a 13-line in-package transform.
+- **Helper placement at end of `instructions_explainer.go`.** Adjacent to `joinKindScopes`, the only other small string-shaping helper in the file. Keeps the file's conceptual boundary clean.
+- **No regression test for `monitor_test.go` change.** Per spec acceptance #5: "an unused-variable fix is purely structural and needs no new test." Same logic applies to `for i := 0; i < n; i++` → `for i := range n` — the iteration count and `i` values are byte-identical for `i ∈ [0, n)`. The existing `TestMonitorConcurrentTrackHandlesAreIndependent` already exercises both loops end-to-end.
+- **No `mage ci` repair attempted on sibling-induced A.3 failure.** Justified above in "Sibling-Induced Failure Note." The fix is A.3's responsibility; cross-droplet patching from D.2 would couple the parallel-dispatch model in a way the orchestrator architecture explicitly avoids.
+
+### Cross-droplet coordination notes
+
+- **A.3 sibling sequencing:** A.3 ("Require non-empty `client_type`") landed `client_type` validation in `internal/app/auth_requests.go` mid-flight in the parallel-dispatch window. It needs a test-fixture update at `auth_requests_test.go:546` (one line: `ClientType: "cli"`). A.3's QA pair will catch this; orchestrator routes accordingly. Out of D.2 scope.
+- **Drop-1 R1 cross-reference:** D2-R1's 5 modernization sites in `internal/tui/model.go` are noted in the routed-refinement payload as "fold into the Drop-1 R1 model.go split when it lands." Avoids duplicate work.
+
+### Hylla feedback
+
+None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls. NO Tillsyn runtime calls"). All evidence resolved via `Read` / `Edit` / `Write` / `Bash` (`rg` for static-grep hint discovery, `wc` for line counts, `mage` for build/test/format gates). The task touched only Go files plus workflow MDs; Hylla is Go-only-today (memory rule `feedback_hylla_go_only_today`), but the per-droplet directive forbids calls in any case. The static-grep substitute for gopls workspace diagnostics is the only methodology adaptation worth flagging — gopls / LSP MCP tool would have given a more authoritative diagnostic surface, but the agent's tool list does not include it. Recommend: future builders' tool surface should include `LSP` for sweep-style droplets so static-grep is not the only available probe.
+
+### Unknowns routed back to orchestrator
+
+- **Sibling droplet A.3's incomplete test-fixture update.** As described in "Sibling-Induced Failure Note." The orchestrator should route this to A.3's QA pair (or a fix-builder round-2 spawn) for completion; not D.2's surface.
+- **D2-R1 + D2-R2 forwarding.** Both routed-refinement entries need to land in `~/.claude/projects/-Users-evanschultz-Documents-Code-hylla-tillsyn/memory/project_drop_4c_5_refinements_raised.md` per the master plan's drop-end refinements protocol. The orchestrator carries that forward at drop close; this worklog + `D2_HINT_SWEEP.md` § 4 are the source-of-truth payload.
+- **`CLI_ADAPTER_AUTHORING.md` / `MCP_TOOL_AUTHORING.md` cross-link.** Sibling droplet A.2's worklog (line 654) flagged that the strict-decoder pattern adds an "every `mcp.WithString` declaration must have a matching JSON-tagged field" invariant that should land in authoring docs. D.2 surfaced no documentation drift of its own, but the sibling's flag remains open — cross-route at drop close.

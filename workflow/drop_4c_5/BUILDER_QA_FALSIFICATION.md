@@ -815,3 +815,48 @@ N/A — E.3 review touched Go files (Hylla-eligible in principle) but the spawn-
 ### TL;DR
 
 T1. PASS — E.3's doc + test-rigor delta is clean: independent presence loops (no `len(overlaps) == 2`), fixture declares both shared-path-and-package, package-only test preserved, doc-comment claim verified against `normalizeActionItemPaths` (TrimSpace + dedupe, no Clean), `./a/b.go` vs `a/b.go` non-overlap example accurate, A13 deferred. One cosmetic NIT (test name now covers both kinds), zero counterexamples, zero refinements raised.
+
+---
+
+## Droplet F.1.3 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (filesystem-MD mode, opus, 2026-05-05).
+**Spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.1.3 — Language-aware embedded resolver" (lines 104-141).
+**Builder worklog:** `workflow/drop_4c_5/BUILDER_WORKLOG.md` § "Droplet F.1.3 — Round 1" (lines 699-769).
+**Files reviewed:** `internal/templates/embed.go`, `internal/templates/embed_test.go`.
+
+### 1. Findings
+
+- 1.1 **Verdict: PASS — no CONFIRMED counterexample.** All 8 spawn-prompt attack categories walked; eight are REFUTED, none CONFIRMED. The implementation is consistent with the spec, the wrapper semantic shift is mitigated by the test rewire, and the cross-package failure flagged in the worklog (`TestServiceClaimAuthRequestRejectsNegativeWaitTimeout`) is independently traceable to droplet A.3's `ClientType` validator at `internal/app/auth_requests.go:236-237` — not F.1.3.
+- 1.2 **`mage test-pkg ./internal/templates` → 386/386 pass** at HEAD with the F.1.3 working-tree edits applied. Five new resolver tests + 381 prior templates tests; zero regressions.
+- 1.3 **`mage test-pkg ./internal/app` shows 1 fail / 429 pass.** The failing test is `TestServiceClaimAuthRequestRejectsNegativeWaitTimeout` at `auth_requests_test.go:543-568`. The fixture calls `CreateAuthRequest` WITHOUT `ClientType` (lines 546-554); the server-side validator at `auth_requests.go:236` (added by droplet A.3 — visible in the doc-comment "Drop 4c.5 droplet A.3: client_type is server-stamped at the adapter seam") rejects with `client_type is required`, so the test never reaches the `ClaimAuthRequest` assertion. F.1.3's edits are confined to `internal/templates/`; this failure is attributable to A.3 (or A.2 / A.x sibling) and falls outside F.1.3's blast radius.
+
+### 2. Counterexamples
+
+- 2.1 **Attack #1 (semantic-shift breakage in callers): REFUTED.** `rg LoadDefaultTemplate\b` shows exactly two production references:
+  - `internal/app/auto_generate_steward.go:44` — inside the `loadStewardSeedTemplate` seam.
+  - `internal/app/service.go:425` — doc-comment reference only (no call).
+  The seam is consumed by `seedStewardAnchors` which only iterates `tpl.StewardSeeds` (line 100). Per F.2.2 acceptance criterion #5, both `default-go.toml` and `default-generic.toml` ship the SAME six STEWARD seeds (DISCUSSIONS / HYLLA_FINDINGS / LEDGER / WIKI_CHANGELOG / REFINEMENTS / HYLLA_REFINEMENTS) — verified independently in `embed_test.go:153-160` (`TestLoadDefaultGenericTemplate`'s `wantSeedTitles`) and `auto_generate_steward.go:152-158` (`canonicalDropFindings`). Materialized seed set is unchanged mid-drop. F.2.4 will redirect to the language-explicit form per spec.
+- 2.2 **Attack #2 (cross-package mage ci impact): REFUTED.** The `internal/app` failure traces to A.3's `ClientType` validator (`auth_requests.go:225-237` cite "Drop 4c.5 droplet A.3"); the test fixture omits `ClientType` so it fails at `CreateAuthRequest` before reaching the wait-timeout assertion. Zero coupling to F.1.3's resolver. Builder correctly flagged + deferred.
+- 2.3 **Attack #3 (test-helper rewire correctness): REFUTED.** `loadDefaultOrFatal` is invoked by 24 tests (per `rg` count in this round). Spot-checked the highest-risk callers:
+  - `TestDefaultTemplateAgentBindingsCoverAllKinds` (line 374) — asserts 12 bindings; would fail if helper returned generic. Helper now explicit `"go"` — passes.
+  - `TestLoadDefaultTemplate_WrapsLanguageEmpty` (line 1010) — only test that asserts wrapper-returns-generic semantic. It calls `LoadDefaultTemplate()` directly (NOT the helper) and `LoadDefaultTemplateForLanguage("")` directly — wrapper rewire does not invalidate the assertion.
+  No test in `embed_test.go` calls `loadDefaultOrFatal` AND asserts the wrapper semantic; the rewire is sound.
+- 2.4 **Attack #4 (`errors.Is` works for unknown lang): REFUTED.** `embed.go:144` wraps with `%w`: `fmt.Errorf("language %q: outside closed Project.Language enum: %w", lang, ErrLanguageNotSupported)`. `embed_test.go:984-997` `TestLoadDefaultTemplateForLanguage_UnknownRejected` verifies via `errors.Is(err, ErrLanguageNotSupported)` AND `strings.Contains(err.Error(), "\"rust\"")`. Same pattern at line 142 for `"fe"`. Routing contract holds.
+- 2.5 **Attack #5 (empty-string lang as preserve vs generic): REFUTED-with-noted-context.** Per Q1 resolution (THEME_F_PLAN.md §3 Note 5) `""` → generic is the intended contract. Builder's worklog § "Production caller status" + § "Cross-droplet coordination notes" name F.2.4 as the audit-and-redirect droplet. Spec acceptance criterion #7 explicitly requires F.1.1 to call `LoadDefaultTemplateForLanguage(project.Language)`, which surfaces the `Language=""` → generic semantic at the project-create boundary. NIT: builder could add a one-line `// SEMANTIC SHIFT: Language="" silently routes to generic — see F.2.4 audit` comment near the seam at `auto_generate_steward.go:43-45`, but this is downstream pickup work, not an F.1.3 BLOCKER.
+- 2.6 **Attack #6 (`ErrLanguageNotSupported` exported + wrapped): REFUTED.** `embed.go:54` declares `var ErrLanguageNotSupported = errors.New("template language not supported")` — uppercase E, exported. Both wrap sites use `%w`. Test at `embed_test.go:959-960` confirms `errors.Is` routing across the package boundary.
+- 2.7 **Attack #7 (embed.FS double-load on every call — performance NIT, not BLOCKER): REFUTED-as-NIT.** `LoadDefaultTemplateForLanguage` opens the embed.FS file + runs `Load` on every call (no caching). Per F.1.3 falsification mitigation F2 in the spec, this is the explicit design — caching layer would bypass the validator chain. Performance impact bounded: dispatcher per-spawn cost is dominated by bundle materialization, not template parse. **NIT** logged for a future cache-once refinement; not a counterexample.
+- 2.8 **Attack #8 (`reflect.DeepEqual` structural not pointer): REFUTED.** `embed_test.go:1021` `reflect.DeepEqual(wrapped, direct)`. Both `wrapped` and `direct` are `Template` (struct value), not `*Template`. `reflect.DeepEqual` on struct values compares field-by-field structurally including embedded slices and maps — exactly what's needed. Pointer-equality semantic does not apply here.
+- 2.9 **Bonus check — closed-enum drift guard live.** `embed.go:115-120` doc-comment cross-references `domain.isValidProjectLanguage` (per spec falsification mitigation F3); `TestLoadDefaultTemplateForLanguage_UnknownRejected` (test #4) is the runtime regression net. Should `domain.Project.Language` ever extend (e.g. add `"rust"` or `"py"`) WITHOUT a matching resolver case + `default-<lang>.toml`, the unknown-lang branch fires loud rather than silently returning Go default. Drift guard intact.
+
+### 3. Summary
+
+- 3.1 **PASS — verdict: no CONFIRMED counterexample.** All 8 attack categories REFUTED. Two NITs raised (one cosmetic doc-comment add at `auto_generate_steward.go:43-45`, one performance cache-once for a future refinement) — neither blocks F.1.3.
+- 3.2 **Cross-package failure attribution confirmed.** `TestServiceClaimAuthRequestRejectsNegativeWaitTimeout` failure is A.3's `ClientType` validator + a stale test fixture; orchestrator should route to A.x QA cycle. F.1.3 is innocent; builder's worklog already noted this correctly under § "Unknowns routed back to orchestrator."
+- 3.3 **Hylla feedback: N/A** — F.1.3 review touched Go files (Hylla-eligible) but the spawn-prompt directive ("NO Hylla calls") routed all evidence through `Read` + `Bash` (`rg`) + `mage`. Hylla is stale post-Drop-4c-merge until reingest; no miss to log.
+
+### TL;DR
+
+T1. PASS — F.1.3 is sound: closed-enum resolver with `errors.Is`-routable sentinel, structural `reflect.DeepEqual` wrapper-equality cross-test, helper rewire safe across 24 callers, semantic shift benign mid-drop because both TOMLs ship identical STEWARD seeds (F.2.4 will land the explicit redirect). Cross-package `internal/app` failure is A.3-territory, not F.1.3's. Two NITs (cosmetic doc + future cache refinement); zero counterexamples; zero blockers.
+T2. Counterexamples: 9 attacks walked (8 spawn-prompt categories + 1 bonus drift-guard live check); all REFUTED. Most load-bearing checks: `errors.Is` chain via `%w`, `reflect.DeepEqual` on struct values not pointers, `loadDefaultOrFatal` rewire vs all 24 call sites, `seedStewardAnchors` materialized output unchanged because both files ship same 6 seeds.
+T3. Verdict PASS. `mage test-pkg ./internal/templates` 386/386. `internal/app` 1 fail attributable to A.3 (`auth_requests.go:236` `ClientType` server-stamp).

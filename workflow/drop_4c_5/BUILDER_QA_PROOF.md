@@ -596,3 +596,87 @@ N/A — per spawn prompt directive (filesystem-MD mode, NO Hylla calls).
 - T3 — `mage test-pkg ./internal/app/dispatcher` 356/356 PASS trusted per spawn prompt; worklog corroborates with `mage test-func` (1.32s, race) + `mage format` clean.
 - T4 — A13 (`InsertRuntimeBlockedBy` single-flight) untouched: file inventory in worklog covers only doc + test + workflow MDs; `conflict.go:271-351` body unchanged.
 - T5 — Worklog at `BUILDER_WORKLOG.md:657-697` covers all required sections (author, spec, state, files, targets, design notes, falsification status, Hylla feedback, unknowns).
+
+## Droplet F.1.3 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD coordination mode — NO Tillsyn / Hylla calls).
+**Date:** 2026-05-05.
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.1.3 — Language-aware embedded resolver" (lines 104-141).
+**Builder round under review:** `workflow/drop_4c_5/BUILDER_WORKLOG.md` § "Droplet F.1.3 — Round 1" (lines 699-769).
+**Verdict:** PASS.
+
+### Trace Coverage
+
+1. **Acceptance #1 — `LoadDefaultTemplateForLanguage(lang string) (Template, error)` exists with documented signature + `ErrLanguageNotSupported` sentinel.** COVERED.
+   - `internal/templates/embed.go:130` — `func LoadDefaultTemplateForLanguage(lang string) (Template, error)`. Doc-comment at lines 96-129 documents the closed enum, drift-guard contract pointing at `internal/domain/project.go` `isValidProjectLanguage`, and the four return-error paths (`fe` deferral, unknown lang, embed-FS open failure, Load chain errors).
+   - `internal/templates/embed.go:54` — `var ErrLanguageNotSupported = errors.New("template language not supported")` (exported). Doc-comment at lines 35-53 names the routing contract (`errors.Is` across package boundaries) and the closed-enum drift guard.
+
+2. **Acceptance #2 — `lang == ""` → `default-generic.toml`.** COVERED.
+   - `embed.go:133-134` — switch case `""` sets `path = "builtin/default-generic.toml"`.
+   - Test pin at `embed_test.go:887-905` `TestLoadDefaultTemplateForLanguage_Generic`: invokes resolver with `""`, asserts `SchemaVersion == SchemaVersionV1` AND the load-bearing `len(AgentBindings) == 0` discriminator (default-go ships 12 bindings; mismatched routing surfaces here).
+
+3. **Acceptance #3 — `lang == "go"` → `default-go.toml`.** COVERED.
+   - `embed.go:135-136` — switch case `"go"` sets `path = "builtin/default-go.toml"`.
+   - Test pin at `embed_test.go:921-939` `TestLoadDefaultTemplateForLanguage_Go`: invokes resolver with `"go"`, asserts `SchemaVersion == "v1"` AND `len(AgentBindings) == len(allKinds)` (12 — the load-bearing discriminator vs generic).
+
+4. **Acceptance #4 — `lang == "fe"` → wrapped `ErrLanguageNotSupported` per Q1.** COVERED.
+   - `embed.go:137-142` — switch case `"fe"` returns `fmt.Errorf("language %q: fe template unavailable; defer until FE adopter materializes: %w", lang, ErrLanguageNotSupported)`. Q1 phrasing matches THEME_F_PLAN.md §3 Note 5.
+   - Test pin at `embed_test.go:952-968` `TestLoadDefaultTemplateForLanguage_FERejected`: asserts `err != nil`, `errors.Is(err, ErrLanguageNotSupported)`, message contains literal `"fe"` (`%q`-quoted form), AND zero-value Template return.
+
+5. **Acceptance #5 — Unknown lang → wrapped `ErrLanguageNotSupported` with offending value.** COVERED.
+   - `embed.go:143-144` — switch default returns `fmt.Errorf("language %q: outside closed Project.Language enum: %w", lang, ErrLanguageNotSupported)`.
+   - Test pin at `embed_test.go:981-997` `TestLoadDefaultTemplateForLanguage_UnknownRejected`: uses canonical `"rust"` fixture; asserts wrapped sentinel via `errors.Is`, message contains `"rust"`, zero-value Template return.
+
+6. **Acceptance #6 — `LoadDefaultTemplate()` preserved as thin wrapper; SEMANTIC SHIFT named loud.** COVERED.
+   - `embed.go:92-94` — body is exactly `return LoadDefaultTemplateForLanguage("")`. One-line indirection per spec.
+   - Doc-comment at `embed.go:56-91` carries an explicit "SEMANTIC SHIFT (Drop 4c.5 droplet F.1.3)" stamp naming the pre→post behavior change (default-go.toml direct read → generic via wrapper), the affected callers (`seedStewardAnchors` at `internal/app/auto_generate_steward.go:44` + `loadProjectTemplate` Drop-3.14 stub), and the F.2.4 caller-redirect successor. The same-6-STEWARD-seeds-across-both-files rationale for why the materialized output is unchanged today is named at lines 75-81.
+   - Cross-test at `embed_test.go:1010-1024` `TestLoadDefaultTemplate_WrapsLanguageEmpty` uses `reflect.DeepEqual(LoadDefaultTemplate(), LoadDefaultTemplateForLanguage(""))` — the strict invariant that pins the wrapper's semantic to its delegated form.
+
+7. **Acceptance #8 — Five new tests landed.** COVERED. Direct file inventory at `embed_test.go`:
+   - line 887 `TestLoadDefaultTemplateForLanguage_Generic`.
+   - line 921 `TestLoadDefaultTemplateForLanguage_Go`.
+   - line 952 `TestLoadDefaultTemplateForLanguage_FERejected`.
+   - line 981 `TestLoadDefaultTemplateForLanguage_UnknownRejected`.
+   - line 1010 `TestLoadDefaultTemplate_WrapsLanguageEmpty` (the wrapper-equality cross-test). Total: five new tests, all `t.Parallel()`, all asserting acceptance bullets #2–#6.
+
+8. **Acceptance #9 — `mage test-pkg ./internal/templates` passes (386/386).** COVERED.
+   - Worklog at `BUILDER_WORKLOG.md:730-733` reports `386 passed / 0 failed / 0 skipped` (initial run + post-format rerun). Arithmetic checks against F.2.2's 381-test baseline: 381 prior + 5 new = 386. Trusted per spawn prompt's "Builder F.1.3 returned green: `mage test-pkg ./internal/templates` 386/386 PASS" verbatim.
+   - The full Load() validator chain (version pre-pass, strict decode, validateMapKeys, validateChildRuleKinds, validateChildRuleCycles, validateChildRuleReachability, validateGateKinds, validateAgentBindingEnvNames, validateAgentBindingContext, validateAgentBindingToolGating, validateTillsyn) ran inside both new resolver tests via `Load(f)` and accepted both files.
+
+9. **Test-helper rewire — `loadDefaultOrFatal` + `TestDefaultTemplateGoLoadsCleanly` use `LoadDefaultTemplateForLanguage("go")`.** COVERED.
+   - `embed_test.go:32` — `tpl, err := LoadDefaultTemplateForLanguage("go")` (was `LoadDefaultTemplate()`). Doc-comment at lines 21-29 explicitly names the SEMANTIC SHIFT rationale: post-F.1.3 `LoadDefaultTemplate()` returns generic, and the catalog-shape assertions in this file (12 agent bindings, gates, context blocks, STEWARD-owned kinds, opus-builders rule, prohibition-allow-list shape) target the GO template specifically. The rewire is the ONLY way the existing ~14 catalog-shape tests survive the wrapper pivot.
+   - `embed_test.go:51-58` — `TestDefaultTemplateGoLoadsCleanly` body invokes `LoadDefaultTemplateForLanguage("go")` directly. Doc-comment at lines 39-47 documents the F.2.1 rename (`TestDefaultTemplateLoadsCleanly` → `TestDefaultTemplateGoLoadsCleanly`) and the F.1.3 rewire to the language-explicit form.
+   - Spot-checked downstream tests via `loadDefaultOrFatal`: `TestDefaultTemplateAgentBindingsCoverAllKinds` (line 374), `TestDefaultTemplateBuildersRunOpus` (line 396), `TestDefaultTemplateLoadsWithGates` (line 500), the context-seeded suite (lines 661-873) — all pull through `loadDefaultOrFatal` and thus through `LoadDefaultTemplateForLanguage("go")`. The 386/386 PASS confirms no regression.
+
+10. **Worklog completeness — including documented SEMANTIC SHIFT.** COVERED. `BUILDER_WORKLOG.md` § "Droplet F.1.3 — Round 1" (lines 699-769) contains:
+    - Author + opus model + filesystem-MD mode + spec pointer (lines 701-705).
+    - Files-touched (production) section (lines 707-714) detailing the new sentinel, the new function with the closed-enum switch, the wrapper rewrite, the import additions, and the doc-comment cross-reference to `domain.Project.Language` + F.2.4 successor.
+    - Files-touched (tests) section (lines 716-727) detailing the five new tests + the helper rewire + the `TestDefaultTemplateGoLoadsCleanly` body update.
+    - Targets-run section with the 386/386 PASS count + `mage formatCheck` cycle (lines 729-733).
+    - Production-caller-status section (lines 735-739) verifying that the SEMANTIC SHIFT does not change the materialized seed set today (same 6 STEWARD seeds across both files) and naming the pre-existing `internal/app` failure as out-of-scope.
+    - Design-decisions section (lines 741-748) covering the exported sentinel rationale, the switch-vs-map choice, the `%q` format choice, the thin-wrapper indirection, the SEMANTIC SHIFT doc-comment stamp, and the embed.FS close idiom.
+    - Falsification-mitigation status section (lines 750-754) walking F1/F2/F3 from the spec.
+    - Cross-droplet coordination section (lines 756-760) naming F.2.4, F.1.1, and F.5.x downstream linkages.
+    - Hylla-feedback section (line 762-764) with the per-spawn-prompt "NO Hylla calls" justification.
+    - Unknowns-routed-back section (lines 766-769) flagging the wrapper-deprecation question and the pre-existing `internal/app` test failure.
+    - THEME_F_PLAN.md droplet F.1.3 heading shows `**State:** done (round 1)` at line 106.
+
+### Findings
+
+None. All ten check items land clean. The closed-enum switch is implemented as the spec's preferred shape (switch over map for distinct error-message phrasing), the SEMANTIC SHIFT is named loud in three places (production doc-comment, helper-rewire doc-comment, builder worklog), and the wrapper-equality cross-test is the strict regression net for any future drift between the two call paths. The five new tests cover the four acceptance-listed scenarios PLUS the spec-mandated wrapper-equality cross-test (#6) — exact match to spec's "5 new tests" tally.
+
+### Hylla Feedback
+
+N/A — F.1.3 review touched only Go-eligible files (`embed.go`, `embed_test.go`) plus workflow MDs. Per spawn-prompt directive "filesystem-MD coordination mode. NO Hylla calls" all evidence resolved via Read on the active worktree files. Per project rule "Hylla Indexes Only Go Files Today" the Go-source review would normally favor Hylla; the override is drop-specific (Hylla stale across the post-Drop-4c-merge state), not a Hylla ergonomics signal.
+
+### Conclusion
+
+PASS. F.1.3 ships the language-aware resolver precisely as scoped: closed-enum switch over `""` / `"go"` / `"fe"` / default; exported `ErrLanguageNotSupported` sentinel for cross-package `errors.Is` routing; thin one-line wrapper preservation that re-routes `LoadDefaultTemplate()` to generic per the SEMANTIC SHIFT; helper + canary-test rewire to keep all existing Go-shape catalog assertions targeting default-go.toml. `mage test-pkg ./internal/templates` 386/386 PASS = 381 prior + 5 new — arithmetic checks against F.2.2's baseline. Worklog is complete with explicit SEMANTIC SHIFT documentation, falsification-mitigation walk, downstream coordination notes, and routed unknowns.
+
+### TL;DR
+
+- T1 — PASS. Resolver function at `embed.go:130` + sentinel at `embed.go:54` match acceptance #1 surface; closed-enum switch at lines 132-145 covers acceptance #2-#5 paths.
+- T2 — Wrapper preservation at `embed.go:92-94` (one-line indirection) + SEMANTIC SHIFT doc-comment at lines 56-91 + cross-test at `embed_test.go:1010-1024` (`reflect.DeepEqual`) pin acceptance #6.
+- T3 — Five new tests landed at `embed_test.go:887`, 921, 952, 981, 1010; all assertions match spec scenarios.
+- T4 — Helper rewire at `embed_test.go:32` (`loadDefaultOrFatal` → `"go"`) + canary at `embed_test.go:51` keep ~14 existing catalog-shape tests targeting default-go.toml; 386/386 PASS confirms no regression.
+- T5 — Worklog at `BUILDER_WORKLOG.md:699-769` covers all required sections including the SEMANTIC SHIFT documentation, F.2.4 caller-redirect linkage, and routed unknowns.

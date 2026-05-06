@@ -103,6 +103,7 @@
 
 ### Droplet F.1.3 — Language-aware embedded resolver
 
+**State:** done (round 1)
 **Title:** `4c.5.F.1.3 — embedded resolver picks default-generic vs default-go by Language`.
 
 **Files / paths:**
