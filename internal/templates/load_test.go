@@ -1922,3 +1922,148 @@ blocked_by_parent = true
 		t.Fatalf("Load: err = %q; want substring %q (parent kind)", err.Error(), `parent "build"`)
 	}
 }
+
+// TestValidateChildRuleReachability_AllReachable verifies the F.5.2 vacuously-
+// true happy-path: the embedded `default-go.toml` template loads cleanly
+// because its 4 standard child_rules cover every non-standalone kind in the
+// closed 12-value enum — `plan` / `build` / the four QA twins all appear as
+// either WhenParentKind or CreateChildKind. Standalone kinds (`closeout`,
+// `commit`, `refinement`, `discussion`, `human-verify`, `research`) are
+// exempt and need not appear in child_rules.
+//
+// Loads via LoadDefaultTemplateForLanguage("go") rather than reading the
+// embed bytes directly so the entire validation chain (including F.5.2's
+// new validators) runs end-to-end against the canonical adopter entry
+// point. Failing this test signals either the embedded default drifted —
+// missing a kind or a child_rule — or the reachability validator's
+// vocabulary diverged from `domain.Kind` (e.g. a new kind landed without
+// either a child_rule reference OR a reachabilityStandaloneKinds entry).
+func TestValidateChildRuleReachability_AllReachable(t *testing.T) {
+	if _, err := LoadDefaultTemplateForLanguage("go"); err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\"): unexpected error: %v", err)
+	}
+}
+
+// TestValidateChildRuleReachability_BuildOrphanedRejected verifies the F.5.2
+// hard-fail contract: a synthetic template that declares a build-family kind
+// in [kinds] but has zero [[child_rules]] entries referencing it (neither as
+// WhenParentKind nor CreateChildKind) is rejected via
+// ErrUnreachableChildRule, with the wrapped message naming the offending
+// kind.
+//
+// Test subject choice: the test orphans `kind=build-qa-falsification` rather
+// than `kind=build` itself. Rationale: declaring `[kinds.build]` activates
+// validateRequiredChildRules's QA-twin invariant (build MUST have both
+// build-qa-proof AND build-qa-falsification child_rules), which runs BEFORE
+// reachability in the validator chain — declaring `[kinds.build]` without
+// those twin rules trips required-rules first and reachability never runs.
+// `build-qa-falsification` is non-standalone and has no required-children
+// invariant of its own, so it isolates the reachability rule cleanly while
+// preserving the spec's "build-family kind orphaned from rules" intent.
+//
+// The synthetic template DECLARES `[kinds.build-qa-falsification]` (so the
+// kind is "valid" per the schema) but never wires it into child_rules. The
+// test asserts that declaration alone is insufficient — reachability
+// requires the kind to appear in at least one child_rules row.
+func TestValidateChildRuleReachability_BuildOrphanedRejected(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+# Build-qa-falsification is declared in [kinds] but no [[child_rules]] entry
+# references it as parent or child. Reachability must reject because the
+# kind is NOT in the standalone-kinds set. Declaring this kind alone (with
+# no plan or build parent declarations) avoids tripping
+# validateRequiredChildRules upstream — required-rules only fires for
+# declared parents (plan / build), and build-qa-falsification is a leaf QA
+# kind with no twin requirements.
+[kinds.build-qa-falsification]
+structural_type = "droplet"
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnreachableChildRule; got nil")
+	}
+	if !errors.Is(err, ErrUnreachableChildRule) {
+		t.Fatalf("Load: errors.Is(_, ErrUnreachableChildRule) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), `"build-qa-falsification"`) {
+		t.Fatalf("Load: err = %q; want substring %q (offending kind)", err.Error(), `"build-qa-falsification"`)
+	}
+}
+
+// TestValidateKindStructuralCoherence_DropWithoutChildRulesRejected verifies
+// the F.5.2 cross-axis wedge: a synthetic template that declares a kind
+// with `structural_type = "drop"` but no [[child_rules]] entry where
+// when_parent_kind matches that kind is rejected via
+// ErrIncoherentStructuralType.
+//
+// The test subject is `kind=research` (NOT `kind=plan`) because `plan` is
+// gated upstream by validateRequiredChildRules — declaring `[kinds.plan]`
+// without its QA-twin child_rules trips the required-rules validator first
+// and the coherence validator never runs. Using `research` (a standalone
+// kind exempt from reachability AND not gated by required-rules) isolates
+// the coherence rule cleanly.
+//
+// The test pins three properties:
+//
+//  1. The error wraps ErrIncoherentStructuralType (route-on-sentinel works).
+//  2. The wrapped message names the offending kind (`research`) so adopters
+//     see the exact line they need to fix.
+//  3. The wrapped message names the structural_type value (`drop`) so the
+//     dev's debugging trail is unambiguous.
+func TestValidateKindStructuralCoherence_DropWithoutChildRulesRejected(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+# Research declared with structural_type=drop but no [[child_rules]] entry
+# has when_parent_kind = "research". The coherence validator must reject.
+# Research is a standalone kind for reachability purposes (exempt from
+# F.5.2's reachability scan) so this test isolates the coherence rule.
+[kinds.research]
+structural_type = "drop"
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrIncoherentStructuralType; got nil")
+	}
+	if !errors.Is(err, ErrIncoherentStructuralType) {
+		t.Fatalf("Load: errors.Is(_, ErrIncoherentStructuralType) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), `"research"`) {
+		t.Fatalf("Load: err = %q; want substring %q (offending kind)", err.Error(), `"research"`)
+	}
+	if !strings.Contains(err.Error(), `"drop"`) {
+		t.Fatalf("Load: err = %q; want substring %q (offending structural_type)", err.Error(), `"drop"`)
+	}
+}
+
+// TestValidateKindStructuralCoherence_DropletNoCheck verifies the inverse
+// contract: when a kind's structural_type is `droplet` (not `drop`), the
+// coherence validator does NOT fire even when no child_rules reference the
+// kind. Pins the "drop only" half of F.5.2's coherence wedge so a future
+// refactor cannot silently broaden the validator's scope to droplet /
+// segment / confluence kinds.
+//
+// The test subject is `kind=research` with `structural_type = "droplet"`
+// and zero child_rules referencing research. Research is in the
+// reachabilityStandaloneKinds set so the reachability validator does not
+// fire either; the test isolates the coherence-rule's "drop only" gate.
+//
+// Load returns nil error on this template — the coherence validator
+// short-circuits because structural_type != "drop".
+func TestValidateKindStructuralCoherence_DropletNoCheck(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+# Research declared with structural_type=droplet (NOT drop) and no
+# child_rules reference research. Coherence validator must NOT fire because
+# the "drop only" gate short-circuits droplet kinds. Research is in the
+# reachabilityStandaloneKinds set so the reachability validator also does
+# not fire. Load must return nil error.
+[kinds.research]
+structural_type = "droplet"
+`
+	if _, err := Load(strings.NewReader(src)); err != nil {
+		t.Fatalf("Load: unexpected error (droplet kind must not trip coherence validator): %v", err)
+	}
+}

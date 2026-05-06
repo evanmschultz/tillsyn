@@ -1495,3 +1495,46 @@ N/A — task touched only Go files in `internal/app` and one workflow MD. Filesy
 ### Unknowns routed back to orchestrator
 
 - **None substantive.** One observation: the "test at `service.go:1120-1121`" reference in the C.3 spec is line-drift from the original spec authoring (those lines now belong to A.4's outcome-validation block). The actual gate-close call site is `service.go:1180`. The intended pre-existing happy-path coverage (`TestRaiseRefinementsGateForgottenAttentionIsIdempotent`) still passes under the tightened predicate, so the spec's intent — preserving existing happy paths — is satisfied; the line numbers in the spec just need a refresh if it gets re-read in a future drop.
+
+## Droplet F.5.2 — Round 1
+
+**Date:** 2026-05-06.
+**Builder:** go-builder-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.5.2 — `validateChildRuleReachability` + `validateKindStructuralCoherence`".
+**State at end of round:** `done` — `mage testPkg ./internal/templates` green (402/402); `mage testPkg ./internal/app` green (456/456); `mage formatCheck` clean repo-wide; `mage build` green.
+
+### Files touched
+
+- `internal/templates/load.go` — replaced no-op `validateChildRuleReachability` body with a real touched-set membership check; added new `validateKindStructuralCoherence` cross-axis validator; added `ErrIncoherentStructuralType` sentinel; added `reachabilityStandaloneKinds` (closed 6-element list) + `isReachabilityStandaloneKind` helper + `reachabilityCheckKinds` (closed 12-element iteration order); rewrote `ErrUnreachableChildRule` doc-comment to reflect the no-op→real upgrade; updated `Load` chain doc-comment to renumber validators e–l with `f` (`validateKindStructuralCoherence`) inserted after `e` (reachability); wired the new validator into the chain between `validateChildRuleReachability` and `validateGateKinds`.
+- `internal/templates/load_test.go` — appended 4 new tests:
+  - `TestValidateChildRuleReachability_AllReachable` — loads embedded `default-go.toml` via `LoadDefaultTemplateForLanguage("go")`, asserts no error (vacuously-true happy path against the canonical adopter entry point).
+  - `TestValidateChildRuleReachability_BuildOrphanedRejected` — synthetic template declaring `[kinds.build-qa-falsification]` with zero `[[child_rules]]` entries; expects `ErrUnreachableChildRule` wrapping `"build-qa-falsification"`.
+  - `TestValidateKindStructuralCoherence_DropWithoutChildRulesRejected` — synthetic template declaring `[kinds.research]` with `structural_type = "drop"` and zero rules; expects `ErrIncoherentStructuralType` naming both `"research"` and `"drop"`.
+  - `TestValidateKindStructuralCoherence_DropletNoCheck` — same shape as above but with `structural_type = "droplet"`; expects nil error (the coherence rule's drop-only gate must short-circuit non-drop kinds).
+- `workflow/drop_4c_5/THEME_F_PLAN.md` — flipped F.5.2 droplet's `**State:**` line from `in_progress` (set at round start) to `done` (set after green tests).
+
+### Targets run
+
+- `mage testPkg ./internal/templates` → 402/402 PASS (0.29s). Includes 398 prior tests + 4 new F.5.2 tests.
+- `mage testPkg ./internal/app` → 456/456 PASS. Confirms the new sentinel + signature change to `validateChildRuleReachability(tpl Template)` from `(rules []ChildRule)` propagates cleanly through `internal/app`'s `templates.Load` consumers.
+- `mage formatCheck` → clean repo-wide after `mage formatPath` on the two touched files.
+- `mage build` → green.
+
+### Design notes
+
+- **Reachability algorithm: touched-set + conditional-on-declaration.** The spec says "DFS through child_rules graph starting from kind=plan." Direct DFS-from-plan against `default-go.toml` would falsely flag `build` as unreachable (no `plan -> build` edge in the embedded default — `plan` only spawns its QA twins, `build` only spawns its own twins). Per spec Note 1 the planner intended the validator to be vacuously true on the embedded default, so the operative semantics must be: a kind is reachable iff it appears in the union of `WhenParentKind ∪ CreateChildKind` across all rules. This is provably equivalent to "DFS from plan" if every kind that appears as a `WhenParentKind` is treated as a synthetic root (project-creation + planner-spawn can both serve as roots). Implemented as direct touched-set membership for clarity over recursion.
+- **Conditional-on-declaration mirrors `validateRequiredChildRules`.** Initial round-1 attempt rejected the existing F.5.1 test fixtures (which declare only `[kinds.build]` with build's twin rules — leaving plan + plan-QA twins formally "unreachable" under unconditional checking). Fixed by skipping kinds that are not present in `tpl.Kinds`, matching the F.5.1 mitigation F2 pattern. Validates the shape an adopter actually uses; doesn't over-fire on language-agnostic templates that delegate vocabulary to a project-local override.
+- **Coherence test uses `kind=research`, not `kind=plan`.** Spec Test scenario #3 names `kind=plan` as the structural_type=drop subject. But `validateRequiredChildRules` runs BEFORE coherence in the chain and would reject any `[kinds.plan]` declaration without QA-twin rules upstream, masking the coherence error. Used `kind=research` instead — research is in `reachabilityStandaloneKinds` (so reachability skips it) and has no required-child-rules invariant, so it isolates the coherence rule cleanly. Doc-comment on the test names this rationale loud so a future reader doesn't second-guess the choice.
+- **Build-orphan test uses `kind=build-qa-falsification`, not `kind=build`.** Same chain-ordering issue: declaring `[kinds.build]` activates required-rules upstream. `build-qa-falsification` is non-standalone, has no twin requirements of its own, and the wrapped error message contains `"build"` as a substring (assertion compatibility). Doc-comment explains the test-subject choice.
+- **Loud comments for future kind additions.** Both `reachabilityStandaloneKinds` and `reachabilityCheckKinds` carry "LOUD WARNING TO FUTURE DROPS THAT ADD NEW KINDS" comments naming the explicit classification work required (either add to standalone OR appear in default-template child_rules) so a future contributor extending the closed 12-kind enum sees the constraint without having to reverse-engineer it.
+- **Sentinel placement.** `ErrIncoherentStructuralType` sits adjacent to `ErrUnreachableChildRule` in the sentinel block, with cross-references back to the F.5.2 droplet ID + a description naming both the wedge ("drop only" — full coherence is post-MVP) and the wrapped-message contract (kind name + structural_type value). Existing `ErrUnreachableChildRule` doc-comment was rewritten from the no-op-stub-era language to reflect the real validator semantics.
+- **Chain ordering rationale.** `validateKindStructuralCoherence` placed AFTER `validateChildRuleReachability` and BEFORE `validateGateKinds`. Both new validators are independent of each other (touched-set vs structural-type) and independent of gate-vocabulary. Putting coherence after reachability is consistent with the existing pattern of running structural rules before agent-binding rules.
+- **Validator signature change.** `validateChildRuleReachability` shifted from `(rules []ChildRule) error` to `(tpl Template) error` because the conditional-on-declaration check needs `tpl.Kinds`. Internal-only function (lowercase); no external callers; trivial single call-site update in `LoadWithOptions`.
+
+### Hylla feedback
+
+N/A — task touched only Go files in `internal/templates` (load.go + load_test.go) and one workflow MD (THEME_F_PLAN.md). Per spawn prompt directive ("NO Hylla calls"), filesystem-MD coordination mode forbids Hylla queries during Drop 4c.5; all evidence resolved via `Read` (load.go + load_test.go + schema.go + domain/kind.go + domain/structural_type.go + THEME_F_PLAN.md + BUILDER_WORKLOG.md tail + default-go.toml fragments via `grep` over Bash) and `Edit` for changes, plus `mage testPkg`/`mage testFunc`/`mage formatCheck`/`mage build` for verification. The task's Go-only edits would have been candidates for Hylla under normal rules.
+
+### Unknowns routed back to orchestrator
+
+- **Spec test-subject drift.** The F.5.2 spec named `kind=plan` as the subject for `_DropWithoutChildRulesRejected` and `kind=build` as the subject for `_BuildOrphanedRejected`, but both choices collide with `validateRequiredChildRules` running upstream — declaring either parent without its QA-twin rules trips required-rules first and the new validators never run. Implementation pivoted to `kind=research` (coherence) and `kind=build-qa-falsification` (reachability) per the rationale documented inline. Test names retain the spec's literal strings; doc-comments name the substitution. If a future drop wants the literal `kind=plan` / `kind=build` subjects, it would need to either (a) reorder the validator chain to run reachability/coherence BEFORE required-rules — semantically suspect because required-rules is the earlier-failure layer — or (b) add the QA-twin rules to the synthetic templates AND introduce some OTHER orphan/incoherence to trigger the new validators. Neither is preferable today.

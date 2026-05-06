@@ -1213,3 +1213,60 @@ Verified C.3's claim that `isRefinementsGate` now requires a title-shape match (
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode forbids Hylla calls per spawn prompt. All evidence resolved via `Read` on `auto_generate_steward.go`, `auto_generate_steward_test.go`, `THEME_CE_PLAN.md`, `BUILDER_WORKLOG.md`, `service.go` (line 1175-1187 around the gate-close call site), `Bash mage test-pkg ./internal/app` for the live 456/456 verification, and `Bash /usr/bin/grep` for cross-package call-site / constant-usage audit.
+
+---
+
+## Droplet F.5.2 — Round 1
+
+**Date:** 2026-05-06.
+**Reviewer:** go-qa-proof-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.5.2 — `validateChildRuleReachability` + `validateKindStructuralCoherence`".
+**Builder claim:** `mage testPkg ./internal/templates` 402/402 + `./internal/app` 456/456 + `mage formatCheck` clean + `mage build` green; two new validators (real reachability + new `validateKindStructuralCoherence`) + 4 new tests.
+**Verdict:** PASS.
+
+### Acceptance map (every spec criterion → evidence line)
+
+- **Acceptance #1 — `validateChildRuleReachability` no longer a no-op.** `internal/templates/load.go:690-714` implements touched-set membership across `WhenParentKind ∪ CreateChildKind` (lines 691-695) with conditional-on-declaration skipping (lines 706-708) and standalone-kinds exemption (lines 696-699). Builder's worklog at `BUILDER_WORKLOG.md:1525-1526` documents the spec-equivalence proof (touched-set form is provably equivalent to "DFS from kind=plan when every WhenParentKind is treated as a synthetic root"). The conditional-on-declaration deviation matches the F.5.1 mitigation F2 carry-over and is required to prevent false-positives against fixtures that declare only `[kinds.build]`.
+- **Acceptance #2 — `validateKindStructuralCoherence` exists and asserts the cross-axis wedge.** `load.go:747-764` builds `parentsWithRules` map of `WhenParentKind` (lines 750-753) and iterates `tpl.Kinds` rejecting any row whose `StructuralType == domain.StructuralTypeDrop` and is absent from the parent index (lines 754-762). Wired into the chain at `load.go:206`, between reachability (line 203) and gate-kinds (line 209), per spec acceptance #4 ordering rationale.
+- **Acceptance #3 — sentinels wrap offending kind name.** `ErrUnreachableChildRule` at `load.go:265` rewritten with adopter-facing doc-comment (lines 249-265, full rewrite vs the no-op-stub-era language). `ErrIncoherentStructuralType` at `load.go:282` is new, sitting adjacent to `ErrUnreachableChildRule` with cross-references back to F.5.2 + the kind-name + structural_type-value wrapped-message contract (lines 267-281). Both wraps verified live: `load.go:710` (`%w: kind %q is declared in [kinds] but neither standalone nor referenced...`) and `load.go:759-760` (`%w: kind %q has structural_type=%q but no [[child_rules]] entry has when_parent_kind=%q`).
+- **Acceptance #4 — 4 new tests with spec-named identifiers.** All four landed in `internal/templates/load_test.go`:
+  - `TestValidateChildRuleReachability_AllReachable` (line 1941) — loads embedded `default-go.toml` via `LoadDefaultTemplateForLanguage("go")`, asserts no error.
+  - `TestValidateChildRuleReachability_BuildOrphanedRejected` (line 1968) — synthetic template orphans `kind=build-qa-falsification`; expects `ErrUnreachableChildRule` wrapping `"build-qa-falsification"`.
+  - `TestValidateKindStructuralCoherence_DropWithoutChildRulesRejected` (line 2014) — synthetic template declares `[kinds.research]` with `structural_type = "drop"` and zero rules; expects `ErrIncoherentStructuralType` containing both `"research"` and `"drop"` substrings.
+  - `TestValidateKindStructuralCoherence_DropletNoCheck` (line 2054) — same shape with `structural_type = "droplet"`; expects nil error (pins the "drop only" gate).
+
+### Builder pivot rationale (chain-ordering analysis)
+
+The spec named `kind=plan` (coherence) and `kind=build` (orphan) as test subjects. Builder pivoted to `kind=research` and `kind=build-qa-falsification` per the rationale captured in `BUILDER_WORKLOG.md:1527-1528` and inline in test doc-comments at `load_test.go:1953-1962` and `load_test.go:2000-2005`. The pivot is correct because `validateRequiredChildRules` (load.go:200) runs BEFORE both new validators in the chain — declaring `[kinds.plan]` or `[kinds.build]` without their QA-twin rules trips required-rules first and the new validators never run. Substitution preserves the spec's intent:
+
+- `kind=research` is in `reachabilityStandaloneKinds` AND has no required-children invariant → isolates coherence cleanly.
+- `kind=build-qa-falsification` is non-standalone (so reachability fires), is a leaf QA kind with no twin requirement (so required-rules skips it), and the wrapped error message contains `"build"` as a substring.
+
+The substitution rationale is documented loud both inline (test doc-comments) and in the worklog's "Unknowns routed back to orchestrator" section — explicit, not silent. Future drops considering the literal `kind=plan` / `kind=build` subjects would need to either (a) reorder validator chain semantically (suspect — required-rules is the earlier-failure layer) or (b) add twin rules + introduce another orphan/incoherence trigger; neither is preferable today.
+
+### Loud-warning audit
+
+- `reachabilityStandaloneKinds` at `load.go:606-613` carries the prose `LOUD WARNING TO FUTURE DROPS THAT ADD NEW KINDS` (lines 588-595) naming the explicit classification choice (standalone OR appears in default-template `[[child_rules]]`).
+- `reachabilityCheckKinds` at `load.go:638-651` carries the parallel warning (lines 634-637) naming the slice-extension contract.
+- Both warnings explicitly cite the closed 12-value `domain.Kind` enum so a future contributor can locate the constraint without reverse-engineering.
+
+### Default-template green-path verification
+
+`internal/templates/builtin/default-go.toml` declares all 12 `[kinds.X]` rows with `structural_type = "droplet"` (verified via grep — every kind row carries `structural_type = "droplet"`). Coherence validator is therefore a no-op against the embedded default by construction. The 4 standard `[[child_rules]]` (lines 209, 216, 223, 230) cover `plan→plan-qa-proof`, `plan→plan-qa-falsification`, `build→build-qa-proof`, `build→build-qa-falsification`; combined with the 6 standalone-kinds exemption, every member of the closed enum is reachable. `TestValidateChildRuleReachability_AllReachable` (line 1941) exercises this end-to-end.
+
+### Chain-ordering and signature change
+
+- Validator slot order in `Load` chain (`load.go:188-228`): `validateMapKeys` → `validateChildRuleKinds` → `validateChildRuleCycles` → `validateRequiredChildRules` → `validateChildRuleReachability` → `validateKindStructuralCoherence` → `validateGateKinds` → ... Doc-comment at `load.go:75-127` updated with new `e` (reachability) + `f` (coherence) entries.
+- `validateChildRuleReachability` signature shifted from `(rules []ChildRule) error` to `(tpl Template) error` because the conditional-on-declaration check needs `tpl.Kinds`. Internal-only function (lowercase); no external callers; trivial single-call-site update at `load.go:203`.
+
+### Certificate
+
+- **Premises:** (P1) Real reachability check across touched-set with declaration conditional + standalone exemption. (P2) New coherence validator asserts `structural_type=drop` ⇒ ≥1 child_rule with matching `when_parent_kind`. (P3) Two sentinels wrap kind names; new sentinel adjacent to old. (P4) 4 spec-named tests cover happy + sad paths for both validators. (P5) Default template passes both validators. (P6) Loud future-drop warnings on both new closed sets.
+- **Evidence:** P1 → `load.go:690-714` + worklog `:1525-1526`. P2 → `load.go:747-764` + chain wire at `:206`. P3 → `load.go:265, 282` + wraps at `:710, 759-760`. P4 → `load_test.go:1941, 1968, 2014, 2054`. P5 → `default-go.toml` grep (12 droplet rows + 4 standard rules + 6-kind standalone exemption). P6 → `load.go:588-595, 634-637`.
+- **Trace:** Each acceptance criterion mapped to a load.go line and an independent test assertion. Chain-ordering pivot explained in worklog + inline doc-comments + this file's "pivot rationale" section.
+- **Conclusion:** PASS — every spec acceptance criterion is satisfied with direct file-line evidence; the test-subject pivot is sound and documented.
+- **Unknowns:** Spec test-subject drift (`plan` / `build` literal subjects) is explicitly routed back to orchestrator in `BUILDER_WORKLOG.md:1540`; not a finding.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode forbids Hylla calls per spawn prompt. All evidence resolved via `Read` on `internal/templates/load.go` (validators + sentinels + chain wire), `internal/templates/load_test.go` (4 new tests), `workflow/drop_4c_5/THEME_F_PLAN.md` (F.5.2 spec), `workflow/drop_4c_5/BUILDER_WORKLOG.md` (F.5.2 entry tail), and `Bash rg` for symbol/test/structural_type membership audits.

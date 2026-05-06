@@ -332,6 +332,7 @@
 
 ### Droplet F.5.2 — `validateChildRuleReachability` + `validateKindStructuralCoherence`
 
+**State:** done (round 1)
 **Title:** `4c.5.F.5.2 — childrule reachability + kind-structural coherence`.
 
 **Files / paths:**

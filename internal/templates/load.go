@@ -82,33 +82,43 @@ type LoadOptions struct {
 //     (`build-qa-proof` + `build-qa-falsification`). Conditional on
 //     the parent kind being declared in [kinds]; absent kinds skip
 //     the check. Drop 4c.5 F.5.1 hook.
-//     e. validateChildRuleReachability — reserved extension point;
-//     currently a no-op.
-//     f. validateGateKinds — assert every gate-kind string in
+//     e. validateChildRuleReachability — assert every member of the
+//     closed 12-value domain.Kind enum (except the 6 standalone kinds
+//     `closeout`/`commit`/`refinement`/`discussion`/`human-verify`/
+//     `research`) is referenced by at least one [[child_rules]] entry,
+//     either as WhenParentKind or as CreateChildKind. Vacuously true on
+//     the embedded default templates; catches typo-stripped adopter
+//     templates. Drop 4c.5 F.5.2 hook (replaced the prior no-op stub).
+//     f. validateKindStructuralCoherence — assert every [kinds.X] row
+//     whose structural_type == "drop" has at least one [[child_rules]]
+//     entry with when_parent_kind == X. The thin cross-axis wedge
+//     between structural_type and child_rules; full coherence is
+//     post-MVP. Drop 4c.5 F.5.2 hook.
+//     g. validateGateKinds — assert every gate-kind string in
 //     Template.Gates value slices is a member of the closed
 //     GateKind enum (4b.1 hook).
-//     g. validateAgentBindingEnvNames — assert every entry in each
+//     h. validateAgentBindingEnvNames — assert every entry in each
 //     AgentBinding.Env slice matches the closed env-var name regex
 //     (`^[A-Za-z][A-Za-z0-9_]*$`), is non-empty, contains no `=`, and
 //     is unique within its binding (Drop 4c F.7.17.1 hook).
-//     h. validateAgentBindingContext — assert every AgentBinding.Context
+//     i. validateAgentBindingContext — assert every AgentBinding.Context
 //     sub-struct satisfies the closed delivery enum, non-negative MaxChars
 //     and MaxRuleDuration, and that every kind referenced by the kind-walk
 //     fields (SiblingsByKind / AncestorsByKind / DescendantsByKind) is a
 //     member of the closed 12-value Kind enum. Drop 4c F.7.18.1 hook.
-//     i. validateAgentBindingToolGating — assert every AgentBinding's
+//     j. validateAgentBindingToolGating — assert every AgentBinding's
 //     ToolsAllowed / ToolsDisallowed entries are non-empty + unique
 //     within-binding; SystemPromptTemplatePath is project-relative,
 //     traversal-free, and shell-metachar-free; Sandbox.Filesystem
 //     AllowWrite / DenyRead entries are clean absolute paths;
 //     Sandbox.Network AllowedDomains / DeniedDomains entries are
 //     non-empty and carry no URL scheme. Drop 4c F.7.2 hook.
-//     j. validateAgentBindingFiles — for every AgentBinding emit a warning
+//     k. validateAgentBindingFiles — for every AgentBinding emit a warning
 //     (NOT an error) when the resolved `~/.claude/agents/<name>.md` file
 //     does not exist. Warn-only per Drop 4c.5 Q2 resolution: dev-machine
 //     state is not template-correctness; adopters wanting strict-fail
 //     wrap WarnLogger at the call site. Drop 4c.5 F.5.1 hook.
-//     k. validateTillsyn — assert the top-level [tillsyn] globals satisfy
+//     l. validateTillsyn — assert the top-level [tillsyn] globals satisfy
 //     the closed contract: non-negative MaxContextBundleChars and
 //     MaxAggregatorDuration (zero is legal — engine-time default
 //     substitution; negative values are rejected) AND SpawnTempRoot is a
@@ -190,7 +200,10 @@ func LoadWithOptions(r io.Reader, opts LoadOptions) (Template, error) {
 	if err := validateRequiredChildRules(tpl); err != nil {
 		return Template{}, err
 	}
-	if err := validateChildRuleReachability(tpl.ChildRules); err != nil {
+	if err := validateChildRuleReachability(tpl); err != nil {
+		return Template{}, err
+	}
+	if err := validateKindStructuralCoherence(tpl); err != nil {
 		return Template{}, err
 	}
 	if err := validateGateKinds(tpl); err != nil {
@@ -233,13 +246,40 @@ var (
 	// participating kinds in path order.
 	ErrTemplateCycle = errors.New("template child_rules contain a cycle")
 
-	// ErrUnreachableChildRule is reserved for future expansion of the
-	// reachability validator. Drop 3's reachability pass collapses to a
-	// no-op because every member of the closed 12-value Kind enum is
-	// reachable from project-creation; later drops that introduce
-	// reachability semantics beyond closed-enum membership will surface
-	// this sentinel.
+	// ErrUnreachableChildRule is returned by validateChildRuleReachability
+	// when a member of the closed 12-value domain.Kind enum is neither in
+	// the closed reachabilityStandaloneKinds set nor referenced (as a
+	// WhenParentKind or a CreateChildKind) by any [[child_rules]] entry.
+	//
+	// The validator is vacuously true for the embedded default templates
+	// (default-go.toml + default-generic.toml) because their 4 standard
+	// child_rules + 6 standalone-kinds classification cover every member of
+	// the closed enum. The sentinel's real value is for ADOPTER templates
+	// that strip [[child_rules]] entries — typo protection at template Load
+	// time. Drop 4c.5 F.5.2 lit this sentinel by replacing the no-op
+	// reachability stub with a real set-membership check.
+	//
+	// The wrapped message names the offending kind verbatim so adopters see
+	// the exact rule they need to add (or the kind they need to remove from
+	// [kinds] if their template legitimately drops a vocabulary entry).
 	ErrUnreachableChildRule = errors.New("template child_rules contain an unreachable rule")
+
+	// ErrIncoherentStructuralType is returned by validateKindStructuralCoherence
+	// when a [kinds.X] row declares `structural_type = "drop"` AND no
+	// [[child_rules]] entry has `when_parent_kind = X`. A drop structural type
+	// names a kind that decomposes into cascade work; a drop kind with no
+	// auto-create children is structurally orphaned.
+	//
+	// The check is restricted to structural_type=drop today; other structural
+	// types (droplet / segment / confluence) do not gate on child_rules
+	// presence in Drop 4c.5. Full structural_type ↔ kind ↔ role coherence
+	// validation is post-MVP.
+	//
+	// The wrapped message names the offending kind, the structural_type
+	// value, and the missing-rule shape so adopters see the exact line they
+	// need to add (a [[child_rules]] entry with when_parent_kind set to the
+	// offending kind).
+	ErrIncoherentStructuralType = errors.New("template kind has incoherent structural_type")
 
 	// ErrUnknownKindReference is returned when a [child_rules] entry
 	// references a kind that is not a member of the closed 12-value Kind
@@ -539,19 +579,187 @@ func formatCyclePath(stack []domain.Kind, closure domain.Kind) string {
 	return strings.Join(parts, " -> ")
 }
 
-// validateChildRuleReachability collapses to a no-op for Drop 3 by design.
-// Per droplet 3.9's contract, a [child_rules] WhenParentKind is "reachable"
-// if it appears as a CreateChildKind of another rule OR if it is a member
-// of the closed 12-value Kind enum (project-creation can spawn any kind
-// directly). validateChildRuleKinds already enforces enum membership for
-// every WhenParentKind, so reachability is automatically satisfied.
+// reachabilityStandaloneKinds is the closed set of kinds that are exempt from
+// the validateChildRuleReachability check. These kinds are spawn-by-orchestrator-
+// or-template (NOT auto-create-from-plan), so failing the reachability scan for
+// any of them is legitimate — adopters who never wire e.g. `commit` into their
+// cascade should not have their template rejected for omitting it.
 //
-// The function exists as a named extension point so later drops that
-// introduce reachability semantics beyond closed-enum membership (for
-// example, project-level allowed_kinds restrictions) can return
-// ErrUnreachableChildRule without reshuffling the public API.
-func validateChildRuleReachability(rules []ChildRule) error {
-	_ = rules
+// LOUD WARNING TO FUTURE DROPS THAT ADD NEW KINDS: every new kind added to the
+// closed 12-value `domain.Kind` enum MUST be classified at addition time —
+// either it belongs in `reachabilityStandaloneKinds` (standalone, exempt from
+// reachability) OR it MUST appear in some `[[child_rules]]` row of the embedded
+// default template (default-go.toml + default-generic.toml) so the reachability
+// scan finds it. Failing to do either will surface as a load-time
+// ErrUnreachableChildRule against the embedded default and break every project
+// that loads it.
+//
+// Today's standalone set per Drop 4c.5 F.5.2 spec:
+//
+//   - closeout       — drop-end aggregation, orchestrator-managed.
+//   - commit         — template-triggered under `plan` at level >= 2 (Drop 2
+//     cadence rule); not auto-created from plan today.
+//   - refinement     — perpetual rollup, orchestrator-managed.
+//   - discussion     — converged-shape parking, orchestrator-managed.
+//   - human-verify   — dev sign-off hold point, orchestrator-managed.
+//   - research       — read-only investigation, manually spawned by planners.
+var reachabilityStandaloneKinds = []domain.Kind{
+	domain.KindCloseout,
+	domain.KindCommit,
+	domain.KindRefinement,
+	domain.KindDiscussion,
+	domain.KindHumanVerify,
+	domain.KindResearch,
+}
+
+// isReachabilityStandaloneKind reports whether k is a member of the closed
+// reachabilityStandaloneKinds set. Used by validateChildRuleReachability to
+// short-circuit the missing-from-graph check for kinds that are legitimately
+// outside the auto-create graph.
+func isReachabilityStandaloneKind(k domain.Kind) bool {
+	for _, candidate := range reachabilityStandaloneKinds {
+		if candidate == k {
+			return true
+		}
+	}
+	return false
+}
+
+// reachabilityCheckKinds is the closed iteration order over the 12-value
+// domain.Kind enum used by validateChildRuleReachability. Hard-coded slice
+// (mirrors domain/kind.go's validKinds) so the validator's error UX is
+// byte-identical across runs — Go map iteration order is non-deterministic and
+// would otherwise produce flapping error messages.
+//
+// LOUD WARNING TO FUTURE DROPS THAT ADD NEW KINDS: extend this slice with the
+// new kind constant in the same drop that introduces it; otherwise the new
+// kind will silently bypass the reachability scan and an adopter's typo-stripped
+// template will not be caught.
+var reachabilityCheckKinds = []domain.Kind{
+	domain.KindPlan,
+	domain.KindResearch,
+	domain.KindBuild,
+	domain.KindPlanQAProof,
+	domain.KindPlanQAFalsification,
+	domain.KindBuildQAProof,
+	domain.KindBuildQAFalsification,
+	domain.KindCloseout,
+	domain.KindCommit,
+	domain.KindRefinement,
+	domain.KindDiscussion,
+	domain.KindHumanVerify,
+}
+
+// validateChildRuleReachability asserts that every kind DECLARED in [kinds]
+// (and absent from reachabilityStandaloneKinds) appears as either a
+// WhenParentKind or a CreateChildKind in at least one [[child_rules]] row.
+//
+// Algorithm: build the set of kinds "touched" by any [[child_rules]] entry
+// (union of every WhenParentKind and every CreateChildKind across all rules).
+// Iterate the closed 12-kind enum in declaration order; for each kind that is
+// (a) declared in tpl.Kinds, (b) NOT in reachabilityStandaloneKinds, and (c)
+// not touched by the rule graph, return ErrUnreachableChildRule wrapping the
+// offending kind name. The first offending kind wins — the error surface is
+// bounded.
+//
+// Conditional-on-declaration rationale (F.5.1 mitigation F2 carry-over):
+// adopter templates that strip a kind from [kinds] (e.g. a language-agnostic
+// template that delegates `kind=plan` to a project-local override) should not
+// be rejected here. The validator only enforces the contract for kinds the
+// template actually uses. validateRequiredChildRules uses the same
+// conditional-on-declaration rule for the QA-twin invariant.
+//
+// Spec equivalence to "DFS from kind=plan": when every kind that appears as a
+// WhenParentKind is treated as a synthetic root (project-creation can directly
+// spawn any kind, plus a planner can spawn into any of its declared
+// allowed_child_kinds), the reachable set is exactly the union of parent and
+// child kinds across all rules. The set-membership form below computes this
+// directly without recursion.
+//
+// Vacuously true on the embedded default per Drop 4c.5 F.5.2 spec Note 1: the
+// closed 12-kind enum + the 4 standard child_rules + the 6 standalone-kinds
+// classification together cover every member of the enum. The validator's
+// real value is for ADOPTER templates that declare a kind in [kinds] but
+// forget the corresponding child_rule — typo protection at template Load
+// time.
+//
+// Conditional-on-membership rationale: validateChildRuleKinds (run before
+// this validator in the chain) asserts every WhenParentKind / CreateChildKind
+// is a member of the closed enum, so reachabilityCheckKinds membership and
+// rule-graph membership share the same vocabulary.
+func validateChildRuleReachability(tpl Template) error {
+	touched := make(map[domain.Kind]struct{}, len(tpl.ChildRules)*2)
+	for _, rule := range tpl.ChildRules {
+		touched[rule.WhenParentKind] = struct{}{}
+		touched[rule.CreateChildKind] = struct{}{}
+	}
+	for _, kind := range reachabilityCheckKinds {
+		if isReachabilityStandaloneKind(kind) {
+			continue
+		}
+		// Skip kinds that are not declared in [kinds] — adopter templates
+		// may legitimately strip vocabulary entries (per F.5.1 mitigation
+		// F2). validateChildRuleKinds (run before this validator) asserts
+		// every WhenParentKind / CreateChildKind reference is a member of
+		// the closed enum, so a [[child_rules]] entry for a stripped kind
+		// is structurally legal but vacuous.
+		if _, declared := tpl.Kinds[kind]; !declared {
+			continue
+		}
+		if _, ok := touched[kind]; !ok {
+			return fmt.Errorf("%w: kind %q is declared in [kinds] but neither standalone nor referenced by any [[child_rules]] entry", ErrUnreachableChildRule, kind)
+		}
+	}
+	return nil
+}
+
+// validateKindStructuralCoherence asserts a thin cross-axis invariant between
+// the [kinds.X] structural_type axis and the [[child_rules]] auto-create axis:
+// any kind declared with `structural_type = "drop"` MUST have at least one
+// [[child_rules]] entry where `when_parent_kind == X`. A "drop" structural type
+// names a kind that decomposes into cascade work; a drop kind with no
+// child-rule entries pointing at it is structurally orphaned and represents a
+// template-author mistake.
+//
+// The check is conditional on the kind's structural_type being EXACTLY "drop"
+// (the closed StructuralType enum has four values: drop / segment / confluence
+// / droplet — see WIKI.md §"Cascade Vocabulary"). Other structural types do
+// NOT trigger this check:
+//
+//   - droplet: terminal node, no decomposition expected.
+//   - segment: may recurse but coherence shape is handled by the kind's own
+//     auto-create chain in a future drop.
+//   - confluence: defined by `blocked_by` non-empty, not by child_rules.
+//
+// Drop 4c.5 F.5.2 ships only the drop-coherence wedge; full structural-type ↔
+// kind ↔ role coherence is post-MVP. The embedded default-go.toml uses
+// `structural_type = "droplet"` for every kind today (per Drop 3 Note 1 in
+// THEME_F_PLAN.md), so this validator is a no-op against the default. It only
+// fires on adopter templates that opt into structural_type=drop.
+//
+// The validator returns on the FIRST offending kind to keep the error surface
+// bounded; outer-map iteration order over tpl.Kinds is non-deterministic in
+// Go but the closed-enum check below is order-independent because exactly
+// zero or one kind will fail on any given template.
+//
+// All non-nil returns wrap ErrIncoherentStructuralType so callers using
+// `errors.Is(err, ErrIncoherentStructuralType)` route correctly.
+func validateKindStructuralCoherence(tpl Template) error {
+	// Index existing [[child_rules]] entries by parent kind for O(1) lookup
+	// of the "any rule with when_parent_kind == X" presence test.
+	parentsWithRules := make(map[domain.Kind]struct{}, len(tpl.ChildRules))
+	for _, rule := range tpl.ChildRules {
+		parentsWithRules[rule.WhenParentKind] = struct{}{}
+	}
+	for kind, row := range tpl.Kinds {
+		if row.StructuralType != domain.StructuralTypeDrop {
+			continue
+		}
+		if _, ok := parentsWithRules[kind]; !ok {
+			return fmt.Errorf("%w: kind %q has structural_type=%q but no [[child_rules]] entry has when_parent_kind=%q (drop kinds must decompose)",
+				ErrIncoherentStructuralType, kind, domain.StructuralTypeDrop, kind)
+		}
+	}
 	return nil
 }
 
