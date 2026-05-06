@@ -132,7 +132,11 @@ Four droplets total. Theme B is sequenced — `B.2` reads `failed` items, which 
 
 **Title:** `D.1 — STRIP NON-FANTASY-FORK GO.MOD REPLACES`
 
+**State:** done
+
 **Goal:** PLAN.md §19.1 first bullet — keep ONLY the fantasy-fork `replace` line in `go.mod`. Every other `replace` is upstream-version pinning that has accumulated experimentally and is now risk surface (a stale path can silently break builds).
+
+**Round-2 outcome (orchestrator-amended semantics):** spec acceptance criterion #1 ("exactly ONE replace directive") was over-strict. Round 1 surfaced 2 load-bearing pins (L1 `ultraviolet`, L2 `chroma/v2`) plus 1 load-bearing local fork (`teatest_v2`). Round 2 restored those 3 with explicit `// load-bearing: <reason>` annotations naming the consumer constraint. Final state: 4 `replace` directives — 1 fantasy-fork + 3 load-bearing — every other (19) experimental self-pin remains stripped. `mage ci` green.
 
 **Files / paths to modify:**
 

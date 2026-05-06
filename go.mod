@@ -2,51 +2,19 @@ module github.com/evanmschultz/tillsyn
 
 go 1.26.1
 
-replace github.com/charmbracelet/x/exp/teatest/v2 => ./third_party/teatest_v2
-
+// fantasy-fork: charm.land/fantasy upstream lacks the embeddings provider
+// surface used by internal/adapters/embeddings/fantasy/; the evanmschultz fork
+// carries the patches. Retain until upstream lands an equivalent surface.
 replace charm.land/fantasy => github.com/evanmschultz/fantasy v0.0.0-20260219222711-d1be5103494b
 
-replace charm.land/lipgloss/v2 => charm.land/lipgloss/v2 v2.0.0-beta.3.0.20260212100304-e18737634dea
+// load-bearing local fork: keeps TUI tests deterministic against charm.land/bubbletea/v2 drift; no published fork analog exists (per third_party/teatest_v2/README.md)
+replace github.com/charmbracelet/x/exp/teatest/v2 => ./third_party/teatest_v2
 
-replace github.com/alecthomas/chroma/v2 => github.com/alecthomas/chroma/v2 v2.14.0
-
-replace github.com/aymanbagabas/go-udiff => github.com/aymanbagabas/go-udiff v0.3.1
-
-replace github.com/charmbracelet/colorprofile => github.com/charmbracelet/colorprofile v0.4.2
-
+// load-bearing: bubbletea/v2 v2.0.0-rc.2 expects *uv.RenderBuffer; ultraviolet HEAD provides *uv.Buffer (Drop 4c.5 D.1 finding L1)
 replace github.com/charmbracelet/ultraviolet => github.com/charmbracelet/ultraviolet v0.0.0-20251205161215-1948445e3318
 
-replace github.com/charmbracelet/x/exp/golden => github.com/charmbracelet/x/exp/golden v0.0.0-20250806222409-83e3a29d542f
-
-replace github.com/charmbracelet/x/exp/slice => github.com/charmbracelet/x/exp/slice v0.0.0-20250904123553-b4e2667e5ad5
-
-replace github.com/clipperhouse/displaywidth => github.com/clipperhouse/displaywidth v0.9.0
-
-replace github.com/clipperhouse/uax29/v2 => github.com/clipperhouse/uax29/v2 v2.5.0
-
-replace github.com/dlclark/regexp2 => github.com/dlclark/regexp2 v1.11.0
-
-replace github.com/go-logfmt/logfmt => github.com/go-logfmt/logfmt v0.6.0
-
-replace github.com/lucasb-eyer/go-colorful => github.com/lucasb-eyer/go-colorful v1.3.0
-
-replace github.com/mattn/go-runewidth => github.com/mattn/go-runewidth v0.0.19
-
-replace github.com/yuin/goldmark => github.com/yuin/goldmark v1.7.8
-
-replace github.com/yuin/goldmark-emoji => github.com/yuin/goldmark-emoji v1.0.5
-
-replace golang.org/x/exp => golang.org/x/exp v0.0.0-20260212183809-81e46e3db34a
-
-replace golang.org/x/net => golang.org/x/net v0.50.0
-
-replace golang.org/x/sync => golang.org/x/sync v0.19.0
-
-replace golang.org/x/sys => golang.org/x/sys v0.41.0
-
-replace golang.org/x/term => golang.org/x/term v0.40.0
-
-replace golang.org/x/text => golang.org/x/text v0.34.0
+// load-bearing: ANSI escape grouping in v2.23.1+ breaks internal/tui/gitdiff/testdata/golden/simple.ansi (Drop 4c.5 D.1 finding L2)
+replace github.com/alecthomas/chroma/v2 => github.com/alecthomas/chroma/v2 v2.14.0
 
 require (
 	charm.land/bubbles/v2 v2.0.0-rc.1
@@ -74,7 +42,6 @@ require (
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/charmbracelet/x/exp/charmtone v0.0.0-20250603201427-c31516f43444 // indirect
 	github.com/charmbracelet/x/json v0.2.0 // indirect
-	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-json-experiment/json v0.0.0-20251027170946-4849db3c2f7e // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
@@ -103,8 +70,8 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/mod v0.33.0 // indirect
-	golang.org/x/tools v0.42.0 // indirect
+	golang.org/x/mod v0.34.0 // indirect
+	golang.org/x/tools v0.43.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
@@ -114,7 +81,7 @@ require (
 )
 
 require (
-	github.com/alecthomas/chroma/v2 v2.23.1 // indirect
+	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/atotto/clipboard v0.1.4
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymanbagabas/go-udiff v0.4.1 // indirect

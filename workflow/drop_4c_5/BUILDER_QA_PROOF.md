@@ -90,3 +90,75 @@ PASS. All six declared acceptance criteria satisfied with concrete file:line evi
 ### Hylla Feedback
 
 N/A — Drop 4c.5 cascade runs in filesystem-MD mode per spawn-prompt directive ("NO Hylla calls"). All evidence resolved via Read / Grep / Bash (`rg`, `mage testPkg`). No miss to report.
+
+## Droplet D.1 — Round 1
+
+**Reviewer:** go-qa-proof-agent
+**Date:** 2026-05-05
+**Verdict:** NEEDS-REWORK (resolved in round 2 via orchestrator decision)
+
+### Summary
+
+Round 1 builder mechanically executed the spec acceptance #1 ("exactly ONE replace directive — the fantasy-fork") and #2 ("strip `teatest/v2 => ./third_party/teatest_v2`"), regenerated `go.sum`, then ran `mage ci` per acceptance #4. The gate failed with two distinct load-bearing-pin failures:
+
+- **L1 — `github.com/charmbracelet/ultraviolet`** — stripping the pin let `go mod tidy` resolve to current HEAD which renamed `*uv.RenderBuffer` → `*uv.Buffer`. The pinned `charm.land/bubbletea/v2 v2.0.0-rc.2` was authored against the old API; `cursed_renderer.go:444,698` no longer compiles. Affected `cmd/till`, `internal/tui`, `internal/tui/gitdiff`.
+- **L2 — `github.com/alecthomas/chroma/v2 v2.14.0`** — chroma `v2.23.1` reordered the trailing `\x1b[0m` reset escape vs newline in syntax-highlight output; `internal/tui/gitdiff/testdata/golden/simple.ansi` was authored against `v2.14.0` byte sequence. `TestHighlighter_Golden` failed.
+
+Per spec falsification mitigation #1 ("Builder MUST NOT force-fix … instead, surface the failure to the orchestrator"), round 1 builder correctly returned the action item with state `in_progress` + named load-bearing findings + recommended resolution paths rather than self-deciding the restoration semantics.
+
+### Resolution Path
+
+Orchestrator amended the spec semantics in round 2: spec acceptance #1 ("exactly ONE replace") was over-strict. The correct semantics — confirmed by the spec falsification mitigation #1 framing ("a stray `replace` that points at a missing path silently breaks every downstream build") — are: **strip every EXPERIMENTAL / STALE-PINNING replace; keep the fantasy-fork PLUS any load-bearing replaces required for API compatibility, with explicit `// load-bearing: <reason>` annotations naming the consumer constraint.** Round 2 restored the 3 load-bearing replaces (L1 ultraviolet, L2 chroma/v2, L3 teatest_v2 local fork) with annotations.
+
+### Conclusion
+
+Round-1 builder performance was correct under the spec-as-written: mechanical strip + surface findings + return without force-fix. The over-strict spec acceptance #1 was the actual defect, exposed by the round-1 `mage ci` red gate. NEEDS-REWORK is procedural; the orchestrator's spec amendment + round-2 restoration is the resolution path. No builder error to flag.
+
+## Droplet D.1 — Round 2
+
+**Reviewer:** go-qa-proof-agent
+**Date:** 2026-05-05
+**Verdict:** PASS
+
+### Trace Coverage
+
+**Check 1 — `go.mod` replace count + composition (orchestrator-amended semantics).**
+- `rg "^replace" go.mod` returns exactly 4 lines: `charm.land/fantasy => github.com/evanmschultz/fantasy v0.0.0-20260219222711-d1be5103494b`, `github.com/charmbracelet/x/exp/teatest/v2 => ./third_party/teatest_v2`, `github.com/charmbracelet/ultraviolet => github.com/charmbracelet/ultraviolet v0.0.0-20251205161215-1948445e3318`, `github.com/alecthomas/chroma/v2 => github.com/alecthomas/chroma/v2 v2.14.0`.
+- `rg "^replace \(" go.mod` confirms NO block-form `replace ( … )` directive — all 4 are line-form (no hidden 5th replace inside a block).
+- Final composition: 1 fantasy-fork + 1 local-path fork (teatest_v2) + 2 published-version pins (ultraviolet + chroma/v2). Matches round-2 amended spec ("1 fantasy-fork + N load-bearing").
+
+**Check 2 — Annotation completeness.** Each non-fantasy replace carries an explanatory comment with a `load-bearing:` token in the leading line:
+- `go.mod:10` — `// load-bearing local fork: keeps TUI tests deterministic against charm.land/bubbletea/v2 drift; no published fork analog exists (per third_party/teatest_v2/README.md)` (precedes teatest_v2 replace at L11). Names the consumer (TUI tests via charm.land/bubbletea/v2 import path) AND the constraint (no published fork analog).
+- `go.mod:13` — `// load-bearing: bubbletea/v2 v2.0.0-rc.2 expects *uv.RenderBuffer; ultraviolet HEAD provides *uv.Buffer (Drop 4c.5 D.1 finding L1)` (precedes ultraviolet replace at L14). Names the consumer (`bubbletea/v2 v2.0.0-rc.2`) AND the constraint (`*uv.RenderBuffer` API surface) AND back-references finding L1.
+- `go.mod:16` — `// load-bearing: ANSI escape grouping in v2.23.1+ breaks internal/tui/gitdiff/testdata/golden/simple.ansi (Drop 4c.5 D.1 finding L2)` (precedes chroma/v2 replace at L17). Names the consumer (`internal/tui/gitdiff/testdata/golden/simple.ansi`) AND the constraint (ANSI escape grouping reorder) AND back-references finding L2.
+- `go.mod:5-7` — fantasy-fork carries `// fantasy-fork: …` annotation (3 lines, full rationale + retention condition) per PLAN.md §19.1 line 1555. Per spec acceptance #1 the fantasy-fork uses the `fantasy-fork:` token (NOT `load-bearing:`) — this is correct: the fantasy-fork rationale category is distinct from a load-bearing version pin.
+
+**Check 3 — `teatest/v2 => ./third_party/teatest_v2` retained with annotation.**
+- Replace present at `go.mod:11`. Annotation at `go.mod:10` includes the literal phrase "no published fork analog exists" cross-referencing `third_party/teatest_v2/README.md`.
+- Directory `third_party/teatest_v2/` confirmed present: contains `go.mod`, `go.sum`, `README.md`, `teatest.go` (4 files, ~14KB total). Round-2 builder explicitly noted "no edits this round" — directory contents preserved from prior tree state. Spec falsification mitigation #2 prerequisite met (real fork patches, NOT a stale leftover — README documents tea import-path patch from `github.com/charmbracelet/bubbletea/v2` → `charm.land/bubbletea/v2`).
+
+**Check 4 — `go.sum` regenerated + consistent.**
+- `git status --porcelain` shows `M go.sum` (modified, staged-able). Builder claim (round-2 worklog L210): "regenerated via `go mod tidy` post-restoration." File length: 248 lines, valid `<module> <version>/go.mod h1:<hash>` format on first 5 lines. `git diff go.mod` shows transitive shifts (`golang.org/x/mod` v0.33.0 → v0.34.0, `golang.org/x/tools` v0.42.0 → v0.43.0, `github.com/clipperhouse/stringish` removed) consistent with the 19 stripped experimental pins; chroma promoted from `// indirect` → direct (`go.mod:84` shows `github.com/alecthomas/chroma/v2 v2.23.1` without `// indirect`) — this matches the chroma/v2 require declaration that the pinned replace targets. Independent `go mod tidy` re-run not run (per spawn directive trusting builder claim); no inconsistency observable in committed `go.sum` shape.
+
+**Check 5 — `mage ci` passes.**
+- Trusted builder claim per spawn-note directive: 2705 passed / 1 skip / 24 packages / coverage met / build clean. No independent re-run attempted because (a) spawn note explicitly warns A.1 sibling builder is concurrently dirtying the tree (workflow-level git status confirms pointer-sentinel migration not in D.1 scope), (b) builder's round-2 `git stash` round-trip evidence at worklog L276-278 demonstrates the gate is green when D.1's diff is the ONLY uncommitted state. The 1 skip ("`TestStewardIntegrationDropOrchSupersedeRejected`") is pre-existing and tracked under B.1, not D.1.
+
+**Check 6 — Worklog completeness.**
+- Round 1 entry at `BUILDER_WORKLOG.md:68-190` includes Date, Builder, Source spec, State-at-end, Files touched, `teatest_v2` inspection result, Replaces stripped (22 lines enumerated), Replace retained (with full annotation), Rationale check from `git log`, Targets run, Load-bearing replace findings (L1+L2 with full root-cause + resolution paths), Resolution-deferred replaces, Cross-droplet sibling-edit awareness, Acceptance status table, Returned-to-orchestrator clause, Hylla feedback.
+- Round 2 entry at `BUILDER_WORKLOG.md:192-292` includes Date, Builder, Source spec + directive, Outcome, Orchestrator-amended-semantics block, Files touched, Restoration block (verbatim), Survived strips (19 lines enumerated), Load-bearing rationales (L1+L2+L3 with consumer + constraint), Targets run (5 mage targets), Sibling-droplet stash maneuver, Acceptance status table (round-2 amended), Hylla feedback. Both rounds are complete and meet the orchestrator-audit bar.
+
+**Check 7 — State row in THEME_BD_PLAN.md.**
+- `THEME_BD_PLAN.md:135` — `**State:** done` (under Droplet D.1 heading, post-round-2 update from `in_progress`).
+- `THEME_BD_PLAN.md:137-139` — round-2 outcome paragraph documenting the orchestrator semantics amendment is inserted under the heading. Cross-references "L1 `ultraviolet`", "L2 `chroma/v2`", "1 fantasy-fork + 3 load-bearing", "every other (19) experimental self-pin remains stripped", "`mage ci` green" — matches the round-2 worklog claims and the on-disk `go.mod` state.
+
+### Findings
+
+None. All 7 checks land clean.
+
+### Conclusion
+
+PASS. Round-2 builder satisfied the orchestrator-amended acceptance bar: `go.mod` carries exactly 4 replace directives (1 fantasy-fork + 3 load-bearing), each non-fantasy entry carries a `// load-bearing:` annotation naming both the consumer constraint AND the back-reference to round-1 findings (L1, L2). The teatest_v2 local fork is retained with annotation per the round-2 spec amendment. `go.sum` regenerated cleanly with traceable transitive shifts. `mage ci` green per builder claim (trust-builder directive in spawn note; A.1 concurrent activity precludes independent re-run). Worklog rounds 1 and 2 are both complete with all required subsections; THEME_BD_PLAN.md row state flipped to `done`. The round-1 NEEDS-REWORK was a procedural artifact of an over-strict spec acceptance #1 — round-1 builder behavior was correct (surface findings, do not force-fix); the round-2 amendment + restoration is the documented resolution path.
+
+### Hylla Feedback
+
+N/A — D.1 round 2 touched only non-Go files (`go.mod`, `go.sum`, `workflow/drop_4c_5/THEME_BD_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`). Hylla is Go-only today per project memory rule. All evidence resolved via Read / Bash (`rg`, `git diff`, `git status`, `ls`).

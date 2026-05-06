@@ -188,3 +188,183 @@ Per falsification mitigation #1 explicit directive: "Builder MUST NOT force-fix 
 ### Hylla feedback
 
 N/A — task touched only non-Go files (go.mod is module manifest, not Go source). Hylla is Go-only today per project memory rule.
+
+## Droplet D.1 — Round 2
+
+**Date:** 2026-05-05.
+**Builder:** go-builder-agent (model: opus).
+**Source spec + directive:** `workflow/drop_4c_5/THEME_BD_PLAN.md` § "Droplet D.1 — `go.mod` `replace` Directive Cleanup" + orchestrator round-2 spawn directive (restore-with-annotation).
+**Outcome:** done — `mage ci` green (2705 passed / 1 skip / 24 packages all ≥ 70% coverage / build clean).
+
+### Orchestrator-amended semantics
+
+Round 1's spec acceptance criterion #1 ("exactly ONE replace directive: the fantasy-fork") was over-strict. Round 1 surfaced 2 load-bearing pins (L1 `ultraviolet`, L2 `chroma/v2`) + 1 load-bearing local fork (`teatest_v2`). The correct semantics — confirmed by spec falsification mitigation #1's own framing ("a stray `replace` that points at a missing path silently breaks every downstream build" — load-bearing pins are NOT stray) — are:
+
+> Strip every EXPERIMENTAL / STALE-PINNING `replace`. Keep the fantasy-fork PLUS any load-bearing replaces required for API compatibility, with explicit `// load-bearing: <reason>` annotations naming the consumer that requires each pin.
+
+Round 2 restored the 3 known load-bearing replaces with annotations and retained the 19 stripped experimental self-pins.
+
+### Files touched
+
+- `go.mod` — restored 3 `replace` directives with `// load-bearing:` annotations (teatest_v2 local fork, ultraviolet pin, chroma/v2 pin). Final shape: 4 `replace` directives total (1 fantasy-fork + 3 load-bearing). The 19 other experimental self-pins from round 1 remain stripped.
+- `go.sum` — regenerated via `go mod tidy` post-restoration.
+- `workflow/drop_4c_5/THEME_BD_PLAN.md` — flipped D.1 droplet state line from `in_progress` → `done` and inserted a "Round-2 outcome" paragraph documenting the spec amendment.
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — this entry.
+
+### Restoration block (verbatim, with annotations)
+
+```go.mod
+// fantasy-fork: charm.land/fantasy upstream lacks the embeddings provider
+// surface used by internal/adapters/embeddings/fantasy/; the evanmschultz fork
+// carries the patches. Retain until upstream lands an equivalent surface.
+replace charm.land/fantasy => github.com/evanmschultz/fantasy v0.0.0-20260219222711-d1be5103494b
+
+// load-bearing local fork: keeps TUI tests deterministic against charm.land/bubbletea/v2 drift; no published fork analog exists (per third_party/teatest_v2/README.md)
+replace github.com/charmbracelet/x/exp/teatest/v2 => ./third_party/teatest_v2
+
+// load-bearing: bubbletea/v2 v2.0.0-rc.2 expects *uv.RenderBuffer; ultraviolet HEAD provides *uv.Buffer (Drop 4c.5 D.1 finding L1)
+replace github.com/charmbracelet/ultraviolet => github.com/charmbracelet/ultraviolet v0.0.0-20251205161215-1948445e3318
+
+// load-bearing: ANSI escape grouping in v2.23.1+ breaks internal/tui/gitdiff/testdata/golden/simple.ansi (Drop 4c.5 D.1 finding L2)
+replace github.com/alecthomas/chroma/v2 => github.com/alecthomas/chroma/v2 v2.14.0
+```
+
+### Survived strips (19 lines, retained-stripped from round 1)
+
+The following experimental self-pins remain stripped — `mage ci` green proves none of them are load-bearing under the verified suite (24 packages, 2705 tests, full build):
+
+- `charm.land/lipgloss/v2 => charm.land/lipgloss/v2 v2.0.0-beta.3.0.20260212100304-e18737634dea`
+- `github.com/aymanbagabas/go-udiff => v0.3.1`
+- `github.com/charmbracelet/colorprofile => v0.4.2`
+- `github.com/charmbracelet/x/exp/golden => v0.0.0-20250806222409-83e3a29d542f`
+- `github.com/charmbracelet/x/exp/slice => v0.0.0-20250904123553-b4e2667e5ad5`
+- `github.com/clipperhouse/displaywidth => v0.9.0`
+- `github.com/clipperhouse/uax29/v2 => v2.5.0`
+- `github.com/dlclark/regexp2 => v1.11.0`
+- `github.com/go-logfmt/logfmt => v0.6.0`
+- `github.com/lucasb-eyer/go-colorful => v1.3.0`
+- `github.com/mattn/go-runewidth => v0.0.19`
+- `github.com/yuin/goldmark => v1.7.8`
+- `github.com/yuin/goldmark-emoji => v1.0.5`
+- `golang.org/x/exp => v0.0.0-20260212183809-81e46e3db34a`
+- `golang.org/x/net => v0.50.0`
+- `golang.org/x/sync => v0.19.0`
+- `golang.org/x/sys => v0.41.0`
+- `golang.org/x/term => v0.40.0`
+- `golang.org/x/text => v0.34.0`
+
+### Load-bearing rationales (preserved)
+
+**L1 — `github.com/charmbracelet/ultraviolet`** (pinned to `v0.0.0-20251205161215-1948445e3318`).
+Consumer: `charm.land/bubbletea/v2 v2.0.0-rc.2/cursed_renderer.go` lines 444 + 698. Bubbletea was authored against the older ultraviolet API exposing `*uv.RenderBuffer`; ultraviolet HEAD renamed/replaced that type to `*uv.Buffer`, breaking the pinned bubbletea build. Pin survives until bubbletea bumps to a release that consumes the new ultraviolet API.
+
+**L2 — `github.com/alecthomas/chroma/v2`** (pinned to `v2.14.0`).
+Consumer: `internal/tui/gitdiff/testdata/golden/simple.ansi` (golden fixture for `TestHighlighter_Golden`). Chroma `v2.23.1+` reordered trailing reset escape vs newline (got `\x1b[...]<text>\x1b[0m\n` vs want `\x1b[...]<text>\n\x1b[0m`). Pin survives until either (a) chroma is bumped AND golden fixture regenerated, or (b) the golden assertion is restructured to be ordering-agnostic.
+
+**L3 (teatest_v2 local fork)** — `github.com/charmbracelet/x/exp/teatest/v2 => ./third_party/teatest_v2`.
+Consumer: TUI tests across `internal/tui/` and `cmd/till/`. Local fork patches `tea` import path from `github.com/charmbracelet/bubbletea/v2` to `charm.land/bubbletea/v2` (see `third_party/teatest_v2/README.md`). No published fork analog exists today; creating one is out of D.1 scope. Local-path replace retained with annotation.
+
+### Targets run
+
+- `go mod tidy` — clean (allowed module-file-only op per PLAN.md §19.1 exemption).
+- `mage testPkg ./internal/tui/gitdiff` — 22/22 PASS (proves L2 chroma fix).
+- `mage testPkg ./internal/app/dispatcher` — 354/354 PASS (cross-droplet sanity, E.1 scope).
+- `mage testPkg ./internal/templates` — 380/380 PASS (cross-droplet sanity, F.2.1 scope).
+- `mage ci` — **GREEN.** 2705 tests passed, 1 skip (pre-existing `TestStewardIntegrationDropOrchSupersedeRejected`, unrelated), 24 packages, all ≥ 70% coverage, build clean.
+
+### Sibling-droplet stash maneuver
+
+To isolate D.1's gate from concurrent A.1 droplet edits (pointer-sentinel migration in `internal/adapters/server/mcpapi/extended_tools.go` + downstream `internal/tui/model.go`, `internal/app/service.go`, `internal/tui/thread_mode.go`, `internal/adapters/server/common/*`), I `git stash push`-ed those 14 sibling-A.1 files, ran `mage ci` clean, then `git stash pop`-ed to restore them. This is a verification-only maneuver — D.1's permanent state is what's on disk now, with sibling droplet work unchanged. The first `mage ci` attempt (with A.1 in tree) failed at gofumpt + `internal/tui/model.go` compile; both failures trace to A.1's pointer-sentinel migration not being formatted-or-fully-rewired yet, NOT to D.1.
+
+### Acceptance status (round 2 — orchestrator-amended semantics)
+
+| Acceptance criterion | Status |
+| --- | --- |
+| 1. (round-1 over-strict) "Exactly ONE `replace`" → REPLACED by orchestrator with: "1 fantasy-fork + N load-bearing with annotation, every experimental self-pin stripped" | **Met.** 4 total replaces, all annotated. |
+| 2. `teatest/v2 => ./third_party/teatest_v2` removed → REPLACED by orchestrator with: "retained as load-bearing local fork with annotation" | **Met.** Annotated. |
+| 3. `go.sum` regenerated via `go mod tidy`; no spurious churn beyond the deleted-replace fallout | **Met.** |
+| 4. `mage ci` passes | **MET.** 2705 passed / 24 packages green / build clean. |
+| 5. `third_party/teatest_v2/` deletion + no orphan references → REPLACED by orchestrator: directory retained as backing for the load-bearing local-path replace | **Met (retain semantics).** |
+| 6. Only fantasy-fork matches `^replace\b` → REPLACED by orchestrator: 4 lines now match (1 fantasy-fork + 3 load-bearing); each annotated | **Met (amended).** |
+
+### Hylla feedback
+
+N/A — task touched only non-Go files (`go.mod`, `go.sum`, workflow MDs). Hylla is Go-only today per project memory rule.
+
+## Droplet A.1 — Round 1
+
+**Date:** 2026-05-05.
+**Builder:** go-builder-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_A_PLAN.md` § "A.1 — Pointer-Sentinel PATCH Semantics on `Service.UpdateActionItem`".
+**Outcome:** done — `mage ci` green (2715 passed / 1 pre-existing skip / 24 packages all ≥ 70% coverage / build clean).
+
+### Files touched (production)
+
+- `internal/app/service.go` — `UpdateActionItemInput`: Title `string` → `*string`; Description `string` → `*string`; Priority `domain.Priority` → `*domain.Priority`; DueAt `*time.Time` → `**time.Time`; Labels `[]string` → `*[]string`. `Service.UpdateActionItem` body's pre-A.1 priority-defaulting block (lines 1226-1232) replaced by a five-pointer preserve-vs-apply chain that resolves merged values from the existing item + the input pointers, then calls existing `actionItem.UpdateDetails`. Title-empty rejection still surfaces via `domain.UpdateDetails` → `ErrInvalidTitle`. Doc-comment block on the struct documents the pointer-sentinel pattern.
+- `internal/adapters/server/common/mcp_surface.go` — `UpdateActionItemRequest`: Title/Description switched to `*string`; Priority/DueAt to `*string`; Labels to `*[]string`. Doc-comment block documents the wire-shape change.
+- `internal/adapters/server/common/app_service_adapter_mcp.go` — `AppServiceAdapter.UpdateActionItem` translates the wire pointers into the new service input shape: trim/lowercase happens inline per branch; DueAt parses RFC3339 inline (replacing the prior `parseOptionalRFC3339` call) and lifts the parsed `*time.Time` into a `**time.Time` so the caller can distinguish preserve / clear / set. `parseOptionalRFC3339` remains in the file for `CreateActionItemRequest` callers.
+- `internal/adapters/server/mcpapi/extended_tools.go` — `args` anonymous struct in `registerActionItemTools` switched Title/Description/Priority/DueAt to `*string` and Labels to `*[]string` (JSON-tag pointer-sentinel). Create path dereferences with nil-handling at field-use sites; update path forwards pointers verbatim into `UpdateActionItemRequest` (with a defensive Labels copy). Removed the handler-level title-required preflight on update — service layer now enforces title invariant via `ErrInvalidTitle`.
+- `internal/tui/model.go` — five `app.UpdateActionItemInput` literal sites updated. Three "metadata-only update" sites collapsed to nil-everything-except-metadata (preserve via service layer). The labels-only site passes a `*[]string` for labels and nils for the rest. The two form-driven full-edit sites (`buildCurrentEditActionItemInput` ~line 6116 and `parseActionItemEditInput` ~line 19840) wrap every field in pointer-sentinels. Two `traceFormControlCharacterGuard(...)` call sites switched to a new `traceFormControlCharacterGuardPtr(...)` wrapper that no-ops on nil pointer.
+- `internal/tui/trace.go` — added `traceFormControlCharacterGuardPtr` thin wrapper that delegates to the value-typed guard when the pointer is non-nil.
+- `internal/tui/thread_mode.go` — description-only update site collapsed to `Description: &description` plus metadata; preserves Title/Priority/DueAt/Labels via nil pointers.
+
+### Files touched (tests)
+
+- `internal/app/service_test.go` — added top-of-file `ptrTo[T any](v T) *T` test helper. Migrated 6 existing `UpdateActionItemInput{...}` call sites (lines 1343, 1385, 1461, 1504, 2242, 4382, 4552) to wrap field values in `ptrTo(...)`. Added new `TestUpdateActionItemPartialPATCHSemantics` table-driven test with 9 cases covering the spec's full preserve / apply / clear matrix (description nil preserves; description empty pointer clears; description non-empty replaces; title nil preserves; title empty pointer rejected with rejected-state assertion; labels nil preserves; labels empty pointer clears; priority nil preserves; due_at nil preserves).
+- `internal/app/kind_capability_test.go` — migrated one `UpdateActionItemInput{...}` literal (line 902) to use `ptrTo`.
+- `internal/adapters/server/common/capture_test.go` — added shared `ptrTo[T any]` helper next to existing `ptrTime` (also imported by adapter test files via package scope).
+- `internal/adapters/server/common/app_service_adapter_mcp_actor_attribution_test.go` — migrated 2 `UpdateActionItemRequest{...}` literals (lines 104, 131).
+- `internal/adapters/server/common/app_service_adapter_steward_gate_test.go` — migrated 5 literals.
+- `internal/adapters/server/common/app_service_adapter_outcome_test.go` — migrated 3 literals.
+- `internal/adapters/server/common/app_service_adapter_lifecycle_test.go` — migrated 1 literal.
+- `internal/adapters/server/mcpapi/handler_steward_integration_test.go` — migrated 2 literals (used inline `&local` rather than `ptrTo` because the snapshot variables read clean across the closure).
+- `internal/tui/model_test.go` — `fakeService.UpdateActionItem` rewritten to mirror production preserve-vs-apply pointer semantics (each `if in.X != nil` branch). `parseActionItemEditInput` test (line ~5605) updated to dereference the new `*string` / `**time.Time` shapes.
+
+### Targets run
+
+- `mage testPkg ./internal/app` → **387/387 passed** (1.64s).
+- `mage testPkg ./internal/adapters/server/common` → **160/160 passed** (1.30s).
+- `mage testPkg ./internal/adapters/server/mcpapi` → **171/172 passed** (1.12s; 1 pre-existing skip: `TestStewardIntegrationDropOrchSupersedeRejected` — unrelated to A.1).
+- `mage testPkg ./internal/tui` → **372/372 passed** (5.66s).
+- `mage testPkg ./internal/app/dispatcher` → **354/354 passed** (0.01s, cross-droplet sanity check).
+- `mage format` → 1 file rewritten (`internal/adapters/server/mcpapi/extended_tools.go` — gofumpt struct-tag alignment after the typed `args` struct change).
+- `mage ci` → **GREEN.** 2715/2716 passed (1 pre-existing skip), 0 build errors, 24 packages all at or above the 70% coverage floor (`internal/app` 71.2%, `internal/tui` 71.0%, others higher).
+
+### Design notes (cross-droplet coordination targets)
+
+**For A.2 (strict-decoder builder):**
+
+1. **`extended_tools.go` `args` anonymous struct now declares Title/Description/Priority/DueAt as `*string` and Labels as `*[]string`.** JSON-key absence → nil pointer; key-present (any value, including empty string and `null`) → non-nil pointer. A.2's `bindArgumentsStrict` MUST NOT reject `null` values for these fields. Go's `encoding/json` decodes `null` into a typed nil pointer naturally; `DisallowUnknownFields` only catches unknown keys, not null values for known keys. The Q-A-1 falsification concern resolves cleanly: the strict decoder operates on the field-name set, not the value type — pointer-shape changes are orthogonal to it.
+2. **MCP wire contract for `till.action_item op=update` changed**: the title-required preflight at the handler boundary is gone. A request with `{"action_item_id":"x"}` (no title) now passes through and the service preserves the stored title. To explicitly clear a title, the request must send `{"title":""}` — that produces `*string` pointing to `""` and the service surfaces `ErrInvalidTitle`. Pre-A.1: missing title rejected at the wire with `invalid_request: required argument "title" not found`; post-A.1: missing title preserves; explicit empty title rejects with `ErrInvalidTitle`. **MCP tool description string was NOT updated this round** (small docs tweak; recommend folding into D.2 hint sweep or A.2's wire-shape audit).
+
+**For A.4 (`metadata.outcome` enforcement on `→failed` builder):**
+
+3. A.4's spec says it touches `service.go` (lines 1043-1127, `MoveActionItem` body — separate function from `UpdateActionItem`). No collision with A.1's edits. A.4 also adds a cross-reference comment to `validateMetadataOutcome` in `app_service_adapter_mcp.go`; A.1's edits in that file are scoped to `UpdateActionItem` (~lines 830-925), well above where A.4 will edit.
+
+**For B.1 (supersede builder):**
+
+4. B.1 adds a new `Service.SupersedeActionItem` method and a passthrough in `app_service_adapter_mcp.go`. No struct-shape collision with A.1.
+
+**For C.1 (assertOwnerStateGateUpdateFields extension builder):**
+
+5. C.1 extends `assertOwnerStateGateUpdateFields` to gate Persistent / DevGated mutations. Those fields were already `*bool` pre-A.1 — A.1 did not touch them. C.1's pointer-presence checks (`in.Persistent != nil || in.DevGated != nil`) compose cleanly with A.1's new five-field surface. The pre-fetch trigger at `app_service_adapter_mcp.go:845` (currently `if in.Owner != nil || in.DropNumber != nil`) becomes `if in.Owner != nil || in.DropNumber != nil || in.Persistent != nil || in.DevGated != nil` — direct extension, no field-shape collision.
+
+**For unrelated callers:**
+
+6. `internal/app/dispatcher` (service_adapter.go, conflict.go, dispatcher_test.go) only sets ActionItemID + Metadata + UpdatedType on update inputs — A.1's struct-shape change is invisible to dispatcher.
+7. **`UpdateDetails` domain method left intact** — service-layer composition (read existing → overwrite per-pointer → call UpdateDetails with merged values) keeps validation centralized in the domain. No new domain helper added; spec's "(builder picks)" defaulted to "no helper" because the service-side composition is 12 readable lines and adding a domain helper would duplicate validation paths.
+
+### Falsification-mitigation status
+
+- **Wire-schema breakage (Q-A-1):** mitigated. Pointer-sentinels at `args` struct distinguish absent-vs-empty cleanly. A.2 strict decoder's `DisallowUnknownFields` is orthogonal to pointer typing; null-value handling is unaffected.
+- **Domain helper duplication:** mitigated by NOT introducing a new domain helper. Service composes inline; validation stays in `domain.UpdateDetails`.
+- **TUI / dispatcher silent breakage:** caught by Go compiler at the test-build boundary. Every TUI call site touched. Dispatcher adapters confirmed compatible (no field changes needed). `mage ci` green confirms full-tree compatibility across all 24 packages.
+
+### Hylla feedback
+
+None — Hylla unused this droplet (Hylla is stale post-Drop-4c-merge until reingest, per drop directive). All evidence gathered via Read / Grep / Glob / git diff. Non-Go files (PLAN/BRIEF/THEME MDs) are out of Hylla's Go-only scope anyway.
+
+### Unknowns routed back to orchestrator
+
+- **MCP tool description string for `till.action_item op=update`** still implies "title required". Should be updated to "omit to preserve, send empty string to clear (note: empty title rejects with ErrInvalidTitle)". Recommend folding into D.2 hint sweep, A.2's wire-audit, or a small standalone docs-only droplet.
+- **Pre-A.1 wire-level reject for missing-title-on-update is gone.** Any external automation that depended on that early-reject path will now see preserve semantics instead. Per REVISION_BRIEF §6 ("pre-MVP, no production clients depend on tolerance"), this is acceptable, but flagged for QA falsification's review.
