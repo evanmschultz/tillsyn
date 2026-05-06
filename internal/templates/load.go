@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -14,7 +16,37 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
+// LoadOptions carries optional parameters to LoadWithOptions. The zero value
+// is legal and matches Load's behavior: no warning logger (warnings are
+// silently dropped) and the production filesystem stat function (os.Stat) for
+// agent-binding-file existence checks.
+//
+// Drop 4c.5 F.5.1 introduced this struct so adopters can plumb a warn-logger
+// through Load without breaking the existing Load(io.Reader) signature.
+// Adopters who want strict-fail behavior on missing agent-binding files
+// (rather than the default warn-only) wrap WarnLogger to escalate at their
+// call site.
+type LoadOptions struct {
+	// WarnLogger receives one line per non-fatal validation finding. Today
+	// only validateAgentBindingFiles (F.5.1) emits warnings. Nil is legal
+	// and means "drop warnings on the floor" — preserves Load's pre-F.5.1
+	// silence-by-default contract.
+	WarnLogger func(string)
+
+	// StatFn is the existence-check function used by validateAgentBindingFiles
+	// for `~/.claude/agents/<name>.md`. Nil resolves to a default that calls
+	// os.Stat and returns true on success. Tests inject in-memory stubs so
+	// the validator's warning behavior is deterministic regardless of the
+	// dev's machine state.
+	StatFn func(path string) bool
+}
+
 // Load parses a Tillsyn template TOML stream and validates it.
+//
+// Load is preserved as a thin wrapper around LoadWithOptions(r, LoadOptions{})
+// so the pre-Drop-4c.5 single-arg shape continues to compile for every
+// existing caller. Adopters who want to plumb a warn-logger or inject a stub
+// stat function call LoadWithOptions directly.
 //
 // Decoding order is fixed by Drop 3 finding 5.B.10 (CE5 schema-version
 // pre-pass mitigation):
@@ -43,28 +75,40 @@ import (
 //     [child_rules] is a member of the closed enum.
 //     c. validateChildRuleCycles — DFS the parent → child kind graph for
 //     directed cycles.
-//     d. validateChildRuleReachability — reserved extension point;
+//     d. validateRequiredChildRules — assert that every present
+//     `kind=plan` row has both QA twin child_rules
+//     (`plan-qa-proof` + `plan-qa-falsification`) and every present
+//     `kind=build` row has both QA twin child_rules
+//     (`build-qa-proof` + `build-qa-falsification`). Conditional on
+//     the parent kind being declared in [kinds]; absent kinds skip
+//     the check. Drop 4c.5 F.5.1 hook.
+//     e. validateChildRuleReachability — reserved extension point;
 //     currently a no-op.
-//     e. validateGateKinds — assert every gate-kind string in
+//     f. validateGateKinds — assert every gate-kind string in
 //     Template.Gates value slices is a member of the closed
 //     GateKind enum (4b.1 hook).
-//     f. validateAgentBindingEnvNames — assert every entry in each
+//     g. validateAgentBindingEnvNames — assert every entry in each
 //     AgentBinding.Env slice matches the closed env-var name regex
 //     (`^[A-Za-z][A-Za-z0-9_]*$`), is non-empty, contains no `=`, and
 //     is unique within its binding (Drop 4c F.7.17.1 hook).
-//     g. validateAgentBindingContext — assert every AgentBinding.Context
+//     h. validateAgentBindingContext — assert every AgentBinding.Context
 //     sub-struct satisfies the closed delivery enum, non-negative MaxChars
 //     and MaxRuleDuration, and that every kind referenced by the kind-walk
 //     fields (SiblingsByKind / AncestorsByKind / DescendantsByKind) is a
 //     member of the closed 12-value Kind enum. Drop 4c F.7.18.1 hook.
-//     h. validateAgentBindingToolGating — assert every AgentBinding's
+//     i. validateAgentBindingToolGating — assert every AgentBinding's
 //     ToolsAllowed / ToolsDisallowed entries are non-empty + unique
 //     within-binding; SystemPromptTemplatePath is project-relative,
 //     traversal-free, and shell-metachar-free; Sandbox.Filesystem
 //     AllowWrite / DenyRead entries are clean absolute paths;
 //     Sandbox.Network AllowedDomains / DeniedDomains entries are
 //     non-empty and carry no URL scheme. Drop 4c F.7.2 hook.
-//     i. validateTillsyn — assert the top-level [tillsyn] globals satisfy
+//     j. validateAgentBindingFiles — for every AgentBinding emit a warning
+//     (NOT an error) when the resolved `~/.claude/agents/<name>.md` file
+//     does not exist. Warn-only per Drop 4c.5 Q2 resolution: dev-machine
+//     state is not template-correctness; adopters wanting strict-fail
+//     wrap WarnLogger at the call site. Drop 4c.5 F.5.1 hook.
+//     k. validateTillsyn — assert the top-level [tillsyn] globals satisfy
 //     the closed contract: non-negative MaxContextBundleChars and
 //     MaxAggregatorDuration (zero is legal — engine-time default
 //     substitution; negative values are rejected) AND SpawnTempRoot is a
@@ -76,6 +120,18 @@ import (
 // can use errors.Is for routing without reaching into pelletier/go-toml/v2
 // internals.
 func Load(r io.Reader) (Template, error) {
+	return LoadWithOptions(r, LoadOptions{})
+}
+
+// LoadWithOptions is the all-fields-explicit variant of Load. See Load's
+// godoc for the validation chain; see LoadOptions for the per-call knobs.
+//
+// Drop 4c.5 F.5.1: opts.WarnLogger receives one line per missing
+// `~/.claude/agents/<name>.md` referenced by an AgentBinding. opts.StatFn
+// (when non-nil) overrides os.Stat for the existence check — tests inject a
+// deterministic stub. Both fields are zero-value-safe; nil WarnLogger drops
+// warnings, nil StatFn falls back to os.Stat.
+func LoadWithOptions(r io.Reader, opts LoadOptions) (Template, error) {
 	if r == nil {
 		return Template{}, errors.New("templates: nil reader")
 	}
@@ -131,6 +187,9 @@ func Load(r io.Reader) (Template, error) {
 	if err := validateChildRuleCycles(tpl.ChildRules); err != nil {
 		return Template{}, err
 	}
+	if err := validateRequiredChildRules(tpl); err != nil {
+		return Template{}, err
+	}
 	if err := validateChildRuleReachability(tpl.ChildRules); err != nil {
 		return Template{}, err
 	}
@@ -146,6 +205,7 @@ func Load(r io.Reader) (Template, error) {
 	if err := validateAgentBindingToolGating(tpl); err != nil {
 		return Template{}, err
 	}
+	validateAgentBindingFiles(tpl, opts.WarnLogger, opts.StatFn)
 	if err := validateTillsyn(tpl); err != nil {
 		return Template{}, err
 	}
@@ -252,6 +312,27 @@ var (
 	// message names the offending kind, the offending field, and the failure
 	// reason for UX.
 	ErrInvalidAgentBindingToolGating = fmt.Errorf("%w: tool_gating", ErrInvalidAgentBinding)
+
+	// ErrMissingRequiredChildRule is returned by validateRequiredChildRules
+	// when a parent kind that is declared in [kinds] is missing one of its
+	// REQUIRED auto-create child rules. Drop 4c.5 F.5.1 fixes the closed
+	// required-set:
+	//
+	//   - kind=plan  → MUST have [[child_rules]] entries creating
+	//                  `plan-qa-proof` AND `plan-qa-falsification`.
+	//   - kind=build → MUST have [[child_rules]] entries creating
+	//                  `build-qa-proof` AND `build-qa-falsification`.
+	//
+	// The check is conditional on the parent kind being declared in [kinds];
+	// adopter templates that strip `kind=plan` or `kind=build` entirely (a
+	// pre-MVP-rare but spec-permitted shape) do not trigger this validator.
+	// Rationale: required-rules-for-undeclared-parents would over-fire on
+	// language-agnostic templates that delegate kind declarations to a
+	// project-local override.
+	//
+	// The wrapped message names the parent kind and the missing child kind
+	// verbatim so adopters see the exact rule they need to add.
+	ErrMissingRequiredChildRule = errors.New("template missing required child rule")
 
 	// ErrInvalidTillsynGlobals is returned by validateTillsyn when the
 	// top-level [tillsyn] table contains a field that fails the closed
@@ -952,4 +1033,177 @@ func validateTillsynRequiresPlugins(entries []string) error {
 		seen[entry] = struct{}{}
 	}
 	return nil
+}
+
+// requiredChildRulesByParent encodes the closed REQUIRED-CHILD-RULES set
+// validated by validateRequiredChildRules. Drop 4c.5 F.5.1 ships this as a
+// hard-coded map (NOT a template-level config) because the QA-twins-on-plan
+// and QA-twins-on-build invariant is part of the cascade contract itself —
+// adopters who skip these twins do not have a working cascade.
+//
+// Future cascade extensions (e.g. design-twins-on-plan) extend this map; the
+// validator is parametric over the map's contents so adding a new required
+// pair is a one-line change here. The set is keyed by parent kind for O(1)
+// presence-check during validation.
+var requiredChildRulesByParent = map[domain.Kind][]domain.Kind{
+	domain.KindPlan:  {domain.KindPlanQAProof, domain.KindPlanQAFalsification},
+	domain.KindBuild: {domain.KindBuildQAProof, domain.KindBuildQAFalsification},
+}
+
+// validateRequiredChildRules asserts that every parent kind in the closed
+// REQUIRED-CHILD-RULES set (requiredChildRulesByParent) — when DECLARED in
+// [kinds] — has a [[child_rules]] entry materializing each of its required
+// QA-twin children.
+//
+// Conditional-on-presence rationale (Drop 4c.5 F.5.1 falsification mitigation
+// F2): adopter templates that strip `kind=plan` or `kind=build` entirely
+// (e.g. an extreme language-agnostic template that delegates all kind
+// declarations to a project-local override) should not be rejected here. The
+// validator only enforces the contract for parents that are declared.
+//
+// The check iterates parent kinds in stable map order (returns on the first
+// missing rule per parent + scans parents in the requiredChildRulesByParent
+// declaration order via a deterministic key list) so the error UX is
+// reproducible across runs.
+//
+// Returns ErrMissingRequiredChildRule wrapping a message that names the
+// parent kind and the missing child kind verbatim so adopters see the exact
+// rule they need to add.
+func validateRequiredChildRules(tpl Template) error {
+	// Index existing [[child_rules]] entries by parent kind for O(1) lookup
+	// of the (parent, child) presence test below.
+	rulesByParent := make(map[domain.Kind]map[domain.Kind]struct{}, len(tpl.ChildRules))
+	for _, rule := range tpl.ChildRules {
+		set, ok := rulesByParent[rule.WhenParentKind]
+		if !ok {
+			set = make(map[domain.Kind]struct{})
+			rulesByParent[rule.WhenParentKind] = set
+		}
+		set[rule.CreateChildKind] = struct{}{}
+	}
+
+	// Stable parent-kind iteration order. Hard-coded slice rather than
+	// sorting requiredChildRulesByParent's keys at runtime so the error UX
+	// is byte-identical across Go map iteration shuffling.
+	for _, parent := range []domain.Kind{domain.KindPlan, domain.KindBuild} {
+		required, ok := requiredChildRulesByParent[parent]
+		if !ok {
+			continue
+		}
+		// Skip parents that are not declared in [kinds] — adopter
+		// templates may legitimately strip plan or build (per F.5.1
+		// falsification mitigation F2). validateChildRuleKinds already
+		// asserts every WhenParentKind / CreateChildKind reference is a
+		// member of the closed enum, so a [[child_rules]] entry for a
+		// stripped parent is structurally legal but vacuous.
+		if _, declared := tpl.Kinds[parent]; !declared {
+			continue
+		}
+		existing := rulesByParent[parent] // nil-safe; map access on zero-value returns zero-value of V
+		for _, child := range required {
+			if _, ok := existing[child]; !ok {
+				return fmt.Errorf("%w: parent %q must have a [[child_rules]] entry creating %q",
+					ErrMissingRequiredChildRule, parent, child)
+			}
+		}
+	}
+	return nil
+}
+
+// claudeAgentsDirEnvVar names an optional environment variable that overrides
+// the default `~/.claude/agents/` lookup directory used by
+// validateAgentBindingFiles. The override exists for adopters whose Claude
+// Code install lives outside the conventional home-directory layout — e.g.
+// containerized CI runners that mount agents at /workspace/agents. When the
+// var is unset (the default) the validator resolves
+// `${HOME}/.claude/agents/<name>.md`.
+const claudeAgentsDirEnvVar = "TILLSYN_CLAUDE_AGENTS_DIR"
+
+// resolveClaudeAgentsDir returns the absolute path to the directory containing
+// per-agent markdown files referenced by AgentBinding.AgentName. When
+// claudeAgentsDirEnvVar is set, that value wins verbatim. Otherwise the
+// function joins the OS-reported home directory with `.claude/agents`.
+//
+// Returns ("", err) when neither the env var nor os.UserHomeDir resolves —
+// validateAgentBindingFiles treats this as "cannot warn deterministically;
+// drop the warning silently" rather than escalating, matching F.5.1's
+// warn-only contract.
+func resolveClaudeAgentsDir() (string, error) {
+	if dir := os.Getenv(claudeAgentsDirEnvVar); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return filepath.Join(home, ".claude", "agents"), nil
+}
+
+// defaultAgentBindingStatFn is the production existence-check used by
+// validateAgentBindingFiles when LoadOptions.StatFn is nil. Returns true when
+// os.Stat reports the file present, false otherwise (including not-found,
+// permission errors, and any other os.Stat failure mode). The function
+// deliberately collapses every failure mode to false because the warning is
+// purely informational — distinguishing "ENOENT" from "EACCES" inside a
+// validator that drops the result on the floor would be UX noise.
+func defaultAgentBindingStatFn(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// validateAgentBindingFiles emits one warning per AgentBinding.AgentName whose
+// corresponding `~/.claude/agents/<name>.md` file is absent at validation time.
+// Drop 4c.5 F.5.1 hook.
+//
+// Warn-only per Drop 4c.5 Q2 resolution (workflow/drop_4c_5/THEME_F_PLAN.md
+// §3 Note 6): dev-machine state is NOT template-correctness. A template that
+// references `go-builder-agent` is no less valid because the dev's machine
+// has not yet materialized the agent file — and forcing strict failure here
+// would block CI builds on machines without the developer agent layout.
+// Adopters who want strict-fail wrap their LoadOptions.WarnLogger with an
+// escalation closure at the call site.
+//
+// Behavior contract:
+//
+//   - logger == nil → warnings drop silently (preserves Load(io.Reader)
+//     pre-F.5.1 silence-by-default).
+//   - statFn == nil → defaults to os.Stat via defaultAgentBindingStatFn.
+//   - resolveClaudeAgentsDir() failure → warnings drop silently (cannot
+//     issue a deterministic path-shaped warning without a base dir).
+//   - For each binding whose AgentName resolves to a missing file, emit one
+//     line shaped: `agent_bindings[<kind>]: agent_name="<name>" referenced
+//     by template but ~/.claude/agents/<name>.md not found at <abs-path>`.
+//
+// The function never returns an error. Outer-map iteration order is
+// non-deterministic (Go map iteration); tests that assert warning lists
+// must sort the captured slice before comparing.
+func validateAgentBindingFiles(tpl Template, logger func(string), statFn func(string) bool) {
+	if logger == nil {
+		return
+	}
+	if statFn == nil {
+		statFn = defaultAgentBindingStatFn
+	}
+	dir, err := resolveClaudeAgentsDir()
+	if err != nil {
+		// Cannot resolve a base dir — drop the warning rather than emit a
+		// half-shaped message. Matches F.5.1's warn-only floor: never
+		// surface filesystem-shaped problems at template-load time.
+		return
+	}
+	for kind, binding := range tpl.AgentBindings {
+		name := binding.AgentName
+		if name == "" {
+			// Empty agent_name is rejected upstream by AgentBinding.Validate
+			// (ErrInvalidAgentBinding); reaching here means a programmer
+			// invariant broke. Skip rather than emit a malformed warning.
+			continue
+		}
+		path := filepath.Join(dir, name+".md")
+		if statFn(path) {
+			continue
+		}
+		logger(fmt.Sprintf("agent_bindings[%q]: agent_name=%q referenced by template but %s not found",
+			kind, name, path))
+	}
 }

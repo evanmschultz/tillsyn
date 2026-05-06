@@ -290,6 +290,7 @@
 
 ### Droplet F.5.1 — `validateAgentBindingFiles` (warn-only) + `validateRequiredChildRules`
 
+**State:** done (round 1)
 **Title:** `4c.5.F.5.1 — agent-binding-files warn + required-child-rules assert`.
 
 **Files / paths:**

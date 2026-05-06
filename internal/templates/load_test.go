@@ -386,6 +386,22 @@ owner = "STEWARD"
 allowed_parent_kinds = ["plan"]
 allowed_child_kinds = []
 structural_type = "droplet"
+
+# Drop 4c.5 F.5.1 requires every declared kind=build to have its two
+# QA-twin child_rules. Added here purely to satisfy the new
+# validateRequiredChildRules invariant; the test's intent (assert
+# tpl.Gates is nil on absent [gates] table) is unchanged.
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
 `
 	tpl, err := Load(strings.NewReader(src))
 	if err != nil {
@@ -1524,6 +1540,19 @@ owner = "STEWARD"
 allowed_parent_kinds = ["plan"]
 allowed_child_kinds = ["build-qa-proof", "build-qa-falsification"]
 structural_type = "droplet"
+
+# Drop 4c.5 F.5.1: declared kind=build requires its two QA-twin child_rules.
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
 `
 	tpl, err := Load(strings.NewReader(src))
 	if err != nil {
@@ -1728,4 +1757,168 @@ func mapKeys[V any](m map[domain.Kind]V) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// templateWithBindings builds a minimal v1 template TOML stream that declares
+// the supplied agent_bindings rows plus the QA-twin child_rules required by
+// the F.5.1 validateRequiredChildRules invariant. Used by the F.5.1
+// agent-binding-files test rows so each test focuses on the binding shape
+// being exercised rather than re-typing the QA-twin scaffolding.
+func templateWithBindings(t *testing.T, agentBindings string) string {
+	t.Helper()
+	return `
+schema_version = "v1"
+
+[kinds.build]
+structural_type = "droplet"
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+` + agentBindings
+}
+
+// TestValidateAgentBindingFiles_WarnOnMissing verifies the F.5.1 warn-only
+// contract: when LoadOptions.WarnLogger is supplied AND
+// LoadOptions.StatFn reports the agent file as missing, exactly one warning
+// is emitted per missing AgentBinding.AgentName and Load returns nil error.
+//
+// The injected stat stub returns false unconditionally so the test is
+// deterministic regardless of the dev's `~/.claude/agents/` layout.
+func TestValidateAgentBindingFiles_WarnOnMissing(t *testing.T) {
+	src := templateWithBindings(t, `
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+`)
+	var warnings []string
+	statFn := func(string) bool { return false }
+	tpl, err := LoadWithOptions(strings.NewReader(src), LoadOptions{
+		WarnLogger: func(msg string) { warnings = append(warnings, msg) },
+		StatFn:     statFn,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: unexpected error (warn-only contract): %v", err)
+	}
+	if got, want := len(warnings), 1; got != want {
+		t.Fatalf("len(warnings) = %d; want %d (one per missing binding)", got, want)
+	}
+	if !strings.Contains(warnings[0], "go-builder-agent") {
+		t.Fatalf("warnings[0] = %q; want substring %q (agent_name)", warnings[0], "go-builder-agent")
+	}
+	if !strings.Contains(warnings[0], "build") {
+		t.Fatalf("warnings[0] = %q; want substring %q (binding kind)", warnings[0], "build")
+	}
+	if !strings.Contains(warnings[0], "go-builder-agent.md") {
+		t.Fatalf("warnings[0] = %q; want substring %q (resolved file path)", warnings[0], "go-builder-agent.md")
+	}
+	// Sanity: the binding still landed on the parsed Template — warn-only
+	// must not blackhole the binding row.
+	if _, ok := tpl.AgentBindings[domain.KindBuild]; !ok {
+		t.Fatalf("AgentBindings[%q] missing after warn-only path", domain.KindBuild)
+	}
+}
+
+// TestValidateAgentBindingFiles_NoWarnOnPresent verifies the inverse contract:
+// when LoadOptions.StatFn reports the agent file as present (the injected stub
+// returns true), no warning is emitted and Load returns nil error. Pins the
+// "warn only when missing" half of the F.5.1 contract so a future refactor
+// cannot quietly start warning on every binding.
+func TestValidateAgentBindingFiles_NoWarnOnPresent(t *testing.T) {
+	src := templateWithBindings(t, `
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+`)
+	var warnings []string
+	statFn := func(string) bool { return true }
+	if _, err := LoadWithOptions(strings.NewReader(src), LoadOptions{
+		WarnLogger: func(msg string) { warnings = append(warnings, msg) },
+		StatFn:     statFn,
+	}); err != nil {
+		t.Fatalf("LoadWithOptions: unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("len(warnings) = %d (%v); want 0 (file present)", len(warnings), warnings)
+	}
+}
+
+// TestValidateRequiredChildRules_PlanMissingProofRejected verifies the
+// F.5.1 hard-fail contract on validateRequiredChildRules: a template that
+// declares `kind=plan` with only the falsification QA twin (and not the
+// proof twin) is rejected via ErrMissingRequiredChildRule, with the
+// wrapped message naming the parent (`plan`) and the missing child
+// (`plan-qa-proof`).
+func TestValidateRequiredChildRules_PlanMissingProofRejected(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[kinds.plan]
+structural_type = "droplet"
+
+# Only the falsification twin is declared — proof twin missing. The
+# F.5.1 validateRequiredChildRules invariant must reject this.
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "plan-qa-falsification"
+title = "PLAN-QA-FALSIFICATION"
+blocked_by_parent = true
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrMissingRequiredChildRule; got nil")
+	}
+	if !errors.Is(err, ErrMissingRequiredChildRule) {
+		t.Fatalf("Load: errors.Is(_, ErrMissingRequiredChildRule) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "plan-qa-proof") {
+		t.Fatalf("Load: err = %q; want substring %q (missing child name)", err.Error(), "plan-qa-proof")
+	}
+	if !strings.Contains(err.Error(), `parent "plan"`) {
+		t.Fatalf("Load: err = %q; want substring %q (parent kind)", err.Error(), `parent "plan"`)
+	}
+}
+
+// TestValidateRequiredChildRules_BuildMissingFalsificationRejected mirrors the
+// proof-missing test for the `kind=build` axis: a template that declares
+// `kind=build` with only the proof QA twin (and not the falsification twin)
+// is rejected via ErrMissingRequiredChildRule. The two parent kinds carry
+// independent QA-twin requirements, so the validator must enforce them
+// independently.
+func TestValidateRequiredChildRules_BuildMissingFalsificationRejected(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[kinds.build]
+structural_type = "droplet"
+
+# Only the proof twin is declared — falsification twin missing.
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrMissingRequiredChildRule; got nil")
+	}
+	if !errors.Is(err, ErrMissingRequiredChildRule) {
+		t.Fatalf("Load: errors.Is(_, ErrMissingRequiredChildRule) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "build-qa-falsification") {
+		t.Fatalf("Load: err = %q; want substring %q (missing child name)", err.Error(), "build-qa-falsification")
+	}
+	if !strings.Contains(err.Error(), `parent "build"`) {
+		t.Fatalf("Load: err = %q; want substring %q (parent kind)", err.Error(), `parent "build"`)
+	}
 }

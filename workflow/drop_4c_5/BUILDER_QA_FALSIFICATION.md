@@ -1321,3 +1321,50 @@ T1. Five attacks: dedup contract, halt-call-count, empty-string fail-loud, doc c
 T2. CONFIRMED: doc-comment at `gate_mage_test_pkg.go:62` and test at `gate_mage_test_pkg_test.go:431-432` cite `WAVE_A_PLAN.md PQA-4` for per-element normalization responsibility, but PQA-4 is about whole-slice empty-`Packages` semantic, not per-element. Actual owner: `internal/domain/action_item.go normalizeActionItemPackages`. Documentation-only.
 T3. **PASS-WITH-NIT** — production behavior correct, fix the two cross-references in a follow-up.
 
+## Droplet F.5.1 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (filesystem-MD mode).
+**Date:** 2026-05-06.
+**Surfaces under review:** `internal/templates/load.go`, `internal/templates/load_test.go`, `internal/templates/builtin/default-go.toml`, `internal/templates/builtin/default-generic.toml`.
+
+### 1. Findings
+
+- 1.1 `Load(r)` thin-wrapper preserved — `load.go:122-124` delegates to `LoadWithOptions(r, LoadOptions{})`. Pre-F.5.1 callers compile unchanged.
+- 1.2 Embedded TOMLs satisfy the new strict `validateRequiredChildRules`: both `default-go.toml` (lines 209-234) and `default-generic.toml` (lines 224-249) declare all four QA-twin `[[child_rules]]` entries (build → build-qa-proof, build → build-qa-falsification, plan → plan-qa-proof, plan → plan-qa-falsification). Both also declare `[kinds.plan]` and `[kinds.build]` so the conditional fires in both files.
+- 1.3 `WarnLogger` nil-safety enforced at `load.go:1181-1183` (`if logger == nil { return }`) — function returns before any stat call.
+- 1.4 `StatFn` nil-safety enforced at `load.go:1184-1186` (`if statFn == nil { statFn = defaultAgentBindingStatFn }`) — defaults to `os.Stat`-based stub.
+- 1.5 `TILLSYN_CLAUDE_AGENTS_DIR` env override implemented at `load.go:1131-1140` (`resolveClaudeAgentsDir`): `os.Getenv(claudeAgentsDirEnvVar)` wins verbatim when non-empty; falls back to `${HOME}/.claude/agents`.
+- 1.6 Required-child-rules conditional-on-presence enforced at `load.go:1099-1101` (`if _, declared := tpl.Kinds[parent]; !declared { continue }`). F2 mitigation correctly wired.
+- 1.7 Stable iteration order pinned at `load.go:1088` — hard-coded `[]domain.Kind{domain.KindPlan, domain.KindBuild}` slice, NOT a `range requiredChildRulesByParent`. Comment at lines 1086-1087 documents the rationale (byte-identical error UX across Go map shuffling).
+- 1.8 Validator chain ordering correct in `LoadWithOptions` (`load.go:181-211`): `validateRequiredChildRules` lands at position 4 (after `validateChildRuleKinds` + `validateChildRuleCycles`, before `validateChildRuleReachability`). `validateAgentBindingFiles` lands at position 10 — last per-binding check before `validateTillsyn`. Both positions match the godoc chain at lines 78-110.
+- 1.9 `mage` (default = `mage ci`) PASSES `internal/templates` — observed `[PKG PASS] github.com/evanmschultz/tillsyn/internal/templates (2.31s)` in coverage stream. The authoritative gate is green.
+- 1.10 Test coverage reaches the new surfaces: `TestValidateAgentBindingFiles_WarnOnMissing` (line 1797, exercises StatFn=false + WarnLogger), `TestValidateAgentBindingFiles_NoWarnOnPresent` (line 1836, exercises StatFn=true), `TestValidateRequiredChildRules_PlanMissingProofRejected` (line 1861), `TestValidateRequiredChildRules_BuildMissingFalsificationRejected` (line 1897). All four assert wrapped error sentinels and message substrings.
+
+### 2. Counterexamples
+
+None. Each attack category resolved REFUTED:
+
+- 2.1 (Attack 1) Load thin-wrapper backward compat — REFUTED. Embedded TOMLs both satisfy strict validation; `Load(r)` shape unchanged.
+- 2.2 (Attack 2) WarnLogger nil-safety — REFUTED. Early-return guard at line 1181-1183.
+- 2.3 (Attack 3) StatFn nil-safety — REFUTED. Default substitution at line 1184-1186.
+- 2.4 (Attack 4) Env override behavior — REFUTED. Implementation at line 1132 uses `os.Getenv` directly; verbatim-wins semantics.
+- 2.5 (Attack 5) Required-child-rules conditional — REFUTED. F2 mitigation at line 1099-1101.
+- 2.6 (Attack 6) Stable iteration order — REFUTED. Hard-coded slice at line 1088, NOT map ranging.
+- 2.7 (Attack 7) Validator chain ordering — REFUTED. `validateRequiredChildRules` at position 4, `validateAgentBindingFiles` at position 10. Matches godoc and rationale.
+
+**One observation (not a counterexample):** `mage testPkg internal/templates` reports `[PKG FAIL] internal/templates (0.00s)` with zero tests collected. This is a pre-existing mage-target argument-handling quirk (the runner's relative-path resolution under `testPkg`), NOT an F.5.1 regression — the same target was broken before this droplet, and the authoritative `mage` (= `mage ci`) gate runs `go test ./...` with the package PASSING. Surface as a refinement candidate for a future drop.
+
+### 3. Summary
+
+**Verdict: PASS.** Seven attack categories exercised, all REFUTED with file/line evidence + test references. Hard-coded ordering, nil-safety, conditional firing, env override, validator-chain position, and embedded-TOML satisfaction all confirmed. `mage ci` green on `internal/templates`. The `mage testPkg` observation is pre-existing tooling behavior unrelated to F.5.1.
+
+### Hylla Feedback
+
+N/A — per spawn directive ("NO Hylla calls"), no Hylla queries attempted. Evidence used `Read` + `Bash` (mage / git log) + `Grep` only.
+
+### TL;DR
+
+T1. All seven F.5.1 attack surfaces validated against `load.go` lines 122-1209, embedded TOMLs lines 209-249 (default-go) and 224-249 (default-generic), and four targeted tests at `load_test.go:1797 / 1836 / 1861 / 1897`. Every category REFUTED.
+T2. No counterexamples. One pre-existing `mage testPkg internal/templates` quirk noted, unrelated to F.5.1; `mage ci` gate is green.
+T3. **PASS** — F.5.1 ships clean.
+

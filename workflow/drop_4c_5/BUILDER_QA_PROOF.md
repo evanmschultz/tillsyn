@@ -1095,3 +1095,37 @@ The cascade `mage testPkg` failure surfaces from `internal/app/auto_generate_ste
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode forbids Hylla calls (per spawn prompt). All evidence resolved via `Read` on the uncommitted working tree files (gate source + tests + spec + worklog).
+
+
+## Droplet F.5.1 — Round 1
+
+**Date:** 2026-05-06.
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, model: opus).
+**Source spec:** `THEME_F_PLAN.md` § "Droplet F.5.1 — `validateAgentBindingFiles` (warn-only) + `validateRequiredChildRules`".
+**Builder claim verified at HEAD:** `mage testPkg ./internal/templates` 398/398 + `./internal/app` 444/444; 4 new files dirty matching declared scope (`internal/templates/load.go`, `internal/templates/load_test.go`, `workflow/drop_4c_5/THEME_F_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`).
+
+### Verdict
+
+**PASS** — all 9 spawn-prompt acceptance bullets carry evidence in the working tree.
+
+### Evidence-by-bullet
+
+1. **`LoadOptions{WarnLogger func(string), StatFn func(string) bool}` exists.** `load.go:29-42`. Doc-comment names the zero-value contract (nil WarnLogger drops warnings; nil StatFn falls back to `os.Stat`). Both fields are exported per the canonical Go optional-arg pattern.
+2. **`LoadWithOptions(r io.Reader, opts LoadOptions) (Template, error)` exists.** `load.go:134`. Body runs the full validation chain in the documented order; receives the WarnLogger and StatFn through `opts`.
+3. **`Load(r io.Reader)` preserved as thin wrapper.** `load.go:122-124`: `return LoadWithOptions(r, LoadOptions{})`. Single-line delegate; nil-zero-valued options match pre-F.5.1 silent behavior. Verified `mage testPkg ./internal/app` (444/444) confirms downstream callers `seedStewardAnchors` + `loadProjectTemplate` still compile + pass.
+4. **`validateAgentBindingFiles` between `validateAgentBindingToolGating` and `validateTillsyn`, warn-only.** Chain at `load.go:205-209`: tool-gating → `validateAgentBindingFiles(tpl, opts.WarnLogger, opts.StatFn)` (no `if err :=` wrap, because the function signature `func(...)` has NO error return — structurally cannot fail) → `validateTillsyn`. Function body at `load.go:1180-1209` early-returns on nil logger; emits one log line per missing binding via `fmt.Sprintf` formatting; never returns an error.
+5. **`validateRequiredChildRules(tpl Template) error` between `validateChildRuleCycles` and `validateChildRuleReachability`, strict.** Chain at `load.go:187-195`: cycles → `validateRequiredChildRules` (returns `error`) → reachability. Body at `load.go:1072-1111` returns `ErrMissingRequiredChildRule` wrapping a message that names the parent kind + missing child kind verbatim.
+6. **Required pairs match spec.** `load.go:1048-1051` `requiredChildRulesByParent`: `KindPlan → {KindPlanQAProof, KindPlanQAFalsification}`, `KindBuild → {KindBuildQAProof, KindBuildQAFalsification}`. Constants verified against `internal/domain/kind.go:22-25`.
+7. **4 new tests present.** `load_test.go:1797` `TestValidateAgentBindingFiles_WarnOnMissing` (asserts `len(warnings)==1` + 3 substring checks), `:1836` `TestValidateAgentBindingFiles_NoWarnOnPresent` (asserts `len(warnings)==0` when statFn returns true), `:1861` `TestValidateRequiredChildRules_PlanMissingProofRejected` (asserts `errors.Is(_, ErrMissingRequiredChildRule)` + substrings `plan-qa-proof` + `parent "plan"`), `:1897` `TestValidateRequiredChildRules_BuildMissingFalsificationRejected` (mirror for build axis). All 4 tests use the `templateWithBindings` helper for the agent-binding tests + inline TOML for the required-rules tests. The WarnOnMissing test additionally asserts the binding still landed on `tpl.AgentBindings` (warn-only must not blackhole the row).
+8. **2 pre-existing tests updated.** `TestTemplateGatesEmptyMapDecodes` (`load_test.go:380-413`) added 2 new `[[child_rules]]` entries for build → build-qa-proof and build → build-qa-falsification with explicit `# Drop 4c.5 F.5.1 requires...` attribution comment; original assertion `tpl.Gates != nil` unchanged. `TestValidateMapKeysCanonicalizesKindsKeys` (`load_test.go:1534-1567`) added the same 2 entries with `# Drop 4c.5 F.5.1: declared kind=build requires its two QA-twin child_rules.` comment; original assertion `tpl.Kinds[domain.KindBuild]` present + no `BUILD` leak unchanged.
+9. **Worklog completeness.** `BUILDER_WORKLOG.md:1415-1456` covers: Files touched (load.go, load_test.go, THEME_F_PLAN.md row flip), targets run (`mage testPkg ./internal/templates` 398/398 + `./internal/app` 444/444), design notes (8 substantive bullets including stat-fn injection rationale, conditional-on-presence rationale, env-var override `TILLSYN_CLAUDE_AGENTS_DIR`, validator slot-ordering rationale, "two pre-existing tests updated rather than carved out" rationale), Hylla feedback `N/A`, no Unknowns. Theme row flipped `→ done (round 1)` at `THEME_F_PLAN.md:293`.
+
+### Tightening notes (non-blocking)
+
+- **Spec acceptance #2 said "Recommended shape: `LoadOptions struct { WarnLogger func(string) }`"** — implementation extends with `StatFn func(string) bool`. Justified by spec Falsification mitigation F1 (filesystem check non-determinism) which explicitly required stat-fn injection. The expansion is a strict superset of the recommended shape; pre-existing nil-Options callers see identical pre-F.5.1 behavior. Not a finding — flagging as evidence the builder followed the falsification mitigation rather than the bare-minimum recommendation.
+- **`resolveClaudeAgentsDir()` failure** drops warnings silently per `load.go:1187-1193`. Spec falsification F3 mandated the nil-logger guard but did not explicitly require home-dir-resolve failure handling; the implementation correctly extends the silent-floor invariant to that branch. Doc-comment names this loud at `load.go:1166-1175`.
+- **Empty `AgentName` skip** at `load.go:1196-1201` is defense-in-depth: `AgentBinding.Validate` upstream already rejects empty `AgentName` as `ErrInvalidAgentBinding`, so reaching this branch is statically impossible today. Defensive guard against future relaxations of the upstream validator.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode forbids Hylla calls (per spawn prompt). All evidence resolved via `Read` on the uncommitted working tree files (load.go + load_test.go + spec + worklog) plus `Bash` for `git status` / `git diff` / `rg` cross-checks.
