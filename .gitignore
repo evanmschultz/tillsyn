@@ -8,8 +8,15 @@ bin/
 dist/
 coverage.out
 
-# Tillsyn runtime state
-.tillsyn/
+# Tillsyn runtime state — ignore everything under .tillsyn/ except the
+# self-host cascade template (Drop 4c.5 F.2.3). Tillsyn dogfoods its own
+# template ergonomics by tracking <repo_root>/.tillsyn/template.toml in git;
+# spawns/, log/, tillsyn.db, etc. are runtime state and stay ignored.
+# Pattern note: re-inclusion under an excluded directory requires excluding
+# the directory's CONTENTS (`.tillsyn/*`) rather than the directory itself
+# (`.tillsyn/`); the latter blocks every re-include rule per gitignore docs.
+.tillsyn/*
+!.tillsyn/template.toml
 .artifacts/
 .tmp/
 

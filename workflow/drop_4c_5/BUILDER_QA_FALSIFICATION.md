@@ -605,3 +605,63 @@ PASS. F.2.2 ships exactly what spec + spawn-prompt require. STEWARD seeds match 
 ### Hylla Feedback
 
 N/A — F.2.2 review touched only Go-eligible files (`embed.go`, `embed_test.go`, `load.go`) plus a TOML and workflow MDs. Per spawn-prompt directive ("filesystem-MD coordination mode. NO Hylla calls.") and the "Hylla Indexes Only Go Files Today" memory rule, no Hylla query was attempted. All evidence resolved via `Read` + `Grep` (Bash-grep) + `mage testPkg`. No miss to log.
+
+## Droplet F.2.3 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (model: opus, filesystem-MD mode).
+**Date:** 2026-05-05.
+**Verdict:** PASS — no counterexample against the build artifact. One CONFIRMED finding routed against the SPEC (planner side), already self-reported and corrected by the builder.
+**Scope:** F.2.3 declared files only — `.tillsyn/template.toml` (NEW), `.gitignore` (modified), `workflow/drop_4c_5/THEME_F_PLAN.md` (state line), `workflow/drop_4c_5/BUILDER_WORKLOG.md` (round 1 section).
+
+### Counterexample Certificate
+
+- **Premises** — Builder claims `.tillsyn/template.toml` ships byte-faithful body content from `default-go.toml` plus a self-host header + a `[tillsyn]` block carrying `spawn_temp_root = "os_tmp"` (matching the dispatcher's empty-string default), and `.gitignore` re-includes that one file while keeping spawns / log / db ignored.
+- **Evidence** — Read of `.tillsyn/template.toml` (697 lines), `internal/templates/builtin/default-go.toml` (653 lines, body section identical past header), `internal/app/dispatcher/bundle.go:246-256` (`resolveSpawnTempRoot`), `.gitignore` (current state + `git diff` showing pre-droplet state), `git check-ignore -v` against four candidate paths, `git status --porcelain --untracked-files=all .tillsyn/`, `BUILDER_WORKLOG.md:492-538` (F.2.3 R1 entry).
+
+### Attack Inventory
+
+**A1 — Body-content drift from `default-go.toml`:** REFUTED. Body bytes match between offsets `template.toml:47` and `default-go.toml:40` (both lines = `schema_version = "v1"`). All `[kinds.*]` (12), `[[child_rules]]` (6), `[[steward_seeds]]` (6), `[gates]` (`build = ["mage_ci", "commit", "push"]`), and `[agent_bindings.*]` + `[agent_bindings.*.context]` (12 + 6) blocks are byte-equivalent. Line-count delta = +44 = +7 header expansion + 36-line `[tillsyn]` tail block + ~1-line whitespace nudge, reconciling the worklog's claimed +43 within tolerance.
+
+**A2 — `[tillsyn].spawn_temp_root = "os_tmp"` choice:** REFUTED. `bundle.go:246-256` `resolveSpawnTempRoot` switch maps both `""` and `"os_tmp"` (== `SpawnTempRootOSTmp`) to the same outcome. The explicit string preserves runtime behavior unchanged while making the dogfood policy observable on inspection. `"project"` would route bundles into `<worktree>/.tillsyn/spawns/<id>/` and require F.7.7 + F.7.8 (NOT shipped); choosing it now would pollute `mage ci`-ready repo state.
+
+**A3 — Gitignore re-include correctness:** REFUTED. `git check-ignore -v` against the live repo:
+
+- `.tillsyn/template.toml` → matches `.gitignore:19:!.tillsyn/template.toml` (RE-INCLUDED).
+- `.tillsyn/spawns/foo.json` → matches `.gitignore:18:.tillsyn/*` (IGNORED).
+- `.tillsyn/log/something` → matches `.gitignore:18:.tillsyn/*` (IGNORED).
+- `.tillsyn/tillsyn.db` → matches `.gitignore:18:.tillsyn/*` (IGNORED).
+
+`git status --porcelain --untracked-files=all .tillsyn/` returns exactly `?? .tillsyn/template.toml`. Surgical re-include works.
+
+**A4 — Subdirectory shadowing:** REFUTED. `.tillsyn/*` glob correctly matches BOTH file entries AND directory entries at that depth — `.tillsyn/spawns/foo.json` is correctly IGNORED via the parent-dir match (Attack-3 evidence). Standard gitignore semantics; no shadowing pathology.
+
+**A5 — Cross-checkout artifact stability:** REFUTED. `internal/app/service.go:loadProjectTemplate` is the only consumer of `<project_root>/.tillsyn/template.toml`; F.1.2 (the walker) has NOT shipped per spec § F.1.2 state line. Today the tillsyn project bakes from the embedded `default-go.toml` and the self-host file is INERT — staged for F.1.2's later activation. Worklog acknowledges this honestly. F.2.3 spec explicitly accepts this future-staging.
+
+**A6 — Header content correctness:** REFUTED. Lines 1-46 of `template.toml`:
+
+- Line 1: "Tillsyn self-host cascade template (dogfood)." — names file correctly.
+- Lines 4 + 11: cross-references "Drop 4c.5 droplet F.2.3" + `internal/templates/builtin/default-go.toml`.
+- Lines 14-19: documents intentional adjustment #1 (header swap).
+- Lines 21-35: documents intentional adjustment #2 (`[tillsyn]` block + `spawn_temp_root` rationale + bundle.go:246-256 reference + the deferred path to `"project"`).
+- Lines 37-41: cross-references F.1.2 walker activation policy.
+
+**A7 — Spec mitigation #3 was wrong (per builder):** **CONFIRMED against SPEC, NOT builder.**
+
+- `THEME_F_PLAN.md` § F.2.3 falsification mitigation F3 reads: `"existing rule is `.tillsyn/spawns/`, NOT `.tillsyn/`. Document in droplet acceptance."`
+- `git diff .gitignore` shows the pre-droplet rule was `-.tillsyn/` (NOT `.tillsyn/spawns/`). The spec's manual-verification claim was incorrect.
+- A `.tillsyn/` directory-level pattern would silently ignore the new `.tillsyn/template.toml` because gitignore re-include rules cannot resurrect a path under an excluded directory (they require `.tillsyn/*` granularity per gitignore docs).
+- Builder caught the spec error during R1 implementation, refactored `.gitignore` to `.tillsyn/*` + `!.tillsyn/template.toml`, and self-reported the spec error in `BUILDER_WORKLOG.md:502`. The fix is correct (Attack-3 evidence).
+
+**Routing:** finding goes against the SPEC (planner authored an incorrect manual-verification claim). The build artifact is correct because the builder caught + fixed the issue. Recommend the spec's F3 mitigation prose be updated post-merge in a refinement, OR THEME_F_PLAN.md is treated as a historical authoring artifact and the corrected behavior is tracked via the worklog.
+
+### Counterexamples (CONFIRMED)
+
+None against the builder's implementation. One CONFIRMED finding (A7) against the SPEC — already self-reported by the builder and resolved correctly in the build artifact.
+
+### Conclusion
+
+**PASS.** Body byte-faithful to `default-go.toml`, `[tillsyn].spawn_temp_root = "os_tmp"` correctly preserves the dispatcher's default behavior, gitignore re-include is surgical (verified by `git check-ignore -v` + `git status --untracked-files=all`), header is correct + audit-traceable, future-staging policy is honest, and the SPEC-side error in mitigation F3 was caught and corrected by the builder rather than propagated. Recommend droplet F.2.3 closes; route the SPEC-prose correction to a refinement note (or accept THEME_F_PLAN.md as a historical authoring artifact).
+
+### Hylla Feedback
+
+N/A — F.2.3 touched only non-Go files (TOML + dotfile + workflow MDs). Hylla is Go-only today per `feedback_hylla_go_only_today.md`. All evidence resolved via `Read` + `Bash` (`git check-ignore`, `git status`, `git diff`). Spawn-prompt directive ("NO Hylla calls") matched the file-type reality.
