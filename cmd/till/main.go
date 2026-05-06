@@ -255,13 +255,18 @@ type projectListCommandOptions struct {
 }
 
 // actionItemCommandOptions stores action-item subcommand flag values shared
-// across `till action_item get|update|move|move_state|delete|restore|reparent`.
+// across `till action_item get|update|move|move_state|delete|restore|reparent|supersede`.
 // Per Droplet 2.11: read commands (get) accept dotted addresses with project
 // resolved by --project flag or slug-prefix shorthand; mutation commands reject
 // dotted form with a mutations-require-UUID error.
+//
+// `reason` is the dev-intent free-text string supplied via `--reason` on the
+// supersede subcommand only (Drop 4c.5 droplet B.1). Empty / whitespace-only
+// values reject in `runActionItemSupersede` before any service call.
 type actionItemCommandOptions struct {
 	projectSlug  string
 	actionItemID string
+	reason       string
 }
 
 // projectCreateCommandOptions stores project create flag values.
@@ -290,17 +295,24 @@ type projectReadinessCommandOptions struct {
 }
 
 // issueSessionCommandOptions stores issue-session flag values.
+//
+// Drop 4c.5 droplet A.3: client_type is no longer a flag-driven option.
+// The CLI stamps "cli" server-side for every auth-related operation;
+// any caller that wants a different value must use the appropriate
+// adapter (mcp-stdio handler, future TUI, etc.).
 type issueSessionCommandOptions struct {
 	principalID   string
 	principalType string
 	principalName string
 	clientID      string
-	clientType    string
 	clientName    string
 	ttl           time.Duration
 }
 
 // requestCreateCommandOptions stores auth request create flag values.
+//
+// Drop 4c.5 droplet A.3: client_type is no longer a flag-driven option;
+// see the issueSessionCommandOptions doc-comment above for the rationale.
 type requestCreateCommandOptions struct {
 	path          string
 	principalID   string
@@ -308,7 +320,6 @@ type requestCreateCommandOptions struct {
 	principalRole string
 	principalName string
 	clientID      string
-	clientType    string
 	clientName    string
 	ttl           time.Duration
 	timeout       time.Duration
@@ -406,16 +417,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	projectDiscoverOpts := projectReadinessCommandOptions{}
 	issueSessionOpts := issueSessionCommandOptions{
 		principalType: "user",
-		clientID:      "till-mcp-stdio",
-		clientType:    "mcp-stdio",
-		clientName:    "Till MCP STDIO",
+		clientID:      "till-cli",
+		clientName:    "Till CLI",
 		ttl:           8 * time.Hour,
 	}
 	requestCreateOpts := requestCreateCommandOptions{
 		principalType: "user",
-		clientID:      "till-mcp-stdio",
-		clientType:    "mcp-stdio",
-		clientName:    "Till MCP STDIO",
+		clientID:      "till-cli",
+		clientName:    "Till CLI",
 		ttl:           8 * time.Hour,
 		timeout:       15 * time.Minute,
 	}
@@ -561,11 +570,11 @@ Only orchestrators may request projects/... or global scope.
 			"  till auth request create --path project/PROJECT_ID \\",
 			"    --principal-id BUILDER_PRINCIPAL_ID --principal-type agent \\",
 			"    --principal-role builder --client-id CLIENT_ID \\",
-			"    --client-type mcp-stdio --reason \"local MCP review\"",
+			"    --reason \"local MCP review\"",
 			"  till auth request create --path projects/PROJECT_ID_A,PROJECT_ID_B \\",
 			"    --principal-id ORCHESTRATOR_PRINCIPAL_ID --principal-type agent \\",
 			"    --principal-role orchestrator --client-id CLIENT_ID \\",
-			"    --client-type mcp-stdio --reason \"multi-project orchestration\"",
+			"    --reason \"multi-project orchestration\"",
 			"  till auth request list --project-id PROJECT_ID --state pending",
 			"  till auth request list --state approved",
 			"  till auth request approve --request-id REQUEST_ID --note \"approved for dogfood\"",
@@ -801,6 +810,39 @@ bare body, or use the slug-prefix shorthand <slug>:<dotted>. Slug-prefix and
 		Args:  cobra.ExactArgs(1),
 		RunE:  actionItemMutationRunE("reparent"),
 	}
+	// actionItemSupersedeCmd is the dev-only escape hatch for clearing one
+	// `failed` action item by transitioning it to `complete` with
+	// `metadata.outcome = "superseded"` and the supplied reason persisted on
+	// `metadata.transition_notes`. Bypasses the always-on terminal-state
+	// guard in service.MoveActionItem (which rejects every `failed →
+	// complete` move pre-D3 override-auth). The CLI is the only surface
+	// invoking this path today — no MCP tool registration exposes supersede
+	// so agent-driven flows cannot reach it.
+	actionItemSupersedeCmd := &cobra.Command{
+		Use:   "supersede [action_item_id]",
+		Short: "Supersede one failed action item (requires UUID — dotted addresses rejected)",
+		Long: strings.TrimSpace(`
+Transition one failed action item to complete with metadata.outcome="superseded"
+and the --reason text persisted on metadata.transition_notes. This is the dev
+escape hatch for clearing a stuck failed item so its parent can move forward.
+
+Only failed items are eligible — supersede on a todo / in_progress / complete /
+archived item rejects with a typed error. The supersede operates on EXACTLY the
+named node; descendants in non-terminal state keep their own state and the
+parent-blocks-on-incomplete-child invariant still gates higher ancestors via
+the existing completion-blocker chain.
+
+The --reason flag is required and must be non-empty after whitespace trim. The
+reason is the audit-trail substance the escape hatch exists to capture; an
+empty reason defeats the point.
+`),
+		Example: strings.Join([]string{
+			"  till action_item supersede 11111111-1111-1111-1111-111111111111 --reason \"rejected by dev — re-planning required\"",
+		}, "\n"),
+		Args: cobra.ExactArgs(1),
+		RunE: actionItemMutationRunE("supersede"),
+	}
+	actionItemSupersedeCmd.Flags().StringVar(&actionItemOpts.reason, "reason", "", "Dev-intent reason recorded on metadata.transition_notes (required, non-empty after trim)")
 	actionItemCmd.AddCommand(
 		actionItemGetCmd,
 		actionItemUpdateCmd,
@@ -809,6 +851,7 @@ bare body, or use the slug-prefix shorthand <slug>:<dotted>. Slug-prefix and
 		actionItemDeleteCmd,
 		actionItemRestoreCmd,
 		actionItemReparentCmd,
+		actionItemSupersedeCmd,
 	)
 
 	dispatcherCmd := &cobra.Command{
@@ -1345,7 +1388,7 @@ on request list for global inventory, or add it to focus on one project.
 		Example: strings.Join([]string{
 			"  till auth request create --path project/PROJECT_ID \\",
 			"    --principal-id PRINCIPAL_ID --principal-type agent \\",
-			"    --client-id CLIENT_ID --client-type mcp-stdio \\",
+			"    --client-id CLIENT_ID \\",
 			"    --reason \"manual MCP review\"",
 			"  till auth request list --project-id PROJECT_ID --state pending",
 			"  till auth request show --request-id REQUEST_ID",
@@ -1380,31 +1423,31 @@ approve, deny, or cancel.
 			"  till auth request create --path project/PROJECT_ID \\",
 			"    --principal-id BUILDER_PRINCIPAL_ID --principal-type agent \\",
 			"    --principal-role builder --client-id CLIENT_ID \\",
-			"    --client-type mcp-stdio --reason \"manual MCP review\"",
+			"    --reason \"manual MCP review\"",
 			"  till auth request create --path project/PROJECT_ID \\",
 			"    --principal-id QA_PRINCIPAL_ID --principal-type agent \\",
 			"    --principal-role qa --client-id CLIENT_ID \\",
-			"    --client-type mcp-stdio --reason \"qa review\"",
+			"    --reason \"qa review\"",
 			"  till auth request create --path project/PROJECT_ID \\",
 			"    --principal-id ORCHESTRATOR_PRINCIPAL_ID --principal-type agent \\",
 			"    --principal-role orchestrator --client-id CLIENT_ID \\",
-			"    --client-type mcp-stdio --reason \"orchestrator review\"",
+			"    --reason \"orchestrator review\"",
 			"  till auth request create --path projects/PROJECT_ID_A,PROJECT_ID_B \\",
 			"    --principal-id ORCHESTRATOR_PRINCIPAL_ID --principal-type agent \\",
 			"    --principal-role orchestrator --client-id CLIENT_ID \\",
-			"    --client-type mcp-stdio --reason \"multi-project orchestration\"",
+			"    --reason \"multi-project orchestration\"",
 			"  till auth request create --path global \\",
 			"    --principal-id ORCHESTRATOR_PRINCIPAL_ID --principal-type agent \\",
 			"    --principal-role orchestrator --client-id CLIENT_ID \\",
-			"    --client-type mcp-stdio --reason \"general orchestration\"",
+			"    --reason \"general orchestration\"",
 			"  till auth request create --path project/PROJECT_ID/branch/BRANCH_ID/phase/PHASE_ID \\",
 			"    --principal-id USER_ID --principal-type user --client-id CLIENT_ID \\",
-			"    --client-type tui --ttl 2h --timeout 30m \\",
+			"    --ttl 2h --timeout 30m \\",
 			"    --reason \"branch-focused review\"",
 			"  till auth request create --path project/PROJECT_ID \\",
 			"    --principal-id BUILDER_PRINCIPAL_ID --principal-type agent \\",
 			"    --principal-role builder --client-id CLIENT_ID \\",
-			"    --client-type mcp-stdio --reason \"resume after approval\" \\",
+			"    --reason \"resume after approval\" \\",
 			"    --continuation-json \"$(cat /tmp/auth-request-continuation.json)\"",
 		}, "\n"),
 		Args: cobra.NoArgs,
@@ -1418,7 +1461,9 @@ approve, deny, or cancel.
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalRole, "principal-role", "", "Optional agent role (orchestrator|builder|qa|research)")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.principalName, "principal-name", "", "Optional principal display name")
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientID, "client-id", requestCreateOpts.clientID, "Stable calling client identifier")
-	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientType, "client-type", requestCreateOpts.clientType, "Calling client transport or surface")
+	// Drop 4c.5 droplet A.3: --client-type is intentionally not exposed.
+	// client_type is stamped server-side at the adapter seam ("cli" for
+	// every CLI auth-request site).
 	requestCreateCmd.Flags().StringVar(&requestCreateOpts.clientName, "client-name", requestCreateOpts.clientName, "Optional client display name")
 	requestCreateCmd.Flags().DurationVar(&requestCreateOpts.ttl, "ttl", requestCreateOpts.ttl, "Requested approved-session lifetime")
 	requestCreateCmd.Flags().DurationVar(&requestCreateOpts.timeout, "timeout", requestCreateOpts.timeout, "How long the request stays pending before timing out")
@@ -1650,8 +1695,7 @@ client, or validate the pair with till auth session validate.
 `),
 		Example: strings.Join([]string{
 			"  till auth issue-session --principal-id PRINCIPAL_ID \\",
-			"    --principal-type agent --client-id CLIENT_ID \\",
-			"    --client-type mcp-stdio",
+			"    --principal-type agent --client-id CLIENT_ID",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1662,7 +1706,9 @@ client, or validate the pair with till auth session validate.
 	issueSessionCmd.Flags().StringVar(&issueSessionOpts.principalType, "principal-type", issueSessionOpts.principalType, "Principal type (user|agent|service)")
 	issueSessionCmd.Flags().StringVar(&issueSessionOpts.principalName, "principal-name", "", "Optional principal display name")
 	issueSessionCmd.Flags().StringVar(&issueSessionOpts.clientID, "client-id", issueSessionOpts.clientID, "Client identifier")
-	issueSessionCmd.Flags().StringVar(&issueSessionOpts.clientType, "client-type", issueSessionOpts.clientType, "Client type")
+	// Drop 4c.5 droplet A.3: --client-type is intentionally not exposed.
+	// client_type is stamped "cli" server-side for every issue-session
+	// invocation; issue-session is a CLI-only dogfood seam.
 	issueSessionCmd.Flags().StringVar(&issueSessionOpts.clientName, "client-name", issueSessionOpts.clientName, "Client display name")
 	issueSessionCmd.Flags().DurationVar(&issueSessionOpts.ttl, "ttl", issueSessionOpts.ttl, "Session time-to-live duration")
 	mustMarkFlagRequired(issueSessionCmd, "principal-id")
@@ -2513,6 +2559,10 @@ func executeCommandFlow(
 		return runOneShotCommand(command, "action_item mutation", func() error {
 			return runActionItemMutationGate(strings.TrimPrefix(command, "action_item."), actionItemOpts)
 		})
+	case "action_item.supersede":
+		return runOneShotCommand("action_item.supersede", "action_item supersede", func() error {
+			return runActionItemSupersede(ctx, svc, actionItemOpts, stdout)
+		})
 	case "export":
 		return runOneShotCommand("export", "export", func() error {
 			return runExport(ctx, svc, exportOpts, stdout)
@@ -2672,9 +2722,13 @@ func runAuthIssueSession(ctx context.Context, auth *autentauth.Service, opts iss
 		PrincipalType: strings.TrimSpace(opts.principalType),
 		PrincipalName: strings.TrimSpace(opts.principalName),
 		ClientID:      strings.TrimSpace(opts.clientID),
-		ClientType:    strings.TrimSpace(opts.clientType),
-		ClientName:    strings.TrimSpace(opts.clientName),
-		TTL:           opts.ttl,
+		// Drop 4c.5 droplet A.3: client_type is stamped server-side at
+		// the adapter seam. issue-session is a CLI-only seam, so it
+		// stamps the "cli" literal here and again on the audit-trail
+		// payload below.
+		ClientType: "cli",
+		ClientName: strings.TrimSpace(opts.clientName),
+		TTL:        opts.ttl,
 	})
 	if err != nil {
 		return fmt.Errorf("issue auth session: %w", err)
@@ -2686,7 +2740,7 @@ func runAuthIssueSession(ctx context.Context, auth *autentauth.Service, opts iss
 		PrincipalType: strings.TrimSpace(opts.principalType),
 		PrincipalName: firstNonEmpty(strings.TrimSpace(opts.principalName), principalID),
 		ClientID:      strings.TrimSpace(opts.clientID),
-		ClientType:    strings.TrimSpace(opts.clientType),
+		ClientType:    "cli",
 		ClientName:    firstNonEmpty(strings.TrimSpace(opts.clientName), strings.TrimSpace(opts.clientID)),
 		ExpiresAt:     issued.Session.ExpiresAt.UTC(),
 	}, issued.Secret)
@@ -3046,13 +3100,17 @@ func runAuthRequestCreate(ctx context.Context, svc *app.Service, cfg config.Conf
 	}
 	actorID, actorType := cliMutationActor(cfg)
 	request, err := svc.CreateAuthRequest(ctx, app.CreateAuthRequestInput{
-		Path:                strings.TrimSpace(opts.path),
-		PrincipalID:         strings.TrimSpace(opts.principalID),
-		PrincipalType:       strings.TrimSpace(opts.principalType),
-		PrincipalRole:       strings.TrimSpace(opts.principalRole),
-		PrincipalName:       strings.TrimSpace(opts.principalName),
-		ClientID:            strings.TrimSpace(opts.clientID),
-		ClientType:          strings.TrimSpace(opts.clientType),
+		Path:          strings.TrimSpace(opts.path),
+		PrincipalID:   strings.TrimSpace(opts.principalID),
+		PrincipalType: strings.TrimSpace(opts.principalType),
+		PrincipalRole: strings.TrimSpace(opts.principalRole),
+		PrincipalName: strings.TrimSpace(opts.principalName),
+		ClientID:      strings.TrimSpace(opts.clientID),
+		// Drop 4c.5 droplet A.3: client_type is stamped server-side
+		// at the adapter seam. The CLI is the "cli" adapter family;
+		// every CLI auth-request site stamps the literal regardless
+		// of any historical --client-type flag value.
+		ClientType:          "cli",
 		ClientName:          strings.TrimSpace(opts.clientName),
 		RequestedSessionTTL: opts.ttl,
 		Reason:              strings.TrimSpace(opts.reason),

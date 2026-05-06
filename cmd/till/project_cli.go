@@ -331,7 +331,7 @@ func projectReadinessNextStep(projectID string, pendingRequests []domain.AuthReq
 	case len(pendingRequests) > 1:
 		return fmt.Sprintf("till auth request list --project-id %s --state pending", projectID), "Multiple pending auth requests are visible; inspect them and then approve or deny the right one before issuing a session, lease, or handoff."
 	case activeOrchestratorSessions == 0:
-		return fmt.Sprintf("till auth request create --path project/%s --principal-id AGENT_ID --principal-type agent --principal-role orchestrator --client-id CLIENT_ID --client-type mcp-stdio --reason %q", projectID, "project collaboration setup"), "No active orchestrator session is visible for this project yet; request and approve one before issuing a project lease."
+		return fmt.Sprintf("till auth request create --path project/%s --principal-id AGENT_ID --principal-type agent --principal-role orchestrator --client-id CLIENT_ID --reason %q", projectID, "project collaboration setup"), "No active orchestrator session is visible for this project yet; request and approve one before issuing a project lease."
 	case leases == 0:
 		return fmt.Sprintf("till lease issue --project-id %s --role builder --agent-name AGENT_NAME", projectID), "An active orchestrator session is visible, so issue the project lease before creating the first handoff."
 	case openHandoffs == 0:

@@ -802,7 +802,6 @@ func TestRunAuthIssueAndRevokeSession(t *testing.T) {
 		"--principal-type", "agent",
 		"--principal-name", "Agent One",
 		"--client-id", "till-mcp-stdio",
-		"--client-type", "mcp-stdio",
 		"--client-name", "Till MCP STDIO",
 	}, &issuedOut, io.Discard); err != nil {
 		t.Fatalf("run(auth issue-session) error = %v", err)
@@ -869,7 +868,6 @@ func TestRunAuthRequestApproveLifecycle(t *testing.T) {
 		"--principal-type", "agent",
 		"--principal-role", "builder",
 		"--client-id", "till-mcp-stdio",
-		"--client-type", "mcp-stdio",
 		"--reason", "manual MCP review",
 		"--continuation-json", `{"resume_tool":"till.raise_attention_item","resume_path":"project/p1","resume":{"path":"project/p1","attempt":1,"tags":["auth","dogfood"]}}`,
 	}, &createdOut, io.Discard); err != nil {
@@ -1074,7 +1072,6 @@ func TestRunAuthRequestTerminalStatesAndFilters(t *testing.T) {
 			"--path", "project/p1",
 			"--principal-id", principalID,
 			"--client-id", "till-tui",
-			"--client-type", "tui",
 			"--reason", "review access",
 		}, &out, io.Discard); err != nil {
 			t.Fatalf("run(auth request create %q) error = %v", principalID, err)
@@ -1158,7 +1155,6 @@ func TestRunAuthRequestTimeoutMaterializesExpiredState(t *testing.T) {
 		"--path", "project/p1",
 		"--principal-id", "review-user",
 		"--client-id", "till-tui",
-		"--client-type", "tui",
 		"--timeout", "1ms",
 		"--reason", "brief review",
 	}, &createdOut, io.Discard); err != nil {
@@ -1185,6 +1181,142 @@ func TestRunAuthRequestTimeoutMaterializesExpiredState(t *testing.T) {
 	}
 }
 
+// TestRunAuthRequestCreateStampsCLIClientType pins the Drop 4c.5 droplet
+// A.3 CLI invariant: every CLI auth-request creation site stamps the
+// literal "cli" on the downstream domain.AuthRequest.ClientType,
+// regardless of any historical --client-type flag value or default.
+// Implementation evidence: cmd/till/main.go:runAuthRequestCreate
+// hard-codes ClientType: "cli". This test reads the stored auth-request
+// row directly to verify the stamp survives the CLI → service → repo
+// path without relying on the client_type display rendering, since the
+// "client type" KV row is a display-only surface.
+func TestRunAuthRequestCreateStampsCLIClientType(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var createdOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "create",
+		"--path", "project/p1",
+		"--principal-id", "review-agent",
+		"--principal-type", "agent",
+		"--principal-role", "builder",
+		"--client-id", "till-cli",
+		"--reason", "cli stamp invariant",
+	}, &createdOut, io.Discard); err != nil {
+		t.Fatalf("run(auth request create) error = %v", err)
+	}
+
+	requestID := extractCLIKVValue(t, createdOut.String(), "request id")
+	if requestID == "" {
+		t.Fatalf("auth request create did not surface a request id: %q", createdOut.String())
+	}
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	stored, err := repo.GetAuthRequest(context.Background(), requestID)
+	if err != nil {
+		t.Fatalf("GetAuthRequest(%q) error = %v", requestID, err)
+	}
+	if got := stored.ClientType; got != "cli" {
+		t.Fatalf("auth request ClientType = %q, want %q (CLI server-stamp)", got, "cli")
+	}
+}
+
+// TestRunAuthIssueSessionStampsCLIClientType pins the same A.3 invariant
+// for the issue-session CLI seam: the autent-issued session carries
+// ClientType "cli" regardless of any --client-id / --client-name input.
+// Asserts on the displayed "client type" KV row since issue-session has
+// no DB-readable analogue without re-implementing autent's storage
+// schema knowledge here.
+func TestRunAuthIssueSessionStampsCLIClientType(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+
+	var issuedOut strings.Builder
+	if err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "issue-session",
+		"--principal-id", "agent-1",
+		"--principal-type", "agent",
+		"--client-id", "till-anything",
+		"--client-name", "Till Anything",
+	}, &issuedOut, io.Discard); err != nil {
+		t.Fatalf("run(auth issue-session) error = %v", err)
+	}
+	if got := extractCLIKVValue(t, issuedOut.String(), "client type"); got != "cli" {
+		t.Fatalf("issue-session client type = %q, want %q (CLI server-stamp)", got, "cli")
+	}
+}
+
+// TestRunAuthRequestCreateRejectsClientTypeFlag pins the Drop 4c.5 droplet
+// A.3 ergonomics invariant: --client-type is no longer a flag on the
+// auth request create CLI surface (server-stamp at adapter seam removes
+// the configurability knob). cobra's strict flag parsing surfaces a
+// non-zero error when the flag is supplied.
+func TestRunAuthRequestCreateRejectsClientTypeFlag(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+	seedProjectForAuthCLITest(t, dbPath, "p1")
+
+	var stderr strings.Builder
+	err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "request", "create",
+		"--path", "project/p1",
+		"--principal-id", "review-agent",
+		"--principal-type", "agent",
+		"--client-id", "till-cli",
+		"--client-type", "cli",
+		"--reason", "flag removal check",
+	}, io.Discard, &stderr)
+	if err == nil {
+		t.Fatal("run(auth request create --client-type) error = nil, want unknown flag error")
+	}
+	if got := stderr.String(); !strings.Contains(got, "--client-type") && !strings.Contains(err.Error(), "client-type") {
+		t.Fatalf("expected unknown flag error mentioning client-type; got err=%v stderr=%q", err, got)
+	}
+}
+
+// TestRunAuthIssueSessionRejectsClientTypeFlag mirrors the auth-request-create
+// assertion above for the issue-session seam.
+func TestRunAuthIssueSessionRejectsClientTypeFlag(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+
+	var stderr strings.Builder
+	err := run(context.Background(), []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"auth", "issue-session",
+		"--principal-id", "agent-1",
+		"--principal-type", "agent",
+		"--client-id", "till-cli",
+		"--client-type", "cli",
+	}, io.Discard, &stderr)
+	if err == nil {
+		t.Fatal("run(auth issue-session --client-type) error = nil, want unknown flag error")
+	}
+	if got := stderr.String(); !strings.Contains(got, "--client-type") && !strings.Contains(err.Error(), "client-type") {
+		t.Fatalf("expected unknown flag error mentioning client-type; got err=%v stderr=%q", err, got)
+	}
+}
+
 // TestRunAuthIssueSessionCredentialsAuthorizeMutation verifies CLI-issued credentials are usable through the auth-backed mutation adapter seam.
 func TestRunAuthIssueSessionCredentialsAuthorizeMutation(t *testing.T) {
 	tmp := t.TempDir()
@@ -1199,7 +1331,6 @@ func TestRunAuthIssueSessionCredentialsAuthorizeMutation(t *testing.T) {
 		"--principal-id", "agent-1",
 		"--principal-type", "agent",
 		"--client-id", "till-mcp-stdio",
-		"--client-type", "mcp-stdio",
 	}, &issuedOut, io.Discard); err != nil {
 		t.Fatalf("run(auth issue-session) error = %v", err)
 	}
@@ -1535,7 +1666,6 @@ func TestRunProjectCommands(t *testing.T) {
 		"--principal-type", "agent",
 		"--principal-role", "builder",
 		"--client-id", "till-mcp-stdio",
-		"--client-type", "mcp-stdio",
 		"--reason", "collaboration setup",
 	}, &requestOut, io.Discard); err != nil {
 		t.Fatalf("run(auth request create) error = %v", err)

@@ -110,7 +110,15 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 			mcp.WithString("requested_by_type", mcp.Description("Optional requester actor type for operation=create. When acting_session_id is provided, this must be omitted or match the acting session principal type."), mcp.Enum("user", "agent", "system")),
 			mcp.WithString("requester_client_id", mcp.Description("Optional requester client identifier for operation=create. When acting_session_id is provided, this must be omitted or match the acting session client_id.")),
 			mcp.WithString("client_id", mcp.Description("Required for operation=create|claim|cancel. Requesting or requester client identifier depending on operation; optional filter for operation=list_sessions")),
-			mcp.WithString("client_type", mcp.Description("Requesting client type for operation=create")),
+			// Drop 4c.5 droplet A.3: client_type is server-inferred from the
+			// adapter family (this MCP-stdio handler stamps "mcp-stdio"
+			// unconditionally). The schema declaration is intentionally
+			// omitted so MCP clients do not advertise a configurable knob.
+			// The `ClientType` field on the typed args struct is retained
+			// transitionally so post-A.2 strict-decode does not reject
+			// existing clients that still send `"client_type": "..."`; the
+			// agent-supplied value is silently overridden by the adapter
+			// stamper below.
 			mcp.WithString("client_name", mcp.Description("Optional client display name for operation=create")),
 			mcp.WithString("requested_ttl", mcp.Description("Optional approved-session lifetime override for operation=create, for example 2h")),
 			mcp.WithString("timeout", mcp.Description("Optional pending-request timeout for operation=create, for example 30m")),
@@ -196,12 +204,17 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 					RequestedByType:     args.RequestedByType,
 					RequesterClientID:   args.RequesterClientID,
 					ClientID:            args.ClientID,
-					ClientType:          args.ClientType,
-					ClientName:          args.ClientName,
-					RequestedTTL:        args.RequestedTTL,
-					Timeout:             args.Timeout,
-					Reason:              args.Reason,
-					ContinuationJSON:    args.ContinuationJSON,
+					// Drop 4c.5 droplet A.3: stamp the adapter family
+					// literal regardless of agent input. args.ClientType
+					// is intentionally ignored; see the type-decl
+					// comment near `mcp.WithString("client_id", ...)`
+					// above for the transitional rationale.
+					ClientType:       "mcp-stdio",
+					ClientName:       args.ClientName,
+					RequestedTTL:     args.RequestedTTL,
+					Timeout:          args.Timeout,
+					Reason:           args.Reason,
+					ContinuationJSON: args.ContinuationJSON,
 				})
 				if err != nil {
 					return toolResultFromError(err), nil

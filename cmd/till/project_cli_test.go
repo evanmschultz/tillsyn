@@ -307,7 +307,7 @@ func TestProjectReadinessNextStep(t *testing.T) {
 		},
 		{
 			name:             "request agent session next when none are active",
-			wantCommandParts: []string{"till auth request create", "--path project/p1", "--principal-id AGENT_ID", "--principal-type agent", "--principal-role orchestrator", "--client-id CLIENT_ID", "--client-type mcp-stdio"},
+			wantCommandParts: []string{"till auth request create", "--path project/p1", "--principal-id AGENT_ID", "--principal-type agent", "--principal-role orchestrator", "--client-id CLIENT_ID"},
 			wantReason:       "No active orchestrator session is visible",
 		},
 		{

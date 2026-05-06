@@ -221,9 +221,20 @@ type ApproveAuthRequestGatewayInput struct {
 }
 
 // CreateAuthRequest creates one pending auth request and mirrors it into the attention surface.
+//
+// Drop 4c.5 droplet A.3: client_type is server-stamped at the adapter seam
+// (mcp-stdio handler stamps "mcp-stdio"; CLI stamps "cli"; future TUI stamps
+// "tui"). This service-level reject-on-empty check closes the asymmetric
+// validation gap with autentauth.ensureClient (which already rejects empty on
+// the approve path) and is defense-in-depth for callers that bypass the
+// adapter stamper. It is NOT a content check — any non-empty string is
+// accepted, mirroring the open-vocabulary policy on auth-session client_type.
 func (s *Service) CreateAuthRequest(ctx context.Context, in CreateAuthRequestInput) (domain.AuthRequest, error) {
 	if s.authRequests == nil {
 		return domain.AuthRequest{}, fmt.Errorf("auth requests are not configured")
+	}
+	if strings.TrimSpace(in.ClientType) == "" {
+		return domain.AuthRequest{}, fmt.Errorf("client_type is required: %w", domain.ErrInvalidClientType)
 	}
 	path, err := domain.ParseAuthRequestPath(in.Path)
 	if err != nil {

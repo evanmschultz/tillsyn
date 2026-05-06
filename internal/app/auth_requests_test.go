@@ -547,6 +547,7 @@ func TestServiceClaimAuthRequestRejectsNegativeWaitTimeout(t *testing.T) {
 		Path:              "project/" + fixture.project.ID,
 		PrincipalID:       "review-agent",
 		ClientID:          "till-mcp-stdio",
+		ClientType:        "mcp-stdio",
 		Reason:            "resume after approval",
 		Continuation:      map[string]any{"resume_token": "resume-123"},
 		RequestedBy:       "review-agent",
@@ -1491,5 +1492,90 @@ func TestApproveAuthRequestAllowedWhenProjectToggleNil(t *testing.T) {
 	}
 	if approved.SessionSecret == "" {
 		t.Fatal("ApproveAuthRequest(toggle-nil) returned empty session secret")
+	}
+}
+
+// TestServiceCreateAuthRequestRejectsEmptyClientType pins the Drop 4c.5
+// droplet A.3 invariant: Service.CreateAuthRequest rejects empty (or
+// whitespace-only) client_type with domain.ErrInvalidClientType. The
+// adapter seam is responsible for stamping the family literal
+// ("mcp-stdio" / "cli" / "tui"); the service-level check is
+// defense-in-depth that mirrors autentauth.ensureClient's symmetric
+// rejection on the approve path.
+func TestServiceCreateAuthRequestRejectsEmptyClientType(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		clientType string
+	}{
+		{name: "empty string", clientType: ""},
+		{name: "single space", clientType: " "},
+		{name: "tab + newline + space", clientType: "\t\n "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newAuthRequestServiceFixture(t)
+
+			_, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+				Path:                "project/" + fixture.project.ID,
+				PrincipalID:         "review-agent",
+				PrincipalType:       "agent",
+				PrincipalName:       "Review Agent",
+				ClientID:            "till-mcp-stdio",
+				ClientType:          tc.clientType,
+				ClientName:          "Till MCP STDIO",
+				RequestedSessionTTL: 2 * time.Hour,
+				Reason:              "manual MCP review",
+				RequestedBy:         "lane-user",
+				RequestedType:       domain.ActorTypeUser,
+				Timeout:             10 * time.Minute,
+			})
+			if err == nil {
+				t.Fatal("CreateAuthRequest(empty client_type) error = nil, want ErrInvalidClientType")
+			}
+			if !errors.Is(err, domain.ErrInvalidClientType) {
+				t.Fatalf("CreateAuthRequest(empty client_type) error = %v, want errors.Is ErrInvalidClientType", err)
+			}
+		})
+	}
+}
+
+// TestServiceCreateAuthRequestAcceptsNonEmptyClientType confirms the
+// rejection's other side: any non-empty client_type passes the gate.
+// Mirrors the open-vocabulary policy on auth-session client_type — the
+// service does NOT enforce a closed set; adapter-stamping at the seam
+// is the value-disciplining layer.
+func TestServiceCreateAuthRequestAcceptsNonEmptyClientType(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		clientType string
+	}{
+		{name: "mcp-stdio", clientType: "mcp-stdio"},
+		{name: "cli", clientType: "cli"},
+		{name: "tui", clientType: "tui"},
+		{name: "future-adapter-family", clientType: "cli-cascade"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newAuthRequestServiceFixture(t)
+
+			request, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+				Path:                "project/" + fixture.project.ID,
+				PrincipalID:         "review-agent",
+				PrincipalType:       "agent",
+				PrincipalName:       "Review Agent",
+				ClientID:            "till-" + tc.clientType,
+				ClientType:          tc.clientType,
+				ClientName:          "Display",
+				RequestedSessionTTL: 2 * time.Hour,
+				Reason:              "vocabulary check",
+				RequestedBy:         "lane-user",
+				RequestedType:       domain.ActorTypeUser,
+				Timeout:             10 * time.Minute,
+			})
+			if err != nil {
+				t.Fatalf("CreateAuthRequest(%q) error = %v, want success", tc.clientType, err)
+			}
+			if got := request.ClientType; got != tc.clientType {
+				t.Fatalf("CreateAuthRequest(%q) stored ClientType = %q, want %q", tc.clientType, got, tc.clientType)
+			}
+		})
 	}
 }

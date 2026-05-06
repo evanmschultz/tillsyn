@@ -1475,6 +1475,13 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	if got := capture.lastCreate.ContinuationJSON; !strings.Contains(got, "resume_tool") {
 		t.Fatalf("CreateAuthRequest() continuation_json = %q, want resume payload", got)
 	}
+	// Drop 4c.5 droplet A.3: the MCP-stdio adapter stamps "mcp-stdio"
+	// regardless of any agent-supplied "client_type" value. Pin the stamp
+	// here so any regression in handler.go's ClientType: "mcp-stdio"
+	// override is caught by the existing exhaustive happy-path test.
+	if got := capture.lastCreate.ClientType; got != "mcp-stdio" {
+		t.Fatalf("CreateAuthRequest() client_type = %q, want mcp-stdio (server-stamped)", got)
+	}
 
 	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.auth_request", map[string]any{
 		"operation":  "list",
@@ -1685,6 +1692,88 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	}
 	if got := capture.lastRevokeSession.ActingSessionSecret; got != "acting-secret-1" {
 		t.Fatalf("RevokeAuthSession() acting_session_secret = %q, want acting-secret-1", got)
+	}
+}
+
+// TestHandlerAuthRequestCreateOverridesAgentSuppliedClientType pins the
+// Drop 4c.5 droplet A.3 server-stamp invariant: regardless of what an MCP
+// client sends for "client_type" (legitimate values like "tui", malicious
+// values like "spoofed-orch", or empty), the MCP-stdio handler stamps
+// "mcp-stdio" on the downstream CreateAuthRequest call. The transitional
+// strict-decode tolerance for the typed struct field is also exercised
+// (post-A.2 strict decoder must NOT reject the schema-omitted-but-typed
+// "client_type" key).
+func TestHandlerAuthRequestCreateOverridesAgentSuppliedClientType(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name              string
+		agentClientType   string
+		omitClientTypeKey bool
+	}{
+		{name: "agent supplies tui", agentClientType: "tui"},
+		{name: "agent supplies spoofed-orch", agentClientType: "spoofed-orch"},
+		{name: "agent supplies empty string", agentClientType: ""},
+		{name: "agent omits client_type key entirely", omitClientTypeKey: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+			capture := &stubAuthRequestService{
+				stubCaptureStateReader: stubCaptureStateReader{
+					captureState: common.CaptureState{StateHash: "abc123"},
+				},
+				created: common.AuthRequestRecord{
+					ID:                  "req-1",
+					State:               "pending",
+					Path:                "project/p1",
+					ProjectID:           "p1",
+					ScopeType:           common.ScopeTypeProject,
+					ScopeID:             "p1",
+					PrincipalID:         "review-agent",
+					PrincipalType:       "agent",
+					PrincipalRole:       "builder",
+					ClientID:            "till-mcp-stdio",
+					ClientType:          "mcp-stdio",
+					RequestedSessionTTL: "2h0m0s",
+					CreatedAt:           now,
+					ExpiresAt:           now.Add(30 * time.Minute),
+				},
+			}
+
+			handler, err := NewHandler(Config{}, capture, nil)
+			if err != nil {
+				t.Fatalf("NewHandler() error = %v", err)
+			}
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+			args := map[string]any{
+				"operation":      "create",
+				"path":           "project/p1",
+				"principal_id":   "review-agent",
+				"principal_type": "agent",
+				"principal_role": "builder",
+				"client_id":      "till-mcp-stdio",
+				"reason":         "override invariant",
+			}
+			if !tc.omitClientTypeKey {
+				args["client_type"] = tc.agentClientType
+			}
+
+			_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", args))
+			if createResp.Error != nil {
+				t.Fatalf("till.auth_request create returned protocol error = %#v", createResp.Error)
+			}
+			structured := toolResultStructured(t, createResp.Result)
+			if got, ok := structured["id"].(string); !ok || got != "req-1" {
+				t.Fatalf("till.auth_request create id = %v, want req-1", structured["id"])
+			}
+
+			if got := capture.lastCreate.ClientType; got != "mcp-stdio" {
+				t.Fatalf("CreateAuthRequest() client_type = %q, want mcp-stdio (handler-stamped); agent sent %q (omit=%v)", got, tc.agentClientType, tc.omitClientTypeKey)
+			}
+		})
 	}
 }
 
@@ -2733,5 +2822,14 @@ func TestAuthRequestToolSchemaApproveAcceptsOnlyDocumentedArgs(t *testing.T) {
 		if _, exists := properties[key]; !exists {
 			t.Fatalf("till.auth_request schema missing documented approve argument %q", key)
 		}
+	}
+
+	// Drop 4c.5 droplet A.3: client_type is server-stamped at the adapter
+	// seam (mcp-stdio handler stamps "mcp-stdio" unconditionally) and must
+	// not be advertised as a configurable parameter on the published schema.
+	// The typed-args struct retains the field for transitional strict-decode
+	// compatibility, but the schema must not declare it.
+	if _, exists := properties["client_type"]; exists {
+		t.Fatalf("till.auth_request schema carries server-stamped parameter %q (Drop 4c.5 A.3 invariant)", "client_type")
 	}
 }
