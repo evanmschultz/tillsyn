@@ -1908,6 +1908,73 @@ func (a *AppServiceAdapter) ListBuiltinTemplates(ctx context.Context) (ListBuilt
 	}, nil
 }
 
+// ValidateCandidateTemplate runs the full templates.LoadWithOptions
+// validation chain on the supplied TOML bytes. The operation is purely
+// lexical: it does NOT touch project state, does NOT re-bake any catalog,
+// and does NOT persist anything to disk.
+//
+// Drop 4c.5 droplet F.3.2: success / failure duality is collapsed into one
+// envelope; adopters route on Result.Valid. Validation failures are
+// returned IN-BAND on the result struct (Valid == false) rather than as Go
+// errors, so toolResultFromError is reserved for adapter-misconfiguration
+// errors only. The 1MB input-size cap is enforced at the MCP boundary
+// (extended_tools.go) before the request reaches this adapter.
+func (a *AppServiceAdapter) ValidateCandidateTemplate(ctx context.Context, in ValidateCandidateTemplateRequest) (ValidateCandidateTemplateResult, error) {
+	if a == nil || a.service == nil {
+		return ValidateCandidateTemplateResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	out, err := a.service.ValidateCandidateTemplate(ctx, app.ValidateCandidateTemplateInput{
+		TemplateTOML: in.TemplateTOML,
+	})
+	if err != nil {
+		return ValidateCandidateTemplateResult{}, mapAppError("validate candidate template", err)
+	}
+	return ValidateCandidateTemplateResult{
+		Valid:        out.Valid,
+		SentinelName: out.SentinelName,
+		Error:        out.Error,
+		Warnings:     append([]string(nil), out.Warnings...),
+	}, nil
+}
+
+// SetProjectTemplate atomically installs a candidate template TOML into
+// the project's `<bare-root | primary-worktree>/.tillsyn/template.toml`
+// AND swaps the project's KindCatalogJSON snapshot to the freshly-baked
+// catalog. The four-step ordering (validate → shadow-bake → tmp+rename →
+// swap+persist) lives in app.Service.SetProjectTemplate's doc-comment;
+// this adapter is a thin pass-through.
+//
+// Drop 4c.5 droplet F.3.3: the wire envelope flips service-side errors
+// into `{Set: false, Error: "..."}` IN-BAND so adopters route on a
+// uniform shape. Adapter-misconfiguration errors (nil receiver, nil
+// service) are still returned as Go errors so the MCP boundary surfaces
+// them via toolResultFromError. Validation failures, no-checkout
+// rejection, and atomic-write failures are surfaced in-band.
+func (a *AppServiceAdapter) SetProjectTemplate(ctx context.Context, in SetProjectTemplateRequest) (SetProjectTemplateResult, error) {
+	if a == nil || a.service == nil {
+		return SetProjectTemplateResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	out, err := a.service.SetProjectTemplate(ctx, app.SetProjectTemplateInput{
+		ProjectID:     strings.TrimSpace(in.ProjectID),
+		TemplateTOML:  []byte(in.TemplateTOML),
+		UpdatedBy:     strings.TrimSpace(in.Actor.ActorID),
+		UpdatedByName: strings.TrimSpace(in.Actor.ActorName),
+		UpdatedType:   domain.ActorType(strings.TrimSpace(in.Actor.ActorType)),
+	})
+	if err != nil {
+		return SetProjectTemplateResult{
+			Set:   false,
+			Error: err.Error(),
+		}, nil
+	}
+	return SetProjectTemplateResult{
+		Set:          true,
+		ProjectID:    out.ProjectID,
+		BakeSource:   out.BakeSource,
+		BytesWritten: out.BytesWritten,
+	}, nil
+}
+
 // ListCapabilityLeases lists scoped capability leases.
 func (a *AppServiceAdapter) ListCapabilityLeases(ctx context.Context, in ListCapabilityLeasesRequest) ([]domain.CapabilityLease, error) {
 	if a == nil || a.service == nil {

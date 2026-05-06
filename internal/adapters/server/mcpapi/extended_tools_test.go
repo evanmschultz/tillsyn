@@ -2,20 +2,24 @@ package mcpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
 	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
@@ -79,6 +83,12 @@ type stubExpandedService struct {
 	getProjectTemplateErr        error
 	listBuiltinTemplatesCalls    int
 	listBuiltinTemplatesErr      error
+	lastValidateCandidateReq     common.ValidateCandidateTemplateRequest
+	validateCandidateCalls       int
+	validateCandidateResultFn    func(common.ValidateCandidateTemplateRequest) (common.ValidateCandidateTemplateResult, error)
+	lastSetProjectTemplateReq    common.SetProjectTemplateRequest
+	setProjectTemplateCalls      int
+	setProjectTemplateResultFn   func(common.SetProjectTemplateRequest) (common.SetProjectTemplateResult, error)
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -871,6 +881,50 @@ func (s *stubExpandedService) ListBuiltinTemplates(_ context.Context) (common.Li
 	}
 	return common.ListBuiltinTemplatesResult{
 		Templates: []string{"default-generic", "default-go"},
+	}, nil
+}
+
+// ValidateCandidateTemplate is the test stub backing the till.template
+// `validate` MCP operation (Drop 4c.5 droplet F.3.2). The stub captures
+// the inbound request via lastValidateCandidateReq so tests can assert
+// wire-shape translation, increments validateCandidateCalls so tests can
+// confirm the call site routed correctly, and delegates the result shape
+// to validateCandidateResultFn when set.
+//
+// When validateCandidateResultFn is nil the stub falls back to a
+// deterministic "looks valid" envelope so tests that do not care about
+// the result body still get a well-formed JSON envelope.
+func (s *stubExpandedService) ValidateCandidateTemplate(_ context.Context, in common.ValidateCandidateTemplateRequest) (common.ValidateCandidateTemplateResult, error) {
+	s.validateCandidateCalls++
+	s.lastValidateCandidateReq = in
+	if s.validateCandidateResultFn != nil {
+		return s.validateCandidateResultFn(in)
+	}
+	return common.ValidateCandidateTemplateResult{Valid: true}, nil
+}
+
+// SetProjectTemplate is the test stub backing the till.template `set`
+// MCP operation (Drop 4c.5 droplet F.3.3). The stub captures the inbound
+// request via lastSetProjectTemplateReq so tests can assert wire-shape
+// translation (including the auth-resolved Actor tuple), increments
+// setProjectTemplateCalls so tests can confirm the call site routed
+// correctly, and delegates the result shape to setProjectTemplateResultFn
+// when set.
+//
+// When setProjectTemplateResultFn is nil the stub falls back to a
+// deterministic "set succeeded" envelope so tests that do not care about
+// the result body still get a well-formed JSON envelope.
+func (s *stubExpandedService) SetProjectTemplate(_ context.Context, in common.SetProjectTemplateRequest) (common.SetProjectTemplateResult, error) {
+	s.setProjectTemplateCalls++
+	s.lastSetProjectTemplateReq = in
+	if s.setProjectTemplateResultFn != nil {
+		return s.setProjectTemplateResultFn(in)
+	}
+	return common.SetProjectTemplateResult{
+		Set:          true,
+		ProjectID:    in.ProjectID,
+		BakeSource:   "<bare-root>",
+		BytesWritten: len(in.TemplateTOML),
 	}, nil
 }
 
@@ -3764,6 +3818,610 @@ func TestTillTemplate_ListBuiltin(t *testing.T) {
 	}
 }
 
+// validTemplateFixtureTOML returns the embedded default-go template
+// re-marshalled to TOML bytes. The fixture is the canonical "valid"
+// payload for till.template validate tests: it round-trips through the
+// full templates.LoadWithOptions chain unchanged because it IS the chain's
+// post-Drop-4c.5 reference shape.
+//
+// The helper centralizes the fixture so a future drop that changes the
+// embedded default's body (e.g. adds a kind, swaps a child rule) lands
+// in the test surface for free without per-test fixture maintenance.
+func validTemplateFixtureTOML(t *testing.T) string {
+	t.Helper()
+	tpl, err := templates.LoadDefaultTemplateForLanguage("go")
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\") error = %v", err)
+	}
+	body, err := templates.MarshalTOML(tpl)
+	if err != nil {
+		t.Fatalf("MarshalTOML() error = %v", err)
+	}
+	return string(body)
+}
+
+// TestTillTemplate_Validate_Valid verifies the Drop 4c.5 droplet F.3.2
+// wire envelope for a valid TOML payload: the response carries
+// `valid: true` with no sentinel_name / error fields, the call routes
+// through the service stub (incrementing validateCandidateCalls), and the
+// inbound TemplateTOML field is captured verbatim so the wire-shape round
+// trip is provable.
+//
+// The stub returns a deterministic Valid: true envelope — this test
+// proves the boundary plumbing, NOT the chain semantics. Chain semantics
+// are exercised by TestTillTemplate_Validate_RealAdapter_* below using
+// the real AppServiceAdapter against templates.LoadWithOptions.
+func TestTillTemplate_Validate_Valid(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	service.validateCandidateResultFn = func(in common.ValidateCandidateTemplateRequest) (common.ValidateCandidateTemplateResult, error) {
+		return common.ValidateCandidateTemplateResult{Valid: true}, nil
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	body := "schema_version = \"v1\"\n# fixture\n"
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(810, "till.template", map[string]any{
+		"operation":     "validate",
+		"template_toml": body,
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template validate returned isError=true: %#v", callResp.Result)
+	}
+	if service.validateCandidateCalls != 1 {
+		t.Fatalf("validateCandidateCalls = %d, want 1", service.validateCandidateCalls)
+	}
+	if service.lastValidateCandidateReq.TemplateTOML != body {
+		t.Fatalf("lastValidateCandidateReq.TemplateTOML = %q, want round-trip of %q",
+			service.lastValidateCandidateReq.TemplateTOML, body)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if valid, _ := structured["valid"].(bool); !valid {
+		t.Fatalf("structured.valid = %v, want true", structured["valid"])
+	}
+	if _, hasError := structured["error"]; hasError {
+		t.Fatalf("structured.error present on valid result: %#v", structured)
+	}
+	if _, hasSentinel := structured["sentinel_name"]; hasSentinel {
+		t.Fatalf("structured.sentinel_name present on valid result: %#v", structured)
+	}
+}
+
+// TestTillTemplate_Validate_UnknownKey verifies the Drop 4c.5 droplet F.3.2
+// wire envelope for an unknown-key failure: the response carries
+// `valid: false`, sentinel_name == "ErrUnknownTemplateKey" (the canonical
+// templates-package sentinel name), and a non-empty error string. The test
+// runs through the REAL AppServiceAdapter chain so the sentinel-name
+// extraction logic in app.classifyTemplateValidationError is exercised
+// end-to-end against templates.LoadWithOptions.
+func TestTillTemplate_Validate_UnknownKey(t *testing.T) {
+	t.Parallel()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("sqlite.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	svc := app.NewService(repo, func() string { return "real-id-001" }, nil, app.ServiceConfig{})
+	adapter := common.NewAppServiceAdapter(svc, nil)
+	handler, err := NewHandler(Config{}, adapter, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	// Start from the canonical valid fixture and inject a typo'd top-level
+	// key. The strict decoder rejects it as ErrUnknownTemplateKey.
+	body := validTemplateFixtureTOML(t) + "\nbogus_top_level_key = \"x\"\n"
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(811, "till.template", map[string]any{
+		"operation":     "validate",
+		"template_toml": body,
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template validate returned transport-level isError=true (failures must be in-band): %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if valid, _ := structured["valid"].(bool); valid {
+		t.Fatalf("structured.valid = true, want false (unknown key must reject)")
+	}
+	sentinel, _ := structured["sentinel_name"].(string)
+	if sentinel != "ErrUnknownTemplateKey" {
+		t.Fatalf("structured.sentinel_name = %q, want %q", sentinel, "ErrUnknownTemplateKey")
+	}
+	errStr, _ := structured["error"].(string)
+	if errStr == "" {
+		t.Fatalf("structured.error is empty on failure result: %#v", structured)
+	}
+}
+
+// TestTillTemplate_Validate_BadSchemaVersion verifies the Drop 4c.5
+// droplet F.3.2 wire envelope when the candidate carries an unsupported
+// schema_version (the templates package rejects everything other than
+// "v1"). The sentinel name MUST be the canonical
+// "ErrUnsupportedSchemaVersion" so adopters route on the exact string.
+//
+// Runs through the real AppServiceAdapter chain to lock the production
+// classify path, NOT a synthetic stub envelope.
+func TestTillTemplate_Validate_BadSchemaVersion(t *testing.T) {
+	t.Parallel()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("sqlite.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	svc := app.NewService(repo, func() string { return "real-id-001" }, nil, app.ServiceConfig{})
+	adapter := common.NewAppServiceAdapter(svc, nil)
+	handler, err := NewHandler(Config{}, adapter, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	body := "schema_version = \"v0\"\n"
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(812, "till.template", map[string]any{
+		"operation":     "validate",
+		"template_toml": body,
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template validate returned transport-level isError=true (failures must be in-band): %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if valid, _ := structured["valid"].(bool); valid {
+		t.Fatalf("structured.valid = true, want false (bad schema_version must reject)")
+	}
+	sentinel, _ := structured["sentinel_name"].(string)
+	if sentinel != "ErrUnsupportedSchemaVersion" {
+		t.Fatalf("structured.sentinel_name = %q, want %q", sentinel, "ErrUnsupportedSchemaVersion")
+	}
+	errStr, _ := structured["error"].(string)
+	if !strings.Contains(errStr, "v0") {
+		t.Fatalf("structured.error = %q, want it to mention the offending version \"v0\"", errStr)
+	}
+}
+
+// TestTillTemplate_Validate_AgentBindingMissingWarn verifies the Drop 4c.5
+// droplet F.3.2 wire envelope surfaces F.5.1's validateAgentBindingFiles
+// warn-only output: a successful Load that emitted warnings via the
+// LoadOptions.WarnLogger closure produces `valid: true` AND a non-empty
+// warnings slice in the JSON envelope.
+//
+// The test uses the stub directly (rather than the real adapter chain)
+// because the production warning path depends on the dev's
+// `~/.claude/agents/<name>.md` filesystem state, which is intentionally
+// non-deterministic per F.5.1's design. The wire-shape coverage here
+// proves the warnings field round-trips; F.5.1's own internal/templates
+// tests cover the warn-emission semantics under controlled stat-fn stubs.
+func TestTillTemplate_Validate_AgentBindingMissingWarn(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	wantWarn := `agent_bindings["build"]: agent_name="go-builder-agent" referenced by template but /tmp/agents/go-builder-agent.md not found`
+	service.validateCandidateResultFn = func(in common.ValidateCandidateTemplateRequest) (common.ValidateCandidateTemplateResult, error) {
+		return common.ValidateCandidateTemplateResult{
+			Valid:    true,
+			Warnings: []string{wantWarn},
+		}, nil
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(813, "till.template", map[string]any{
+		"operation":     "validate",
+		"template_toml": "schema_version = \"v1\"\n# fixture\n",
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template validate returned isError=true: %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if valid, _ := structured["valid"].(bool); !valid {
+		t.Fatalf("structured.valid = %v, want true (missing agent file is warn-only)", structured["valid"])
+	}
+	warningsRaw, ok := structured["warnings"].([]any)
+	if !ok {
+		t.Fatalf("structured.warnings missing or wrong type: %#v", structured)
+	}
+	if len(warningsRaw) != 1 {
+		t.Fatalf("warnings len = %d, want 1", len(warningsRaw))
+	}
+	got, _ := warningsRaw[0].(string)
+	if got != wantWarn {
+		t.Fatalf("warnings[0] = %q, want %q", got, wantWarn)
+	}
+}
+
+// TestTillTemplate_Validate_OversizedRejected verifies Drop 4c.5 F.3.2
+// falsification mitigation #1: a template_toml body larger than the 1 MiB
+// cap rejects with a transport-level invalid_request: error BEFORE the
+// service is invoked. The cap defends the templates package allocator
+// against malicious or accidental large inputs.
+func TestTillTemplate_Validate_OversizedRejected(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	// Build a body > 1 MiB (the cap is 1 << 20 = 1048576 bytes).
+	oversized := strings.Repeat("x", (1<<20)+1)
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(814, "till.template", map[string]any{
+		"operation":     "validate",
+		"template_toml": oversized,
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); !isError {
+		t.Fatalf("till.template validate(oversized) should reject; result = %#v", callResp.Result)
+	}
+	if service.validateCandidateCalls != 0 {
+		t.Fatalf("validateCandidateCalls = %d, want 0 (oversized must reject pre-service)", service.validateCandidateCalls)
+	}
+	text := toolResultText(t, callResp.Result)
+	if !strings.HasPrefix(text, "invalid_request:") {
+		t.Fatalf("error text = %q, want prefix invalid_request:", text)
+	}
+	if !strings.Contains(text, "template_toml") {
+		t.Fatalf("error text = %q, want it to name the offending template_toml field", text)
+	}
+}
+
+// TestTillTemplate_Set_HappyPath verifies the Drop 4c.5 droplet F.3.3
+// `till.template set` operation end-to-end through the REAL
+// AppServiceAdapter chain. The test seeds an SQLite-backed Service with a
+// project whose RepoBareRoot points at a temp dir, sends a valid template
+// TOML body, and asserts:
+//
+//   - The MCP envelope returns `set: true`, `bake_source: "<bare-root>"`,
+//     and `bytes_written` matching the input length.
+//   - The on-disk file lands at `<bare-root>/.tillsyn/template.toml` with
+//     byte-identical content to the inbound payload.
+//   - The project's KindCatalogJSON is non-empty and decodes as a
+//     templates.KindCatalog with the closed 12-kind enum (proves the
+//     shadow-bake-then-swap step landed).
+//
+// The test exercises the full atomic-install ordering (validate →
+// shadow-bake → tmp+rename → swap+persist) which the stub-driven tests
+// below cannot prove because they bypass the service.
+func TestTillTemplate_Set_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	svc, auth, server := newRealAdapterSetServer(t)
+	bareRoot := t.TempDir()
+	project, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
+		Name:         "F33 Set HappyPath",
+		RepoBareRoot: bareRoot,
+		Language:     "go",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	// Use the canonical valid Go fixture as the candidate body — it
+	// rounds through the full validation chain unchanged.
+	body := validTemplateFixtureTOML(t)
+	sessionID, sessionSecret := issueProjectScopedSetSession(t, auth, project.ID)
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(820, "till.template", map[string]any{
+		"operation":      "set",
+		"project_id":     project.ID,
+		"template_toml":  body,
+		"session_id":     sessionID,
+		"session_secret": sessionSecret,
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template set returned isError=true: %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if set, _ := structured["set"].(bool); !set {
+		t.Fatalf("structured.set = %v, want true; full result = %#v", structured["set"], structured)
+	}
+	if got := structured["bake_source"]; got != "<bare-root>" {
+		t.Fatalf("structured.bake_source = %v, want <bare-root>", got)
+	}
+	wantBytes := float64(len(body))
+	if got, _ := structured["bytes_written"].(float64); got != wantBytes {
+		t.Fatalf("structured.bytes_written = %v, want %v", structured["bytes_written"], wantBytes)
+	}
+	dest := filepath.Join(bareRoot, ".tillsyn", "template.toml")
+	onDisk, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", dest, err)
+	}
+	if string(onDisk) != body {
+		t.Fatalf("on-disk template (%d bytes) != inbound body (%d bytes); atomic-rename did not land verbatim", len(onDisk), len(body))
+	}
+	updated, err := svc.GetProject(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("GetProject(after set) error = %v", err)
+	}
+	if len(updated.KindCatalogJSON) == 0 {
+		t.Fatal("project.KindCatalogJSON is empty after set; shadow-bake did not persist")
+	}
+	var catalog templates.KindCatalog
+	if err := json.Unmarshal(updated.KindCatalogJSON, &catalog); err != nil {
+		t.Fatalf("decode KindCatalogJSON: %v", err)
+	}
+	if len(catalog.Kinds) != 12 {
+		t.Fatalf("len(catalog.Kinds) = %d, want 12 (closed enum)", len(catalog.Kinds))
+	}
+}
+
+// TestTillTemplate_Set_ValidationFailureNoWrite verifies Drop 4c.5
+// F.3.3 acceptance #5 + falsification mitigation F4 (atomic ordering):
+// when the candidate TOML fails the validate step, NO file is written
+// and the wire envelope returns `set: false` with a non-empty error.
+//
+// Routes through the real AppServiceAdapter so the validate-step
+// short-circuit is exercised end-to-end (the in-memory shadow-bake
+// step never runs because validate aborts first).
+func TestTillTemplate_Set_ValidationFailureNoWrite(t *testing.T) {
+	t.Parallel()
+
+	svc, auth, server := newRealAdapterSetServer(t)
+	bareRoot := t.TempDir()
+	project, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
+		Name:         "F33 Set ValidateFail",
+		RepoBareRoot: bareRoot,
+		Language:     "go",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	sessionID, sessionSecret := issueProjectScopedSetSession(t, auth, project.ID)
+
+	// Body with an unknown top-level key — strict decoder will reject
+	// via ErrUnknownTemplateKey before any filesystem side effect.
+	body := validTemplateFixtureTOML(t) + "\nbogus_top_level_key = \"x\"\n"
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(821, "till.template", map[string]any{
+		"operation":      "set",
+		"project_id":     project.ID,
+		"template_toml":  body,
+		"session_id":     sessionID,
+		"session_secret": sessionSecret,
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template set returned transport-level isError=true (validation failures must be in-band): %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if set, _ := structured["set"].(bool); set {
+		t.Fatalf("structured.set = true, want false on validation failure; full result = %#v", structured)
+	}
+	errStr, _ := structured["error"].(string)
+	if errStr == "" {
+		t.Fatalf("structured.error is empty on validation failure: %#v", structured)
+	}
+	dest := filepath.Join(bareRoot, ".tillsyn", "template.toml")
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("on-disk template should NOT exist after validation failure: stat(%s) err = %v", dest, err)
+	}
+}
+
+// TestTillTemplate_Set_AuthRejected verifies Drop 4c.5 F.3.3 auth gating:
+// a `set` call without valid session credentials reaches the
+// authorizeMCPMutation gate and rejects BEFORE any filesystem or service
+// side effect. The wire envelope surfaces a transport-level
+// `session_required:` (or similar) tool error per the existing auth-error
+// mapping.
+func TestTillTemplate_Set_AuthRejected(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		stubMutationAuthorizer: stubMutationAuthorizer{
+			authErr: errors.Join(common.ErrInvalidAuthentication, errors.New("bad secret")),
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(822, "till.template", map[string]any{
+		"operation":      "set",
+		"project_id":     "p1",
+		"template_toml":  "schema_version = \"v1\"\n",
+		"session_id":     "sess-rejected",
+		"session_secret": "secret-rejected",
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); !isError {
+		t.Fatalf("till.template set with rejected auth should produce transport tool error; result = %#v", callResp.Result)
+	}
+	if got := toolResultText(t, callResp.Result); !strings.HasPrefix(got, "invalid_auth:") {
+		t.Fatalf("error text = %q, want prefix invalid_auth:", got)
+	}
+	if service.setProjectTemplateCalls != 0 {
+		t.Fatalf("setProjectTemplateCalls = %d, want 0 (auth must reject pre-service)", service.setProjectTemplateCalls)
+	}
+}
+
+// TestTillTemplate_Set_RebakeFailureRollback verifies Drop 4c.5 F.3.3
+// falsification mitigation #4: when persist fails AFTER the atomic
+// rename has already landed the on-disk file, the file is moved aside to
+// a `.tillsyn-set-failed-<id>.toml` sibling so the dev sees the
+// orphaned artifact and can recover manually. The wire envelope returns
+// `set: false` with an error message naming the rollback path.
+//
+// The test stubs the in-band failure shape via the
+// setProjectTemplateResultFn closure so the assertion focuses on
+// envelope plumbing — the rollback-write rename is exercised end-to-end
+// in the templates_service-level service tests; the MCP layer just
+// passes the error string through.
+func TestTillTemplate_Set_RebakeFailureRollback(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	wantErrMsg := `persist project after template install: simulated persist failure; on-disk file moved aside to /tmp/test/.tillsyn/template.toml.tillsyn-set-failed-abc.toml for manual recovery`
+	service.setProjectTemplateResultFn = func(in common.SetProjectTemplateRequest) (common.SetProjectTemplateResult, error) {
+		return common.SetProjectTemplateResult{
+			Set:   false,
+			Error: wantErrMsg,
+		}, nil
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(823, "till.template", map[string]any{
+		"operation":      "set",
+		"project_id":     "p1",
+		"template_toml":  "schema_version = \"v1\"\n",
+		"session_id":     "sess-1",
+		"session_secret": "secret-1",
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template set returned transport-level isError=true (in-band failure must surface via set:false): %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if set, _ := structured["set"].(bool); set {
+		t.Fatalf("structured.set = true, want false on persist failure; full result = %#v", structured)
+	}
+	errStr, _ := structured["error"].(string)
+	if !strings.Contains(errStr, "tillsyn-set-failed-") {
+		t.Fatalf("structured.error = %q, want it to name the rollback path with tillsyn-set-failed- prefix", errStr)
+	}
+	if service.setProjectTemplateCalls != 1 {
+		t.Fatalf("setProjectTemplateCalls = %d, want 1", service.setProjectTemplateCalls)
+	}
+}
+
+// TestTillTemplate_Set_NoCheckoutPath verifies Drop 4c.5 F.3.3 acceptance
+// #3: when the project has both RepoBareRoot AND RepoPrimaryWorktree
+// empty, the operation rejects with a clear error message naming the
+// missing-checkout failure mode. The wire envelope surfaces this as
+// `set: false` with a non-empty error rather than a transport tool
+// error.
+//
+// Routes through the real AppServiceAdapter chain because the
+// no-checkout rejection lives in app.Service.SetProjectTemplate's path
+// validation, not at the MCP boundary.
+func TestTillTemplate_Set_NoCheckoutPath(t *testing.T) {
+	t.Parallel()
+
+	svc, auth, server := newRealAdapterSetServer(t)
+	// Project with NO RepoBareRoot and NO RepoPrimaryWorktree.
+	project, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
+		Name:     "F33 Set NoCheckout",
+		Language: "go",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	sessionID, sessionSecret := issueProjectScopedSetSession(t, auth, project.ID)
+
+	body := validTemplateFixtureTOML(t)
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(824, "till.template", map[string]any{
+		"operation":      "set",
+		"project_id":     project.ID,
+		"template_toml":  body,
+		"session_id":     sessionID,
+		"session_secret": sessionSecret,
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template set returned transport-level isError=true (no-checkout failure must surface via set:false): %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	if set, _ := structured["set"].(bool); set {
+		t.Fatalf("structured.set = true, want false on no-checkout: %#v", structured)
+	}
+	errStr, _ := structured["error"].(string)
+	if !strings.Contains(errStr, "no checkout") {
+		t.Fatalf("structured.error = %q, want it to mention no-checkout", errStr)
+	}
+}
+
+// TestTillTemplate_Set_OversizedRejected verifies Drop 4c.5 F.3.3
+// falsification mitigation #1 (mirroring F.3.2): a template_toml body
+// larger than the 1 MiB cap rejects with a transport-level
+// invalid_request: error BEFORE auth resolution OR service invocation.
+// Enforcing the cap pre-auth defends against unauthenticated callers
+// pre-allocating large server buffers.
+func TestTillTemplate_Set_OversizedRejected(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	oversized := strings.Repeat("x", (1<<20)+1)
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(825, "till.template", map[string]any{
+		"operation":      "set",
+		"project_id":     "p1",
+		"template_toml":  oversized,
+		"session_id":     "sess-1",
+		"session_secret": "secret-1",
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); !isError {
+		t.Fatalf("till.template set(oversized) should reject; result = %#v", callResp.Result)
+	}
+	if service.setProjectTemplateCalls != 0 {
+		t.Fatalf("setProjectTemplateCalls = %d, want 0 (oversized must reject pre-service)", service.setProjectTemplateCalls)
+	}
+	text := toolResultText(t, callResp.Result)
+	if !strings.HasPrefix(text, "invalid_request:") {
+		t.Fatalf("error text = %q, want prefix invalid_request:", text)
+	}
+	if !strings.Contains(text, "template_toml") {
+		t.Fatalf("error text = %q, want it to name the offending template_toml field", text)
+	}
+}
+
 // TestHandlerExpandedToolRejectsUnknownJSONKeys verifies the Drop 4c.5 A.2
 // strict-decoder hardening at the MCP wire boundary: an unknown key on a
 // tool's arguments object now produces an "invalid_request: unknown field
@@ -5187,4 +5845,78 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 			t.Fatalf("UpdateProjectRequest first-class fields not plumbed: %+v", got)
 		}
 	})
+}
+
+// newRealAdapterSetServer constructs a real auth-backed MCP handler stack
+// for Drop 4c.5 F.3.3 `till.template set` tests. The returned tuple
+// includes:
+//
+//   - svc: the *app.Service backing the handler (for seeding projects).
+//   - auth: the *autentauth.Service that issues sessions directly via
+//     auth.IssueSession (sidesteps the auth-request/approval two-step
+//     since the F.3.3 tests only need a usable approved session, not
+//     audit-trail mirroring into attention items).
+//   - server: the httptest.Server to POST JSON-RPC against.
+//
+// The helper mirrors handler_integration_test.go's
+// newRealMCPAttentionHandlerForTest with the auth backend wired through
+// app.ServiceConfig.AuthBackend so Service.AuthorizeMutation succeeds
+// when the MCP tool calls authorizeMCPMutation.
+func newRealAdapterSetServer(t *testing.T) (*app.Service, *autentauth.Service, *httptest.Server) {
+	t.Helper()
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("sqlite.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	auth, err := autentauth.NewSharedDB(autentauth.Config{DB: repo.DB()})
+	if err != nil {
+		t.Fatalf("autentauth.NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+	nextID := 0
+	svc := app.NewService(repo, func() string {
+		nextID++
+		return fmt.Sprintf("real-id-%03d", nextID)
+	}, nil, app.ServiceConfig{
+		AuthBackend: auth,
+	})
+	adapter := common.NewAppServiceAdapter(svc, auth)
+	handler, err := NewHandler(Config{}, adapter, adapter)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return svc, auth, server
+}
+
+// issueProjectScopedSetSession issues a project-scoped approved session
+// for `till.template set` tests. The session has principal_type=user
+// and includes the approved_path metadata so the MCP authorizeMCPMutation
+// gate accepts it for project-scoped operations on the supplied
+// projectID.
+//
+// Pattern mirrors issueApprovedPathMCPTestSession in
+// handler_integration_test.go.
+func issueProjectScopedSetSession(t *testing.T, auth *autentauth.Service, projectID string) (sessionID, sessionSecret string) {
+	t.Helper()
+	issued, err := auth.IssueSession(context.Background(), autentauth.IssueSessionInput{
+		PrincipalID:   "user-1",
+		PrincipalType: "user",
+		PrincipalName: "User One",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		ClientName:    "Till MCP STDIO",
+		Metadata: map[string]string{
+			"approved_path": domain.AuthRequestPath{ProjectID: projectID}.String(),
+			"project_id":    projectID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("IssueSession() error = %v", err)
+	}
+	return issued.Session.ID, issued.Secret
 }

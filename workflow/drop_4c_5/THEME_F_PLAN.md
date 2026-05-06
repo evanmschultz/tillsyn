@@ -450,6 +450,7 @@
 
 ### Droplet F.3.2 — `till.template` MCP tool: `validate` operation
 
+**State:** done (round 1)
 **Title:** `4c.5.F.3.2 — till.template MCP validate operation`.
 
 **Files / paths:**
@@ -489,6 +490,7 @@
 
 ### Droplet F.3.3 — `till.template` MCP tool: `set` operation (atomic install + re-bake)
 
+**State:** done (round 1)
 **Title:** `4c.5.F.3.3 — till.template MCP set operation atomic install`.
 
 **Files / paths:**

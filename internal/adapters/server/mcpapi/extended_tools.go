@@ -1857,12 +1857,27 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 	}
 }
 
-// registerTemplateTools registers the read-only `till.template` MCP tool.
+// templateInputMaxBytes caps the size of a candidate TOML body the
+// `till.template validate` and `till.template set` MCP operations will
+// accept. Inputs larger than the cap reject with an `invalid_request`
+// error before any allocation hits the templates package or the
+// filesystem write path. Chosen at 1 MiB per Drop 4c.5 F.3.2 falsification
+// mitigation #1 (and reused by F.3.3 per its falsification mitigation
+// F1): matches typical CI YAML caps and is two orders of magnitude above
+// the embedded `default-go.toml` (~5 KiB), so legitimate adopter
+// templates never bump the ceiling.
 //
-// Drop 4c.5 droplet F.3.1: ships `get` (TOML-OUT, requires project_id) and
-// `list_builtin` (JSON-OUT, project-context-free). Subsequent droplets
-// extend this registration: F.3.2 adds `validate`; F.3.3 adds `set`
-// (auth-gated atomic install).
+// Pre-F.3.3 the constant was named templateValidateMaxInputBytes; F.3.3
+// renamed it to reflect the dual-callsite reality (validate + set) and
+// keep the cap-policy expression in one place.
+const templateInputMaxBytes = 1 << 20
+
+// registerTemplateTools registers the `till.template` MCP tool.
+//
+// Drop 4c.5 droplet F.3.1 shipped `get` (TOML-OUT, requires project_id) and
+// `list_builtin` (JSON-OUT, project-context-free); droplet F.3.2 added
+// `validate` (JSON-OUT, TOML-IN, purely lexical); droplet F.3.3 added
+// `set` (auth-gated atomic install + re-bake; JSON-OUT, TOML-IN).
 //
 // Wire-format choices:
 //   - `get` returns the active per-project Template re-marshalled via
@@ -1872,6 +1887,24 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 //     structuredContent slot.
 //   - `list_builtin` returns a JSON object via mcp.NewToolResultJSON; the
 //     payload is a closed-shape map matching common.ListBuiltinTemplatesResult.
+//   - `validate` returns a JSON object via mcp.NewToolResultJSON; the
+//     payload matches common.ValidateCandidateTemplateResult. Validation
+//     failures are surfaced IN-BAND via Valid == false rather than as
+//     transport-level tool errors so adopters route on a uniform shape
+//     regardless of which validator inside templates.LoadWithOptions
+//     tripped. The 1 MiB input-size cap is enforced at this boundary
+//     (templateInputMaxBytes) before the request reaches the service
+//     layer; oversized inputs reject as `invalid_request`.
+//   - `set` returns a JSON object via mcp.NewToolResultJSON; the payload
+//     matches common.SetProjectTemplateResult. The operation is
+//     auth-gated via authorizeMCPMutation (project-scoped); the same
+//     1 MiB input cap applies. Atomicity is the four-step ordering
+//     documented on app.Service.SetProjectTemplate (validate →
+//     shadow-bake → tmp+rename → swap+persist). Failure modes — invalid
+//     TOML, no-checkout, write/persist failure — are surfaced IN-BAND
+//     via {set: false, error: "..."} so adopters route on a uniform
+//     shape; transport-level tool errors are reserved for adapter
+//     misconfiguration.
 //
 // Strict-decode parity: the operation argument struct is decoded via
 // bindArgumentsStrict (post-A.2) so unknown JSON keys reject with the
@@ -1884,14 +1917,26 @@ func registerTemplateTools(srv *mcpserver.MCPServer, templatesSvc common.Templat
 	srv.AddTool(
 		mcp.NewTool(
 			"till.template",
-			mcp.WithDescription("Inspect template state. Use operation=get|list_builtin. operation=get requires project_id and returns the active per-project Template as TOML plus a bake-source provenance string (<bare-root>|<primary-worktree>|embedded-default-go|embedded-default-generic). operation=list_builtin returns the closed list of embedded builtin template names. The get result reflects the LIVE on-disk walk; per Drop 3 finding 5.B.14 the project's KindCatalog snapshot is frozen at create time, so live edits to .tillsyn/template.toml require F.3.3's set operation to land in the catalog."),
-			mcp.WithString("operation", mcp.Required(), mcp.Description("Template operation"), mcp.Enum("get", "list_builtin")),
-			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=get; ignored for operation=list_builtin")),
+			mcp.WithDescription("Inspect, validate, or install template state. Use operation=get|list_builtin|validate|set. operation=get requires project_id and returns the active per-project Template as TOML plus a bake-source provenance string (<bare-root>|<primary-worktree>|embedded-default-go|embedded-default-generic). operation=list_builtin returns the closed list of embedded builtin template names. operation=validate runs the full templates.LoadWithOptions chain on the supplied template_toml and returns {valid, sentinel_name, error, warnings}; validation failures surface in-band via valid=false (NOT as a transport tool error). operation=set requires project_id, template_toml, session_id, session_secret; atomically validates + writes to <bare-root|primary-worktree>/.tillsyn/template.toml + re-bakes the project's KindCatalog (validate → shadow-bake → tmp+rename → swap+persist). Set failures surface in-band via {set: false, error: \"...\"}. The validate and set inputs are capped at 1 MiB; larger payloads reject as invalid_request. Per Drop 3 finding 5.B.14, in-flight action items already created continue to use the prior catalog; new action items created after set use the new catalog."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Template operation"), mcp.Enum("get", "list_builtin", "validate", "set")),
+			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=get and operation=set; ignored for operation=list_builtin and operation=validate")),
+			mcp.WithString("template_toml", mcp.Description("Candidate template TOML body. Required for operation=validate and operation=set; ignored for operation=get and operation=list_builtin. Capped at 1 MiB.")),
+			mcp.WithString("session_id", mcp.Description("Required for operation=set. "+mcpMutationSessionDescription)),
+			mcp.WithString("session_secret", mcp.Description("Required for operation=set. "+mcpMutationSessionSecretDescription)),
+			mcp.WithString("agent_instance_id", mcp.Description(mcpAgentInstanceDescription)),
+			mcp.WithString("lease_token", mcp.Description(mcpLeaseTokenDescription)),
+			mcp.WithString("override_token", mcp.Description(mcpOverrideTokenDescription)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args struct {
-				Operation string `json:"operation"`
-				ProjectID string `json:"project_id"`
+				Operation       string `json:"operation"`
+				ProjectID       string `json:"project_id"`
+				TemplateTOML    string `json:"template_toml"`
+				SessionID       string `json:"session_id"`
+				SessionSecret   string `json:"session_secret"`
+				AgentInstanceID string `json:"agent_instance_id"`
+				LeaseToken      string `json:"lease_token"`
+				OverrideToken   string `json:"override_token"`
 			}
 			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -1928,6 +1973,80 @@ func registerTemplateTools(srv *mcpserver.MCPServer, templatesSvc common.Templat
 				result, err := mcp.NewToolResultJSON(out)
 				if err != nil {
 					return nil, fmt.Errorf("encode template list_builtin result: %w", err)
+				}
+				return result, nil
+			case "validate":
+				// Drop 4c.5 F.3.2: enforce the 1 MiB input cap BEFORE any
+				// allocation hits the templates package, so a malicious
+				// or accidental large body never reaches the LoadOptions
+				// reader. The cap measures the raw byte length of the
+				// inbound JSON-decoded string; multi-byte UTF-8 sequences
+				// count by their byte width, matching the input the
+				// templates.Load reader will actually consume.
+				if len(args.TemplateTOML) > templateInputMaxBytes {
+					return mcp.NewToolResultError(fmt.Sprintf("invalid_request: template_toml exceeds %d-byte cap (got %d bytes)", templateInputMaxBytes, len(args.TemplateTOML))), nil
+				}
+				out, err := templatesSvc.ValidateCandidateTemplate(ctx, common.ValidateCandidateTemplateRequest{
+					TemplateTOML: args.TemplateTOML,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(out)
+				if err != nil {
+					return nil, fmt.Errorf("encode template validate result: %w", err)
+				}
+				return result, nil
+			case "set":
+				// Drop 4c.5 F.3.3: same 1 MiB input cap as validate; the
+				// cap is enforced BEFORE auth so an unauthenticated
+				// caller cannot pre-allocate large server buffers via
+				// repeated oversized calls.
+				if len(args.TemplateTOML) > templateInputMaxBytes {
+					return mcp.NewToolResultError(fmt.Sprintf("invalid_request: template_toml exceeds %d-byte cap (got %d bytes)", templateInputMaxBytes, len(args.TemplateTOML))), nil
+				}
+				projectID := strings.TrimSpace(args.ProjectID)
+				if projectID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+				}
+				if strings.TrimSpace(args.TemplateTOML) == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "template_toml" not found`), nil
+				}
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(templatesSvc),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"set_project_template",
+					"project:"+projectID,
+					"project",
+					projectID,
+					map[string]string{"project_id": projectID},
+				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				}, true)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				out, err := templatesSvc.SetProjectTemplate(ctx, common.SetProjectTemplateRequest{
+					ProjectID:    projectID,
+					TemplateTOML: args.TemplateTOML,
+					Actor:        actor,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(out)
+				if err != nil {
+					return nil, fmt.Errorf("encode template set result: %w", err)
 				}
 				return result, nil
 			default:

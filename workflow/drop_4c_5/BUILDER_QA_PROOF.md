@@ -1574,3 +1574,83 @@ Not in spec but legitimately needed because the test file contained a sibling lo
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All Go evidence resolved via `Read` + `/usr/bin/grep` on uncommitted state. Builder's mage testPkg verdicts (3/3 + 474/474 + 22/22) trusted per directive.
+
+## Droplet F.3.2 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode).
+**Date:** 2026-05-06.
+**Verdict:** PASS.
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.3.2 — `till.template` MCP tool: `validate` operation".
+**Builder claim:** `mage ci` 2899/2899 green; `validate` op + 1 MiB cap + closed sentinel-name table.
+
+### 1. Findings
+
+- 1.1 **Acceptance #1 (envelope shape) — PASS.** `mcp_surface.go:952-957` defines `ValidateCandidateTemplateResult{Valid, SentinelName, Error, Warnings}`. Success path at `template_service.go:304-307` returns `{Valid:true, Warnings:[…]}`; failure path at `template_service.go:296-302` returns `{Valid:false, SentinelName, Error, Warnings}`. JSON tags use `omitempty` so `valid:true` results omit `sentinel_name`/`error` keys.
+- 1.2 **Acceptance #2 (full LoadWithOptions pipeline) — PASS.** `template_service.go:295` calls `templates.LoadWithOptions(strings.NewReader(in.TemplateTOML), opts)` — the all-fields-explicit variant that runs the same chain as `Load` (load.go:144). No short-circuit.
+- 1.3 **Acceptance #3 (purely lexical) — PASS.** Service method takes only `TemplateTOML string`; never reaches `s.repo`, never persists, never re-bakes. All work is in-memory.
+- 1.4 **Acceptance #4 (5 tests including bonus) — PASS.** All 4 spec-named tests + bonus `_OversizedRejected` present at `extended_tools_test.go:3823, 3876, 3926, 3978, 4030`. Two tests (`UnknownKey`, `BadSchemaVersion`) wire the real `app.NewService` + `common.NewAppServiceAdapter` chain to lock the production sentinel-name extraction path.
+- 1.5 **Acceptance #5 (mage testPkg green) — TRUSTED.** Builder reported 220/220 PASS on `./internal/adapters/server/mcpapi`; `mage ci` 2899/2899. Filesystem-MD mode trusts per directive.
+- 1.6 **Falsification mitigation #1 (1 MiB cap pre-service) — PASS.** Constant `templateValidateMaxInputBytes = 1 << 20` at `extended_tools.go:1867`. Cap enforced at lines 1960-1962 BEFORE `templatesSvc.ValidateCandidateTemplate` invocation. Reject path returns `mcp.NewToolResultError("invalid_request: template_toml exceeds %d-byte cap …")`. Test `_OversizedRejected:4055` asserts `validateCandidateCalls == 0`; line 4059 asserts `invalid_request:` prefix.
+- 1.7 **Falsification mitigation #2 (errors.Is-friendly + raw wrapped string) — PASS.** Closed table `templateValidationSentinels` at `template_service.go:243-260` (13 sentinels); `classifyTemplateValidationError:319-326` walks via `errors.Is`. AgentBinding sub-sentinels (`Env`, `ContextRules`, `ToolGating`) listed BEFORE generic `ErrInvalidAgentBinding` so specific wraps win. Fallback `validationFallbackSentinelName = "validation_error"` (line 267) guarantees non-empty `SentinelName` on any failure. Raw wrapped string surfaced via `Error: err.Error()` (line 300).
+- 1.8 **Falsification mitigation #3 (warnings independent of valid) — PASS.** `Warnings` is a separate JSON field; success path emits warnings unconditionally (line 306); failure path also propagates collected warnings (line 301). Doc-comment at `mcp_surface.go:941-949` documents "Valid == true MAY carry warnings; Valid == false MAY also carry warnings." Test `_AgentBindingMissingWarn` exercises `valid:true` + non-empty warnings shape.
+- 1.9 **Surface plumbing — PASS.** `TemplateService` interface at `mcp_surface.go:966-970` extended with `ValidateCandidateTemplate`. Adapter passthrough at `app_service_adapter_mcp.go:1922-1938` clones the warnings slice (defensive copy). Wire layer uses `mcp.NewToolResultJSON` (in-band failure surface, NOT `toolResultFromError`) — matches spec falsification mitigation #2.
+- 1.10 **Worklog completeness — PASS.** `BUILDER_WORKLOG.md:1920-1956` covers files touched, targets run (3 testPkg + mage ci), 7 design notes including drift contract, Hylla feedback section.
+
+### 2. Missing Evidence
+
+- 2.1 None. Every acceptance criterion + every falsification mitigation traced to concrete code + test assertions.
+
+### 3. Summary
+
+**PASS.** All 5 acceptance criteria + all 3 falsification mitigations have concrete evidence. The 4 spec-required tests are present plus the bonus `_OversizedRejected` test for mitigation #1. The closed sentinel table is correctly ordered (specific wraps before generic catch-alls). The 1 MiB cap is provably pre-service via test assertion on `validateCandidateCalls == 0`. Warnings are independent of `Valid` via separate fields. Builder's `mage ci` 2899/2899 verdict trusted per filesystem-MD protocol.
+
+### Certificate
+
+- **Premises:** validate op exists + 1 MiB cap pre-service + closed sentinel table errors.Is-friendly + warnings independent of valid + 4 spec tests + bonus oversized test + full Load pipeline + purely lexical + worklog complete.
+- **Evidence:** `mcp_surface.go:932-957, 966-970`; `app_service_adapter_mcp.go:1911-1938`; `template_service.go:191-326`; `extended_tools.go:1860-1979`; `extended_tools_test.go:3790-4065`; `THEME_F_PLAN.md` § F.3.2 acceptance + falsification mitigations; `BUILDER_WORKLOG.md:1920-1956`.
+- **Trace or cases:** (a) Valid TOML → `LoadWithOptions` succeeds → `{Valid:true, Warnings:nil}`. (b) Unknown key → `ErrUnknownTemplateKey` wraps → table walk finds match → `{Valid:false, SentinelName:"ErrUnknownTemplateKey", Error:"…"}`. (c) Oversized payload → cap check at `extended_tools.go:1960` → `invalid_request:` transport error, service never called. (d) Warn-only path → `WarnLogger` appends to slice → `{Valid:true, Warnings:[…]}`.
+- **Conclusion:** PASS.
+- **Unknowns:** None.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All Go evidence resolved via `Read` + `rg` on uncommitted state. Builder's `mage ci` 2899/2899 verdict trusted per directive.
+
+## Droplet F.3.3 — Round 1
+
+**Reviewer:** go-qa-proof-agent.
+**Date:** 2026-05-06.
+**Verdict:** **PASS.**
+
+### 1. Findings
+
+- 1.1 **Acceptance #1 (auth-gated set op) PROVEN.** `extended_tools.go:2000-2030` adds `case "set":` with `authorizeMCPMutation(ctx, pickMutationAuthorizer(templatesSvc), …, "set_project_template", "project:"+projectID, "project", projectID, …)`. Required args `project_id`, `template_toml`, `session_id`, `session_secret` are all wired via `mcp.WithString` declarations at `extended_tools.go:1922-1929` and consumed from the strict-decoded args struct (lines 1937-1944). The strict decoder rejects unknown keys via `bindArgumentsStrict`, satisfying A.2 hardening parity. `TestTillTemplate_Set_AuthRejected` (test_diff line range "case 822") asserts `setProjectTemplateCalls == 0` AND `invalid_auth:` prefix when auth fails.
+- 1.2 **Acceptance #2 (atomic ordering) PROVEN.** `template_service.go:416-518` `SetProjectTemplate` follows the exact spec ordering: (1) `templates.LoadWithOptions(strings.NewReader(...))` validate at line 453; (2) `templates.Bake(tpl)` + `json.Marshal(shadowCatalog)` shadow-bake at lines 460-464; (3) `os.WriteFile(tmpPath, ...)` + `os.Rename(tmpPath, dest)` at lines 474-489; (4) `project.KindCatalogJSON = shadowEncoded` + `s.repo.UpdateProject(ctx, project)` at lines 492-494. Persist-fail rollback at lines 495-512 calls `os.Rename(dest, dest+".tillsyn-set-failed-"+tmpSuffix+".toml")` with the exact sentinel suffix the spec mandated. Defer-guarded best-effort `os.Remove(tmpPath)` at lines 481-486 protects against early-return paths between WriteFile and Rename.
+- 1.3 **Acceptance #3 (write target selection) PROVEN.** `template_service.go:431-449` switch picks `bareRoot != ""` first → `templateBakeSourceBareRoot`; falls through to `primaryWorktree != ""` → `templateBakeSourcePrimaryWorktree`; default → `ErrProjectHasNoCheckout`. Sentinel exposed as package-level `var ErrProjectHasNoCheckout = errors.New("project has no checkout — cannot install template; create the project's checkout layout first")` at line 370. `TestTillTemplate_Set_NoCheckoutPath` exercises the real-adapter chain with a project carrying empty `RepoBareRoot` AND `RepoPrimaryWorktree`, asserts `set:false` + error contains `"no checkout"`.
+- 1.4 **Acceptance #4 (success envelope) PROVEN.** `mcp_surface.go:986-996` `SetProjectTemplateResult` JSON tags: `set bool` (always), `project_id`, `bake_source`, `bytes_written` (omitempty on success). `template_service.go:513-517` returns `{ProjectID: project.ID, BakeSource: bakeSource, BytesWritten: len(in.TemplateTOML)}`. Adapter at `app_service_adapter_mcp.go:1965-1973` maps to `{Set: true, ProjectID, BakeSource, BytesWritten}`. `TestTillTemplate_Set_HappyPath` asserts `set==true`, `bake_source=="<bare-root>"`, `bytes_written == len(body)`, on-disk file byte-identical to inbound, AND `len(catalog.Kinds) == 12` (proves shadow-bake-then-swap landed in `KindCatalogJSON`).
+- 1.5 **Acceptance #5 (validation failure → no write, no rebake) PROVEN.** `template_service.go:453-456` returns wrapped error from `templates.LoadWithOptions` BEFORE any `os.MkdirAll` / `os.WriteFile` / `os.Rename` / `repo.UpdateProject` runs. `app_service_adapter_mcp.go:1958-1963` flips the error in-band into `{Set: false, Error: err.Error()}`. `TestTillTemplate_Set_ValidationFailureNoWrite` exercises real-adapter chain with `bogus_top_level_key` injected → asserts `set==false`, error non-empty, AND `os.Stat(dest)` returns `os.IsNotExist` (proves no file written).
+- 1.6 **Acceptance #6 (6 tests) PROVEN.** All six tests present in test_diff: `TestTillTemplate_Set_HappyPath` (real-adapter), `_ValidationFailureNoWrite` (real-adapter), `_AuthRejected` (stub), `_RebakeFailureRollback` (stub asserts `tillsyn-set-failed-` substring in error), `_NoCheckoutPath` (real-adapter), `_OversizedRejected` (cap pre-service). Two new helpers `newRealAdapterSetServer` + `issueProjectScopedSetSession` plus stub method `SetProjectTemplate` on `stubExpandedService` (test_diff lines around stub +911-928).
+- 1.7 **Snapshot policy (Drop 3 5.B.14) preserved.** `template_service.go:396-400` doc-comment names "in-flight action items already created continue to use the prior catalog; new action items created after this method returns use the new catalog. The cascade does NOT auto-migrate in-flight items." This matches Note 3 and falsification mitigation F1.
+- 1.8 **1 MiB cap enforced pre-auth.** `extended_tools.go:2005-2007` `len(args.TemplateTOML) > templateInputMaxBytes` check fires BEFORE `authorizeMCPMutation` (line 2015). Mirrors the F.3.2 enforcement at line 1981. Constant rename `templateValidateMaxInputBytes → templateInputMaxBytes` is mechanical (single-package private name) with doc-comment naming the rename history. `TestTillTemplate_Set_OversizedRejected` asserts `setProjectTemplateCalls == 0` + `invalid_request:` prefix + error mentions `template_toml`.
+- 1.9 **Worklog completeness PROVEN.** `BUILDER_WORKLOG.md` § "Droplet F.3.3 — Round 1" lines 1957-1998 covers files touched, targets run (`mage ci` **2905/2905 PASS**, +6 over post-F.3.2 baseline), 11 design notes (atomic ordering, MkdirAll defense, defer cleanup, in-band failure surface, auth-at-boundary parity with `SetProjectAllowedKinds`, helper-pattern decisions including the `seedApprovedProjectSession` → `auth.IssueSession` pivot), Hylla feedback. Coverage gates met: app 70.8%, common 72.1%, mcpapi 74.2%, templates 94.8%.
+- 1.10 **In-band rollback path naming.** `template_service.go:497-511` constructs `failedPath := dest + ".tillsyn-set-failed-" + tmpSuffix + ".toml"` and surfaces it in the error message verbatim — matches falsification mitigation F4 + spec acceptance #2's "moved to `<dest>.tillsyn-set-failed-<id>.toml`". Stub-driven test asserts the substring `tillsyn-set-failed-` round-trips through the wire envelope.
+
+### 2. Missing Evidence
+
+- 2.1 None. Every acceptance criterion + every spec-mandated test + the spec-mandated bonus `_OversizedRejected` test + Note-3 atomic ordering + 5.B.14 snapshot policy preservation + 1 MiB cap + auth gate are all traced to concrete code locations with assertion-level evidence.
+
+### 3. Summary
+
+**PASS.** All 6 acceptance criteria + Note 3 atomic ordering + 5.B.14 snapshot policy + 1 MiB cap + worklog completeness traced to concrete code + tests. The four-step `validate → shadow-bake → tmp+rename → swap+persist` ordering is exact-spec; the persist-fail rollback moves the on-disk file to the named sentinel path; the in-band failure surface is uniform across validation / no-checkout / persist-fail. Builder's `mage ci` 2905/2905 verdict trusted per filesystem-MD protocol; coverage gates met across all four touched packages.
+
+### Certificate
+
+- **Premises:** auth-gated set op present; atomic four-step ordering; checkout fallback BareRoot → PrimaryWorktree → ErrProjectHasNoCheckout; success envelope `{set, project_id, bake_source, bytes_written}`; validate-fail short-circuit (no write, no rebake); 6 spec tests + 2 helpers + stub method; 5.B.14 snapshot policy preserved; 1 MiB cap pre-auth; worklog complete.
+- **Evidence:** `template_service.go:332-518` (Input/Output types, sentinel, atomic install body); `mcp_surface.go:953-1011` (Request/Result types + interface extension); `app_service_adapter_mcp.go:1944-1973` (in-band-error pass-through); `extended_tools.go:1860-2051` (cap, auth gate, set case); test_diff for `extended_tools_test.go` (six tests + helpers + stub method); `BUILDER_WORKLOG.md:1957-1998`; `THEME_F_PLAN.md` § F.3.3 acceptance + Note 3.
+- **Trace or cases:** (a) Happy path (real adapter): valid TOML + auth → `LoadWithOptions` ok → `Bake` → `json.Marshal` shadow → `MkdirAll` + `WriteFile` tmp + `Rename` to dest → `UpdateProject` swaps catalog → envelope `{set:true, bake_source:"<bare-root>", bytes_written:N}`, on-disk byte-identical, KindCatalogJSON has 12 kinds. (b) Validation fail (real adapter): unknown key → `LoadWithOptions` errors → adapter flips to `{set:false, error:"…"}`, file does NOT exist. (c) Auth reject (stub): `authorizeMCPMutation` returns `ErrInvalidAuthentication` → `toolResultFromError` → `invalid_auth:` prefix, service never called. (d) Persist-fail rollback (stub): in-band `{set:false, error:"…tillsyn-set-failed-…"}`. (e) No checkout (real adapter): empty paths → `ErrProjectHasNoCheckout` → `{set:false, error:"…no checkout…"}`. (f) Oversized (stub): pre-auth cap → `invalid_request:` transport error, service never called.
+- **Conclusion:** PASS.
+- **Unknowns:** None.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All Go evidence resolved via `Read` + `rg` (absolute-path) on uncommitted state. Builder's `mage ci` 2905/2905 verdict trusted per directive.

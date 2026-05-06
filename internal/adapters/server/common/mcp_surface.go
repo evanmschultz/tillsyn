@@ -923,16 +923,93 @@ type ListBuiltinTemplatesResult struct {
 	Templates []string `json:"templates"`
 }
 
-// TemplateService exposes read-only inspection of per-project bake state
-// and the closed list of embedded builtin templates.
+// ValidateCandidateTemplateRequest carries inputs for the read-only
+// `till.template validate` operation. The MCP boundary applies the 1MB
+// input-size cap before invoking the service; the service itself never
+// touches project state, never re-bakes, never persists.
 //
-// Drop 4c.5 droplet F.3.1: F.3.2 (`validate`) and F.3.3 (`set`) extend this
-// interface with mutating operations in subsequent droplets. The read-only
-// surface lands first so the wire shape stabilizes before the auth-gated
-// write paths come online.
+// Drop 4c.5 droplet F.3.2.
+type ValidateCandidateTemplateRequest struct {
+	TemplateTOML string `json:"template_toml"`
+}
+
+// ValidateCandidateTemplateResult is the wire envelope returned by
+// `till.template validate`. The struct collapses the success / failure
+// duality into one shape so adopters route on `Valid` rather than parsing
+// two different JSON schemas:
+//
+//   - Valid == true  → SentinelName == "" AND Error == ""; Warnings MAY be
+//     populated when the template references agent files that are not
+//     present on the dev's machine (F.5.1 warn-only behavior).
+//   - Valid == false → SentinelName names the canonical templates-package
+//     sentinel that errors.Is matched (e.g. "ErrUnknownTemplateKey",
+//     "ErrUnsupportedSchemaVersion", "ErrIncoherentStructuralType"). When no
+//     sentinel matches, SentinelName is "validation_error" so the field is
+//     never empty on a failure result. Error is the wrapped-error string,
+//     including position-aware detail when pelletier/go-toml/v2 supplied it.
+//
+// Drop 4c.5 droplet F.3.2.
+type ValidateCandidateTemplateResult struct {
+	Valid        bool     `json:"valid"`
+	SentinelName string   `json:"sentinel_name,omitempty"`
+	Error        string   `json:"error,omitempty"`
+	Warnings     []string `json:"warnings,omitempty"`
+}
+
+// SetProjectTemplateRequest carries inputs for the auth-gated
+// `till.template set` operation (Drop 4c.5 droplet F.3.3). The MCP boundary
+// enforces the 1MB input-size cap on TemplateTOML and runs the
+// authorizeMCPMutation gate BEFORE invoking this request through the
+// adapter; the service-level write path therefore trusts the inbound
+// payload but still re-validates via templates.LoadWithOptions as the
+// first atomic-install step (defense-in-depth + the canonical drift guard
+// against MCP-boundary skew).
+//
+// Actor carries the resolved authenticated principal so the project-update
+// audit trail records the correct user/agent identity. Pre-Drop-2 the
+// project-update path threads the actor through the legacy
+// withResolvedMutationActor helper; F.3.3 mirrors that wiring so the
+// audit trail stays uniform across mutation surfaces.
+type SetProjectTemplateRequest struct {
+	ProjectID    string
+	TemplateTOML string
+	Actor        ActorLeaseTuple
+}
+
+// SetProjectTemplateResult is the wire envelope returned by `till.template
+// set`. The Set bool collapses success/failure into a single shape so
+// adopters route on Set rather than parsing two JSON schemas. On Set ==
+// true, BakeSource names the post-install bake-source token (always
+// "<bare-root>" or "<primary-worktree>" — embedded fallbacks cannot be
+// "set" because there is no on-disk file for them); BytesWritten reports
+// the candidate body size that landed on disk after the atomic rename.
+//
+// On Set == false (validation failure, no checkout, atomic-write failure,
+// rollback failure), the Error field carries a human-readable message
+// pointing at the failure mode. Atomic-rename failures also include the
+// rollback path so the dev can clean up the orphaned on-disk artifact
+// (per Drop 4c.5 F.3.3 falsification mitigation #4).
+//
+// Drop 4c.5 droplet F.3.3.
+type SetProjectTemplateResult struct {
+	Set          bool   `json:"set"`
+	ProjectID    string `json:"project_id,omitempty"`
+	BakeSource   string `json:"bake_source,omitempty"`
+	BytesWritten int    `json:"bytes_written,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+// TemplateService exposes read-only inspection of per-project bake state,
+// the closed list of embedded builtin templates, lexical validation of
+// candidate template TOML bodies, and the auth-gated atomic install path.
+//
+// Drop 4c.5 droplet F.3.1 landed Get + ListBuiltin; F.3.2 added Validate;
+// F.3.3 added SetProjectTemplate (auth-gated atomic install + re-bake).
 type TemplateService interface {
 	GetProjectTemplate(context.Context, GetProjectTemplateRequest) (GetProjectTemplateResult, error)
 	ListBuiltinTemplates(context.Context) (ListBuiltinTemplatesResult, error)
+	ValidateCandidateTemplate(context.Context, ValidateCandidateTemplateRequest) (ValidateCandidateTemplateResult, error)
+	SetProjectTemplate(context.Context, SetProjectTemplateRequest) (SetProjectTemplateResult, error)
 }
 
 // CapabilityLeaseService exposes lease issuance and lifecycle operations.

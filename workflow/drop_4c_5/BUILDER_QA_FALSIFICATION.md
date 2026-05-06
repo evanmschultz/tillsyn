@@ -1736,3 +1736,131 @@ N/A — filesystem-MD coordination mode; reviewed Go surfaces via Read + git dif
 T1. All six declared attacks plus a bonus doc-cross-ref check REFUTED. New `gitenv` package is a clean lift, prefix-match is correctly underscore-anchored, no-aliasing is unit-tested, nil-check doc-update matches spec #4 verbatim, and old helper names are fully retired (zero residual references).
 T2. No counterexamples.
 T3. **PASS** — E.9 ready to commit.
+
+## Droplet F.3.2 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, opus)
+**Date:** 2026-05-06
+**Verdict:** PASS
+**Scope:** F.3.2-declared paths only — `internal/adapters/server/common/app_service_adapter_mcp.go`, `internal/adapters/server/common/mcp_surface.go`, `internal/adapters/server/mcpapi/extended_tools.go`, `internal/adapters/server/mcpapi/extended_tools_test.go`, `internal/app/template_service.go`, `workflow/drop_4c_5/THEME_F_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`. Sibling edits to `internal/app/service.go` (E.9 doc-only at `runGitStatusPreCheck`) deliberately skipped per scoping.
+
+### 1. Findings
+
+- **1.1 1 MiB cap correctness (Attack 1).** REFUTED. `extended_tools.go:1867` declares `templateValidateMaxInputBytes = 1 << 20` (= 1 048 576 bytes). The cap check at line 1960 (`if len(args.TemplateTOML) > templateValidateMaxInputBytes`) precedes the service call at line 1963 — proven by the `_OversizedRejected` test (`extended_tools_test.go:4046-4060`) which asserts `service.validateCandidateCalls != 0` is a fail with the comment "oversized must reject pre-service" and the error-text prefix `invalid_request:`. Boundary: `1 << 20 + 1` bytes (`strings.Repeat("x", (1<<20)+1)`) reliably trips because `len()` is byte-count, matching the doc-comment's "multi-byte UTF-8 sequences count by their byte width" claim. No wasted parse — the cap fires before any `templates.LoadWithOptions` invocation.
+- **1.2 Sentinel-name extraction completeness (Attack 2).** REFUTED. Templates package exports 14 sentinels (`go doc -short`): `ErrUnknownTemplateKey`, `ErrUnsupportedSchemaVersion`, `ErrTemplateCycle`, `ErrUnreachableChildRule`, `ErrIncoherentStructuralType`, `ErrUnknownKindReference`, `ErrInvalidAgentBinding`, `ErrUnknownGateKind`, `ErrInvalidAgentBindingEnv`, `ErrInvalidContextRules`, `ErrInvalidAgentBindingToolGating`, `ErrMissingRequiredChildRule`, `ErrInvalidTillsynGlobals`, `ErrLanguageNotSupported`. Builder's `templateValidationSentinels` table (`template_service.go:243-260`) covers 13. `ErrLanguageNotSupported` is omitted — but it is only emitted by `LoadDefaultTemplateForLanguage`, which the validate path never invokes (`ValidateCandidateTemplate` calls `templates.LoadWithOptions(strings.NewReader(...))` only). Omission is correct. Order is also correct: the three `fmt.Errorf("%w: <suffix>", ErrInvalidAgentBinding)` wraps (Env / ContextRules / ToolGating) precede the `ErrInvalidAgentBinding` catch-all in the table, so `errors.Is` matches the more-specific name first, exactly as the doc-comment claims.
+- **1.3 Warnings vs `valid:true` decoupling (Attack 3).** REFUTED. `mcp_surface.go:81-86` declares the wire envelope with `Valid` and `Warnings` as independent JSON fields (`json:"valid"` and `json:"warnings,omitempty"`). The service-side method (`template_service.go:288-308`) sets `Valid: true` regardless of whether `warnings` is empty or populated, only flipping to `Valid: false` when Load returns a non-nil error. Test `TestTillTemplate_Validate_AgentBindingMissingWarn` asserts `valid=true` AND `warnings` len=1 simultaneously — locks the decoupling contract. The doc-comment names the duality explicitly ("a successfully-loading template (Valid == true) MAY carry warnings, and a failing template (Valid == false) MAY also have collected warnings before the fatal-error validator fired").
+- **1.4 Real-adapter test rigor (Attack 4).** REFUTED. `TestTillTemplate_Validate_UnknownKey` (`extended_tools_test.go:3879-3919`) and `TestTillTemplate_Validate_BadSchemaVersion` (`extended_tools_test.go:3929-3967`) both construct the production stack: `sqlite.Open(...)` → `app.NewService(repo, ..., app.ServiceConfig{})` → `common.NewAppServiceAdapter(svc, nil)` → `NewHandler(Config{}, adapter, nil)`. No stubs interpose. The full chain (MCP boundary cap → adapter → service → `templates.LoadWithOptions` → `classifyTemplateValidationError`) is exercised end-to-end for both sentinel paths. UnknownKey injects `bogus_top_level_key = "x"` after the canonical valid fixture; BadSchemaVersion sends `schema_version = "v0"` — both assertions name the exact canonical sentinel string. `mage test-pkg ./internal/adapters/server/mcpapi` → 220/220 passed.
+- **1.5 Service-layer purity (Attack 5).** REFUTED. `Service.ValidateCandidateTemplate` body (`template_service.go:288-308`) is 21 lines: capture-warnings closure, `templates.LoadWithOptions(strings.NewReader(in.TemplateTOML), opts)`, error-or-success branch. Zero `s.repo.*` calls; no `WithTransaction` / `Save*` / `Persist*` references; no project lookup; no walk; no bake. The method takes the project axis nowhere — the input struct is `{TemplateTOML string}`. Lexical-only, exactly as the spec demands. (`s` is the receiver but never dereferenced for state — could even be a value receiver semantically; the pointer receiver matches the existing `*app.Service` method-set convention.)
+- **1.6 Stub-field side-effect risk (Attack 6).** REFUTED. The three new stub fields on `stubExpandedService` (`extended_tools_test.go:82-84`: `lastValidateCandidateReq`, `validateCandidateCalls`, `validateCandidateResultFn`) are referenced only by the `ValidateCandidateTemplate` method (line 892, 893, 895) and the four `TestTillTemplate_Validate_*` tests (lines 3850-3851, 4055-4056, plus the `validateCandidateResultFn` setters in the Valid + AgentBindingMissingWarn tests). Confirmed via `git grep validateCandidateCalls -- extended_tools_test.go` returning exactly 6 hits, all inside F.3.2 surfaces. The stub method only touches its own `s.validateCandidate*` fields — no cross-field mutation. Other tests sharing `stubExpandedService` continue to construct it via composite-literal partial-init (zero values for the new fields), which is safe because `validateCandidateCalls=0` and `validateCandidateResultFn=nil` are the natural inert state.
+
+### 2. Counterexamples
+
+None. All six attacks REFUTED.
+
+### 3. Mage Verification
+
+- `mage test-pkg ./internal/adapters/server/mcpapi` → 220/220 passed.
+- `mage test-pkg ./internal/app` → 474/474 passed.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode; reviewed Go surfaces via Read + git diff + targeted git grep + `go doc -short` for the templates-package sentinel inventory. No Hylla calls attempted.
+
+### TL;DR
+
+T1. All six declared attacks REFUTED. 1 MiB cap fires pre-service (proven by `_OversizedRejected` asserting `validateCandidateCalls == 0`). Sentinel table covers 13/14 templates-package errors; the missing one (`ErrLanguageNotSupported`) is unreachable from `LoadWithOptions`. Warnings + Valid are independent JSON fields and the service preserves the duality. UnknownKey + BadSchemaVersion tests run the real `app.NewService` + `common.NewAppServiceAdapter` chain. `Service.ValidateCandidateTemplate` makes zero `s.repo.*` calls — pure lexical. New stub fields are isolated to F.3.2 tests (6 references, all in F.3.2 surface).
+T2. No counterexamples.
+T3. **PASS** — F.3.2 ready to commit.
+
+## Droplet F.3.3 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, opus)
+**Date:** 2026-05-06
+**Verdict:** FAIL — one CONFIRMED counterexample (acceptance #6: missing `_RebakeFailureRollback` end-to-end test).
+**Scope:** F.3.3-declared files only — `internal/app/template_service.go`, `internal/adapters/server/common/mcp_surface.go`, `internal/adapters/server/common/app_service_adapter_mcp.go`, `internal/adapters/server/mcpapi/extended_tools.go`, `internal/adapters/server/mcpapi/extended_tools_test.go`, `workflow/drop_4c_5/THEME_F_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`.
+
+**Spec source:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.3.3 — `till.template` MCP tool: `set` operation (atomic install + re-bake)".
+
+### Attack 1 — Atomicity ordering correctness — REFUTED
+
+`Service.SetProjectTemplate` body (template_service.go:416-518) walks the mandated four steps in order:
+1. Validate via `templates.LoadWithOptions(strings.NewReader(string(in.TemplateTOML)), templates.LoadOptions{})` (line 453). Failure aborts with `validate candidate template: %w` BEFORE any filesystem touch.
+2. Shadow-bake `templates.Bake(tpl)` + `json.Marshal(shadowCatalog)` in memory (lines 460-464). Failure aborts BEFORE any filesystem touch.
+3. `os.WriteFile(tmpPath, ...)` then `os.Rename(tmpPath, dest)` (lines 474, 487). Tmp suffix is `s.idGen()` with `clock().UnixNano()` fallback (lines 469-472). Deferred `os.Remove(tmpPath)` runs only when `renamed == false`.
+4. `project.KindCatalogJSON = shadowEncoded` + `s.repo.UpdateProject(ctx, project)` (lines 492-494).
+
+Order matches the spec mandate `validate → shadow-bake → tmp+rename → swap+persist`. No re-ordering bug.
+
+### Attack 2 — Persist-fail rollback path — CONFIRMED COUNTEREXAMPLE
+
+**Spec acceptance #6** mandates four tests including `_RebakeFailureRollback`. The test exists by name (`TestTillTemplate_Set_RebakeFailureRollback`, extended_tools_test.go), but its body **stubs the in-band failure** at the `setProjectTemplateResultFn` closure:
+
+```go
+service.setProjectTemplateResultFn = func(in common.SetProjectTemplateRequest) (common.SetProjectTemplateResult, error) {
+    return common.SetProjectTemplateResult{Set: false, Error: wantErrMsg}, nil
+}
+```
+
+The service-level rollback rename (`os.Rename(dest, failedPath)` at template_service.go:501) is **never exercised**. The MCP-layer test only verifies the error string passes through. Search confirms no service-level test for the rollback branch exists:
+
+```
+$ /usr/bin/grep -nE "RebakeFailure|RollbackFailure|set-failed|TestService_SetProjectTemplate" internal/app/*.go internal/app/*_test.go
+internal/app/template_service.go:392:    .tillsyn-set-failed-<id>.toml" sibling so the dev sees the
+internal/app/template_service.go:500:    failedPath := dest + ".tillsyn-set-failed-" + tmpSuffix + ".toml"
+```
+
+(only the production code, no test). The test docstring even acknowledges the gap: "the rollback-write rename is exercised end-to-end in the templates_service-level service tests; the MCP layer just passes the error string through" — but those service-level tests do not exist. This means:
+
+- The rollback `os.Rename(dest, failedPath)` path has zero coverage.
+- The double-failure branch (lines 502-507, where rollback ALSO fails) has zero coverage.
+- The `_RebakeFailureRollback` test as written is a NAME match, not a behavior match — acceptance #6 deliverable is not met.
+
+**Reproduction:** apply a simple service-level test that injects an `UpdateProject` error and asserts (a) the on-disk `<dest>` no longer exists, (b) `<dest>.tillsyn-set-failed-<id>.toml` exists with original byte content. Today there is no such test. The orphaned-file recovery promise documented in template_service.go:495-499 is unverified at the integration boundary.
+
+### Attack 3 — Auth-gate placement — REFUTED
+
+extended_tools.go:2000-2030 places the cap check (line 2005) BEFORE the auth gate (line 2015). Spec falsification mitigation #1 (mirroring F.3.2) explicitly mandates "the cap is enforced BEFORE auth so an unauthenticated caller cannot pre-allocate large server buffers." Code matches. Pattern parity with F.3.2 (extended_tools.go:1986-1988) holds. Auth call mirrors `set_allowed_kinds` shape (line 620 vs 2015 — same `authorizeMCPMutation` signature, same scope strings format). Action_name `"set_project_template"` is unique and consistent.
+
+### Attack 4 — Write-target selection — REFUTED
+
+template_service.go:431-449 uses `switch` with `bareRoot != ""` first, `primaryWorktree != ""` second, and `default → ErrProjectHasNoCheckout`. Both empty paths return the sentinel. The `TestTillTemplate_Set_NoCheckoutPath` test exercises this end-to-end through the real adapter (creates a project with no `RepoBareRoot` AND no `RepoPrimaryWorktree`, asserts in-band `set: false` with "no checkout" in the error). Spec acceptance #3 met.
+
+### Attack 5 — Snapshot policy preservation — REFUTED
+
+Doc-comment at template_service.go:396-400 explicitly names the boundary: "in-flight action items already carrying their own KindCatalog metadata continue to use the PRIOR catalog. NEW action items created after this method returns use the NEW catalog. The cascade does NOT auto-migrate in-flight items." Implementation only updates `project.KindCatalogJSON` (line 492) — no walk over existing action items, no batch update. Snapshot policy 5.B.14 holds by construction.
+
+### Attack 6 — `_OversizedRejected` test — REFUTED
+
+`TestTillTemplate_Set_OversizedRejected` (extended_tools_test.go) constructs a `1<<20 + 1` byte payload, asserts (a) transport-level `isError == true`, (b) `setProjectTemplateCalls == 0` (proves cap fires PRE-service AND PRE-auth), (c) error text starts with `"invalid_request:"` and names `"template_toml"`. Mirrors F.3.2 `_OversizedRejected` shape. Cap-pre-auth ordering matches F.3.3 falsification mitigation #1.
+
+### Attack 7 — `ErrProjectHasNoCheckout` sentinel exposure — REFUTED
+
+`var ErrProjectHasNoCheckout = errors.New(...)` declared at template_service.go:370. Returned directly (not wrapped) at line 448 — `errors.Is` matches by identity. Adapter at app_service_adapter_mcp.go flips it into in-band `{Set: false, Error: err.Error()}` so wire callers see the message text. Sentinel is exported for callers needing programmatic routing.
+
+### Additional ergonomic notes (non-blocking)
+
+- `tmpSuffix` fallback `fmt.Sprintf("set-%d", s.clock().UnixNano())` is race-prone for two concurrent sets at the exact same nanosecond — but `idGen()` is the production path and `clock().UnixNano()` is only the fallback when the generator returns empty. Ergonomic, not a blocker.
+- The double-failure error message at line 503-506 uses both `%w` (for `err`) and `%v` (for `rollbackErr`). Using `%w` for both would let callers `errors.Is` either; the current shape lets `errors.Is(err, persistErr)` work but not the rollback err. Minor.
+- The `_HappyPath` test correctly proves on-disk byte-equality (`os.ReadFile(dest) == body`) AND `KindCatalogJSON` decodes to a 12-kind closed catalog. F5 mitigation (post-set on-disk = post-set bake) is verified end-to-end through `_HappyPath`.
+
+### Summary
+
+**FAIL** — 1 CONFIRMED counterexample on Attack 2 (acceptance #6 deliverable `_RebakeFailureRollback` is name-only; no test exercises the production rollback rename branch). 6 of 7 attacks REFUTED.
+
+**Recommended remediation:** add a service-level test in `internal/app/service_test.go` (or a new `internal/app/template_service_test.go`) that:
+1. Creates a Service with a stub repo whose `UpdateProject` returns an injected error.
+2. Calls `SetProjectTemplate` with a valid TOML.
+3. Asserts: returned err mentions "tillsyn-set-failed-"; on-disk `dest` does NOT exist; on-disk `<dest>.tillsyn-set-failed-<idGen()>.toml` exists with the original byte content.
+4. Optionally a second case where `os.Rename(dest, failedPath)` itself fails (e.g., permission-denied target dir) → returned err contains "ROLLBACK ALSO FAILED".
+
+After the remediation lands, F.3.3 should re-spawn QA-proof + QA-falsification.
+
+### Hylla Feedback
+
+N/A — action item touched non-Go files only at the workflow MD layer; Go file evidence came via `Read` / `LSP`-equivalent direct inspection per filesystem-MD coordination mode (no Hylla calls per paradigm override in spawn prompt).
+
+### TL;DR
+
+T1. F.3.3 fails on one CONFIRMED counterexample (acceptance #6): `TestTillTemplate_Set_RebakeFailureRollback` stubs the in-band failure shape rather than exercising the production rollback rename branch in `Service.SetProjectTemplate`. The `os.Rename(dest, failedPath)` path at template_service.go:501 has zero coverage. No service-level test for the rollback branch exists.
+T2. 6 of 7 declared attacks REFUTED — atomicity order correct (validate → shadow-bake → tmp+rename → swap+persist), cap-before-auth ordering matches spec, `ErrProjectHasNoCheckout` sentinel exposed correctly, snapshot policy 5.B.14 preserved by construction, `_OversizedRejected` and `_NoCheckoutPath` both prove their respective contracts.
+T3. **FAIL** — F.3.3 needs a service-level rollback-rename test before commit. Recommended fix: ~30 LOC test in `internal/app/template_service_test.go` (new file) injecting an `UpdateProject` failure via a stub repo and asserting orphaned-file recovery semantics.
