@@ -1454,3 +1454,44 @@ N/A — task touched only Go files in `internal/templates`. Filesystem-MD coordi
 - **None substantive.** Two notes for the orchestrator:
   1. F.5.2 (next droplet in Theme F's Chain 4) replaces `validateChildRuleReachability`'s no-op body and may add `validateKindStructuralCoherence`. F.5.1's slot-ordering choice (required-child-rules adjacent to reachability) keeps F.5.2's edit surface minimal.
   2. F.3.2's `till.template validate` op is spec'd to surface `validateAgentBindingFiles`'s warn-logger output in its envelope (per F.3.2 acceptance #1). The `LoadWithOptions` + `LoadOptions.WarnLogger` shape landed here is the consumption seam — F.3.2 will pass a slice-collecting closure as the `WarnLogger`.
+
+## Droplet C.3 — Round 1
+
+**Date:** 2026-05-06.
+**Builder:** go-builder-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_CE_PLAN.md` § "C.3 — Tighten `isRefinementsGate` predicate".
+**Outcome:** done — `mage test-pkg ./internal/app` green (456/456), `mage formatCheck` clean.
+
+### Files touched
+
+- `internal/app/auto_generate_steward.go` — extracted shared title vocabulary so the create site and the predicate cannot drift:
+  - New constants `refinementsGateTitlePrefix = "DROP_"` and `refinementsGateTitleInfix = "_REFINEMENTS_GATE_BEFORE_DROP_"`.
+  - New constructor `refinementsGateTitle(dropNumber int) string` returning the canonical `DROP_<N>_REFINEMENTS_GATE_BEFORE_DROP_<N+1>` shape.
+  - `seedDropFindingsAndGate` create-site at line 256 swapped from inline `fmt.Sprintf` to `refinementsGateTitle(drop.DropNumber)`.
+  - `isRefinementsGate` predicate gained two title-shape gates (`strings.HasPrefix(item.Title, refinementsGateTitlePrefix)` + `strings.Contains(item.Title, refinementsGateTitleInfix)`) alongside the existing Owner / StructuralType / DropNumber checks.
+  - Doc-comment on `isRefinementsGate` rewritten: states the title-shape requirement and explains the false-positive resilience rationale (a future STEWARD-owned numbered confluence with a different purpose — e.g. a hypothetical `DROP_<N>_MERGE_WINDOW_GATE` — would otherwise trip `raiseRefinementsGateForgottenAttention`'s safety-net path).
+- `internal/app/auto_generate_steward_test.go` — added two new top-level tests with table-driven sub-cases:
+  - `TestIsRefinementsGateAcceptsCanonicalTitle`: 3 sub-cases covering single-digit (drop 4 → 5), double-digit (drop 10 → 11), and triple-digit (drop 100 → 101) gates. Each sub-case asserts `refinementsGateTitle(N)` equals the expected literal AND `isRefinementsGate` returns true on a struct-literal `domain.ActionItem` carrying that title.
+  - `TestIsRefinementsGateRejectsForeignSTEWARDConfluence`: 7 sub-cases — foreign STEWARD-owned numbered confluence with arbitrary title (`DROP_5_MERGE_WINDOW_GATE`), title missing `DROP_` prefix, title with prefix but no infix (`DROP_5_HYLLA_FINDINGS`), DropNumber=0 with canonical title (existing rule preserved), non-STEWARD owner, non-confluence structural type, empty title.
+- `workflow/drop_4c_5/THEME_CE_PLAN.md` — added `**State:** in_progress (round 1)` line under the C.3 droplet heading at start, flipped to `**State:** done (round 1)` after green tests.
+
+### Targets run
+
+- `mage test-pkg ./internal/app` — **456/456 PASS** (1.70s). 453 pre-existing tests preserved (existing happy-path coverage at `service.go:~1180` still hits via `TestRaiseRefinementsGateForgottenAttentionIsIdempotent` whose drop-7 gate's full canonical title now also satisfies the new predicate gates) plus 10 new sub-cases (3 in `TestIsRefinementsGateAcceptsCanonicalTitle` + 7 in `TestIsRefinementsGateRejectsForeignSTEWARDConfluence`).
+- `mage formatCheck` — clean.
+
+### Design notes
+
+- **Two-constant + constructor split, not a single-constant.** The spec proposed `refinementsGateTitle(dropNumber int) string` as the shared seam. Implementation went one level finer: a prefix constant (`"DROP_"`) and an infix constant (`"_REFINEMENTS_GATE_BEFORE_DROP_"`) feed both the constructor (which builds the full string) AND the predicate (which checks shape without re-deriving the full canonical from drop_number). Rationale: the predicate cannot just compare against `refinementsGateTitle(item.DropNumber)` — that pattern would re-introduce the same false-positive surface if a future kind happens to share the `DROP_<N>` prefix and `<N+1>` suffix shape. Checking prefix + infix individually is the minimum sufficient discriminator, and lifting both shape pieces to constants keeps the predicate and constructor coupled to the same source of truth.
+- **Doc-comment offset note for spec drift.** Spec referenced "test at `service.go:1120-1121`" as the gate-close call site to preserve. Reading `service.go` shows that range is now A.4's outcome-validation block (which landed during this drop, after the C.3 spec was written). The actual gate-close call site is `service.go:1180` (verified via `rg "isRefinementsGate"`). The pre-existing test that exercises this call site is `TestRaiseRefinementsGateForgottenAttentionIsIdempotent` at `auto_generate_steward_test.go:393` — its drop-7 gate still satisfies the tightened predicate because the gate's title (`DROP_7_REFINEMENTS_GATE_BEFORE_DROP_8`) carries both the new prefix and infix gates.
+- **No domain-layer changes.** Both new constants live in `internal/app` package scope. The spec's "constant" hint could have meant `domain.RefinementsGateTitlePrefix`, but the gate-title shape is an auto-generator implementation detail (no other package needs to reason about it), so package-private placement keeps the surface tight. If a future caller (e.g. the dispatcher) needs the constructor, promotion to a package-public symbol is a one-line refactor.
+- **Adversarial title sub-cases pinned.** Falsification mitigation #3 in the spec called out "regex / prefix check accidentally matches valid future kinds." The reject-test enumerates several title shapes that satisfy ONE of the new gates but not both (`5_REFINEMENTS_GATE_BEFORE_DROP_6` has the infix but no `DROP_` prefix; `DROP_5_HYLLA_FINDINGS` has the prefix but no infix), pinning that the predicate requires BOTH pieces.
+- **Existing 4 happy paths preserved.** Beyond the gate-close call-site path called out in the spec, two other existing tests construct gates whose titles satisfy the new shape: `TestAutoGenSeedsLevel2FindingsOnNumberedDropCreation` (DROP_3 → DROP_4) and `TestRaiseRefinementsGateForgottenAttentionIsIdempotent` (DROP_7 → DROP_8). Both continue to pass.
+
+### Hylla feedback
+
+N/A — task touched only Go files in `internal/app` and one workflow MD. Filesystem-MD coordination mode (per spawn prompt) forbids Hylla calls; all evidence resolved via `Read` (auto_generate_steward.go + auto_generate_steward_test.go + THEME_CE_PLAN.md + service.go around 1100-1190 + BUILDER_WORKLOG.md tail), `Edit` for changes, and `rg` (via Bash) for the symbol-presence cross-check that located the actual `service.go:1180` call site (resolving the spec's `1120-1121` line drift).
+
+### Unknowns routed back to orchestrator
+
+- **None substantive.** One observation: the "test at `service.go:1120-1121`" reference in the C.3 spec is line-drift from the original spec authoring (those lines now belong to A.4's outcome-validation block). The actual gate-close call site is `service.go:1180`. The intended pre-existing happy-path coverage (`TestRaiseRefinementsGateForgottenAttentionIsIdempotent`) still passes under the tightened predicate, so the spec's intent — preserving existing happy paths — is satisfied; the line numbers in the spec just need a refresh if it gets re-read in a future drop.

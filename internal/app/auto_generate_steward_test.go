@@ -540,3 +540,138 @@ func TestAutoGenSeedsRejectsMissingAnchor(t *testing.T) {
 		t.Fatalf("CreateActionItem error = %v, want wrap of errStewardParentNotSeeded", err)
 	}
 }
+
+// TestIsRefinementsGateAcceptsCanonicalTitle verifies the predicate returns
+// true for an ActionItem carrying the full canonical refinements-gate shape
+// — Owner=STEWARD, StructuralType=Confluence, DropNumber>0, and a title built
+// by refinementsGateTitle. Covers the single-digit drop number (DROP_4 →
+// DROP_5) plus the double-digit edge case (DROP_10 → DROP_11) called out in
+// the Drop 4c.5 droplet C.3 spec.
+func TestIsRefinementsGateAcceptsCanonicalTitle(t *testing.T) {
+	cases := []struct {
+		name       string
+		dropNumber int
+		wantTitle  string
+	}{
+		{
+			name:       "single digit drop 4",
+			dropNumber: 4,
+			wantTitle:  "DROP_4_REFINEMENTS_GATE_BEFORE_DROP_5",
+		},
+		{
+			name:       "double digit drop 10",
+			dropNumber: 10,
+			wantTitle:  "DROP_10_REFINEMENTS_GATE_BEFORE_DROP_11",
+		},
+		{
+			name:       "triple digit drop 100",
+			dropNumber: 100,
+			wantTitle:  "DROP_100_REFINEMENTS_GATE_BEFORE_DROP_101",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			built := refinementsGateTitle(tc.dropNumber)
+			if built != tc.wantTitle {
+				t.Fatalf("refinementsGateTitle(%d) = %q, want %q", tc.dropNumber, built, tc.wantTitle)
+			}
+			gate := domain.ActionItem{
+				Owner:          stewardOwner,
+				StructuralType: domain.StructuralTypeConfluence,
+				DropNumber:     tc.dropNumber,
+				Title:          built,
+			}
+			if !isRefinementsGate(gate) {
+				t.Fatalf("isRefinementsGate(canonical %q) = false, want true", built)
+			}
+		})
+	}
+}
+
+// TestIsRefinementsGateRejectsForeignSTEWARDConfluence verifies the predicate
+// returns false for a STEWARD-owned numbered confluence whose Title is NOT a
+// refinements-gate. Covers the falsification surface called out in droplet
+// C.3 — pre-C.3 the predicate matched on Owner / StructuralType / DropNumber
+// alone, so any future STEWARD-owned numbered confluence (e.g. a hypothetical
+// MERGE_WINDOW_GATE) would have tripped raiseRefinementsGateForgottenAttention's
+// safety-net path. Post-C.3 the title-shape check rejects every such row.
+//
+// Also covers DropNumber=0 (existing rule preserved) plus several adversarial
+// title shapes that satisfy one of the new title checks but not both.
+func TestIsRefinementsGateRejectsForeignSTEWARDConfluence(t *testing.T) {
+	cases := []struct {
+		name string
+		item domain.ActionItem
+	}{
+		{
+			name: "foreign STEWARD-owned numbered confluence with arbitrary title",
+			item: domain.ActionItem{
+				Owner:          stewardOwner,
+				StructuralType: domain.StructuralTypeConfluence,
+				DropNumber:     5,
+				Title:          "DROP_5_MERGE_WINDOW_GATE",
+			},
+		},
+		{
+			name: "title missing DROP_ prefix",
+			item: domain.ActionItem{
+				Owner:          stewardOwner,
+				StructuralType: domain.StructuralTypeConfluence,
+				DropNumber:     5,
+				Title:          "5_REFINEMENTS_GATE_BEFORE_DROP_6",
+			},
+		},
+		{
+			name: "title has DROP_ prefix but no refinements-gate infix",
+			item: domain.ActionItem{
+				Owner:          stewardOwner,
+				StructuralType: domain.StructuralTypeConfluence,
+				DropNumber:     5,
+				Title:          "DROP_5_HYLLA_FINDINGS",
+			},
+		},
+		{
+			name: "DropNumber=0 with canonical title still rejects (existing rule preserved)",
+			item: domain.ActionItem{
+				Owner:          stewardOwner,
+				StructuralType: domain.StructuralTypeConfluence,
+				DropNumber:     0,
+				Title:          "DROP_0_REFINEMENTS_GATE_BEFORE_DROP_1",
+			},
+		},
+		{
+			name: "non-STEWARD owner with canonical title",
+			item: domain.ActionItem{
+				Owner:          "drop-orch",
+				StructuralType: domain.StructuralTypeConfluence,
+				DropNumber:     5,
+				Title:          "DROP_5_REFINEMENTS_GATE_BEFORE_DROP_6",
+			},
+		},
+		{
+			name: "non-confluence structural type with canonical title",
+			item: domain.ActionItem{
+				Owner:          stewardOwner,
+				StructuralType: domain.StructuralTypeDroplet,
+				DropNumber:     5,
+				Title:          "DROP_5_REFINEMENTS_GATE_BEFORE_DROP_6",
+			},
+		},
+		{
+			name: "empty title",
+			item: domain.ActionItem{
+				Owner:          stewardOwner,
+				StructuralType: domain.StructuralTypeConfluence,
+				DropNumber:     5,
+				Title:          "",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if isRefinementsGate(tc.item) {
+				t.Fatalf("isRefinementsGate(%+v) = true, want false", tc.item)
+			}
+		})
+	}
+}

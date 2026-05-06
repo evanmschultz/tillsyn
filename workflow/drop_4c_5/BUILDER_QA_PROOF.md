@@ -1170,3 +1170,46 @@ Verified C.2's claim that `raiseRefinementsGateForgottenAttention` now performs 
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode forbids Hylla calls per spawn prompt. All evidence resolved via `Read` on `auto_generate_steward.go`, `auto_generate_steward_test.go`, `THEME_CE_PLAN.md`, `BUILDER_WORKLOG.md`, plus `Bash mage` for the live test run + `Bash /usr/bin/grep` for line-number cross-checks.
+
+## Droplet C.3 — Round 1
+
+**Date:** 2026-05-06.
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, no Tillsyn / no Hylla).
+**Verdict:** PASS.
+
+### Scope
+
+Verified C.3's claim that `isRefinementsGate` now requires a title-shape match (prefix `DROP_` + infix `_REFINEMENTS_GATE_BEFORE_DROP_`) on top of the existing Owner / StructuralType / DropNumber gates, and that the title vocabulary is extracted into shared constants + a constructor consumed by both the create site and the predicate. Files in scope: `internal/app/auto_generate_steward.go`, `internal/app/auto_generate_steward_test.go`, `workflow/drop_4c_5/THEME_CE_PLAN.md` (C.3 row), `workflow/drop_4c_5/BUILDER_WORKLOG.md` (C.3 entry).
+
+### Acceptance walkthrough
+
+1. **Title-shape check added.** `auto_generate_steward.go:376` `if !strings.HasPrefix(item.Title, refinementsGateTitlePrefix)` and `:379` `if !strings.Contains(item.Title, refinementsGateTitleInfix)` are added alongside the pre-existing Owner (`:367`), StructuralType (`:370`), and DropNumber (`:373`) gates. Constants resolve to literal `"DROP_"` (`:331`) and `"_REFINEMENTS_GATE_BEFORE_DROP_"` (`:338`). Spec acceptance #1 — strings.HasPrefix + strings.Contains pattern — matches verbatim. ✓
+
+2. **Doc-comment updated.** `auto_generate_steward.go:349-365` rewritten: explicitly names "Owner=STEWARD + StructuralType=Confluence + DropNumber>0 + a title that begins with refinementsGateTitlePrefix and contains refinementsGateTitleInfix"; explains the false-positive resilience rationale via the hypothetical `DROP_<N>_MERGE_WINDOW_GATE` example; cross-references `service.go:~1180` gate-close-hook caller; names the constructor coupling per falsification mitigation #1. Matches impl 1:1. ✓
+
+3. **Two new tests with required sub-cases.** `TestIsRefinementsGateAcceptsCanonicalTitle` at `auto_generate_steward_test.go:550-589` carries 3 sub-cases (single-digit drop 4 → 5, double-digit drop 10 → 11, triple-digit drop 100 → 101), each asserting `refinementsGateTitle(N)` produces the literal canonical AND the predicate returns true on that title. `TestIsRefinementsGateRejectsForeignSTEWARDConfluence` at `:601-677` carries 7 sub-cases — foreign STEWARD-owned numbered confluence (`DROP_5_MERGE_WINDOW_GATE`), missing-prefix (`5_REFINEMENTS_GATE_BEFORE_DROP_6`), missing-infix (`DROP_5_HYLLA_FINDINGS`), DropNumber=0 with canonical title (existing rule preserved), non-STEWARD owner, non-confluence structural-type, empty title. Coverage spans the Drop 4c.5 spec edge cases (DROP_4 + DROP_10) plus broader adversarial shapes. ✓
+
+4. **`mage test-pkg ./internal/app` green.** Re-ran live: 456/456 PASS (1.65s). Pre-existing happy paths preserved — `TestAutoGenSeedsLevel2FindingsOnNumberedDropCreation` (drop 3 → 4 gate at `auto_generate_steward_test.go:269`) and `TestRaiseRefinementsGateForgottenAttentionIsIdempotent` (drop 7 → 8 gate at `:428`) both produce gates whose canonical titles satisfy the new prefix + infix gates. ✓
+
+5. **Title-constant extraction shared by predicate AND create site.** Verified via `/usr/bin/grep -rn` on `internal/`: only one production-code call site of `refinementsGateTitle` exists — `auto_generate_steward.go:256` `gateTitle := refinementsGateTitle(drop.DropNumber)` — replacing the prior inline `fmt.Sprintf` at the create site. Predicate at `:376/:379` consumes the same `refinementsGateTitlePrefix` + `refinementsGateTitleInfix` constants. Create-side and read-side cannot drift; falsification mitigation #1 closed. ✓
+
+6. **Worklog completeness.** `BUILDER_WORKLOG.md:1458-1497` captures Date / Builder / Source spec / Outcome / Files (constants, constructor, predicate edits, test additions, THEME_CE_PLAN.md state line) / Targets (mage test-pkg PASS + formatCheck clean) / Design notes (two-constant split rationale, doc-comment offset note for spec line drift, no domain-layer escalation, adversarial sub-cases pinned, 4 happy paths preserved) / Hylla Feedback / Unknowns (none substantive — only spec line-drift note). ✓
+
+### Falsification probes attempted, all mitigated
+
+- **Constructor format ↔ predicate alignment.** `refinementsGateTitle(N) = fmt.Sprintf("%s%d%s%d", "DROP_", N, "_REFINEMENTS_GATE_BEFORE_DROP_", N+1)`. Every output starts with `DROP_<digit>` (matches `HasPrefix("DROP_")`) and contains the literal infix (matches `Contains`). Tested at the constructor level (`:574 built := refinementsGateTitle(tc.dropNumber)`) AND the predicate level (`:584 isRefinementsGate(gate)`). No drift surface remains.
+- **Adversarial title that satisfies prefix+infix individually.** `5_REFINEMENTS_GATE_BEFORE_DROP_6` (no prefix) → predicate rejects at `:376`; test at `:617-623` pins. `DROP_5_HYLLA_FINDINGS` (no infix) → rejects at `:379`; test at `:626-632` pins. Both mitigations exercise BOTH new gates.
+- **DropNumber=0 with canonical title.** Test case at `:633-641` — title satisfies both new shape gates AND owner+structural type, BUT DropNumber=0 short-circuits at `:373`. Existing rule preserved.
+- **Non-STEWARD principal with canonical title.** `:642-650` — owner-prefix gate rejects at `:367` before title checks. Predicate is owner-first, defense-in-depth ordered.
+- **Pre-existing happy-path regression.** Two pre-C.3 tests construct gates whose titles also pass the new shape (`auto_generate_steward_test.go:269` DROP_3, `:428` DROP_7). Both passed in the 456/456 run; regression-free.
+- **Predicate unreachable except via the create site.** Falsifiable: spec language ("nothing prevents an unrelated row from satisfying the Owner/StructuralType/DropNumber tuple") motivates the title-shape gate. Verified via `/usr/bin/grep` on `REFINEMENTS_GATE_BEFORE_DROP_` — only the constructor + tests + integration test (`handler_steward_integration_test.go:163`) reference it; no production code path constructs a gate-style row outside `seedDropFindingsAndGate`. The predicate's defensive-by-design contract is explicit in the rewritten doc-comment.
+- **Spec line-drift on `service.go:1120-1121`.** Builder caught + documented this in worklog `:1486` and `:1497`. Verified live: actual gate-close hook is `service.go:1180-1184` (`if toState == domain.StateComplete && isRefinementsGate(actionItem)`). Pre-existing test `TestRaiseRefinementsGateForgottenAttentionIsIdempotent` (drop-7 gate) exercises this path under the tightened predicate and passes. Spec intent — preserve existing happy paths — is satisfied; the spec's stale line numbers are documentation-drift, not a correctness gap.
+
+### Soft observations (informational, non-blocking)
+
+- **Residual theoretical false-positive: an adversarial title like `DROP_FOO_REFINEMENTS_GATE_BEFORE_DROP_BAR` could pass both shape gates** if a future planner manually constructed an ActionItem with that title + DropNumber>0 + Owner=STEWARD + StructuralType=Confluence. Today no such code path exists; the only producer is `refinementsGateTitle`, which always emits numeric N. Tightening the predicate to require numeric drop numbers in the title would require regex; per spec, regex was discouraged ("predicate uses prefix + contains rather than substring-only to reduce overlap surface"). Accepted as a planner-bug surface, not a runtime safety hole.
+- **Two-constant split vs single-constructor-comparison.** Builder's design note at `BUILDER_WORKLOG.md:1485` is principled: comparing `item.Title == refinementsGateTitle(item.DropNumber)` would re-introduce the drift surface the spec mitigates. Prefix + infix gates are the minimum sufficient discriminator. Sound.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode forbids Hylla calls per spawn prompt. All evidence resolved via `Read` on `auto_generate_steward.go`, `auto_generate_steward_test.go`, `THEME_CE_PLAN.md`, `BUILDER_WORKLOG.md`, `service.go` (line 1175-1187 around the gate-close call site), `Bash mage test-pkg ./internal/app` for the live 456/456 verification, and `Bash /usr/bin/grep` for cross-package call-site / constant-usage audit.

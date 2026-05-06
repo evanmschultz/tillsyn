@@ -253,7 +253,7 @@ func (s *Service) seedDropFindingsAndGate(ctx context.Context, drop domain.Actio
 		}
 		createdFindingIDs = append(createdFindingIDs, finding.ID)
 	}
-	gateTitle := fmt.Sprintf("DROP_%d_REFINEMENTS_GATE_BEFORE_DROP_%d", drop.DropNumber, drop.DropNumber+1)
+	gateTitle := refinementsGateTitle(drop.DropNumber)
 	if _, lookupErr := s.repo.FindActionItemByOwnerAndTitle(ctx, drop.ProjectID, stewardOwner, gateTitle); lookupErr == nil {
 		return nil
 	} else if !errors.Is(lookupErr, ErrNotFound) {
@@ -323,11 +323,46 @@ func (s *Service) assembleRefinementsGateBlockedBy(ctx context.Context, drop dom
 	return out, nil
 }
 
+// refinementsGateTitlePrefix is the literal prefix every auto-generated
+// refinements-gate title carries. Both the constructor (refinementsGateTitle)
+// and the predicate (isRefinementsGate) consume it so the two stay in lockstep
+// — drift between create-side and read-side string shapes is the falsification
+// surface droplet C.3 closes.
+const refinementsGateTitlePrefix = "DROP_"
+
+// refinementsGateTitleInfix is the load-bearing middle segment of every
+// auto-generated refinements-gate title. The predicate matches on this infix
+// (rather than re-deriving the full canonical string from drop_number) so it
+// remains correct even if the auto-generator's title format gains additional
+// numeric variants in the future.
+const refinementsGateTitleInfix = "_REFINEMENTS_GATE_BEFORE_DROP_"
+
+// refinementsGateTitle builds the canonical refinements-gate title for the
+// supplied drop_number. The auto-generator's create site (seedDropFindingsAndGate)
+// and the predicate (isRefinementsGate) both rely on this shape; extracting the
+// constructor closes the drift surface called out in droplet C.3 falsification
+// mitigation #1.
+func refinementsGateTitle(dropNumber int) string {
+	return fmt.Sprintf("%s%d%s%d", refinementsGateTitlePrefix, dropNumber, refinementsGateTitleInfix, dropNumber+1)
+}
+
 // isRefinementsGate reports whether one already-fetched action item is the
 // auto-generated DROP_<N>_REFINEMENTS_GATE_BEFORE_DROP_<N+1> confluence.
 // The gate is identified by Owner=STEWARD + StructuralType=Confluence +
-// DropNumber>0; the title shape is asserted by the auto-generator's create
-// path so it does not need to be re-checked here.
+// DropNumber>0 + a title that begins with refinementsGateTitlePrefix and
+// contains refinementsGateTitleInfix.
+//
+// The title shape check is defensive against a future STEWARD-owned numbered
+// confluence with a different purpose (e.g. a hypothetical
+// DROP_<N>_MERGE_WINDOW_GATE) accidentally tripping the safety-net path in
+// raiseRefinementsGateForgottenAttention. Although the auto-generator's
+// create path is the only site that materializes this gate today, callers
+// of the predicate (notably the gate-close hook at service.go:~1180) only
+// inspect already-fetched items; the predicate cannot rely on the create-side
+// invariant for correctness because nothing prevents an unrelated row from
+// satisfying the Owner/StructuralType/DropNumber tuple. Per droplet C.3
+// falsification mitigation #1, the title prefix + infix constants are
+// shared with refinementsGateTitle so the two sites cannot drift.
 func isRefinementsGate(item domain.ActionItem) bool {
 	if strings.TrimSpace(item.Owner) != stewardOwner {
 		return false
@@ -336,6 +371,12 @@ func isRefinementsGate(item domain.ActionItem) bool {
 		return false
 	}
 	if item.DropNumber <= 0 {
+		return false
+	}
+	if !strings.HasPrefix(item.Title, refinementsGateTitlePrefix) {
+		return false
+	}
+	if !strings.Contains(item.Title, refinementsGateTitleInfix) {
 		return false
 	}
 	return true

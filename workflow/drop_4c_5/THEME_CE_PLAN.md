@@ -79,6 +79,8 @@
 
 ### C.3 — Tighten `isRefinementsGate` predicate
 
+**State:** done (round 1)
+
 **Source:** memory R3 (Drop 3 NIT 3.22 1.2.3).
 
 **Files:**
