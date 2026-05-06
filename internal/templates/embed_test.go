@@ -40,6 +40,125 @@ func TestDefaultTemplateGoLoadsCleanly(t *testing.T) {
 	}
 }
 
+// TestLoadDefaultGenericTemplate is the canary for the language-agnostic
+// builtin shipped in Drop 4c.5 droplet F.2.2. It verifies that
+// builtin/default-generic.toml:
+//
+//  1. Opens cleanly from the embed.FS (the //go:embed directive on
+//     DefaultTemplateFS extends to both files in F.2.2).
+//  2. Parses + validates through the full templates.Load() chain (every
+//     load.go sentinel — unknown key, schema-version mismatch, unknown kind
+//     reference, child-rule cycle, agent-binding-tool-gating — would
+//     surface here).
+//  3. Carries the closed 12-kind catalog (same vocabulary as default-go).
+//  4. Carries exactly four standard child_rules: build→build-qa-proof,
+//     build→build-qa-falsification, plan→plan-qa-proof,
+//     plan→plan-qa-falsification. The two drop-narrowed entries
+//     (DROP-PLAN-QA-PROOF, DROP-PLAN-QA-FALSIFICATION) that default-go.toml
+//     ships are INTENTIONALLY OMITTED — drop-level cascade is
+//     Tillsyn-runtime-specific scaffolding, not language-agnostic shape.
+//     Per F.2.2 acceptance criterion #4 + the corresponding test scenario.
+//  5. Carries the same six STEWARD persistent-parent seeds as default-go
+//     (DISCUSSIONS, HYLLA_FINDINGS, LEDGER, WIKI_CHANGELOG, REFINEMENTS,
+//     HYLLA_REFINEMENTS) — STEWARD coordination scaffolding is
+//     language-agnostic.
+//  6. Has ZERO agent_bindings — `len(tpl.AgentBindings) == 0`. Per F.2.2
+//     acceptance criterion #2 + falsification mitigations F1+F2+F3, the
+//     generic template intentionally OMITS [agent_bindings] entirely.
+//     Adopters declare bindings in their project-local
+//     <project_root>/.tillsyn/template.toml.
+//
+// Drop 4c.5 droplet F.1.3 (later in Theme F's chain) will land
+// `LoadDefaultTemplateForLanguage("")` which selects this file via the
+// resolver. Until then this test exercises the file via a direct embed.FS
+// open + Load() pass — proving the file ships and parses cleanly without
+// pre-shipping the F.1.3 entry point.
+func TestLoadDefaultGenericTemplate(t *testing.T) {
+	t.Parallel()
+
+	f, err := DefaultTemplateFS.Open("builtin/default-generic.toml")
+	if err != nil {
+		t.Fatalf("DefaultTemplateFS.Open(default-generic.toml): unexpected error: %v", err)
+	}
+	defer f.Close()
+
+	tpl, err := Load(f)
+	if err != nil {
+		t.Fatalf("Load(default-generic.toml): unexpected error: %v", err)
+	}
+
+	if tpl.SchemaVersion != SchemaVersionV1 {
+		t.Fatalf("SchemaVersion = %q; want %q", tpl.SchemaVersion, SchemaVersionV1)
+	}
+
+	// Closed 12-kind catalog — same vocabulary as default-go.
+	if got, want := len(tpl.Kinds), len(allKinds); got != want {
+		t.Fatalf("len(Kinds) = %d; want %d (closed 12-kind catalog)", got, want)
+	}
+	for _, kind := range allKinds {
+		if _, ok := tpl.Kinds[kind]; !ok {
+			t.Fatalf("Kinds[%q] missing — every closed-12-kind must have a [kinds.<kind>] section", kind)
+		}
+	}
+
+	// Exactly four standard child_rules — drop-narrowed entries omitted.
+	if got, want := len(tpl.ChildRules), 4; got != want {
+		t.Fatalf("len(ChildRules) = %d; want %d (four standard rules; drop-narrowed entries intentionally omitted)", got, want)
+	}
+	wantChildRuleEdges := map[string]bool{
+		"build->build-qa-proof":         false,
+		"build->build-qa-falsification": false,
+		"plan->plan-qa-proof":           false,
+		"plan->plan-qa-falsification":   false,
+	}
+	for _, rule := range tpl.ChildRules {
+		// Drop-narrowed entries (when_parent_structural_type set) are
+		// explicitly forbidden in the generic file.
+		if rule.WhenParentStructuralType != "" {
+			t.Fatalf("ChildRules carries drop-narrowed entry (when_parent_structural_type=%q); generic must omit drop-narrowed scaffolding", rule.WhenParentStructuralType)
+		}
+		edge := string(rule.WhenParentKind) + "->" + string(rule.CreateChildKind)
+		if _, expected := wantChildRuleEdges[edge]; !expected {
+			t.Fatalf("ChildRules carries unexpected edge %q; generic ships only the four standard rules", edge)
+		}
+		wantChildRuleEdges[edge] = true
+	}
+	for edge, seen := range wantChildRuleEdges {
+		if !seen {
+			t.Fatalf("ChildRules missing expected edge %q", edge)
+		}
+	}
+
+	// Six STEWARD seeds — same coordination scaffold as default-go.
+	if got, want := len(tpl.StewardSeeds), 6; got != want {
+		t.Fatalf("len(StewardSeeds) = %d; want %d (DISCUSSIONS / HYLLA_FINDINGS / LEDGER / WIKI_CHANGELOG / REFINEMENTS / HYLLA_REFINEMENTS)", got, want)
+	}
+	wantSeedTitles := map[string]bool{
+		"DISCUSSIONS":       false,
+		"HYLLA_FINDINGS":    false,
+		"LEDGER":            false,
+		"WIKI_CHANGELOG":    false,
+		"REFINEMENTS":       false,
+		"HYLLA_REFINEMENTS": false,
+	}
+	for _, seed := range tpl.StewardSeeds {
+		if _, expected := wantSeedTitles[seed.Title]; !expected {
+			t.Fatalf("StewardSeeds carries unexpected title %q", seed.Title)
+		}
+		wantSeedTitles[seed.Title] = true
+	}
+	for title, seen := range wantSeedTitles {
+		if !seen {
+			t.Fatalf("StewardSeeds missing expected title %q", title)
+		}
+	}
+
+	// Zero agent_bindings — the load-bearing showcase contract.
+	if got := len(tpl.AgentBindings); got != 0 {
+		t.Fatalf("len(AgentBindings) = %d; want 0 (generic template intentionally omits [agent_bindings] table)", got)
+	}
+}
+
 // TestDefaultTemplateCoversAllTwelveKinds asserts every member of the closed
 // 12-value Kind enum has a [kinds.<kind>] section. Mirrors the assertion in
 // the soon-to-be-deleted internal/adapters/storage/sqlite/repo_test.go

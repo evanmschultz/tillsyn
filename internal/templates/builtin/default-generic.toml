@@ -1,0 +1,336 @@
+# Tillsyn language-agnostic default cascade template (builtin).
+#
+# Sibling to builtin/default-go.toml. Ships the closed 12-kind catalog, the
+# four standard child_rules (build→build-qa-proof, build→build-qa-falsification,
+# plan→plan-qa-proof, plan→plan-qa-falsification), the six STEWARD
+# persistent-parent seeds, and the build-only [gates] sequence — the
+# language-agnostic core of default-go.toml's shape, with TWO deliberate
+# omissions:
+#
+#   1. NO [agent_bindings] table — agent identities are language-specific.
+#   2. NO drop-narrowed [[child_rules]] entries (DROP-PLAN-QA-PROOF,
+#      DROP-PLAN-QA-FALSIFICATION) — drop-level cascade is Tillsyn-cascade-
+#      specific scaffolding; generic adopters opt in via project-local
+#      <project_root>/.tillsyn/template.toml. Per workflow/drop_4c_5/
+#      THEME_F_PLAN.md § F.2.2 test scenarios ("the two drop-narrowed
+#      entries MAY be omitted in generic").
+#
+# Why omit agent_bindings?
+#   Agent identities (`go-builder-agent`, `go-qa-proof-agent`, etc.) are
+#   inherently language- and project-specific. A language-agnostic default
+#   cannot honestly nominate which agent should run for any kind without
+#   biasing toward a particular language ecosystem. Per workflow/drop_4c_5/
+#   THEME_F_PLAN.md § F.2.2 acceptance #2 (and falsification mitigations
+#   F1+F2+F3), the safest contract for the generic template is "no agent
+#   bindings declared" — the dispatcher tolerates absent bindings (an
+#   absent binding for kind X means "no auto-spawn for kind X"; orchestrator
+#   handles those kinds manually until the adopter authors a project-local
+#   <project_root>/.tillsyn/template.toml that declares its preferred
+#   bindings).
+#
+# When does this file get loaded?
+#   Drop 4c.5 droplet F.1.3 lands `LoadDefaultTemplateForLanguage(lang)`. Per
+#   F.1.3 acceptance criteria 2 + 6, `lang == ""` (the project's
+#   `domain.Project.Language` zero value) selects this generic file. Until
+#   F.1.3 lands, `LoadDefaultTemplate()` continues to read default-go.toml
+#   directly (preserving the prior behavior byte-for-byte). F.2.2 only ships
+#   the file + extends the //go:embed directive; downstream droplets wire
+#   the language-aware resolver.
+#
+# Encoding rules (mirrors default-go.toml):
+#   - schema_version pinned to "v1"; bumping requires migration in load.go.
+#   - Reverse-hierarchy prohibitions (PLAN.md § 19.3 finding 5.B.16 N3) are
+#     EXPLICIT via [kinds.<parent>].allowed_child_kinds enumerating every
+#     allowed child EXCEPT the prohibited one.
+#   - Auto-create rules (PLAN.md § 19.3 line 1635) are encoded as
+#     [[child_rules]] entries; the auto-generator (Drop 3 droplet 3.20)
+#     materializes one ActionItem per rule when the parent is created.
+#   - STEWARD persistent parent seeds (PLAN.md § 15.7 + § 19.3 line 1637)
+#     are encoded as [[steward_seeds]] entries; auto-generator materializes
+#     one ActionItem per seed at project creation time.
+#
+# Canonical specs:
+#   - main/PLAN.md § 19.3 (template-overhaul scope, line 1623+).
+#   - workflow/drop_4c_5/THEME_F_PLAN.md droplets F.2.2 + F.1.3.
+
+schema_version = "v1"
+
+# -----------------------------------------------------------------------------
+# [kinds] — closed 12-value Kind enum.
+# -----------------------------------------------------------------------------
+#
+# Each row records:
+#   - owner: principal responsible for materializing children (per fix L7;
+#     "STEWARD" marks STEWARD-owned, the auth gate at internal/adapters/
+#     server/common/app_service_adapter_mcp.go reads this).
+#   - allowed_parent_kinds: kinds that may parent this kind. Empty =
+#     universal-allow.
+#   - allowed_child_kinds: kinds that may be children of this kind. Empty =
+#     universal-allow. The four reverse-hierarchy prohibitions documented in
+#     PLAN.md § 19.3 are encoded by enumerating every kind EXCEPT the
+#     prohibited child here.
+#   - structural_type: cascade-shape classification per PLAN.md § 19.3 line
+#     1635. drop / segment / confluence / droplet — orthogonal to kind.
+
+[kinds.plan]
+# Planning-dominant — planner agent decomposes work into children. Plans
+# nest infinitely; a plan may contain sub-plans, builds, research,
+# discussions, etc.
+structural_type = "droplet"
+
+[kinds.research]
+# Read-only investigation — research agent compiles findings, posts a
+# comment, dies. Does NOT auto-create QA children.
+structural_type = "droplet"
+
+[kinds.build]
+# Code-changing leaf — builder agent implements, tests, commits.
+# Auto-creates build-qa-proof + build-qa-falsification children via
+# [[child_rules]] below.
+structural_type = "droplet"
+
+[kinds.plan-qa-proof]
+# Proof-completeness QA pass on a plan parent.
+structural_type = "droplet"
+
+[kinds.plan-qa-falsification]
+# Falsification QA pass on a plan parent.
+structural_type = "droplet"
+
+[kinds.build-qa-proof]
+# Proof-completeness QA pass on a build parent. Reverse-hierarchy
+# prohibition (PLAN.md § 19.3): build-qa-proof cannot parent a plan.
+# allowed_child_kinds enumerates every kind EXCEPT plan.
+allowed_child_kinds = [
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.build-qa-falsification]
+# Falsification QA pass on a build parent. Reverse-hierarchy prohibition
+# (PLAN.md § 19.3): build-qa-falsification cannot parent a plan.
+allowed_child_kinds = [
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.closeout]
+# Drop-end coordination — aggregates ledger / refinements / findings.
+# STEWARD-owned per PLAN.md § 15.7 (§ 19.3 bullet 9). Reverse-hierarchy
+# prohibition: closeout cannot parent another closeout. allowed_child_kinds
+# enumerates every kind EXCEPT closeout.
+owner = "STEWARD"
+allowed_child_kinds = [
+    "plan",
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.commit]
+# Commit action — template-triggered under plan at level >= 2 (Commit
+# Cadence rule, CLAUDE.md). Reverse-hierarchy prohibition: commit cannot
+# parent a plan. allowed_child_kinds enumerates every kind EXCEPT plan.
+allowed_child_kinds = [
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.refinement]
+# Perpetual / long-lived tracking umbrella — drop-end entries roll up
+# here. STEWARD-owned per PLAN.md § 15.7.
+owner = "STEWARD"
+structural_type = "droplet"
+
+[kinds.discussion]
+# Cross-cutting decision park — description = converged shape, comments =
+# audit trail.
+structural_type = "droplet"
+
+[kinds.human-verify]
+# Dev sign-off hold point — attention items + checklist children, no
+# plan/QA. Reverse-hierarchy prohibition: human-verify cannot parent a
+# build. allowed_child_kinds enumerates every kind EXCEPT build.
+allowed_child_kinds = [
+    "plan",
+    "research",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+# -----------------------------------------------------------------------------
+# [[child_rules]] — auto-create directives evaluated at parent creation time.
+# -----------------------------------------------------------------------------
+#
+# Per PLAN.md § 19.3 line 1635:
+#   - build → build-qa-proof + build-qa-falsification
+#   - plan  → plan-qa-proof  + plan-qa-falsification
+#   - structural_type=drop → planner droplet + qa-proof droplet +
+#                            qa-falsification droplet (a kind=plan with
+#                            its own QA twins).
+#
+# WhenParentStructuralType narrows the rule when set; an empty value
+# matches every parent structural_type. blocked_by_parent wires the
+# auto-created child with a blocked_by edge to the parent so the child
+# cannot start until the parent reaches its terminal completion state.
+
+# build → build-qa-proof
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+# build → build-qa-falsification
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+# plan → plan-qa-proof
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "plan-qa-proof"
+title = "PLAN-QA-PROOF"
+blocked_by_parent = true
+
+# plan → plan-qa-falsification
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "plan-qa-falsification"
+title = "PLAN-QA-FALSIFICATION"
+blocked_by_parent = true
+
+# NOTE — drop-narrowed child_rules INTENTIONALLY OMITTED.
+#
+# default-go.toml ships two additional [[child_rules]] entries narrowed by
+# `when_parent_structural_type = "drop"` (DROP-PLAN-QA-PROOF +
+# DROP-PLAN-QA-FALSIFICATION) to wire drop-level QA twins for Tillsyn's own
+# cascade vocabulary. Drop-level cascade is Tillsyn-runtime-specific
+# scaffolding — adopters using the generic template are NOT required to
+# follow Tillsyn's drop convention, so the language-agnostic showcase
+# omits the two drop-narrowed rules. Adopters who want them author them in
+# their project-local <project_root>/.tillsyn/template.toml or fork
+# default-go.toml.
+#
+# Companion test TestLoadDefaultGenericTemplate pins `len(tpl.ChildRules) == 4`
+# as a regression guard so future drops cannot silently re-introduce the
+# drop-narrowed rules here.
+
+# -----------------------------------------------------------------------------
+# [[steward_seeds]] — long-lived coordination anchors seeded at project creation.
+# -----------------------------------------------------------------------------
+#
+# Per fix L3 + droplet 3.20: six STEWARD-owned level_1 persistent parents
+# are spawned once on project creation by Service.CreateProjectWithMetadata.
+# Mirrors the default-go.toml seed list 1:1 — the STEWARD coordination
+# scaffold is language-agnostic and applies identically to generic adopters.
+# Each seed materializes as an ActionItem with:
+#
+#   - Owner          = "STEWARD"
+#   - Persistent     = true
+#   - DevGated       = false
+#   - Kind           = "discussion"
+#   - StructuralType = "droplet"
+#   - DropNumber     = 0
+
+[[steward_seeds]]
+title = "DISCUSSIONS"
+description = "Cross-cutting discussion topics. Description = converged shape, comments = audit trail of dev quotes."
+
+[[steward_seeds]]
+title = "HYLLA_FINDINGS"
+description = "Per-drop Hylla feedback aggregated by drop-orch + STEWARD."
+
+[[steward_seeds]]
+title = "LEDGER"
+description = "Per-drop ledger entries — cost, node count, refactors, descriptions. Populated post-merge by STEWARD from each drop's DROP_N_LEDGER_ENTRY level_2 finding."
+
+[[steward_seeds]]
+title = "WIKI_CHANGELOG"
+description = "Per-drop wiki changelog entries — what shifted in WIKI.md and why. Populated post-merge by STEWARD."
+
+[[steward_seeds]]
+title = "REFINEMENTS"
+description = "Perpetual refinement rollup — entries raised during drop work that did not block the drop. Populated drop-end by drop-orch via DROP_N_REFINEMENTS_RAISED."
+
+[[steward_seeds]]
+title = "HYLLA_REFINEMENTS"
+description = "Perpetual Hylla-tooling refinement rollup — entries that came out of Hylla-feedback rounds. Populated drop-end by drop-orch via DROP_N_HYLLA_REFINEMENTS_RAISED."
+
+# -----------------------------------------------------------------------------
+# [gates] — per-kind closed-enum gate sequence (Drop 4b Wave A 4b.1).
+# -----------------------------------------------------------------------------
+#
+# Mirrors default-go.toml's gate vocabulary 1:1. Closed-enum gate kinds
+# (mage_ci, mage_test_pkg, hylla_reingest, commit, push) are language-
+# agnostic enough to apply to any project; each gate's runtime is gated by
+# project-metadata toggles (DispatcherCommitEnabled, DispatcherPushEnabled)
+# which BOTH DEFAULT OFF (nil/false) — generic-template adopters opt in via
+# project-metadata flips when ready.
+#
+# Absence of an entry for a given kind means "no gates" — the gate runner
+# returns Success: true immediately. NOT "all gates".
+
+[gates]
+build = ["mage_ci", "commit", "push"]
+
+# -----------------------------------------------------------------------------
+# [agent_bindings] — INTENTIONALLY OMITTED.
+# -----------------------------------------------------------------------------
+#
+# Per F.2.2 acceptance criterion #2: the language-agnostic generic template
+# OMITS the [agent_bindings] table entirely. Rationale documented in the
+# header comment above. Adopters who fork this template author bindings in
+# their project-local <project_root>/.tillsyn/template.toml.
+#
+# Companion test TestLoadDefaultGenericTemplate in embed_test.go pins
+# `len(tpl.AgentBindings) == 0` as a regression guard so future drops
+# cannot silently re-introduce bindings here.

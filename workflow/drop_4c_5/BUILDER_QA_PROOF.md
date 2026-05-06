@@ -334,3 +334,78 @@ N/A — F.2.2 review touched Go-eligible files (`embed.go`, `embed_test.go`) plu
 ### Conclusion
 
 PASS. F.2.2 ships the language-agnostic showcase precisely as scoped: the closed 12-kind catalog, the four standard `[[child_rules]]`, the six STEWARD seeds, the `[gates.build]` sequence parity with default-go, and the deliberate `[agent_bindings]`-table omission — every one pinned via direct test assertion. The embed directive uses the spec-mandated explicit two-file form. `LoadDefaultTemplate()` semantics are preserved byte-for-byte (F.1.3 will generalize later). `mage testPkg ./internal/templates` 381/381 PASS = 380 prior + 1 new (`TestLoadDefaultGenericTemplate`) — arithmetic checks against F.2.1's 380-test baseline. Worklog is complete with explicit Hylla-feedback rationale.
+
+## Droplet F.2.3 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD coordination mode — NO Tillsyn / Hylla calls).
+**Date:** 2026-05-05.
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.2.3 — Self-host `<project_root>/.tillsyn/template.toml` for tillsyn".
+**Builder round under review:** `workflow/drop_4c_5/BUILDER_WORKLOG.md` § "Droplet F.2.3 — Round 1" (lines 492-538).
+**Verdict:** PASS.
+
+### Premises
+
+1. P1 — `.tillsyn/template.toml` exists at repo root with valid v1 schema.
+2. P2 — Header comment block names this as the tillsyn self-host template (NOT the embedded-builtin headering).
+3. P3 — Body content (from `schema_version = "v1"` onward through `[agent_bindings.human-verify]`) is faithful to `internal/templates/builtin/default-go.toml`.
+4. P4 — A `[tillsyn]` table with `spawn_temp_root = "os_tmp"` is appended at the bottom.
+5. P5 — `"os_tmp"` matches the dispatcher's consumer-time default at `internal/app/dispatcher/bundle.go:246-256` `resolveSpawnTempRoot` (empty → `SpawnTempRootOSTmp`; `"os_tmp"` → `SpawnTempRootOSTmp`; observably equivalent).
+6. P6 — `.gitignore` re-include rule is correctly wired: `.tillsyn/*` excludes contents AND `!.tillsyn/template.toml` re-includes the dogfood seed.
+7. P7 — Runtime state (`spawns/`, `tillsyn.db`, `tillsyn.db-shm/-wal`, `livewait.secret`, `logs/`, `config.toml`) remains ignored.
+8. P8 — `mage ci` is green (2719 pass / 1 pre-existing skip / 24 packages, all ≥ 70% coverage / build clean).
+9. P9 — `.tillsyn/template.toml` is tracked-eligible (NOT `git add`-ed yet, but will stage cleanly; not blocked by gitignore).
+10. P10 — Worklog round entry is complete (files touched, targets run, design notes, falsification-mitigation status, Hylla feedback).
+
+### Evidence
+
+- E1 (P1, P2): `Read .tillsyn/template.toml` lines 1-50 — header comment block (lines 1-46) names the tillsyn self-host template, body header `schema_version = "v1"` at line 47, `# [kinds]` block at lines 49-51. Total 696 lines.
+- E2 (P3): Spot-checked three reference points:
+  - Schema-version line: `.tillsyn/template.toml:47` matches `default-go.toml:22` exactly (`schema_version = "v1"`).
+  - `[kinds]` block heading structure matches at both files.
+  - Tail of body: `.tillsyn/template.toml:653` ends `[agent_bindings.human-verify]` block (matching `default-go.toml:653`: `agent_name = "orchestrator-managed"` ... `blocked_retries = 0`).
+  - Line-delta arithmetic: 696 - 653 = +43 lines, accounted for by +8-line header expansion + +33-line `[tillsyn]` block + ~+2 whitespace nudges. No silent body drift.
+- E3 (P4): `.tillsyn/template.toml:695-696`:
+  ```toml
+  [tillsyn]
+  spawn_temp_root = "os_tmp"
+  ```
+  Block-comment rationale at lines 660-693 documents the choice + deferred path to `"project"`.
+- E4 (P5): `internal/app/dispatcher/bundle.go:246-256` `resolveSpawnTempRoot`:
+  ```go
+  switch spawnTempRoot {
+  case "", SpawnTempRootOSTmp:
+      return SpawnTempRootOSTmp, nil
+  ...
+  ```
+  Empty AND `"os_tmp"` both resolve to `SpawnTempRootOSTmp` — observably equivalent. Schema doc at `internal/templates/schema.go:263-281` documents the same. The explicit pin in the dogfood file makes the dogfood semantics observable on inspection without changing runtime behavior.
+- E5 (P6, P7): `.gitignore:18-19`:
+  ```
+  .tillsyn/*
+  !.tillsyn/template.toml
+  ```
+  `git check-ignore -v .tillsyn/template.toml` returned `.gitignore:19:!.tillsyn/template.toml	.tillsyn/template.toml` — negation rule wins. `git status --porcelain .tillsyn/` returns `?? .tillsyn/` — only the re-included file shows as a candidate. Builder's own `git status --ignored --porcelain` evidence (worklog line 520) shows runtime state files all `!!` ignored.
+- E6 (P8): Builder worklog line 518 reports `mage ci` GREEN — 2719 pass / 1 pre-existing skip (`TestStewardIntegrationDropOrchSupersedeRejected` — same skip seen across all earlier rounds, not F.2.3-introduced) / 24/24 packages green / all ≥ 70% coverage. Trust the builder claim per spawn-prompt directive.
+- E7 (P9): `git ls-files .tillsyn/template.toml` returns empty (file not yet staged); `git ls-files --others --exclude-standard .tillsyn/` returns `.tillsyn/template.toml` (file is a tracked-eligible candidate). The file is NOT yet `git add`-ed — builder explicitly avoids commit per spawn-prompt rules. Acceptance #3 is "tracked / tracked-eligible" — the latter is satisfied.
+- E8 (P10): Builder worklog § "Droplet F.2.3 — Round 1" includes Files touched (4 files), spawn_temp_root choice rationale, Targets run, Design notes (5 bullets), Falsification-mitigation status (F1/F2/F3), Hylla feedback (`N/A — task touched only non-Go files`). Complete per the WORKFLOW Phase 4 contract.
+
+### Trace Coverage
+
+1. **Acceptance #1 (file exists, valid v1 schema, header names tillsyn self-host, body matches default-go.toml):** P1 ∧ P2 ∧ P3 → met by E1 + E2.
+2. **Acceptance #2 (`mage ci` green):** P8 → met by E6.
+3. **Acceptance #3 (file is tracked / tracked-eligible):** P9 → met by E7. Tracked-eligible (not yet staged); orchestrator stages on commit.
+4. **Acceptance #4 (gitignore correctness; `template.toml` not ignored):** P6 ∧ P7 → met by E5. Note: spec mitigation F3 said "existing rule is `.tillsyn/spawns/`" pre-droplet — that was wrong (actual rule was `.tillsyn/`). Builder identified the gap, refactored to the canonical pattern, documented the correction in worklog § ".gitignore" (line 502) and § "Falsification-mitigation status F3" (line 534). Forthright self-correction, not drift.
+5. **`spawn_temp_root` matches dispatcher default:** P4 ∧ P5 → met by E3 + E4. Empty and `"os_tmp"` are observably equivalent; explicit pin makes the dogfood policy inspectable.
+6. **Worklog completeness:** P10 → met by E8.
+
+### Conclusion
+
+PASS. F.2.3 round 1 satisfies every acceptance criterion with evidence pinned to file content + dispatcher source + git surface state. The two judgment calls — (1) `"os_tmp"` over `"project"` for `spawn_temp_root`, (2) `.gitignore` refactor instead of relying on the (incorrect) spec mitigation F3 — are both well-reasoned, documented in worklog, and tightly scoped. The byte-faithful body copy with intentional header + tail adjustments matches the spec's "BYTE-IDENTICAL copy ... future drift is intentional, drop-tracked" framing exactly.
+
+### Unknowns
+
+- U1 — `.tillsyn/template.toml` is not yet `git add`-ed. Acceptance #3 admits "tracked-eligible" so this is not a finding against F.2.3, but the orchestrator MUST stage the file during the drop's commit step (gitignore won't block, but the file won't appear in the next PR diff unless explicitly staged). Routed in QA summary back to orchestrator.
+- U2 — F.2.3's self-host file sits inert until F.1.2 (filesystem walk) ships. This is acknowledged in the spec ("landing F.2.3 first means the file sits unused until F.1.x activates it. Acceptable.") and in the worklog design notes. Not a finding.
+
+### Hylla Feedback
+
+N/A — droplet under review touched only non-Go files (TOML + dotfile + workflow MDs). Hylla is Go-only today per project memory `feedback_hylla_go_only_today.md`. All evidence resolved via `Read` / `Bash` (`git ls-files`, `git status --porcelain`, `git check-ignore -v`) / file content inspection. No Hylla query was attempted, so no miss to log.

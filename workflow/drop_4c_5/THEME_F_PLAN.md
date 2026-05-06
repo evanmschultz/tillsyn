@@ -182,6 +182,7 @@
 
 ### Droplet F.2.2 — Add default-generic.toml (language-agnostic showcase)
 
+**State:** done (round 1)
 **Title:** `4c.5.F.2.2 — add default-generic.toml language-agnostic builtin`.
 
 **Files / paths:**
@@ -219,6 +220,7 @@
 
 ### Droplet F.2.3 — Self-host `<project_root>/.tillsyn/template.toml` for tillsyn
 
+**State:** done (round 1)
 **Title:** `4c.5.F.2.3 — add self-host template at repo root for dogfood`.
 
 **Files / paths:**

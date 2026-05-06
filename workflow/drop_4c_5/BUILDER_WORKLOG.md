@@ -536,3 +536,56 @@ Per spec acceptance #1 — pick `"os_tmp"` or `"project"` after confirming curre
 ### Hylla feedback
 
 N/A — task touched only non-Go files (TOML + dotfile + workflow MDs). Hylla is Go-only today per `feedback_hylla_go_only_today.md`. All evidence resolved via `Read` / `Bash` (`rg` for `SpawnTempRoot` consumers + `git check-ignore` + `git ls-files` + `git status --ignored`) / `Edit` / `Write` / `mage ci`. No Hylla query was attempted, so no miss to log.
+
+---
+
+## Droplet A.4 — Round 1
+
+**Spec:** `workflow/drop_4c_5/THEME_A_PLAN.md` § A.4. **Blocked-by:** A.1 (already done). **State delta:** in_progress → done.
+
+### Files touched
+
+- `internal/domain/errors.go` — added `ErrInvalidMetadataOutcome` sentinel error with full doc-comment covering the closed enum + asymmetry + idempotent carve-out rationale.
+- `internal/app/service.go` — added the A.4 outcome guard inside `Service.MoveActionItem` (between the existing terminal-state guard at line 1116 and the column move at line ~1140). Guard fires only when `toState == StateFailed && fromState != StateFailed` (idempotent self-move carve-out preserves pre-A.4 data rows). Validates `outcome ∈ {failure, blocked, superseded}` after `strings.TrimSpace + strings.ToLower`. Rejects `success` on `→failed` per master PLAN cross-cutting decision (semantically nonsense).
+- `internal/app/service_test.go` — fixed two pre-existing tests that moved into `StateFailed` with empty outcome (`TestMoveActionItemToFailedUsesMarkFailedCapability` at line 4953, `TestMoveActionItemToFailedSkipsCompletionCriteria` at line 4990) by pre-populating `Metadata.Outcome = "failure"` on the action-item input. Added new table-driven test `TestMoveActionItemFailedTransitionRequiresOutcome` covering all 7 acceptance rows plus 4 additional rows (mixed-case acceptance, garbage-outcome rejection, complete-no-outcome asymmetry, in_progress-no-outcome no-op). Each rejection row also asserts post-rejection lifecycle state is unchanged (guard fires before column move).
+- `internal/adapters/server/common/app_service_adapter_mcp.go` — extended the doc-comment on `validateMetadataOutcome` to cross-reference the new service-level invariant. Function body unchanged. The adapter validator stays permissive (empty + "success" still pass at the MCP boundary) because outcomes legitimately propagate ahead of state changes (e.g., agent sets `outcome = "success"` while item is still in_progress before flipping to complete).
+- `internal/adapters/server/common/app_service_adapter_lifecycle_test.go` — fixed `TestMoveActionItemStateToFailed` (line 957) by inserting an `UpdateActionItem(metadata.outcome = "failure")` call before the `MoveActionItemState(... "failed")` call. Production agents follow the same documented order per `CLAUDE.md` § "Action-Item Lifecycle".
+
+### Mage targets run
+
+- `mage testPkg ./internal/app` — 408/408 pass (`-race`). Includes the new 11-row table.
+- `mage testPkg ./internal/adapters/server/common` — 160/160 pass.
+- `mage testPkg ./internal/domain` — 303/303 pass (sanity for the new sentinel error addition).
+- `mage testFunc ./internal/app TestMoveActionItemFailedTransitionRequiresOutcome` — 11/11 pass with `-race`.
+- `mage formatPath` ran on each touched file (gofumpt re-aligned the `errors.go` declaration block; no semantic delta).
+- `mage ci` blocks at `formatCheck` step on `internal/adapters/server/mcpapi/extended_tools_test.go` — that file's gofumpt drift was introduced by an earlier droplet (A.1 round-1 which is already done); the concurrent A.1 round-2 fix-builder running in parallel does not edit that file. The drift is OUTSIDE my declared paths so I did not touch it; documenting here so the orchestrator can route a one-line `mage formatPath` cleanup to whatever droplet inherits the file. My code-level testPkg runs are clean across every package I touched.
+
+### Design notes
+
+- **Insertion point.** Spec required positioning AFTER the terminal-state guard (line 1116-1118) but BEFORE the column move (`actionItem.Move(...)` at line ~1140). Chose to insert immediately after the terminal-state guard block so the two guards read together as the "transition validity" cluster. The completion-criteria check at the old line 1124 (now line ~1146) still fires for `→complete` only, so my guard sits cleanly between terminal-state-from and completion-criteria-to.
+- **Idempotent carve-out (`fromState != StateFailed`).** Without this, the existing `TestMoveActionItemFromFailedIdempotentAllowed` test (line 5106) would break because it idempotently re-moves an already-failed item with empty outcome. The carve-out also matches the philosophical intent: A.4 enforces correctness ON the transition INTO failed, not retroactively on items that are already there. The terminal-state guard at line 1116 still permits same-state idempotent moves; my guard explicitly mirrors that semantics for the failed-only sub-case.
+- **Case-insensitive enum match.** Used `strings.TrimSpace + strings.ToLower` to mirror the existing `validateMetadataOutcome` adapter validator's case-folding. A row in the table-test pins this contract (`"Failure"` accepted) so the carve-out is self-documenting.
+- **Reject `"success"` on `→failed`.** Per master PLAN cross-cutting decision (`PLAN.md:39`): _"A.4's strict-failure-outcome-enum check (rejecting `"success"` on `→failed`) — INCLUDE."_. Cost was one extra closed-set entry; semantic value is preventing nonsense transitions. The adapter-level `validateMetadataOutcome` retains `"success"` in its accepted set because outcomes legitimately propagate ahead of complete transitions.
+- **Error wrapping shape.** `fmt.Errorf("%w: metadata.outcome must be one of {failure, blocked, superseded} on transition to failed (got %q)", domain.ErrInvalidMetadataOutcome, actionItem.Metadata.Outcome)` — the `%q` preserves the raw caller-sent value (NOT the lowercased one) so debug logs show what the caller actually sent.
+
+### Falsification-mitigation status
+
+- **F1 (existing tests that move to failed without outcome).** Mitigated. Three tests in scope identified via `rg "MoveActionItem.*[Ff]ailed"` across the project. Fixed two (`internal/app/service_test.go` lines 4953 + 4990 + 1 adapter test). The third (`TestMoveActionItemFromFailedIdempotentAllowed` line 5106) is preserved by the `fromState != StateFailed` carve-out and tests pass.
+- **F2 (TUI / direct-repo bypass).** Confirmed via `rg ".MoveActionItem("` that all production state-flips funnel through `Service.MoveActionItem`. The dispatcher's `internal/app/dispatcher/monitor.go:applyCrashTransition` and `dispatcher.go:transitionToFailed` go through `Service.MoveActionItem` via the `dispatcherSvcAdapter` seam. **Latent bug detected (NEW REFINEMENT — see below)**: those two paths call `MoveActionItem(... → failed)` BEFORE the subsequent `UpdateActionItem(metadata.outcome="failure")`, which violates the documented order in `CLAUDE.md` § "Action-Item Lifecycle". My new guard would reject those production calls. The dispatcher's tests use stubs (`richDispatchService.MoveActionItem` at `dispatcher_test.go:526`) that bypass the real Service, so the test suite does not catch this. Real production runs would surface as `ErrInvalidMetadataOutcome` rejections from the dispatcher's crash-handling path.
+- **F3 (`outcome = "success"` allowed on `→failed`).** Mitigated. The strict-enum switch rejects `success` (closed set is `failure | blocked | superseded`). Test row `failed-with-success-outcome rejected` pins the contract.
+
+### Refinement raised — Drop 4c.5 R-A.4-1
+
+**Title:** Dispatcher's failed-transition path violates "metadata-before-move" order.
+
+**Surface:** `internal/app/dispatcher/monitor.go:applyCrashTransition` (lines ~351-371) and `internal/app/dispatcher/dispatcher.go:transitionToFailed` (lines ~639-664) both invoke `MoveActionItem(... → failed)` BEFORE the follow-up `UpdateActionItem(metadata.outcome = "failure")`. Per `CLAUDE.md` § "Action-Item Lifecycle" the documented agent order is **set metadata first, then flip column**. Today the dispatcher tests stub `MoveActionItem` so the real `Service.MoveActionItem` guard is never hit; production runs against the real Service would fail with `ErrInvalidMetadataOutcome` during dispatcher crash-recovery.
+
+**Why deferred from A.4:** scope expansion into `internal/app/dispatcher/` is outside my declared `paths` and would require touching `monitor.go`, `dispatcher.go`, plus updating the corresponding test fixtures. The A.4 spec explicitly stated as criterion #4 that the dispatcher pattern is "preserved" — i.e., A.4 assumes the dispatcher already follows the doc order, but the dispatcher does NOT today.
+
+**Fix shape (one-droplet refactor):** in both call sites, reorder so `UpdateActionItem(metadata)` precedes `MoveActionItem(... → failed)`. Update `richDispatchService.MoveActionItem` test stub to assert the metadata is already populated when the move call lands. Estimated cost: ~30 LOC across 2 production files + ~10 LOC in dispatcher_test.go.
+
+**Suggested routing:** add as `R-A.4-1` to the Drop 4c.5 closeout refinements list (or to whatever drop ships dispatcher hardening next). Pre-MVP no production agent currently runs into this because cascade dispatch isn't dogfooding yet — Drop 5 dogfood would surface it immediately.
+
+### Hylla feedback
+
+N/A — task touched only Go files but Hylla is stale post-Drop-4c-merge until reingest (per spawn prompt: "filesystem-MD coordination mode. NO Tillsyn runtime calls. NO Hylla calls"). All evidence resolved via `Read` / `Bash` (`rg` for `MoveActionItem`, `StateFailed`, `Outcome`, `validateMetadataOutcome`) / `Edit` / `mage testPkg` / `mage formatPath`. No Hylla query attempted; no miss to log.

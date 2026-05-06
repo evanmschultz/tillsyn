@@ -8,22 +8,25 @@ import "embed"
 // the //go:embed directive uses relative paths with no parent traversal.
 //
 // Drop 4c.5 droplet F.2.1 rebadged the original `default.toml` to
-// `default-go.toml` so a sibling `default-generic.toml` (and, post-Q1
-// resolution, future language-flavored variants) can ship alongside without
-// stepping on the Go-flavored content. The directive uses an EXPLICIT FILE
-// LIST rather than a glob (`builtin/*.toml`) per F.2.1 falsification
-// mitigation #2: an explicit list cannot accidentally pick up unrelated
-// .toml fixtures or leftover files in builtin/.
+// `default-go.toml` so sibling builtins (and, post-Q1 resolution, future
+// language-flavored variants) can ship alongside without stepping on the
+// Go-flavored content. Drop 4c.5 droplet F.2.2 added the language-agnostic
+// `default-generic.toml` sibling. The directive uses an EXPLICIT FILE LIST
+// rather than a glob (`builtin/*.toml`) per F.2.1 falsification mitigation
+// #2 (carried forward to F.2.2): an explicit list cannot accidentally pick
+// up unrelated .toml fixtures or leftover files in builtin/.
 //
-// Subsequent Theme F droplets extend the list:
-//   - F.2.2 adds `builtin/default-generic.toml`.
+// Subsequent Theme F droplets:
 //   - F.1.3 adds the language-aware resolver `LoadDefaultTemplateForLanguage`
-//     and reduces `LoadDefaultTemplate` to a thin wrapper.
+//     and reduces `LoadDefaultTemplate` to a thin wrapper that selects the
+//     generic file. Until F.1.3 lands, `LoadDefaultTemplate()` continues to
+//     read `default-go.toml` directly (preserving the prior behavior
+//     byte-for-byte).
 //
 // Canonical specs: workflow/drop_3/PLAN.md droplet 3.14 + main/PLAN.md § 19.3
-// + workflow/drop_4c_5/THEME_F_PLAN.md droplet F.2.1.
+// + workflow/drop_4c_5/THEME_F_PLAN.md droplets F.2.1 + F.2.2.
 //
-//go:embed builtin/default-go.toml
+//go:embed builtin/default-go.toml builtin/default-generic.toml
 var DefaultTemplateFS embed.FS
 
 // LoadDefaultTemplate parses and validates the builtin Go-flavored default

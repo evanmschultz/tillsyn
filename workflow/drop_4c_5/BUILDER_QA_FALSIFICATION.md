@@ -560,3 +560,48 @@ PASS-WITH-NIT. Builder E.2 cleanly executed acceptance #2 (ListColumns error pat
 ### Hylla Feedback
 
 N/A — droplet edits + reviewed surface are Go files, but the spawn-prompt directive ("NO Hylla calls") routed all evidence through `Read` / `Bash` (`rg`, `git diff`). No fallback misses to log under the standard rule because the rule was suspended for this round.
+
+## Droplet F.2.2 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (model: opus, filesystem-MD mode).
+**Date:** 2026-05-05.
+**Verdict:** PASS — no counterexample found across the seven attack categories.
+**Scope:** F.2.2 declared files only — `internal/templates/builtin/default-generic.toml` (NEW), `internal/templates/embed.go` (modified), `internal/templates/embed_test.go` (extended), `workflow/drop_4c_5/THEME_F_PLAN.md` (state line), `workflow/drop_4c_5/BUILDER_WORKLOG.md` (round 1 section).
+
+### Counterexample Certificate
+
+- **Premises** — Builder claims default-generic.toml mirrors default-go's 12 kinds + 4 standard child_rules + 6 STEWARD seeds + identical `[gates]`, while omitting `[agent_bindings]` table and the two drop-narrowed `[[child_rules]]`. Embed directive uses explicit two-file form. Tests assert all of the above.
+- **Evidence** — Read of `internal/templates/builtin/default-generic.toml` (337 lines), `internal/templates/builtin/default-go.toml` (gates + steward_seeds + child_rules slices via `grep`), `internal/templates/embed.go` (29-line `//go:embed` directive), `internal/templates/embed_test.go:43-160` (`TestLoadDefaultGenericTemplate`), `internal/templates/load.go:78-150` (Load chain), `:284-301` (`validateMapKeys`), `:400-403` (`validateChildRuleReachability` no-op), `:468-654` (all `validateAgentBinding*` validators iterate `range tpl.AgentBindings`). `mage testPkg ./internal/templates` reproduced **381/381 PASS** in QA session.
+
+### Attack Inventory
+
+**A1 — STEWARD seeds drift:** REFUTED. Both files ship 6 seeds with identical titles `DISCUSSIONS / HYLLA_FINDINGS / LEDGER / WIKI_CHANGELOG / REFINEMENTS / HYLLA_REFINEMENTS` (verified by `[[steward_seeds]]` line-grep on both files: default-go lines 299-320, default-generic lines 284-306).
+
+**A2 — Validator chain coverage with empty bindings:** REFUTED. All four `validateAgentBinding*` validators (`load.go:468 validateAgentBindingEnvNames`, `:531 validateAgentBindingContext`, `:622 validateAgentBindingToolGating`, plus `validateMapKeys` agent_bindings loop at `:290`) iterate `range tpl.AgentBindings`. Go's `range` over a nil map iterates zero times, so each validator is a no-op when bindings are absent. `validateRequiredChildRules` does NOT yet exist (it's an F.5.1 future droplet — confirmed via grep). 381/381 mage test result confirms.
+
+**A3 — Embed directive completeness:** REFUTED. `embed.go:29` reads exactly `//go:embed builtin/default-go.toml builtin/default-generic.toml` — explicit two-file form per F.2.1 falsification mitigation #2, NOT a glob.
+
+**A4 — `AgentBindings == 0` semantics:** REFUTED. No validator in the chain requires non-empty `AgentBindings`. The closed set of validators that touch the map all use `range`-iteration, which is empty-safe. Test asserts `len(tpl.AgentBindings) == 0` and the file passes the full chain. Builder's "the dispatcher tolerates absent bindings" claim is the contract, consistent with spec acceptance #2.
+
+**A5 — Drop-narrowed child_rules omission:** REFUTED. default-go ships 6 `[[child_rules]]` (4 standard + 2 drop-narrowed `DROP-PLAN-QA-PROOF` / `DROP-PLAN-QA-FALSIFICATION` with `when_parent_structural_type = "drop"` at default-go lines 256-268); default-generic ships only the 4 standard, with a defensive test guard rejecting any non-empty `WhenParentStructuralType` (`embed_test.go:117`). TOML body explicitly comments the omission rationale (lines 251-265).
+
+**A6 — Header comment vs TOML parser:** REFUTED. All header lines (1-54) are `#`-prefixed comments; TOML body starts at line 56 with `schema_version = "v1"`. Pelletier/go-toml/v2 parses cleanly (verified by 381/381 PASS).
+
+**A7 — `mage ci` impact across consumers:** REFUTED. `rg DefaultTemplateFS` returns only two consumers — `embed.go:LoadDefaultTemplate` (opens `default-go.toml` by literal name) and `embed_test.go:TestLoadDefaultGenericTemplate` (opens `default-generic.toml` by literal name). Neither walks the embed.FS. The new file cannot surprise an unintended consumer.
+
+### Counterexamples (CONFIRMED)
+
+None. All seven attacks REFUTED.
+
+### Findings (Non-Blocking)
+
+- **F1 NIT:** The `embed_test.go:79` test opens the file via `DefaultTemplateFS.Open("builtin/default-generic.toml")` rather than the F.1.3-future `LoadDefaultTemplateForLanguage("")`. This is correct per spec ("F.1.3 not yet landed; direct embed.FS open preserves byte-for-byte semantics until then"). No action.
+- **F2 NIT:** Doc-comment in default-generic.toml header references "F.1.3 acceptance criteria 2 + 6" — criterion 2 picks the file by `lang == ""`; criterion 6 establishes the wrapper relationship — informational only.
+
+### Conclusion
+
+PASS. F.2.2 ships exactly what spec + spawn-prompt require. STEWARD seeds match 1:1, gates match 1:1, embed directive is explicit two-file form, validator chain is empty-bindings-safe (verified by `mage testPkg` 381/381 PASS), drop-narrowed child_rules correctly omitted with defensive test guard, no FS-walking consumers. Builder's design notes correctly trace the absent-vs-empty-table decision (chose absent) and the drop-narrowed omission rationale. Recommend droplet F.2.2 closes.
+
+### Hylla Feedback
+
+N/A — F.2.2 review touched only Go-eligible files (`embed.go`, `embed_test.go`, `load.go`) plus a TOML and workflow MDs. Per spawn-prompt directive ("filesystem-MD coordination mode. NO Hylla calls.") and the "Hylla Indexes Only Go Files Today" memory rule, no Hylla query was attempted. All evidence resolved via `Read` + `Grep` (Bash-grep) + `mage testPkg`. No miss to log.
