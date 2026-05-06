@@ -92,16 +92,27 @@ const (
 	// Off-by-default per project metadata DispatcherCommitEnabled toggle
 	// (F.7.15) — the gate is a no-op when the toggle is unset / false.
 	GateKindCommit GateKind = "commit"
+
+	// GateKindPush invokes the F.7.14 push gate: resolves the project
+	// worktree's current branch via `git symbolic-ref --short HEAD` and runs
+	// `git push origin <branch>` against the same worktree. Off-by-default
+	// per project metadata DispatcherPushEnabled toggle (F.7.15) — the gate
+	// is a no-op when the toggle is unset / false. Drop 4c F.7.14 ships the
+	// gate implementation alongside this enum entry; the future wiring
+	// droplet (F.7-CORE REV-13) expands the default template's [gates.build]
+	// sequence to include this kind after F.7.13's commit gate.
+	GateKindPush GateKind = "push"
 )
 
 // validGateKinds stores every member of the closed GateKind enum. Drop 4c
-// F.7.13 added "commit"; "push" lands in a follow-up droplet alongside its
-// gate implementation.
+// F.7.13 added "commit"; Drop 4c F.7.14 adds "push" alongside its gate
+// implementation in internal/app/dispatcher/gate_push.go.
 var validGateKinds = []GateKind{
 	GateKindMageCI,
 	GateKindMageTestPkg,
 	GateKindHyllaReingest,
 	GateKindCommit,
+	GateKindPush,
 }
 
 // IsValidGateKind reports whether g is a member of the closed GateKind enum.
