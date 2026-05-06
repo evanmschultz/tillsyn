@@ -301,7 +301,7 @@
 
 ### E.6 — `validateMapKeys` case-fold footgun: post-decode canonicalization
 
-**State:** in_progress
+**State:** done
 
 **Source:** memory 4b R1 (Drop 4b 4b.1 F4).
 

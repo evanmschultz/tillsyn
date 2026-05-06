@@ -1145,3 +1145,65 @@ Round-1 fix-builder expanded `Track`'s doc-comment in `internal/app/dispatcher/m
 ### Hylla feedback
 
 None — Hylla unused this round (per spawn prompt: "NO Hylla calls"). Filesystem-MD coordination mode. Edit + Read only.
+
+## Droplet E.6 — Round 1
+
+**Spawn time:** 2026-05-06 (filesystem-MD mode, model: opus). Resume of a prior E.6 spawn that hit the daily usage limit before writing the worklog entry / flipping the THEME plan row; production code + tests were already on-disk in the working tree at resume time.
+**Source spec:** `THEME_CE_PLAN.md` § "E.6 — `validateMapKeys` case-fold footgun: post-decode canonicalization".
+**Goal:** Change `validateMapKeys` to ALSO canonicalize map keys post-decode so a TOML document writing `[gates.BUILD]` (uppercase) loads cleanly AND consumer-side lookups by `domain.KindBuild` succeed. Reject post-canonicalization collisions (e.g. `[gates.BUILD]` AND `[gates.build]` in the same document folding to the same `domain.Kind`). Caller at `load.go:125` updates from value-receiver to pointer-receiver.
+
+### Files touched
+
+- `internal/templates/load.go` (production):
+  - `validateMapKeys` signature changed from `func validateMapKeys(tpl Template) error` → `func validateMapKeys(tpl *Template) error` so the canonicalized rebuild is visible to the caller. The body now delegates to a new generic helper `canonicalizeMapKeys[V any](m map[domain.Kind]V, fieldName string)` for each of the three maps (`tpl.Kinds`, `tpl.AgentBindings`, `tpl.Gates`); when the helper returns a non-nil rebuilt map the caller swaps it into the Template.
+  - `canonicalizeMapKeys` runs a pre-scan over every key — validates enum membership via the existing `domain.IsValidKind` (already case-folds via TrimSpace+ToLower) AND tracks whether any key needs canonicalization. The all-lowercase happy path returns `(nil, nil)` so the embedded default templates (every key already canonical) avoid touching the map's underlying allocation. The rebuild path detects post-canonicalization duplicates and returns `ErrUnknownKindReference` wrapping a `"%s map has duplicate key %q after case-fold canonicalization"` message that names the offending TOML field + the canonical key.
+  - Caller at `load.go:125` updated: `if err := validateMapKeys(&tpl); err != nil`. Verified via grep — only one call site in the package.
+  - Doc-comment on `validateMapKeys` (lines 276-307) extended to: (a) describe the canonicalization mutation, (b) lock the fix-path decision (post-decode canonicalization NOT exact-match validation) and explain why (`domain.IsValidKind` already case-folds; forcing exact-match would diverge value-validation from key-validation), (c) document the pointer-receiver rationale, (d) document the collision-detection contract referencing the 2026-05-05 pelletier/go-toml/v2 probe.
+  - New helper `canonicalizeMapKeys` carries its own doc-comment explaining the three-tuple return contract `(rebuilt, nil)` / `(nil, nil)` / `(nil, err)` and the generic-`any` constraint rationale.
+
+- `internal/templates/load_test.go` (test):
+  - Added `"slices"` import for the new `mapKeys` helper's deterministic key sort.
+  - Added 8 new test functions covering the spec's acceptance bullets + falsification mitigations:
+    1. `TestValidateMapKeysCanonicalizesGatesKeys` — `[gates.BUILD]` loads + `tpl.Gates[domain.KindBuild]` returns the gate sequence; pre-canonicalization key `Kind("BUILD")` does NOT survive (asserts no leak via the `_, leaked := tpl.Gates[...]` check).
+    2. `TestValidateMapKeysCanonicalizesKindsKeys` — same shape for `[kinds.BUILD]`.
+    3. `TestValidateMapKeysCanonicalizesAgentBindingsKeys` — same shape for `[agent_bindings.BUILD]`.
+    4. `TestValidateMapKeysCanonicalizesTitlecaseGatesKey` — parallel coverage of `[gates.Build]` (titlecase NOT all-caps) so the canonicalization path is exercised on every case-fold variant, not only the all-uppercase corner.
+    5. `TestValidateMapKeysCollidesOnCaseFold` — `[gates.BUILD]` AND `[gates.build]` in the same document → `Load` returns an error satisfying `errors.Is(_, ErrUnknownKindReference)` AND containing the substrings `"duplicate"`, `"build"`, `"gates"` for adopter UX.
+    6. `TestValidateMapKeysCollidesOnCaseFoldKindsTable` — mirrors the collision check on the `[kinds.*]` map so the rebuild path is exercised on every map (not only Gates).
+    7. `TestValidateMapKeysRejectsBogusKeyAfterCaseFoldVariant` — pins the pre-existing rejection contract under the new regime: a typo like `[gates.BULID]` (transposed letters) STILL surfaces as `ErrUnknownKindReference` because `IsValidKind`'s enum-membership check fires before the canonicalization step.
+    8. `TestValidateMapKeysDefaultTemplateRegression` — calls `LoadDefaultTemplateForLanguage("go")` (the canonical adopter entry-point) and asserts every key in `tpl.Kinds` / `tpl.AgentBindings` / `tpl.Gates` is already-canonical lowercase. Failing this test signals either (a) the embedded default-go.toml drifted to mixed-case (template-author error) or (b) the rebuild path runs even when not needed (cold-load performance regression). Sanity-checks `tpl.Kinds[domain.KindBuild]` is present.
+  - Added `mapKeys[V any](m map[domain.Kind]V) []string` test-only helper that returns a sorted slice of map keys for deterministic error UX in the new tests' `Fatalf` arguments.
+
+### Targets run
+
+- `mage test-pkg ./internal/templates` — **394/394 PASS** (0.01s, 1 package). All pre-existing `internal/templates` tests + the 8 new canonicalization / collision / regression tests green.
+- Did NOT run `mage ci` (out of scope per spawn-prompt verification target). Did NOT commit (per HARD RULES).
+
+### Acceptance — explicit checklist
+
+1. **Chosen fix path: post-decode canonicalization.** Done. Locked in `validateMapKeys` doc-comment lines 287-294 with the rationale (`domain.IsValidKind` already case-folds → key-validation contract should match value-validation contract). Signature change `Template` → `*Template` landed; caller at `load.go:125` updated; verified via grep that only one call site exists.
+2. **`TestValidateMapKeysCanonicalizesGatesKeys` — `[gates.BUILD]` loads + `tpl.Gates[domain.KindBuild]` returns gate sequence.** Done. Test asserts `len(gateSeq) == 1`, `gateSeq[0] == GateKind("mage_ci")`, AND no leak of the pre-canonicalization key.
+3. **`TestValidateMapKeysCanonicalizesKindsKeys` — `[kinds.BUILD]` loads + `tpl.Kinds[domain.KindBuild]` returns the entry.** Done.
+4. **`TestValidateMapKeysCanonicalizesAgentBindingsKeys` — `[agent_bindings.BUILD]` loads + `tpl.AgentBindings[domain.KindBuild]` returns the binding.** Done. Asserts `binding.AgentName == "go-builder-agent"` for fidelity.
+5. **`TestValidateMapKeysCollidesOnCaseFold` — both `[gates.BUILD]` AND `[gates.build]` in same template rejects with clear error naming the collision.** Done. Test confirms pelletier/go-toml/v2 accepts the two as distinct sibling tables (case-sensitive at the TOML layer per the spec's 2026-05-05 probe note); the collision surfaces from `canonicalizeMapKeys`'s rebuild path as `ErrUnknownKindReference`. Falsification mitigation #3 ("if the decoder rejects upstream, drop the collision test") not triggered — decoder accepts upstream as predicted.
+6. **`mage test-pkg ./internal/templates` green.** Done — 394/394.
+
+### Falsification-mitigation status
+
+- **Mitigation #1 — alternative fix path (exact-match rejection) is more conservative.** Mitigated. The `validateMapKeys` doc-comment explicitly locks the post-decode canonicalization decision and explains the rationale (alignment with `domain.IsValidKind`'s pre-existing case-fold tolerance). The test surface is structured so plan-QA can flip the droplet to exact-match by removing the canonicalization tests + the `mapKeys` helper and adding a case-fold-rejection test; the helper extraction (`canonicalizeMapKeys`) makes the flip mechanical (helper either returns `(nil, ErrUnknownKindReference)` on any non-canonical key OR keeps current behavior).
+- **Mitigation #2 — signature change `Template` → `*Template` breaks Step 4a's call ordering at `load.go:125`.** Mitigated. The single call site is updated in the same change; `rg "validateMapKeys\("` confirms only one production call. The caller order remains identical (validateMapKeys → validateChildRuleKinds → … → validateTillsyn).
+- **Mitigation #3 — collision test brittle (TOML decoder may reject duplicates upstream).** Verified empirically: pelletier/go-toml/v2 accepts `[gates.BUILD]` and `[gates.build]` as distinct sibling tables at decode time. The collision test passes via the `canonicalizeMapKeys` rebuild's duplicate-detection branch, not via decoder error. If a future pelletier upgrade changes this, the collision test's `errors.Is(_, ErrUnknownKindReference)` assertion would fail and surface the regression.
+
+### Cross-droplet coordination notes
+
+- **E.6 has no in-package collisions with other Theme C+E droplets.** `internal/templates` is touched only by E.6 within Theme C+E (per the package-collision matrix in `THEME_CE_PLAN.md` §Notes). Adjacent themes (Theme F.1.3 / F.2.1 / F.2.2 / F.2.3) also touch `internal/templates`, but those droplets shipped at HEAD `4909f29` (per spawn prompt: "E.6 blocks on F.1.3 (already shipped at HEAD). No other blockers."), so no concurrent contention.
+- **`validateMapKeys` is exported only via `Load`'s call graph.** No external package calls the validator directly; the signature change is invisible outside `internal/templates`. Verified via `rg validateMapKeys` showing only the production call site at `load.go:125` plus the test file's helper assertions.
+- **Default-template regression test guards the F.2.* author-facing rebadge work.** F.2.1 / F.2.2 / F.2.3 landed `default-go.toml` + `default-generic.toml` siblings; the new `TestValidateMapKeysDefaultTemplateRegression` exercises `LoadDefaultTemplateForLanguage("go")` end-to-end, so any future drift introducing mixed-case keys in either embedded TOML payload would surface here as a test failure rather than as a silent canonicalization-rebuild allocation on every cold load.
+
+### Hylla feedback
+
+None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evidence resolved via `Read` / `rg` / `Edit` / `mage test-pkg`. Filesystem-MD coordination mode.
+
+### Unknowns routed back to orchestrator
+
+- **None.** The spec's two falsification hedges (alt fix-path + decoder-pre-rejection) both landed cleanly: post-decode canonicalization is the chosen fix, and the decoder's empirical behavior matches the prediction (accepts both case variants → collision surfaces from the rebuild). The `validateMapKeys` doc-comment carries the rationale so a future reader (or a flip-to-exact-match plan-QA review) can locate the decision point without re-deriving it. No scope expansion; no out-of-spec edits.

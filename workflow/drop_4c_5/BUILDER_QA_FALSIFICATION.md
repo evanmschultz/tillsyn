@@ -1012,3 +1012,74 @@ T3. Verdict FAIL. One low-severity CONFIRMED counterexample needs a quick fix-up
 ### Hylla Feedback
 
 N/A — review touched Go files (monitor.go, monitor_test.go) but spawn-prompt directive ("NO Hylla calls") routed all evidence through `Read` + `Bash` (`rg` against committed code). Hylla stale post-Drop-4c-merge regardless. No miss to log.
+
+## Droplet E.5 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (re-dispatch after prior spawn hit usage limit).
+**Date:** 2026-05-06.
+**Builder verdict under attack:** E.5 GREEN, `mage testPkg ./internal/adapters/server/mcpapi` 212/212. Adds dedicated `mapToolError` case for `domain.ErrOrchSelfApprovalDisabled` placed before the generic `common.ErrAuthorizationDenied` case, retrofits two pre-existing tests to assert the new `auth_denied:` prefix, and adds `TestMapToolErrorOrchSelfApprovalDisabled` (3 sub-cases).
+**Files reviewed:**
+
+- `internal/adapters/server/mcpapi/handler.go` lines 948-961 (new case).
+- `internal/adapters/server/mcpapi/handler_test.go` lines 2699-2827 (retrofit + new test).
+- `internal/adapters/server/mcpapi/handler_steward_integration_test.go` lines 993-1052 (retrofit).
+- `internal/adapters/server/common/auth.go` lines 19-25 (`ErrAuthorizationDenied` alias).
+- `internal/domain/errors.go` lines 85-103 (sentinel definitions).
+- `internal/app/auth_requests.go` lines 416-456 (production wrap site).
+- `workflow/drop_4c_5/THEME_BD_PLAN.md` (E.5 spec — note: THEME_BD covers B+D; E.5 spec lives under THEME_CE_PLAN.md by Theme E membership; reviewer confirmed declared-files via spawn-prompt only).
+
+### Section 1 — Attack Findings
+
+#### 1.1 — Case ordering bypass: REFUTED
+
+The new `case errors.Is(err, domain.ErrOrchSelfApprovalDisabled)` lands at handler.go:948, BEFORE `case errors.Is(err, common.ErrAuthorizationDenied)` at handler.go:962. Verified via direct read.
+
+`common.ErrAuthorizationDenied` is an alias of `domain.ErrAuthorizationDenied` (`internal/adapters/server/common/auth.go:25` — `var ErrAuthorizationDenied = domain.ErrAuthorizationDenied`). `domain.ErrOrchSelfApprovalDisabled` is a distinct sentinel created via `errors.New(...)` at `internal/domain/errors.go:103`. The two sentinels are independent: `errors.Is(domain.ErrOrchSelfApprovalDisabled, domain.ErrAuthorizationDenied)` returns false (distinct comparable values, no Unwrap chain).
+
+Production wrap at `internal/app/auth_requests.go:454` wraps ONLY `domain.ErrOrchSelfApprovalDisabled` via `%w`, with no `errors.Join` of `domain.ErrAuthorizationDenied`. So today the case ordering is independent of correctness — both cases would route the toggle-disabled error correctly even if reordered. The doc-comment at handler.go:949-956 explicitly addresses this and notes the defensive ordering is for a hypothetical future `errors.Join` ledger change. Doc accurate, ordering load-bearing for forward compat, no live bug.
+
+#### 1.2 — Text format consistency / internals leak: REFUTED
+
+Both auth-denied cases follow `<code>: <english fragment>: <err.Error()>` shape. `err.Error()` for the toggle-disabled wrap is `"project \"<id>\" has opted out of orch self-approval: orch self-approval disabled by project metadata"` — pure English assembled from the wrap site (`auth_requests.go:454`) and the sentinel text (`errors.go:103`). No stack trace, no internal struct dump, no path/secret leak. Project ID is included but project IDs are not secrets; they appear in user-facing CLI output across the codebase (e.g. `till project list`).
+
+The text format matches the pre-existing pattern for every other case in `mapToolError` (every one of the 11 cases uses `<code>: ... + err.Error()`). Consistent, no exfiltration risk.
+
+#### 1.3 — Regression-guard for generic ErrAuthorizationDenied: REFUTED
+
+`TestMapToolErrorOrchSelfApprovalDisabled/ErrAuthorizationDenied generic case unchanged` (handler_test.go:2808-2826) feeds a bare `common.ErrAuthorizationDenied` into `mapToolError` and asserts: (a) Class=auth, (b) Code=auth_denied, (c) Text starts with `auth_denied:`, AND (d) Text does NOT contain the droplet-E.5 sharp fragment `"orch-self-approval disabled by project toggle"`. (d) is the load-bearing regression guard — proves the new case did not shadow the generic sentinel.
+
+Verified by reading: bare `common.ErrAuthorizationDenied = domain.ErrAuthorizationDenied`; `errors.Is(domain.ErrAuthorizationDenied, domain.ErrOrchSelfApprovalDisabled)` is false; the new case at line 948 falls through; the generic case at line 962 catches it; Text becomes `"auth_denied: authorization denied"` (no sharp fragment). Assertion (d) passes.
+
+#### 1.4 — Wrap-form coverage: REFUTED
+
+`TestMapToolErrorOrchSelfApprovalDisabled/wrapped sentinel mirrors production shape` (handler_test.go:2786-2806) builds `fmt.Errorf("project %q has opted out of orch self-approval: %w", "proj-1", domain.ErrOrchSelfApprovalDisabled)` — verbatim mirror of `auth_requests.go:454` — and feeds it into `mapToolError`. Asserts Class/Code/prefix plus the production wrap fragment `"opted out of orch self-approval"` propagates into Text. Final assertion `errors.Is(wrapped, domain.ErrOrchSelfApprovalDisabled)` is the meta-guard: if `errors.Is` semantics ever change (won't, std-lib stable), the test catches it.
+
+Plus the integration test (`TestAuthRequestApproveProjectToggleDisabledRejectedIntegration` in handler_steward_integration_test.go) exercises the full HTTP→service→repo path with the real wrap; its updated assertions pin the prefix on the over-the-wire response. Both layers covered.
+
+#### 1.5 — Existing test compat (substring → prefix migration): REFUTED
+
+Two retrofit sites:
+
+- handler_test.go:2741-2742 — added `if !strings.HasPrefix(text, "auth_denied:") { t.Fatalf(...) }` BEFORE the existing `strings.Contains(text, "orch self-approval disabled by project metadata")` check. The pre-E.5 doc-comment block (handler_test.go:2706-2714 in current diff) explicitly described the substring-only assertion as a "future refinement" hedge — that refinement landed in E.5, so the prefix assertion is now justified and the doc-comment is updated accordingly.
+- handler_steward_integration_test.go:1045-1047 — same retrofit: prepended `strings.HasPrefix(text, "auth_denied:")` check; existing `Contains` checks for the sentinel message + wrap fragment preserved unchanged.
+
+Migration is additive — the prefix check is added, no substring assertion is weakened or removed. If someone reverts the handler.go case (sharp prefix lost), both retrofit sites fail loudly. If someone changes the sharp text (e.g. tweaks "by project toggle" to "by project metadata toggle"), the `strings.Contains(text, "orch-self-approval disabled by project toggle")` assertion in the new unit test (line 2781) fires, but the integration retrofit only pins the prefix not the sharp fragment — that's intentional (integration is full-stack so the sharp-text wording lives in the unit test, not duplicated).
+
+### Section 2 — Counterexamples
+
+None. Five attack categories independently REFUTED.
+
+### Section 3 — Summary
+
+Verdict **PASS**. E.5 lands cleanly. The new `mapToolError` case is correctly placed (defensive ordering, load-bearing for forward compat), text format is consistent and leak-free, regression guards (1.3) and wrap-form coverage (1.4) and migration discipline (1.5) all verified. `mage testPkg ./internal/adapters/server/mcpapi` 212/212 GREEN locally re-confirmed by reviewer.
+
+### Section 4 — Hylla Feedback
+
+N/A — spawn-prompt directive ("NO Hylla calls") routed all evidence through `Read` + `Bash` (`rg`/`go doc errors.Is`) on committed code. Hylla stale post-Drop-4c-merge regardless. No miss to log.
+
+### TL;DR
+
+T1. Five attack vectors (case ordering, text leak, regression guard, wrap coverage, prefix-migration) each independently REFUTED via direct read of handler.go:948-967, handler_test.go:2699-2827, handler_steward_integration_test.go:1045-1052, common/auth.go:25, domain/errors.go:94-103, app/auth_requests.go:454.
+T2. None — no CONFIRMED counterexamples.
+T3. Verdict **PASS**. Droplet E.5 ships clean. Defensive ordering forward-compat-correct; sharp-prefix surfaces toggle-disabled separately from generic auth-denied without shadowing; production wrap shape exactly mirrored in unit test.
+T4. N/A — Hylla not consulted per spawn directive.

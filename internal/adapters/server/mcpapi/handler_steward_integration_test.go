@@ -993,11 +993,14 @@ func TestAuthRequestApproveStewardCrossSubtreeSucceedsForPersistentParent(t *tes
 // mirrors the service-layer steward_cross_subtree sub-case in
 // TestApproveAuthRequestRejectsWhenProjectToggleDisabled. Asserts:
 //   - HTTP-level: response carries isError=true.
-//   - Error-text: contains the ErrOrchSelfApprovalDisabled sentinel
-//     ("orch self-approval disabled by project metadata") and the wrap
-//     fragment ("opted out of orch self-approval"). Substring match (not
-//     prefix) so the test stays robust regardless of any future mapToolError
-//     refinement that sharpens the error code.
+//   - Error-text: starts with the sharp `auth_denied:` prefix (Drop 4c.5
+//     droplet E.5 added the dedicated mapToolError case for
+//     ErrOrchSelfApprovalDisabled), AND contains the
+//     ErrOrchSelfApprovalDisabled sentinel ("orch self-approval disabled
+//     by project metadata") and the wrap fragment ("opted out of orch
+//     self-approval"). Prefix-match was previously substring-only with a
+//     "future refinement may sharpen" hedge; that refinement landed in E.5
+//     so the test now pins the prefix as a regression guard.
 //   - DB-level: persisted request state remains "pending" (toggle backstop
 //     prevented the approval from being committed).
 func TestAuthRequestApproveProjectToggleDisabledRejectedIntegration(t *testing.T) {
@@ -1039,6 +1042,9 @@ func TestAuthRequestApproveProjectToggleDisabledRejectedIntegration(t *testing.T
 	}
 
 	text := toolResultText(t, approveResp.Result)
+	if !strings.HasPrefix(text, "auth_denied:") {
+		t.Fatalf("toggle-disabled integration error text = %q, want auth_denied: prefix (Drop 4c.5 droplet E.5 mapToolError case)", text)
+	}
 	if !strings.Contains(text, "orch self-approval disabled by project metadata") {
 		t.Fatalf("toggle-disabled integration error text = %q, want ErrOrchSelfApprovalDisabled sentinel message", text)
 	}

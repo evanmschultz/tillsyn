@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
@@ -943,6 +944,20 @@ func mapToolError(err error) toolErrorMapping {
 			Class: "auth",
 			Code:  "session_expired",
 			Text:  "session_expired: " + err.Error(),
+		}
+	case errors.Is(err, domain.ErrOrchSelfApprovalDisabled):
+		// Sharp-prefix case for the project-toggle opt-out path. Placed
+		// BEFORE the generic ErrAuthorizationDenied case as defensive
+		// ordering: today auth_requests.go:454 wraps only %w-on-
+		// ErrOrchSelfApprovalDisabled (no errors.Join with
+		// ErrAuthorizationDenied), so the order does not affect
+		// correctness; if a future ledger change ever joins both
+		// sentinels, this ordering ensures the toggle-specific message
+		// wins. Drop 4c.5 droplet E.5.
+		return toolErrorMapping{
+			Class: "auth",
+			Code:  "auth_denied",
+			Text:  "auth_denied: orch-self-approval disabled by project toggle: " + err.Error(),
 		}
 	case errors.Is(err, common.ErrAuthorizationDenied):
 		return toolErrorMapping{

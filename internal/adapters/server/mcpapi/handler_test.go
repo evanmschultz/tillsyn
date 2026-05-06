@@ -2700,16 +2700,18 @@ func TestAuthRequestApproveCrossOrchSubtreeRejected(t *testing.T) {
 // bonus): the project metadata `OrchSelfApprovalEnabled = *false` opts the
 // project out of orch-self-approval. The service-layer gate rejects with
 // domain.ErrOrchSelfApprovalDisabled BEFORE evaluating role / path /
-// cross-orch. Assert isError=true + error text contains the toggle-disabled
-// sentinel message.
+// cross-orch. Assert isError=true + error text starts with the
+// `auth_denied:` sharp prefix and contains the toggle-disabled sentinel
+// message.
 //
-// Note (refinement candidate, raised as 4a Drop refinement): the handler's
-// mapToolError currently has no case for ErrOrchSelfApprovalDisabled, so the
-// response surfaces with the default `internal_error:` prefix. The error
-// message text still propagates faithfully — test asserts on the message
-// fragment, not the prefix. A future refinement should map this sentinel to
-// a sharper code (e.g. `auth_disabled` or extend `auth_denied`) for client
-// observability symmetry with the auth_denied path.
+// Drop 4c.5 droplet E.5 added the dedicated mapToolError case for
+// ErrOrchSelfApprovalDisabled (placed BEFORE the generic
+// ErrAuthorizationDenied case as defensive ordering). The response now
+// surfaces with the sharper `auth_denied:` prefix instead of the prior
+// `internal_error:` fallback. The integration counterpart
+// (TestAuthRequestApproveProjectToggleDisabledRejectedIntegration in
+// handler_steward_integration_test.go) pins the prefix as a regression
+// guard; this stub-based unit test mirrors the prefix assertion.
 func TestAuthRequestApproveProjectToggleDisabledRejected(t *testing.T) {
 	t.Parallel()
 
@@ -2736,12 +2738,92 @@ func TestAuthRequestApproveProjectToggleDisabledRejected(t *testing.T) {
 		t.Fatalf("case (e) isError = false, want true; result = %#v", approveResp.Result)
 	}
 	text := toolResultText(t, approveResp.Result)
+	if !strings.HasPrefix(text, "auth_denied:") {
+		t.Fatalf("case (e) error text = %q, want auth_denied: prefix (Drop 4c.5 droplet E.5 mapToolError case)", text)
+	}
 	if !strings.Contains(text, "orch self-approval disabled by project metadata") {
 		t.Fatalf("case (e) error text = %q, want ErrOrchSelfApprovalDisabled sentinel message", text)
 	}
 	if !strings.Contains(text, "opted out of orch self-approval") {
 		t.Fatalf("case (e) error text = %q, want toggle-opt-out wrap fragment", text)
 	}
+}
+
+// TestMapToolErrorOrchSelfApprovalDisabled pins the Drop 4c.5 droplet E.5
+// mapToolError case for domain.ErrOrchSelfApprovalDisabled. Three
+// sub-cases:
+//
+//  1. Bare sentinel — mapToolError(domain.ErrOrchSelfApprovalDisabled)
+//     returns Class=auth, Code=auth_denied, Text starts with `auth_denied:`.
+//  2. Wrapped sentinel — matches the production wrap shape from
+//     internal/app/auth_requests.go:454 (`fmt.Errorf("project %q ...: %w",
+//     ..., domain.ErrOrchSelfApprovalDisabled)`); the new case fires via
+//     errors.Is and the wrapped error message is preserved in Text.
+//  3. Regression protection — bare common.ErrAuthorizationDenied (NOT the
+//     orch-self-approval sentinel) still maps to the generic auth_denied
+//     case with the prior text shape (`auth_denied: <err.Error()>`),
+//     proving the new case did not shadow the generic sentinel.
+func TestMapToolErrorOrchSelfApprovalDisabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("bare sentinel", func(t *testing.T) {
+		t.Parallel()
+		mapped := mapToolError(domain.ErrOrchSelfApprovalDisabled)
+		if mapped.Class != "auth" {
+			t.Fatalf("Class = %q, want auth", mapped.Class)
+		}
+		if mapped.Code != "auth_denied" {
+			t.Fatalf("Code = %q, want auth_denied", mapped.Code)
+		}
+		if !strings.HasPrefix(mapped.Text, "auth_denied:") {
+			t.Fatalf("Text = %q, want auth_denied: prefix", mapped.Text)
+		}
+		if !strings.Contains(mapped.Text, "orch-self-approval disabled by project toggle") {
+			t.Fatalf("Text = %q, want droplet-E.5 sharp-prefix fragment", mapped.Text)
+		}
+	})
+
+	t.Run("wrapped sentinel mirrors production shape", func(t *testing.T) {
+		t.Parallel()
+		// Mirrors auth_requests.go:454.
+		wrapped := fmt.Errorf("project %q has opted out of orch self-approval: %w", "proj-1", domain.ErrOrchSelfApprovalDisabled)
+		mapped := mapToolError(wrapped)
+		if mapped.Class != "auth" {
+			t.Fatalf("Class = %q, want auth", mapped.Class)
+		}
+		if mapped.Code != "auth_denied" {
+			t.Fatalf("Code = %q, want auth_denied", mapped.Code)
+		}
+		if !strings.HasPrefix(mapped.Text, "auth_denied:") {
+			t.Fatalf("Text = %q, want auth_denied: prefix", mapped.Text)
+		}
+		if !strings.Contains(mapped.Text, "opted out of orch self-approval") {
+			t.Fatalf("Text = %q, want production wrap fragment", mapped.Text)
+		}
+		if !errors.Is(wrapped, domain.ErrOrchSelfApprovalDisabled) {
+			t.Fatalf("wrapped error must satisfy errors.Is(domain.ErrOrchSelfApprovalDisabled) for the new case to fire")
+		}
+	})
+
+	t.Run("ErrAuthorizationDenied generic case unchanged", func(t *testing.T) {
+		t.Parallel()
+		// Regression guard: the new case is placed BEFORE the generic
+		// ErrAuthorizationDenied case but must not swallow bare
+		// ErrAuthorizationDenied sentinels.
+		mapped := mapToolError(common.ErrAuthorizationDenied)
+		if mapped.Class != "auth" {
+			t.Fatalf("Class = %q, want auth", mapped.Class)
+		}
+		if mapped.Code != "auth_denied" {
+			t.Fatalf("Code = %q, want auth_denied", mapped.Code)
+		}
+		if !strings.HasPrefix(mapped.Text, "auth_denied:") {
+			t.Fatalf("Text = %q, want auth_denied: prefix", mapped.Text)
+		}
+		if strings.Contains(mapped.Text, "orch-self-approval disabled by project toggle") {
+			t.Fatalf("Text = %q, generic ErrAuthorizationDenied must not be routed through droplet-E.5 sharp case", mapped.Text)
+		}
+	})
 }
 
 // TestAuthRequestToolSchemaApproveAcceptsOnlyDocumentedArgs is the W3.4

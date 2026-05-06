@@ -106,7 +106,7 @@ func TestBindArgumentsStrictRejectsUnknownKey(t *testing.T) {
 		Params: mcp.CallToolParams{
 			Name: "till.action_item",
 			Arguments: map[string]any{
-				"operation": "create",
+				"operation":  "create",
 				"descrption": "typo'd description (note missing 'i')",
 			},
 		},

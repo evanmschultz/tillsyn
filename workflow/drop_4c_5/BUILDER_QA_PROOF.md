@@ -850,3 +850,63 @@ None for E.4's stated scope. The spec's six acceptance criteria are each backed 
 ### Hylla Feedback
 
 N/A — review touched only Go source + tests and workflow MDs under filesystem-MD coordination mode. Per spawn prompt directive ("NO Hylla calls"), no Hylla queries attempted. Evidence resolved via `Read` + `rg` + `mage testPkg` on uncommitted state.
+
+---
+
+## Droplet E.5 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, Section 0 4-pass).
+**Source spec:** `THEME_CE_PLAN.md` § "E.5 — `mapToolError` adds `ErrOrchSelfApprovalDisabled` sharp-prefix case".
+**Builder worklog:** `BUILDER_WORKLOG.md` § "Droplet E.5 — Round 1" (lines 1061-1118).
+**Evidence basis:** `git diff HEAD` on the three Go files (handler.go + handler_test.go + handler_steward_integration_test.go); `Read` against handler.go lines 935-967 for case-ordering verification; `mage testFunc` against the three relevant test functions independently re-run.
+
+### 1. Acceptance verification
+
+| # | Acceptance criterion | Status | Evidence |
+| - | -------------------- | ------ | -------- |
+| 1 | New `case errors.Is(err, domain.ErrOrchSelfApprovalDisabled):` placed BEFORE generic `ErrAuthorizationDenied`. | **PASS** | `handler.go:948` — new case directly precedes generic case at `handler.go:962`. Diff shows insertion BEFORE the existing `ErrAuthorizationDenied` block; visual read of lines 935-967 confirms ordering: `ErrInvalidAuthentication` (936) → `ErrSessionExpired` (942) → **`ErrOrchSelfApprovalDisabled` (948)** → `ErrAuthorizationDenied` (962) → `ErrGrantRequired` (968). |
+| 2 | New case returns `Class: "auth"`, `Code: "auth_denied"`, `Text` starting with `auth_denied:`. | **PASS** | `handler.go:957-961` — exactly `Class: "auth", Code: "auth_denied", Text: "auth_denied: orch-self-approval disabled by project toggle: " + err.Error()`. Sharp-prefix style matches existing convention at line 966 (`"auth_denied: " + err.Error()`). |
+| 3 | New `domain` import added to handler.go. | **PASS** | `handler.go:14` — `"github.com/evanmschultz/tillsyn/internal/domain"` import added in correct alphabetical position between `common` and `mark3labs/mcp-go/mcp`. Doc-comment on the new case (lines 949-956) explains defensive-ordering rationale and cross-references `auth_requests.go:454`. |
+| 4 | `TestAuthRequestApproveProjectToggleDisabledRejectedIntegration` tightened to assert `auth_denied:` prefix. | **PASS** | `handler_steward_integration_test.go:1045-1047` — new `strings.HasPrefix(text, "auth_denied:")` check inserted BEFORE the existing `strings.Contains` checks for sentinel + wrap fragments. Doc-comment (lines 996-1005) updated: replaces prior "future refinement may sharpen" hedge with "Drop 4c.5 droplet E.5" attribution + "regression guard" framing. DB-level pending-state assertion (line 1051+) untouched — orthogonal concern correctly preserved. |
+| 5 | Stub-based unit test mirror `TestAuthRequestApproveProjectToggleDisabledRejected` tightened. | **PASS** | `handler_test.go:2741-2743` — same `strings.HasPrefix(text, "auth_denied:")` check inserted BEFORE the existing `strings.Contains` substring checks. Stale doc-comment block (lines 2701-2712) rewritten to reflect E.5 landing — replaces "no case for ErrOrchSelfApprovalDisabled, response surfaces with `internal_error:` prefix" with the now-accurate sharp-prefix description. (Builder routed this as "outside strict scope but doc was contradicting new behavior" under §Unknowns; the symmetric fix is correct — leaving the stale comment would have created a behavioral-contract drift between adjacent tests in the same package.) |
+| 6 | New direct unit test `TestMapToolErrorOrchSelfApprovalDisabled` exists with 3 sub-tests. | **PASS** | `handler_test.go:2752-2828` — `t.Parallel()` table-driven with three `t.Run` sub-tests: (a) `"bare sentinel"` — `mapToolError(domain.ErrOrchSelfApprovalDisabled)` asserts `Class=auth`, `Code=auth_denied`, prefix `auth_denied:`, fragment `"orch-self-approval disabled by project toggle"`; (b) `"wrapped sentinel mirrors production shape"` — replicates `auth_requests.go:454` wrap (`fmt.Errorf("project %q has opted out of orch self-approval: %w", "proj-1", domain.ErrOrchSelfApprovalDisabled)`), asserts same Class/Code/prefix + production wrap fragment + `errors.Is` self-check; (c) `"ErrAuthorizationDenied generic case unchanged"` — bare `common.ErrAuthorizationDenied` asserts the generic mapping is preserved AND that `Text` does NOT contain the droplet-E.5 fragment (regression guard against shadowing). |
+| 7 | `mage test-pkg ./internal/adapters/server/mcpapi` green. | **PASS** | Independently re-ran `mage testFunc` on the three load-bearing test functions: `TestMapToolErrorOrchSelfApprovalDisabled` → 4 tests (parent + 3 sub) PASS in 1.45s; `TestAuthRequestApproveProjectToggleDisabledRejected` (stub) → 1 test PASS in 1.41s; `TestAuthRequestApproveProjectToggleDisabledRejectedIntegration` (full DB) → 1 test PASS in 7.98s. All `-race` enabled. Builder's reported 212/212 for the full package run is consistent with these per-function results. |
+
+### 2. Findings
+
+None blocking. Three NIT-class observations:
+
+**2.1 Sharp-prefix Text format includes `err.Error()` suffix (intentional, but worth flagging).** The new case's Text is `"auth_denied: orch-self-approval disabled by project toggle: " + err.Error()` — the static droplet-specific fragment is followed by a colon and the wrapped error's full text. This means the production path produces e.g. `auth_denied: orch-self-approval disabled by project toggle: project "proj-1" has opted out of orch self-approval: orch self-approval disabled by project metadata` — three colon-separated layers. This matches the existing generic case style (line 966 also appends `err.Error()`) and is the correct choice for diagnostic continuity, but the doubled framing ("orch-self-approval disabled by project toggle" THEN the wrapped "orch self-approval disabled by project metadata") is mildly redundant. Builder routed this exact concern under §Unknowns and offered a single-line alternative if orchestrator prefers a fixed Text. **Non-blocking** — the redundancy is observability win (clients can pattern-match either fragment), tests pin both fragments explicitly so a future refinement can edit safely.
+
+**2.2 Builder modified `handler_test.go` Round-1 doc-comment for `TestAuthRequestApproveProjectToggleDisabledRejected` even though the spec only named the integration test.** The spec at THEME_CE_PLAN.md line 285 names the integration test (`...Integration` suffix) by name; the stub-based unit-test mirror in `handler_test.go` (no suffix) was not strictly in scope. Builder tightened both because (a) the unit-test mirror's old doc-comment carried a stale "no case for ErrOrchSelfApprovalDisabled" claim that contradicted the new behavior and (b) both tests are in the same package — leaving asymmetric assertions would have created a future-confusion footgun. The fix is correct and within-package, but it does mildly expand scope. Builder routed this transparently under §Unknowns. **Non-blocking** — the symmetric fix prevents future drift, and re-running `mage testFunc` on the stub test independently confirms the tightened assertion is satisfied.
+
+**2.3 Spec/code surface mismatch acknowledged.** Spec line 279 said "case-(e) integration test in `handler_test.go`" but the actual `*Integration` test lives in `handler_steward_integration_test.go`. Builder correctly identified the spec inaccuracy and tightened the test in its actual file. **Non-blocking** — spec has a minor file-path error, builder routed it to orchestrator awareness, no behavior cost.
+
+### 3. Falsification-mitigation status
+
+- **Mitigation #1 — Case ordering shadows `ErrOrchSelfApprovalDisabled` if it ever wraps `ErrAuthorizationDenied`.** **Verified.** New case at line 948 is BEFORE generic at line 962. Pinned by sub-test 6(c) which asserts bare `common.ErrAuthorizationDenied` does NOT route to the new sharp case (Text must NOT contain the droplet-E.5 fragment).
+- **Mitigation #2 — Error code drift between message text and code field.** **Verified.** Both unit (sub-tests 6(a)/6(b)) and integration tests pin `Code: "auth_denied"` AND `Text` starting with `auth_denied:`. Drift between Code and Text would surface as a test failure.
+- **Mitigation #3 — `auth_requests_test.go:1407` contract `errors.Is(err, ErrAuthorizationDenied) == false` for toggle-disabled errors must be preserved.** **Verified.** The new mapping case in `handler.go` does NOT alter the production wrap chain at `auth_requests.go:454`. The wrap remains `fmt.Errorf("project %q has opted out of orch self-approval: %w", projectID, domain.ErrOrchSelfApprovalDisabled)` — only `%w`-wraps the toggle sentinel, no `errors.Join` with `ErrAuthorizationDenied`. The new mapping case only changes how `mapToolError` *categorizes* the error; the underlying chain identity is unchanged.
+
+### 4. Missing evidence
+
+None for E.5's stated scope. The spec's three acceptance criteria (sharp-prefix case + integration tightening + `mage test-pkg` green) are each backed by independently-verified file-state evidence. The two scope expansions builder made (unit-test mirror tightening, dedicated direct unit test) are within-package, transparently routed under §Unknowns, and add regression coverage rather than risk.
+
+### 5. Worklog completeness
+
+Worklog at lines 1061-1118 contains: scope statement, files-touched breakdown (production + 2 test files, with explicit per-file rationale), verification (mage testPkg + formatCheck), explicit acceptance checklist (4 items, each with status + evidence pointer), falsification-mitigation status (3 items), cross-droplet coordination notes (C.1, A.3, F.3.1), Hylla feedback (None — directive-compliant), and three §Unknowns routed back to orchestrator (file-path spec mismatch, scope-expanded direct unit test, sharp-prefix `err.Error()` suffix decision). Complete and well-routed.
+
+### 6. Summary
+
+**Verdict: PASS.** All seven acceptance criteria PASS. Case ordering is correct and pinned by regression sub-test. Both integration and unit-test assertions tightened to `auth_denied:` prefix. New direct `TestMapToolErrorOrchSelfApprovalDisabled` adds three sub-cases (bare + wrapped + regression-guard) covering the spec's enumerated test scenarios precisely. Three NIT-class observations are non-blocking and either intentional design choices (2.1) or transparent scope expansions (2.2/2.3) the builder routed correctly under §Unknowns. No round-2 work required for E.5.
+
+### TL;DR
+
+- T1 — All seven acceptance criteria PASS (case-ordering BEFORE generic, sharp `auth_denied:` prefix, domain import added, integration test tightened, unit-test mirror tightened, new dedicated 3-sub-test `TestMapToolErrorOrchSelfApprovalDisabled`, all three relevant tests independently re-run via `mage testFunc` and PASS).
+- T2 — Three NIT-class findings, all non-blocking: (2.1) Text concatenation produces a triple-layered colon sequence — intentional diagnostic-continuity choice matching the generic-case style; (2.2) builder also tightened the unit-test mirror beyond strict spec scope to fix a stale doc-comment, transparent and within-package; (2.3) spec named the wrong file for the integration test, builder identified and routed correctly.
+- T3 — All three falsification mitigations verified: case-ordering preserved, Class/Code/Text/prefix triple-pinned, `errors.Is(err, ErrAuthorizationDenied)` contract on toggle-disabled path preserved (no `errors.Join` introduced).
+- T4 — No missing evidence. Worklog is complete with correct §Unknowns routing. No round-2 needed.
+
+### Hylla Feedback
+
+N/A — review touched only Go source + tests under filesystem-MD coordination mode. Per spawn prompt directive ("NO Hylla calls"), no Hylla queries attempted. Evidence resolved via `Read` + `git diff` + `mage testFunc` on the uncommitted working tree.
