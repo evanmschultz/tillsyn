@@ -1538,3 +1538,52 @@ N/A — task touched only Go files in `internal/templates` (load.go + load_test.
 ### Unknowns routed back to orchestrator
 
 - **Spec test-subject drift.** The F.5.2 spec named `kind=plan` as the subject for `_DropWithoutChildRulesRejected` and `kind=build` as the subject for `_BuildOrphanedRejected`, but both choices collide with `validateRequiredChildRules` running upstream — declaring either parent without its QA-twin rules trips required-rules first and the new validators never run. Implementation pivoted to `kind=research` (coherence) and `kind=build-qa-falsification` (reachability) per the rationale documented inline. Test names retain the spec's literal strings; doc-comments name the substitution. If a future drop wants the literal `kind=plan` / `kind=build` subjects, it would need to either (a) reorder the validator chain to run reachability/coherence BEFORE required-rules — semantically suspect because required-rules is the earlier-failure layer — or (b) add the QA-twin rules to the synthetic templates AND introduce some OTHER orphan/incoherence to trigger the new validators. Neither is preferable today.
+
+## Droplet C.4 — Round 1
+
+**Author:** orchestrator (filesystem-MD mode; orchestrator-side WIKI edit per memory `feedback_md_update_qa.md` — no subagent for MD work).
+**Date:** 2026-05-06.
+**Source spec:** `THEME_CE_PLAN.md` § "C.4 — WIKI Cross-Subtree Exception kind-choice survey + clarification".
+
+### Files touched
+
+- `WIKI.md` (Cross-Subtree Exception section) — replaced the hedge "(`kind=refinement` for refinements, `kind=discussion` for discussion topics, `kind=closeout` or `kind=plan` for ledger / wiki-changelog / findings rollups as appropriate)" with a precision table mapping each of the six persistent parents to its level_2 child kind. Added a clarifying sentence noting that persistent parents themselves are seeded with `kind=discussion` per `seedStewardAnchors`.
+- `workflow/drop_4c_5/THEME_CE_PLAN.md` — C.4 droplet `**State:**` line added flipping `in_progress (implicit)` → `done (round 1 — orchestrator-self edit + self-QA, no Go test gate)`.
+
+### Survey of seedStewardAnchors
+
+Read `internal/app/auto_generate_steward.go:88-120`. Confirmed:
+
+- All 6 STEWARD anchor seeds materialize with `Kind: domain.KindDiscussion` (cross-cutting anchor, no auto-QA twins per CLAUDE.md "Required Children" rule for discussion kinds).
+- Anchor titles are FULL UPPERCASE per memory `feedback_tillsyn_titles`.
+- Anchors are `Persistent: true`, `DevGated: false`, `StructuralType: domain.StructuralTypeDroplet`.
+
+The table I added is about LEVEL_2 children's kind, not the persistent-parents' kind.
+
+### Kind-choice rationale per row
+
+- REFINEMENTS → refinement: carry-forward refinement candidates. Direct closed-enum match.
+- HYLLA_REFINEMENTS → refinement: same shape as REFINEMENTS for Hylla refinements.
+- HYLLA_FINDINGS → research: per-drop subagent-reported Hylla misses are read-only investigation findings, not carry-forward refinements. Closed-enum's "research = read-only investigation, agent compiles findings, posts, dies" matches exactly. (Spec offered both research and refinement; chose research as the more accurate semantic fit.)
+- DISCUSSIONS → discussion: cross-cutting decision park.
+- LEDGER → closeout: drop-end aggregation entries (cost / node-count / commit-SHA snapshots).
+- WIKI_CHANGELOG → closeout: drop-end one-liner aggregation entries.
+
+### Self-QA findings
+
+Per memory `feedback_md_update_qa.md`, post-edit self-QA covering consistency / cross-refs / drift:
+
+- Hedge prose removed cleanly; no orphan reference to `kind=plan` (which the original hedge listed).
+- Precision table uses each kind from the closed 12-value enum exactly once or twice (refinement appears twice for REFINEMENTS + HYLLA_REFINEMENTS; closeout twice for LEDGER + WIKI_CHANGELOG; research and discussion each once). All choices are valid closed-enum values.
+- Cross-reference to `internal/app/auto_generate_steward.go` `seedStewardAnchors` is accurate (verified via Read).
+- Hard restrictions section (lines 254-259 pre-edit) untouched.
+- CLAUDE.md not edited (per acceptance #3 — read-only check; no cross-reference drift surfaced).
+- The hedge mentioned `kind=plan` for "ledger / wiki-changelog / findings rollups as appropriate"; the new table fixes that (no `kind=plan` for ledger/wiki — both are now `closeout`).
+
+### Hylla feedback
+
+N/A — markdown-only edit. Per CLAUDE.md "Hylla Indexes Only Go Files Today" + filesystem-MD mode.
+
+### Unknowns routed back to dev
+
+- The HYLLA_FINDINGS choice (research vs refinement) was builder-orchestrator judgment per spec acceptance #2 ("clarify which"). The chosen interpretation is "research" because per-drop Hylla misses are investigation findings posted by subagents, not carry-forward refinement candidates; carry-forward Hylla items go to HYLLA_REFINEMENTS. If dev prefers a different mapping, single-table-row edit.

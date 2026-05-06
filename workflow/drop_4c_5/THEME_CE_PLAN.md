@@ -112,6 +112,9 @@
 
 ### C.4 — WIKI Cross-Subtree Exception kind-choice survey + clarification
 
+**State:** done (round 1 — orchestrator-self edit + self-QA, no Go test gate)
+
+
 **Source:** memory R5 (Drop 3 NIT 3.22).
 
 **Files:**

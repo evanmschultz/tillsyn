@@ -249,7 +249,20 @@ External adopters: this rule generalizes. Any orchestrator-shaped session that f
 
 Drop orchs operate inside their assigned level_1 subtree. The one exception: drop orchs may **add** level_2 nodes under STEWARD's six persistent level_1 parents — `DISCUSSIONS`, `HYLLA_FINDINGS`, `LEDGER`, `WIKI_CHANGELOG`, `REFINEMENTS`, `HYLLA_REFINEMENTS` — and may nest further descendants under their own additions.
 
-This lets drop orchs route per-drop content through the Tillsyn tree for STEWARD visibility, while the on-disk source of truth lives in `workflow/drop_N/` on the drop branch (see `PLAN.md` §15.9). Findings, refinement candidates, ledger entries, wiki-changelog entries, Hylla feedback, and ad-hoc discussion topics each become a level_2 node (`kind=refinement` for refinements, `kind=discussion` for discussion topics, `kind=closeout` or `kind=plan` for ledger / wiki-changelog / findings rollups as appropriate) under the matching persistent parent; the Tillsyn description can hold a short summary + pointer into `workflow/drop_N/` files, while the full content lives on disk. STEWARD post-merge reads both the Tillsyn nodes and the `workflow/drop_N/` files, writes the top-level MDs on `main`, and closes the level_2 nodes.
+This lets drop orchs route per-drop content through the Tillsyn tree for STEWARD visibility, while the on-disk source of truth lives in `workflow/drop_N/` on the drop branch (see `PLAN.md` §15.9). The Tillsyn description holds a short summary + pointer into `workflow/drop_N/` files; the full content lives on disk. STEWARD post-merge reads both the Tillsyn nodes and the `workflow/drop_N/` files, writes the top-level MDs on `main`, and closes the level_2 nodes.
+
+The level_2 child kind for each persistent parent is fixed (chosen from the closed 12-value enum):
+
+| Persistent parent     | Level_2 child kind | Rationale                                                                                  |
+| --------------------- | ------------------ | ------------------------------------------------------------------------------------------ |
+| `REFINEMENTS`         | `refinement`       | Carry-forward Tillsyn product / CLI / TUI / MCP refinement candidates.                     |
+| `HYLLA_REFINEMENTS`   | `refinement`       | Carry-forward Hylla search-quality / ergonomics refinement candidates.                     |
+| `HYLLA_FINDINGS`      | `research`         | Read-only investigation findings (per-drop subagent-reported Hylla misses), no carry-forward intent — matches the closed-enum's "research = read-only investigation, agent compiles findings, posts, dies" semantics. |
+| `DISCUSSIONS`         | `discussion`       | Cross-cutting decision park (description = converged shape; comments = audit trail).      |
+| `LEDGER`              | `closeout`         | Drop-end aggregation entries (cost / node-count / commit-SHA snapshots).                   |
+| `WIKI_CHANGELOG`      | `closeout`         | Drop-end one-liner aggregation entries.                                                    |
+
+Persistent parents themselves are seeded with `kind=discussion` (cross-cutting anchor with no auto-QA twins; see `internal/app/auto_generate_steward.go` `seedStewardAnchors`); the table above defines the *children's* kind, not the parent's.
 
 **Hard restrictions on the exception:**
 
