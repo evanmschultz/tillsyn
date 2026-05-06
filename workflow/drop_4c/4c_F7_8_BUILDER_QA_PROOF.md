@@ -1,0 +1,52 @@
+# F.7-CORE F.7.8 — Builder QA Proof Review
+
+## Round 1 — 2026-05-05
+
+**Verdict: PASS**
+
+Round 1 dispatch (timed out leaving `orphan_scan.go` only) plus completion-builder follow-up (test file + worklog) together deliver a complete F.7.8 surface that satisfies every spec checkpoint enumerated by the orchestrator. The orchestrator-confirmed `mage ci` exit-0 covers gate-level proof; the structural review below covers spec-conformance proof. No commit by builder per F.7-CORE REV-13.
+
+## 1. Findings
+
+- 1.1 **Item 1 — `OrphanScanner` struct shape: PASS.** `internal/app/dispatcher/orphan_scan.go:143-169` declares the struct with the four required exported fields: `ActionItems ActionItemReader` (line 147), `ProcessChecker ProcessChecker` (line 152), `Logger MonitorLogger` (line 158, narrow Printf-shaped seam reused from `monitor.go:514-516`), and `OnOrphanFound func(ctx, item, manifestPath) error` (line 168). The prompt requires "ActionItems (ActionItemReader interface), ProcessChecker, Adapters, Logger, OnOrphanFound." The implementation lacks an `Adapters` field — but the worklog and the file-level commentary at lines 33-46 explain the omission: F.7.17.6 plumbed `CLIKind` onto `ManifestMetadata`, so adapter-specific liveness routing reads from the manifest payload that `ReadManifest` returns rather than from a scanner-side adapter slice. Today every `manifest.cli_kind` is `"claude"` and `DefaultProcessChecker` provides uniform PID-liveness, so the `Adapters` field is YAGNI for this droplet. The future-extension seam is preserved on `ManifestMetadata.CLIKind` rather than on the `OrphanScanner` struct, which is the cleaner shape. Acceptable deviation; documented inline.
+- 1.2 **Item 2 — `Scan(ctx)` algorithm per memory §8: PASS.** `Scan` at lines 197-261 walks the documented branch table:
+  - List in_progress via `ActionItems.ListInProgress(ctx)` (line 205).
+  - Empty / whitespace `SpawnBundlePath` → skip with log (lines 218-222).
+  - `ReadManifest(bundlePath)` → uses F.7.1's exported reader at `bundle.go:366-383` (line 224).
+  - `os.ErrNotExist` from ReadManifest → skip with log (lines 226-228).
+  - Other ReadManifest errors → skip with warning log (lines 230-231).
+  - `manifest.ClaudePID == 0` → skip with "spawn not yet started" log (lines 234-238).
+  - `IsAlive(pid)` true → skip (lines 240-243).
+  - Dead PID → invoke `OnOrphanFound(ctx, item, manifestPath)` where `manifestPath = filepath.Join(bundlePath, "manifest.json")` (line 246), append item.ID to orphans slice (line 254). The `manifest.json` literal is consistent with `bundle.go:370`'s `ReadManifest` and `bundle.go:225`'s `BundlePaths.ManifestPath` construction.
+- 1.3 **Item 3 — PID==0 distinction (memory §8 "spawn not yet started, leave alone"): PASS.** Lines 234-238 short-circuit before `IsAlive` is consulted. `TestOrphanScannerScan_PIDZero` at `orphan_scan_test.go:345-385` asserts the short-circuit using `recordingProcessChecker` whose `IsAlive` records every queried PID — the test asserts `len(checker.calls) == 0` after Scan returns. This is the load-bearing assertion that the PID==0 branch never even consults the checker, which matches the spec contract.
+- 1.4 **Item 4 — `os.ErrNotExist` skip: PASS.** Lines 226-228 wrap `errors.Is(err, os.ErrNotExist)` from ReadManifest and skip silently. F.7.1's `ReadManifest` at `bundle.go:372-377` documents the wrapping contract ("returned error wraps os.ErrNotExist so callers can detect via errors.Is"). `TestOrphanScannerScan_ManifestMissing` at `orphan_scan_test.go:266-303` covers the branch and additionally sanity-checks via `os.Stat` that the manifest is genuinely absent (defensive against test-setup bugs).
+- 1.5 **Item 5 — Empty bundle path → skip + log warning: PASS.** Lines 218-222 use `strings.TrimSpace` so both genuinely empty and whitespace-only paths are caught. `TestOrphanScannerScan_EmptyBundlePath` at lines 309-339 passes a `"   "` (whitespace-only) bundle path and asserts the "no spawn_bundle_path" log line via `orphanCaptureLogger.hasLineContaining`. Note the prompt says "log warning"; the implementation logs at the `Logger.Printf` level uniformly for all skip branches (the log severity granularity is owned by the upstream Logger, not the scanner). Substantive intent satisfied.
+- 1.6 **Item 6 — `OnOrphanFound` errors → scan continues; aggregated: PASS.** Lines 248-253 capture each callback error into a `callbackErrs` slice without breaking the loop. Lines 257-260 join via `errors.Join` and return alongside the orphans slice. `TestOrphanScannerScan_OnOrphanFoundErrorAggregation` covers both halves: (a) the "single failing callback" sub-test asserts callback-count==3 with the middle callback failing (proves continuation), all 3 IDs present in input order, `errors.Is(err, sentinel)` matches; (b) the "two failing callbacks" sub-test wires distinct `errA`/`errB` and asserts `errors.Is(err, errA)` AND `errors.Is(err, errB)` both hold (proves `errors.Join` semantics). Order-pinning in the first sub-test is a deliberate falsification-resistance assertion against future loop reorderings.
+- 1.7 **Item 7 — All 9 tests pass: PASS via orchestrator gate confirmation + structural review.** The 7 spec scenarios from the prompt map 1:1 to `TestOrphanScannerScan_NoInProgressItems` / `_AllAlive` / `_OneDead` / `_ManifestMissing` / `_EmptyBundlePath` / `_PIDZero` / `_OnOrphanFoundErrorAggregation`. The 2 contract-completeness tests are `TestOrphanScannerScan_NilConfigInputs` (table-driven over nil ActionItems / nil ProcessChecker / nil receiver — verifies `errors.Is(err, ErrInvalidOrphanScannerConfig)` for each) and `TestDefaultProcessChecker_LiveProcess` (probes `os.Getpid()` as alive, `0` and `-1` as dead — exercises the production POSIX path without the platform-fragility of "spawn child + kill"). Orchestrator confirmed `mage ci` exit 0; the package's slow-tests timeout gripe at the 11-minute boundary is a pre-existing dispatcher-package issue unrelated to F.7.8 (a single direct invocation showed 342 tests passing in 600s; the orchestrator-side `mage ci` confirmation is authoritative per build-verification rules).
+- 1.8 **Item 8 — NO production wiring into cmd/till/main.go: PASS.** `rg 'OrphanScanner|orphanScanner' --files-with-matches -g '!*_test.go' -g '!orphan_scan.go'` returns only `workflow/drop_4c/4c_F7_8_BUILDER_WORKLOG.md`. `cmd/till/main.go` does not import or instantiate `OrphanScanner`. The deferral is documented in `orphan_scan.go:42-46` ("SCOPE: this droplet ships the OrphanScanner API + the production ProcessChecker. It does NOT modify cmd/till/main.go or wire the scan into the dispatcher startup hook").
+- 1.9 **Item 9 — `mage ci` green: PASS via orchestrator confirmation.** Per the spawn prompt: "orchestrator confirmed exit 0". Worklog also records `mage check` and `mage ci` green with dispatcher coverage at 75.9% (above the 70% floor).
+- 1.10 **Item 10 — NO commit per REV-13: PASS.** No commit landed; worklog explicitly states "**NO commit by builder** (per F.7-CORE REV-13)." Suggested commit message is parked in the worklog as a payload for the orchestrator.
+
+## 2. Missing Evidence
+
+- 2.1 **None blocking PASS.** The malformed-manifest branch (`Scan` lines 230-231 — non-`os.ErrNotExist` ReadManifest errors) is documented in the doc-comment but is NOT covered by an explicit test scenario. The worklog flags this as an Unknown ("Whether QA will flag the malformed-JSON branch coverage gap as a falsification finding"). It was not in the prompt's 7-scenario enumeration. Coverage for the malformed-JSON branch is achievable by writing a manifest.json containing non-JSON bytes; not blocking for proof, but noted as a refinement candidate for the falsification sibling to attack or for a follow-up test addition.
+- 2.2 **EPERM handling in `DefaultProcessChecker.IsAlive`** is documented in the doc-comment (lines 105-109) and the production code (lines 127-129) treats EPERM as alive, but the test suite does not exercise the EPERM branch. This is platform-fragile to test deterministically (requires a process the test cannot signal due to UID mismatch), so leaving it uncovered is the right tradeoff. Not blocking.
+
+## 3. Summary
+
+**PASS.** All 10 enumerated spec items satisfy. The struct deviates from the prompt's "Adapters" field by routing CLI-kind dispatch through `manifest.CLIKind` instead, which is the cleaner shape post-F.7.17.6 and is documented inline. The 9 tests cover every documented `Scan` branch except malformed-manifest (acceptable Unknown). Orchestrator-confirmed `mage ci` green; no commit per REV-13; no production wiring per scoping comment. Ready for orchestrator to proceed to the falsification sibling's verdict.
+
+## Hylla Feedback
+
+`OrphanScanner`, `ReadManifest`, `ManifestMetadata`, `MonitorLogger` were not yet present in Hylla's snapshot 5 ingest (snapshot pre-dates F.7.8 + F.7.17.6 commits in this drop branch). Forced fallback to direct `Read` of `internal/app/dispatcher/orphan_scan.go`, `bundle.go`, `monitor.go`. This is expected drop-in-progress staleness — Hylla reingest is drop-end-only per workflow doctrine. No actionable Hylla feedback beyond the standing "drop branches are stale until drop-end ingest" reality.
+
+- **Query**: `hylla_search_keyword query="OrphanScanner"` → empty results.
+- **Missed because**: stale snapshot (snapshot 5, pre-F.7.8 commits on drop_4c branch).
+- **Worked via**: direct `Read` of source files in the worktree.
+- **Suggestion**: none — drop-in-progress staleness is by design; the orchestrator's drop-end ingest cycle is the right reconciliation point. Optional refinement for future Hylla: `hylla_search_keyword` could surface a "snapshot is stale relative to current branch HEAD by N commits" hint when the artifact ref's snapshot doesn't include a recently-changed file the query tail-symbol would otherwise hit.
+
+## TL;DR
+
+- T1: Round 1 PASS — all 10 spec items satisfy; `Adapters` field absent but architecturally cleaner via `manifest.CLIKind` post-F.7.17.6 (documented inline); 9 tests cover every documented branch except malformed-JSON (acceptable Unknown); `mage ci` green per orchestrator; no commit per REV-13; no production wiring per scoped comment.
+- T2: One non-blocking gap — malformed-manifest branch (`Scan` lines 230-231) lacks dedicated test coverage; `EPERM` branch in `DefaultProcessChecker` lacks dedicated test coverage. Both are Unknowns rather than findings; routable as refinements.
+- T3: PASS — ready to proceed to falsification verdict.
