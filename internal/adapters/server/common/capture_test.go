@@ -333,3 +333,11 @@ func ptrTime(ts time.Time) *time.Time {
 	value := ts.UTC()
 	return &value
 }
+
+// ptrTo returns a pointer to v. Test-only convenience for the
+// pointer-sentinel UpdateActionItemRequest shape introduced by Drop 4c.5
+// droplet A.1; co-located here so adapter test bodies stay readable
+// instead of each case allocating a named local just to take its address.
+func ptrTo[T any](v T) *T {
+	return &v
+}

@@ -506,14 +506,14 @@ func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
 			if !ok {
 				return actionMsg{err: fmt.Errorf("thread details update: actionItem %q not found", actionItemID)}
 			}
+			// Drop 4c.5 droplet A.1: description-only update — apply the
+			// new description (non-nil pointer) and leave the other
+			// fields nil so the service-layer pointer-sentinel PATCH
+			// preserves stored Title/Priority/DueAt/Labels.
 			metadata := actionItem.Metadata
 			_, err := m.svc.UpdateActionItem(context.Background(), app.UpdateActionItemInput{
 				ActionItemID:  actionItem.ID,
-				Title:         actionItem.Title,
-				Description:   description,
-				Priority:      actionItem.Priority,
-				DueAt:         actionItem.DueAt,
-				Labels:        append([]string(nil), actionItem.Labels...),
+				Description:   &description,
 				Metadata:      &metadata,
 				UpdatedBy:     actorID,
 				UpdatedByName: actorName,

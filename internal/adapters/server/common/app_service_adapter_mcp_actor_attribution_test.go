@@ -103,7 +103,7 @@ func TestAppServiceAdapterUpdateActionItemRejectsNonUserWithoutGuardTuple(t *tes
 	adapter, _, _, actionItem := newActorAttributionAdapterFixture(t)
 	_, err := adapter.UpdateActionItem(context.Background(), UpdateActionItemRequest{
 		ActionItemID: actionItem.ID,
-		Title:        "Agent Update",
+		Title:        ptrTo("Agent Update"),
 		Actor: ActorLeaseTuple{
 			ActorType: string(domain.ActorTypeAgent),
 			AgentName: "agent-1",
@@ -130,7 +130,7 @@ func TestAppServiceAdapterUpdateActionItemAllowsGuardedNonUserAttribution(t *tes
 
 	updated, err := adapter.UpdateActionItem(context.Background(), UpdateActionItemRequest{
 		ActionItemID: actionItem.ID,
-		Title:        "Guarded Agent Update",
+		Title:        ptrTo("Guarded Agent Update"),
 		Actor: ActorLeaseTuple{
 			ActorType:       string(domain.ActorTypeAgent),
 			AgentName:       "agent-1",

@@ -230,6 +230,19 @@ func (m Model) shouldTraceLoadDataStage(stage string, duration time.Duration, st
 	return strings.TrimSpace(stage) == "total" && duration >= 50*time.Millisecond
 }
 
+// traceFormControlCharacterGuardPtr logs pre-persistence guard details for
+// pointer-sentinel fields. nil = "field not supplied" → no-op; non-nil →
+// delegates to the value-typed traceFormControlCharacterGuard. Drop 4c.5
+// droplet A.1 introduced *string fields on UpdateActionItemInput; this
+// thin wrapper keeps caller sites readable while preserving the existing
+// guard semantics.
+func (m Model) traceFormControlCharacterGuardPtr(entity, operation, field string, value *string) {
+	if value == nil {
+		return
+	}
+	m.traceFormControlCharacterGuard(entity, operation, field, *value)
+}
+
 // traceFormControlCharacterGuard logs pre-persistence guard details for fields containing control characters.
 func (m Model) traceFormControlCharacterGuard(entity, operation, field, value string) {
 	if !containsControlRunes(value) {

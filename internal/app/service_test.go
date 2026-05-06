@@ -16,6 +16,14 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
+// ptrTo returns a pointer to v. Test-only convenience for the
+// pointer-sentinel UpdateActionItemInput shape introduced by Drop 4c.5
+// droplet A.1; co-located here so test bodies stay readable instead of
+// each case allocating a named local just to take its address.
+func ptrTo[T any](v T) *T {
+	return &v
+}
+
 // fakeRepo represents fake repo data used by this package.
 type fakeRepo struct {
 	projects              map[string]domain.Project
@@ -1342,11 +1350,11 @@ func TestUpdateActionItem(t *testing.T) {
 	due := now.Add(24 * time.Hour)
 	updated, err := svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
 		ActionItemID: actionItem.ID,
-		Title:        "new title",
-		Description:  "details",
-		Priority:     domain.PriorityHigh,
-		DueAt:        &due,
-		Labels:       []string{"frontend", "backend"},
+		Title:        ptrTo("new title"),
+		Description:  ptrTo("details"),
+		Priority:     ptrTo(domain.PriorityHigh),
+		DueAt:        ptrTo(&due),
+		Labels:       ptrTo([]string{"frontend", "backend"}),
 	})
 	if err != nil {
 		t.Fatalf("UpdateActionItem() error = %v", err)
@@ -1384,7 +1392,7 @@ func TestUpdateActionItemAppliesMutationActorContext(t *testing.T) {
 	})
 	updated, err := svc.UpdateActionItem(ctx, UpdateActionItemInput{
 		ActionItemID: actionItem.ID,
-		Title:        "new title",
+		Title:        ptrTo("new title"),
 	})
 	if err != nil {
 		t.Fatalf("UpdateActionItem() error = %v", err)
@@ -1460,7 +1468,7 @@ func TestUpdateActionItemCarriesExplicitActorName(t *testing.T) {
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
 	updated, err := svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
 		ActionItemID:  actionItem.ID,
-		Title:         "new title",
+		Title:         ptrTo("new title"),
 		UpdatedBy:     "user-2",
 		UpdatedByName: "Evan Schultz",
 		UpdatedType:   domain.ActorTypeUser,
@@ -1503,13 +1511,259 @@ func TestUpdateActionItemPreservesPriorityWhenOmitted(t *testing.T) {
 	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
 	updated, err := svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
 		ActionItemID: actionItem.ID,
-		Title:        "new title",
+		Title:        ptrTo("new title"),
 	})
 	if err != nil {
 		t.Fatalf("UpdateActionItem(title-only) error = %v", err)
 	}
 	if updated.Priority != domain.PriorityMedium {
 		t.Fatalf("priority = %q, want %q", updated.Priority, domain.PriorityMedium)
+	}
+}
+
+// TestUpdateActionItemPartialPATCHSemantics covers Drop 4c.5 droplet A.1's
+// pointer-sentinel PATCH contract on Service.UpdateActionItem. Each row
+// seeds a stored action item, then issues a partial-update with the named
+// pointer fields and asserts the post-update state matches the
+// preserve-vs-apply-vs-clear contract:
+//
+//   - nil input pointer → preserve the stored value;
+//   - non-nil pointer → apply the dereferenced value (empty deref clears,
+//     except Title where empty surfaces ErrInvalidTitle);
+//   - DueAt uses **time.Time so the outer-pointer-nil / outer-non-nil-
+//     inner-nil / outer-non-nil-inner-non-nil triplet covers
+//     preserve / clear / set.
+//
+// The 9-row table mirrors THEME_A_PLAN.md § A.1's acceptance scenarios.
+func TestUpdateActionItemPartialPATCHSemantics(t *testing.T) {
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	preStoredDue := now.Add(48 * time.Hour)
+
+	// seed builds a fresh repo + service + stored action item with the
+	// canonical pre-update state (title="old title", description="old desc",
+	// priority=high, due_at=preStoredDue, labels=[a b]). Each subtest
+	// receives its own seeded fixture so writes don't leak across cases.
+	seed := func(t *testing.T) (*Service, domain.ActionItem) {
+		t.Helper()
+		repo := newFakeRepo()
+		actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
+			Kind:        domain.KindPlan,
+			ID:          "t1",
+			ProjectID:   "p1",
+			ColumnID:    "c1",
+			Position:    0,
+			Title:       "old title",
+			Description: "old desc",
+			Priority:    domain.PriorityHigh,
+			DueAt:       &preStoredDue,
+			Labels:      []string{"a", "b"},
+		}, now)
+		if err != nil {
+			t.Fatalf("seed action item: %v", err)
+		}
+		repo.tasks[actionItem.ID] = actionItem
+		svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+		return svc, actionItem
+	}
+
+	cases := []struct {
+		name          string
+		buildInput    func(actionItemID string) UpdateActionItemInput
+		expectErr     error
+		expectTitle   string
+		expectDesc    string
+		expectPrio    domain.Priority
+		expectDueNil  bool
+		expectDueTime time.Time
+		expectLabels  []string
+	}{
+		{
+			name: "description nil preserves",
+			buildInput: func(id string) UpdateActionItemInput {
+				return UpdateActionItemInput{
+					ActionItemID: id,
+					Title:        ptrTo("new title"),
+				}
+			},
+			expectTitle:   "new title",
+			expectDesc:    "old desc",
+			expectPrio:    domain.PriorityHigh,
+			expectDueTime: preStoredDue,
+			expectLabels:  []string{"a", "b"},
+		},
+		{
+			name: "description empty pointer clears",
+			buildInput: func(id string) UpdateActionItemInput {
+				return UpdateActionItemInput{
+					ActionItemID: id,
+					Title:        ptrTo("new title"),
+					Description:  ptrTo(""),
+				}
+			},
+			expectTitle:   "new title",
+			expectDesc:    "",
+			expectPrio:    domain.PriorityHigh,
+			expectDueTime: preStoredDue,
+			expectLabels:  []string{"a", "b"},
+		},
+		{
+			name: "description non-empty replaces",
+			buildInput: func(id string) UpdateActionItemInput {
+				return UpdateActionItemInput{
+					ActionItemID: id,
+					Title:        ptrTo("new title"),
+					Description:  ptrTo("fresh"),
+				}
+			},
+			expectTitle:   "new title",
+			expectDesc:    "fresh",
+			expectPrio:    domain.PriorityHigh,
+			expectDueTime: preStoredDue,
+			expectLabels:  []string{"a", "b"},
+		},
+		{
+			name: "title nil preserves",
+			buildInput: func(id string) UpdateActionItemInput {
+				return UpdateActionItemInput{
+					ActionItemID: id,
+					Description:  ptrTo("new desc"),
+				}
+			},
+			expectTitle:   "old title",
+			expectDesc:    "new desc",
+			expectPrio:    domain.PriorityHigh,
+			expectDueTime: preStoredDue,
+			expectLabels:  []string{"a", "b"},
+		},
+		{
+			name: "title empty pointer rejected",
+			buildInput: func(id string) UpdateActionItemInput {
+				return UpdateActionItemInput{
+					ActionItemID: id,
+					Title:        ptrTo(""),
+					Description:  ptrTo("new desc"),
+				}
+			},
+			expectErr: domain.ErrInvalidTitle,
+		},
+		{
+			name: "labels nil preserves",
+			buildInput: func(id string) UpdateActionItemInput {
+				return UpdateActionItemInput{
+					ActionItemID: id,
+					Title:        ptrTo("new title"),
+				}
+			},
+			expectTitle:   "new title",
+			expectDesc:    "old desc",
+			expectPrio:    domain.PriorityHigh,
+			expectDueTime: preStoredDue,
+			expectLabels:  []string{"a", "b"},
+		},
+		{
+			name: "labels empty pointer clears",
+			buildInput: func(id string) UpdateActionItemInput {
+				return UpdateActionItemInput{
+					ActionItemID: id,
+					Title:        ptrTo("new title"),
+					Labels:       ptrTo([]string{}),
+				}
+			},
+			expectTitle:   "new title",
+			expectDesc:    "old desc",
+			expectPrio:    domain.PriorityHigh,
+			expectDueTime: preStoredDue,
+			expectLabels:  []string{},
+		},
+		{
+			name: "priority nil preserves",
+			buildInput: func(id string) UpdateActionItemInput {
+				return UpdateActionItemInput{
+					ActionItemID: id,
+					Title:        ptrTo("new title"),
+				}
+			},
+			expectTitle:   "new title",
+			expectDesc:    "old desc",
+			expectPrio:    domain.PriorityHigh,
+			expectDueTime: preStoredDue,
+			expectLabels:  []string{"a", "b"},
+		},
+		{
+			name: "due_at nil preserves",
+			buildInput: func(id string) UpdateActionItemInput {
+				return UpdateActionItemInput{
+					ActionItemID: id,
+					Title:        ptrTo("new title"),
+				}
+			},
+			expectTitle:   "new title",
+			expectDesc:    "old desc",
+			expectPrio:    domain.PriorityHigh,
+			expectDueTime: preStoredDue,
+			expectLabels:  []string{"a", "b"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, actionItem := seed(t)
+			updated, err := svc.UpdateActionItem(context.Background(), tc.buildInput(actionItem.ID))
+			if tc.expectErr != nil {
+				if !errors.Is(err, tc.expectErr) {
+					t.Fatalf("UpdateActionItem() error = %v, want %v", err, tc.expectErr)
+				}
+				// On error, the stored item must remain unchanged.
+				stored, getErr := svc.GetActionItem(context.Background(), actionItem.ID)
+				if getErr != nil {
+					t.Fatalf("GetActionItem(after-error) = %v", getErr)
+				}
+				if stored.Title != "old title" || stored.Description != "old desc" {
+					t.Fatalf("rejected update mutated stored item: title=%q desc=%q", stored.Title, stored.Description)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UpdateActionItem() unexpected error = %v", err)
+			}
+			if updated.Title != tc.expectTitle {
+				t.Fatalf("Title = %q, want %q", updated.Title, tc.expectTitle)
+			}
+			if updated.Description != tc.expectDesc {
+				t.Fatalf("Description = %q, want %q", updated.Description, tc.expectDesc)
+			}
+			if updated.Priority != tc.expectPrio {
+				t.Fatalf("Priority = %q, want %q", updated.Priority, tc.expectPrio)
+			}
+			if tc.expectDueNil {
+				if updated.DueAt != nil {
+					t.Fatalf("DueAt = %v, want nil", updated.DueAt)
+				}
+			} else {
+				if updated.DueAt == nil {
+					t.Fatalf("DueAt = nil, want %v", tc.expectDueTime)
+				}
+				if !updated.DueAt.Equal(tc.expectDueTime) {
+					t.Fatalf("DueAt = %v, want %v", *updated.DueAt, tc.expectDueTime)
+				}
+			}
+			gotLabels := updated.Labels
+			if gotLabels == nil {
+				gotLabels = []string{}
+			}
+			wantLabels := tc.expectLabels
+			if wantLabels == nil {
+				wantLabels = []string{}
+			}
+			if len(gotLabels) != len(wantLabels) {
+				t.Fatalf("Labels length = %d, want %d (got=%v want=%v)", len(gotLabels), len(wantLabels), gotLabels, wantLabels)
+			}
+			for i := range gotLabels {
+				if gotLabels[i] != wantLabels[i] {
+					t.Fatalf("Labels[%d] = %q, want %q", i, gotLabels[i], wantLabels[i])
+				}
+			}
+		})
 	}
 }
 
@@ -2241,11 +2495,11 @@ func TestServiceCreateAndUpdateActionItemEnqueueEmbeddingLifecycle(t *testing.T)
 
 	updated, err := svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
 		ActionItemID: created.ID,
-		Title:        "Ship hybrid search",
-		Description:  created.Description,
-		Priority:     created.Priority,
-		Labels:       created.Labels,
-		DueAt:        created.DueAt,
+		Title:        ptrTo("Ship hybrid search"),
+		Description:  ptrTo(created.Description),
+		Priority:     ptrTo(created.Priority),
+		Labels:       ptrTo(created.Labels),
+		DueAt:        ptrTo(created.DueAt),
 		Metadata:     &created.Metadata,
 	})
 	if err != nil {
@@ -4381,9 +4635,9 @@ func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
 	})
 	if _, err := svc.UpdateActionItem(branchCtx, UpdateActionItemInput{
 		ActionItemID: branch.ID,
-		Title:        "Branch A",
-		Description:  "branch-updated",
-		Priority:     domain.PriorityMedium,
+		Title:        ptrTo("Branch A"),
+		Description:  ptrTo("branch-updated"),
+		Priority:     ptrTo(domain.PriorityMedium),
 		UpdatedBy:    "branch-agent",
 		UpdatedType:  domain.ActorTypeAgent,
 	}); err != nil {
@@ -4551,9 +4805,9 @@ func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
 
 	if _, err := svc.UpdateActionItem(phaseACtx, UpdateActionItemInput{
 		ActionItemID: actionItemB.ID,
-		Title:        "ActionItem B1",
-		Description:  "out of scope",
-		Priority:     domain.PriorityMedium,
+		Title:        ptrTo("ActionItem B1"),
+		Description:  ptrTo("out of scope"),
+		Priority:     ptrTo(domain.PriorityMedium),
 		UpdatedBy:    "phase-a-agent",
 		UpdatedType:  domain.ActorTypeAgent,
 	}); !errors.Is(err, domain.ErrMutationLeaseInvalid) {

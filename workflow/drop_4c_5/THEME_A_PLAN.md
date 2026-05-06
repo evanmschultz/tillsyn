@@ -1,7 +1,7 @@
 # Drop 4c.5 — Theme A Plan (Silent-Data-Loss + Agent-Surface Hardening)
 
 **Author:** Theme A planner.
-**Status:** decomposition draft awaiting plan-QA.
+**Status:** decomposition draft awaiting plan-QA. A.1 state: done.
 **Source brief:** `workflow/drop_4c_5/REVISION_BRIEF.md` §3.1.
 **Evidence basis:** direct code reads (LSP/Read/Grep) on `main` HEAD `7cd84ec`. No Hylla calls (stale post-Drop-4c-merge).
 

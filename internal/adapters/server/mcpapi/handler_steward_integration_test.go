@@ -288,10 +288,12 @@ func TestStewardIntegrationDropOrchCreateAndUpdateAllowedButCannotMoveState(t *t
 	hyllaFindingsID := fixture.findingIDs["DROP_3_HYLLA_FINDINGS"]
 
 	// Description-only update by drop-orch on STEWARD-owned finding SUCCEEDS.
+	titleSnap := "DROP_3_HYLLA_FINDINGS"
+	descSnap := "Drop-orch updated body — Hylla feedback rollup for Drop 3."
 	updated, err := fixture.adapter.UpdateActionItem(ctx, servercommon.UpdateActionItemRequest{
 		ActionItemID: hyllaFindingsID,
-		Title:        "DROP_3_HYLLA_FINDINGS",
-		Description:  "Drop-orch updated body — Hylla feedback rollup for Drop 3.",
+		Title:        &titleSnap,
+		Description:  &descSnap,
 		Actor:        dropOrch,
 	})
 	if err != nil {
@@ -471,9 +473,10 @@ func TestStewardIntegrationDropOrchOwnerMutationRejected(t *testing.T) {
 
 	hyllaFindingsID := fixture.findingIDs["DROP_3_HYLLA_FINDINGS"]
 	clearedOwner := ""
+	titleSnap := "DROP_3_HYLLA_FINDINGS"
 	if _, err := fixture.adapter.UpdateActionItem(ctx, servercommon.UpdateActionItemRequest{
 		ActionItemID: hyllaFindingsID,
-		Title:        "DROP_3_HYLLA_FINDINGS",
+		Title:        &titleSnap,
 		Owner:        &clearedOwner,
 		Actor:        dropOrch,
 	}); !errors.Is(err, servercommon.ErrAuthorizationDenied) {

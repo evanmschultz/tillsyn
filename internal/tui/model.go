@@ -6103,13 +6103,23 @@ func (m Model) buildCurrentEditActionItemInput() (app.UpdateActionItemInput, dom
 	}
 	metadata := m.buildActionItemMetadataFromForm(vals, actionItem.Metadata)
 
+	// Drop 4c.5 droplet A.1: form-driven full edit always supplies every
+	// field — wrap in pointer-sentinels so the service-layer PATCH applies
+	// each value. Title is empty-string-rejected by domain.UpdateDetails;
+	// the form pre-fills Title from actionItem.Title above (lines 6080-83)
+	// so the dereferenced value is always non-empty here.
+	titleVal := title
+	descVal := description
+	priorityVal := priority
+	labelsVal := append([]string(nil), labels...)
+	dueAtVal := dueAt
 	return app.UpdateActionItemInput{
 		ActionItemID:  actionItemID,
-		Title:         title,
-		Description:   description,
-		Priority:      priority,
-		DueAt:         dueAt,
-		Labels:        labels,
+		Title:         &titleVal,
+		Description:   &descVal,
+		Priority:      &priorityVal,
+		DueAt:         &dueAtVal,
+		Labels:        &labelsVal,
 		Metadata:      &metadata,
 		UpdatedBy:     m.threadActorID(),
 		UpdatedByName: m.threadActorName(),
@@ -8042,13 +8052,12 @@ func (m Model) jumpToDependencyCandidateActionItem() (tea.Model, tea.Cmd) {
 // updateActionItemMetadataCmd persists one metadata update for the provided actionItem fields.
 func (m Model) updateActionItemMetadataCmd(actionItem domain.ActionItem, metadata domain.ActionItemMetadata, status string) tea.Cmd {
 	return func() tea.Msg {
+		// Drop 4c.5 droplet A.1: pointer-sentinel PATCH semantics — nil
+		// Title/Description/Priority/DueAt/Labels preserves existing
+		// stored values. Metadata-only update path no longer needs to
+		// pass current values back through the wire.
 		_, err := m.svc.UpdateActionItem(context.Background(), app.UpdateActionItemInput{
 			ActionItemID:  actionItem.ID,
-			Title:         actionItem.Title,
-			Description:   actionItem.Description,
-			Priority:      actionItem.Priority,
-			DueAt:         actionItem.DueAt,
-			Labels:        append([]string(nil), actionItem.Labels...),
 			Metadata:      &metadata,
 			UpdatedBy:     m.threadActorID(),
 			UpdatedByName: m.threadActorName(),
@@ -8588,13 +8597,12 @@ func (m Model) attachResourceEntry(path string, isDir bool) tea.Cmd {
 		}
 		meta := actionItem.Metadata
 		meta.ResourceRefs = refs
+		// Drop 4c.5 droplet A.1: metadata-only update — let the
+		// pointer-sentinel PATCH preserve Title/Description/Priority/
+		// DueAt/Labels server-side rather than round-tripping current
+		// values through the wire.
 		_, err = m.svc.UpdateActionItem(context.Background(), app.UpdateActionItemInput{
 			ActionItemID:  actionItem.ID,
-			Title:         actionItem.Title,
-			Description:   actionItem.Description,
-			Priority:      actionItem.Priority,
-			DueAt:         actionItem.DueAt,
-			Labels:        append([]string(nil), actionItem.Labels...),
 			Metadata:      &meta,
 			UpdatedBy:     m.threadActorID(),
 			UpdatedByName: m.threadActorName(),
@@ -11527,8 +11535,8 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			m.actionItemFormResourceCursor = 0
 			m.actionItemFormResourceEditIndex = -1
 			in.ActionItemID = actionItemID
-			m.traceFormControlCharacterGuard("actionItem", "update", "title", in.Title)
-			m.traceFormControlCharacterGuard("actionItem", "update", "description", in.Description)
+			m.traceFormControlCharacterGuardPtr("actionItem", "update", "title", in.Title)
+			m.traceFormControlCharacterGuardPtr("actionItem", "update", "description", in.Description)
 			return m, func() tea.Msg {
 				_, updateErr := m.svc.UpdateActionItem(context.Background(), in)
 				if updateErr != nil {
@@ -11565,8 +11573,8 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.actionItemFormSubactionItemCursor = 0
 		m.actionItemFormResourceCursor = 0
 		m.actionItemFormResourceEditIndex = -1
-		m.traceFormControlCharacterGuard("actionItem", "update", "title", in.Title)
-		m.traceFormControlCharacterGuard("actionItem", "update", "description", in.Description)
+		m.traceFormControlCharacterGuardPtr("actionItem", "update", "title", in.Title)
+		m.traceFormControlCharacterGuardPtr("actionItem", "update", "description", in.Description)
 		return m, func() tea.Msg {
 			updatedActionItem, updateErr := m.svc.UpdateActionItem(context.Background(), in)
 			if updateErr != nil {
@@ -11632,13 +11640,13 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 				if slices.Equal(normalizeConfigLabels(actionItem.Labels), normalizeConfigLabels(labels)) {
 					return nil
 				}
+				// Drop 4c.5 droplet A.1: labels-only update — pass labels
+				// pointer (apply) and leave Title/Description/Priority/
+				// DueAt nil (preserve at the service layer).
+				labelsCopy := append([]string(nil), labels...)
 				_, err := m.svc.UpdateActionItem(context.Background(), app.UpdateActionItemInput{
 					ActionItemID:  actionItem.ID,
-					Title:         actionItem.Title,
-					Description:   actionItem.Description,
-					Priority:      actionItem.Priority,
-					DueAt:         actionItem.DueAt,
-					Labels:        append([]string(nil), labels...),
+					Labels:        &labelsCopy,
 					Metadata:      &actionItem.Metadata,
 					UpdatedBy:     m.threadActorID(),
 					UpdatedByName: m.threadActorName(),
@@ -19837,12 +19845,20 @@ func parseActionItemEditInput(raw string, current domain.ActionItem) (app.Update
 		labels = parsedLabels
 	}
 
+	// Drop 4c.5 droplet A.1: parser-driven full edit always supplies
+	// every field — wrap in pointer-sentinels so the service-layer
+	// PATCH applies each value (matches buildCurrentEditActionItemInput).
+	titleVal := title
+	descVal := description
+	priorityVal := priority
+	labelsVal := labels
+	dueAtVal := dueAt
 	return app.UpdateActionItemInput{
-		Title:       title,
-		Description: description,
-		Priority:    priority,
-		DueAt:       dueAt,
-		Labels:      labels,
+		Title:       &titleVal,
+		Description: &descVal,
+		Priority:    &priorityVal,
+		DueAt:       &dueAtVal,
+		Labels:      &labelsVal,
 	}, nil
 }
 

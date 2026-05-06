@@ -831,9 +831,27 @@ func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActio
 	if a == nil || a.service == nil {
 		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
-	dueAt, err := parseOptionalRFC3339(in.DueAt)
-	if err != nil {
-		return domain.ActionItem{}, err
+	// Drop 4c.5 droplet A.1: DueAt switches to *string pointer-sentinel at
+	// the wire. nil = preserve, non-nil = apply (empty clears, non-empty
+	// parses as RFC3339). Decode here so the parsed *time.Time can flow
+	// into UpdateActionItemInput.DueAt as a **time.Time.
+	var dueAtPtr **time.Time
+	if in.DueAt != nil {
+		raw := strings.TrimSpace(*in.DueAt)
+		if raw == "" {
+			// Caller explicitly cleared DueAt — non-nil outer pointer with
+			// nil inner pointer signals "set DueAt to nil".
+			var inner *time.Time
+			dueAtPtr = &inner
+		} else {
+			ts, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return domain.ActionItem{}, fmt.Errorf("due_at must be RFC3339: %w", ErrInvalidCaptureStateRequest)
+			}
+			utc := ts.UTC()
+			inner := &utc
+			dueAtPtr = &inner
+		}
 	}
 	ctx, actorType, err := withMutationGuardContext(ctx, in.Actor)
 	if err != nil {
@@ -851,14 +869,38 @@ func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActio
 			return domain.ActionItem{}, err
 		}
 	}
+	// Drop 4c.5 droplet A.1: pointer-sentinels for Title / Description /
+	// Priority / Labels flow through verbatim — service-layer branches on
+	// nil vs non-nil. Trim/lowercase normalization happens inline so the
+	// dereferenced value matches the create-time normalization rules.
+	var titlePtr *string
+	if in.Title != nil {
+		trimmed := strings.TrimSpace(*in.Title)
+		titlePtr = &trimmed
+	}
+	var descriptionPtr *string
+	if in.Description != nil {
+		trimmed := strings.TrimSpace(*in.Description)
+		descriptionPtr = &trimmed
+	}
+	var priorityPtr *domain.Priority
+	if in.Priority != nil {
+		normalized := domain.Priority(strings.TrimSpace(strings.ToLower(*in.Priority)))
+		priorityPtr = &normalized
+	}
+	var labelsPtr *[]string
+	if in.Labels != nil {
+		copied := append([]string(nil), (*in.Labels)...)
+		labelsPtr = &copied
+	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	actionItem, err := a.service.UpdateActionItem(ctx, app.UpdateActionItemInput{
 		ActionItemID:   strings.TrimSpace(in.ActionItemID),
-		Title:          strings.TrimSpace(in.Title),
-		Description:    strings.TrimSpace(in.Description),
-		Priority:       domain.Priority(strings.TrimSpace(strings.ToLower(in.Priority))),
-		DueAt:          dueAt,
-		Labels:         append([]string(nil), in.Labels...),
+		Title:          titlePtr,
+		Description:    descriptionPtr,
+		Priority:       priorityPtr,
+		DueAt:          dueAtPtr,
+		Labels:         labelsPtr,
 		Role:           domain.Role(strings.TrimSpace(in.Role)),
 		StructuralType: domain.StructuralType(strings.TrimSpace(in.StructuralType)),
 		Owner:          in.Owner,

@@ -947,17 +947,34 @@ func (f *fakeService) CreateActionItem(_ context.Context, in app.CreateActionIte
 }
 
 // UpdateActionItem updates state for the requested operation.
+//
+// Drop 4c.5 droplet A.1: input fields (Title / Description / Priority /
+// DueAt / Labels) switched to pointer-sentinel shape — nil preserves the
+// stored value, non-nil applies the dereferenced value (matching the
+// production Service.UpdateActionItem branch). The fake mirrors that
+// preserve-vs-apply semantic so TUI tests see the same wire-shape
+// behavior as production.
 func (f *fakeService) UpdateActionItem(_ context.Context, in app.UpdateActionItemInput) (domain.ActionItem, error) {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
 			if f.tasks[projectID][idx].ID != in.ActionItemID {
 				continue
 			}
-			f.tasks[projectID][idx].Title = strings.TrimSpace(in.Title)
-			f.tasks[projectID][idx].Description = strings.TrimSpace(in.Description)
-			f.tasks[projectID][idx].Priority = in.Priority
-			f.tasks[projectID][idx].DueAt = in.DueAt
-			f.tasks[projectID][idx].Labels = in.Labels
+			if in.Title != nil {
+				f.tasks[projectID][idx].Title = strings.TrimSpace(*in.Title)
+			}
+			if in.Description != nil {
+				f.tasks[projectID][idx].Description = strings.TrimSpace(*in.Description)
+			}
+			if in.Priority != nil {
+				f.tasks[projectID][idx].Priority = *in.Priority
+			}
+			if in.DueAt != nil {
+				f.tasks[projectID][idx].DueAt = *in.DueAt
+			}
+			if in.Labels != nil {
+				f.tasks[projectID][idx].Labels = *in.Labels
+			}
 			if in.Metadata != nil {
 				f.tasks[projectID][idx].Metadata = *in.Metadata
 			}
@@ -5589,10 +5606,17 @@ func TestActionItemEditParsing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseActionItemEditInput() error = %v", err)
 	}
-	if input.Title != "new" || input.Priority != domain.PriorityHigh {
-		t.Fatalf("unexpected parsed input %#v", input)
+	// Drop 4c.5 droplet A.1: Title / Priority / DueAt switched to
+	// pointer-sentinel shape on UpdateActionItemInput. The form-driven
+	// parser always supplies every field — non-nil pointers carry the
+	// dereferenced parsed value.
+	if input.Title == nil || *input.Title != "new" {
+		t.Fatalf("Title = %v, want pointer to %q", input.Title, "new")
 	}
-	if input.DueAt == nil || input.DueAt.Format("2006-01-02") != "2026-03-01" {
+	if input.Priority == nil || *input.Priority != domain.PriorityHigh {
+		t.Fatalf("Priority = %v, want pointer to %q", input.Priority, domain.PriorityHigh)
+	}
+	if input.DueAt == nil || *input.DueAt == nil || (*input.DueAt).Format("2006-01-02") != "2026-03-01" {
 		t.Fatalf("unexpected parsed due date %#v", input.DueAt)
 	}
 

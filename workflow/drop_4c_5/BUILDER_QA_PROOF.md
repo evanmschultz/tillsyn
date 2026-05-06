@@ -162,3 +162,75 @@ PASS. Round-2 builder satisfied the orchestrator-amended acceptance bar: `go.mod
 ### Hylla Feedback
 
 N/A — D.1 round 2 touched only non-Go files (`go.mod`, `go.sum`, `workflow/drop_4c_5/THEME_BD_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`). Hylla is Go-only today per project memory rule. All evidence resolved via Read / Bash (`rg`, `git diff`, `git status`, `ls`).
+
+## Droplet A.1 — Round 1
+
+**Reviewer:** go-qa-proof-agent
+**Date:** 2026-05-05
+**Verdict:** PASS
+
+### Trace Coverage
+
+1. **Acceptance #1 — `UpdateActionItemInput` struct shape.** COVERED.
+   - `internal/app/service.go:678-708` declares `UpdateActionItemInput` with the spec-mandated pointer-sentinel shape: `Title *string` (684), `Description *string` (689), `Priority *domain.Priority` (694), `DueAt **time.Time` (703), `Labels *[]string` (708).
+   - The `**time.Time` choice is structurally consistent with prior `*time.Time` semantics where the inner pointer doubles as a presence sentinel inside the domain entity (worklog rationale + struct doc-comment 695-702 explain the second indirection level): outer-nil = preserve, outer-non-nil-inner-nil = clear, outer-non-nil-inner-non-nil = set. This preserves the existing nil-vs-zero contract on `domain.ActionItem.DueAt` while adding a higher-order presence layer at the input boundary.
+   - Doc-comments 664-677 explain the pattern + cross-reference the precedent fields (Owner / DropNumber / Persistent / DevGated / Paths / Packages / Files / StartCommit / EndCommit) that already used pointer-sentinels pre-A.1.
+
+2. **Acceptance #2 — Service body branches on each pointer.** COVERED.
+   - `internal/app/service.go:1263-1290` implements the five-pointer preserve-vs-apply chain. Each field (title, description, priority, dueAt, labels) initializes from the existing `actionItem` value, then conditionally overwrites only when the corresponding input pointer is non-nil. The merged values flow into the canonical `actionItem.UpdateDetails(...)` validator at line 1290.
+   - Title-empty rejection still surfaces via `domain.UpdateDetails` -> `ErrInvalidTitle` (worklog confirms; service body line 1267-1269 doc-comment cross-references this invariant).
+   - No new domain helper -- service composes inline (12 readable lines), keeps `domain.UpdateDetails` validation centralized.
+
+3. **Acceptance #3 — Existing tests still pass.** COVERED via builder-claimed `mage ci` green (2715 passed / 1 pre-existing skip / 24 packages all >= 70% coverage). Trust-builder directive applies; independent re-run not required.
+
+4. **Acceptance #4 — Three new table-driven test cases (description-preservation / title-preservation / explicit-clear).** COVERED with FULL 9-row table.
+   - `internal/app/service_test.go:1538-1768` declares `TestUpdateActionItemPartialPATCHSemantics` with exactly 9 cases mirroring the THEME_A_PLAN.md spec table verbatim:
+     1. `description nil preserves` (1581-1593)
+     2. `description empty pointer clears` (1594-1608)
+     3. `description non-empty replaces` (1609-1623)
+     4. `title nil preserves` (1624-1637)
+     5. `title empty pointer rejected` (1638-1648, asserts `domain.ErrInvalidTitle`)
+     6. `labels nil preserves` (1649-1662)
+     7. `labels empty pointer clears` (1663-1677)
+     8. `priority nil preserves` (1678-1691)
+     9. `due_at nil preserves` (1692-1705)
+   - Test runner (1708-1767) seeds a fresh repo per case (no leak), asserts post-update Title/Description/Priority/DueAt/Labels equality, and on `expectErr` asserts both the wrapped error AND that the stored item remains unmutated (lines 1716-1724).
+
+5. **Acceptance #5 — Empty title still rejected.** COVERED by row #5 above (`title empty pointer rejected`, `Title: ptrTo("")`, `expectErr: domain.ErrInvalidTitle`). The `errors.Is` check at line 1713 confirms the wrapped-error contract. The post-rejection state assertion (1716-1724) confirms no partial mutation leaked through.
+
+6. **Acceptance #6/#7 — `mage test-pkg ./internal/app` and `./internal/adapters/server/common` pass with `-race`; `mage ci` clean.** COVERED via builder-claimed counts: `internal/app` 387/387, `internal/adapters/server/common` 160/160, `internal/tui` 372/372, `internal/adapters/server/mcpapi` 171/172 (one pre-existing skip), `mage ci` 2715 passed. Mage targets enforce `-race` by default per project rules.
+
+7. **Wire-shape coordination — MCP tool description string.** PARTIAL — surfaced as Unknown.
+   - The wire pointer-shape change DID land at the `args` anonymous struct in `internal/adapters/server/mcpapi/extended_tools.go:764-768` (Title/Description/Priority/DueAt = `*string`; Labels = `*[]string`), and the title-required preflight at the handler boundary was correctly removed (1065-1071 doc-comment + service-layer enforcement).
+   - However, the published MCP tool description strings at `extended_tools.go:1437` (Title), 1452 (description), 1453 (priority), 1454 (due_at), 1455 (labels) -- and the legacy-alias declarations at 1501-1510 / 1528-1532 -- were NOT updated to document the new "omit to preserve, send empty string to explicitly clear" wire semantics. The `WithString("title", ...)` declaration still reads "Title. Required for operation=create|update" (1437). This is a documentation gap, not a behavioral defect: the runtime contract is correct, only the human-facing tool description text is stale.
+   - Worklog § "Unknowns routed back to orchestrator" explicitly surfaces this as an open item recommending fold into D.2 hint sweep, A.2's wire-audit, or a small standalone docs droplet. PARTIAL coverage is acceptable on this specific point -- the spec-mandated falsification mitigation #1 about omit-vs-empty semantics IS implemented at the runtime layer (which is what protects callers from silent data loss); the description-string update is a lower-stakes follow-up the orchestrator can route. PASS verdict honors the runtime correctness; the docs gap is logged as F1.
+
+8. **TUI call sites — pointer-sentinel idioms.** COVERED.
+   - `internal/tui/model.go:6116-6127` (`buildCurrentEditActionItemInput`): wraps every field via `&titleVal` / `&descVal` / `&priorityVal` / `&dueAtVal` / `&labelsVal` with the local-var-then-take-address idiom required by `UpdateActionItemInput`'s pointer fields.
+   - `internal/tui/model.go:8059-8065` (resource-add metadata-only path): collapses to nil-everything-except-metadata. Doc-comment 8055-8058 documents the preserve semantic.
+   - `internal/tui/model.go:8604-8610` (resource-attach metadata-only path): same nil-everything-except-metadata shape.
+   - `internal/tui/model.go:11647-11655` (labels-only update): passes `&labelsCopy` for Labels and nils for Title/Description/Priority/DueAt.
+   - `internal/tui/model.go:19856-19862` (`parseActionItemEditInput`): wraps every field in pointer-sentinels, mirroring the build-side helper.
+   - `internal/tui/thread_mode.go:514-521` (description-only thread update): passes `&description` for Description plus metadata, nils for Title/Priority/DueAt/Labels.
+   - `internal/tui/trace.go:233-244` adds the `traceFormControlCharacterGuardPtr` thin wrapper that no-ops on nil and delegates to the value-typed guard otherwise -- preserves trace semantics across the pointer migration.
+
+9. **Worklog completeness + Hylla feedback section.** COVERED.
+   - `workflow/drop_4c_5/BUILDER_WORKLOG.md` § "Droplet A.1 — Round 1" (lines 294-371) carries every required subsection: Files touched (production + tests), Targets run, Design notes (with cross-droplet coordination guidance for A.2 / A.4 / B.1 / C.1 builders), Falsification-mitigation status, Hylla feedback (correctly N/A + explained), Unknowns routed back to orchestrator. Section is well above the standard.
+
+10. **Migration safety — no UpdateActionItem callers left passing concrete values.** COVERED.
+    - `rg "app\.UpdateActionItemInput\{" --type=go` (production-only) returns: `internal/adapters/server/common/app_service_adapter_mcp.go:897` (correctly uses pointer-sentinels), `internal/tui/model.go:6116, 8059, 8604, 11647, 19856` (all use pointer-sentinels per check #8), `internal/tui/thread_mode.go:514` (pointer-sentinels), `internal/app/dispatcher/conflict.go:319` (only sets Metadata/UpdatedType -- A.1-invisible per worklog § "For unrelated callers" point 6), `internal/app/dispatcher/service_adapter.go:44` (only Metadata/UpdatedType -- same).
+    - Both dispatcher sites only ever wrote Metadata pre-A.1, so the new preserve-by-default pointer semantics are strictly correct for them -- no string clobbering risk because no string fields were being set.
+    - Test sites (`service_test.go`, `kind_capability_test.go`, the four `app_service_adapter_*_test.go` files, `handler_steward_integration_test.go`, `model_test.go`) all use the new `ptrTo` test helper or inline `&local` per worklog. The test fakeService at `model_test.go` was rewritten to mirror production preserve-vs-apply semantics.
+
+### Findings
+
+- **F1 (informational, not blocking):** MCP tool description strings at `extended_tools.go:1437/1452-1455` and the legacy-alias clones at 1501-1510 / 1528-1532 still describe pre-A.1 wire semantics ("Title. Required for operation=create|update"). Runtime behavior is correct; only the human-facing tool descriptions are stale. Builder explicitly logged this as an Unknown routed back to orchestrator with three reasonable follow-up paths (D.2 hint sweep, A.2 wire-audit, or standalone docs droplet). Recommend the orchestrator pick one before drop close.
+- **F2 (informational, not blocking):** Pre-A.1, an MCP `op=update` request that omitted `title` was rejected at the boundary with `invalid_request: required argument "title" not found` (handler-level preflight). Post-A.1, the same request silently preserves the stored title. Worklog § "Unknowns" notes this; per REVISION_BRIEF §6 ("pre-MVP, no production clients depend on tolerance"), the behavior change is acceptable. Flagged here so QA falsification can attack and orchestrator can decide whether to surface in CHANGELOG-equivalent.
+
+### Conclusion
+
+PASS. Droplet A.1 implements pointer-sentinel PATCH semantics on `Service.UpdateActionItem` exactly per spec: 5 pointer-sentinel fields landed (Title / Description / Priority / DueAt / Labels), service body branches cleanly on nil-vs-non-nil, the title-required invariant survives via `domain.UpdateDetails`'s `ErrInvalidTitle`, and the 9-row table-driven test mirrors THEME_A_PLAN.md verbatim including the empty-title rejection row. Wire-shape coordination at the `args` struct is correct; the MCP tool description-string update is a noted Unknown but not a runtime defect. All 16 source files + 2 workflow MDs in the declared file set are present and consistent. Migration safety holds: every production caller of `app.UpdateActionItemInput{...}` either uses pointer-sentinels or only sets Metadata/UpdatedType (dispatcher's two sites are A.1-invisible). Builder-claimed `mage ci` green (2715 passed / 24 packages / coverage met) accepted under the trust-builder directive.
+
+### Hylla Feedback
+
+N/A -- A.1 review touched Go source files but Hylla is stale post-Drop-4c-merge per the spawn-prompt's filesystem-MD-coordination directive (NO Hylla calls). All evidence resolved via Read / Grep / Bash (`rg`). Per project rule "Hylla Indexes Only Go Files Today" the Go-source review would normally favor Hylla; the override is drop-specific, not a Hylla ergonomics signal.

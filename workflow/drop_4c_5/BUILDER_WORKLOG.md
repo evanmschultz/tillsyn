@@ -368,3 +368,48 @@ None — Hylla unused this droplet (Hylla is stale post-Drop-4c-merge until rein
 
 - **MCP tool description string for `till.action_item op=update`** still implies "title required". Should be updated to "omit to preserve, send empty string to clear (note: empty title rejects with ErrInvalidTitle)". Recommend folding into D.2 hint sweep, A.2's wire-audit, or a small standalone docs-only droplet.
 - **Pre-A.1 wire-level reject for missing-title-on-update is gone.** Any external automation that depended on that early-reject path will now see preserve semantics instead. Per REVISION_BRIEF §6 ("pre-MVP, no production clients depend on tolerance"), this is acceptable, but flagged for QA falsification's review.
+
+## Droplet A.1 — Round 2
+
+**Date:** 2026-05-05.
+**Builder:** go-builder-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_A_PLAN.md` § "A.1 — Pointer-Sentinel PATCH Semantics" Falsification Mitigation #1 (line 88) — the spec-mandated MCP tool description string update that round 1 deferred and `BUILDER_QA_FALSIFICATION.md § "Droplet A.1 — Round 1"` flagged as CONFIRMED counterexample C1.
+**Outcome:** done — 5 description strings updated on the primary `till.action_item` tool + 5 mirror updates on the legacy `till.update_task` alias; `mage testPkg ./internal/adapters/server/mcpapi` 171/172 PASS (1 pre-existing skip, unrelated); `mage formatCheck` clean.
+
+### Files touched
+
+- `internal/adapters/server/mcpapi/extended_tools.go` — 10 MCP `mcp.Description(...)` string edits across two tool registrations:
+  - **Primary `till.action_item` tool** (lines ~1437, 1452-1455): updated `title`, `description`, `priority`, `due_at`, `labels` to document the post-A.1 PATCH semantics (omit-to-preserve / explicit-empty-to-apply distinction).
+  - **Legacy alias `till.update_task` tool** (lines ~1528-1532): mirrored the same 5 description updates. This alias routes through `handleActionItemOperation(..., "update")` and inherits the same wire-shape semantics, so leaving its descriptions stale would resurrect the same agent-surface drift in the legacy path.
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — this round-2 entry.
+
+### Description-string deltas (verbatim)
+
+**`till.action_item` (primary tool):**
+
+- `title`: "Title. Required for operation=create|update" → "Title. Required for operation=create. On operation=update, omit to preserve the existing title; sending an empty string is rejected (ErrInvalidTitle — title invariant)."
+- `description`: "Action-item details in markdown-rich text" → "Action-item details in markdown-rich text. On operation=update, omit to preserve the existing value; send an empty string to explicitly clear it."
+- `priority`: "low|medium|high" → "low|medium|high. On operation=update, omit to preserve the existing value; sending an empty string rejects with ErrInvalidPriority (priority must be one of the closed enum values)."
+- `due_at`: "Optional RFC3339 timestamp" → "Optional RFC3339 timestamp. On operation=update, omit to preserve the existing value; send an empty string to explicitly clear it; non-empty values must parse as RFC3339."
+- `labels`: "Optional labels" → "Optional labels. On operation=update, omit to preserve the existing slice; supplying any array (including the empty array) replaces the stored labels."
+
+**`till.update_task` (legacy alias):** same 5 fields, same new wording (with "ActionItem" preserving the legacy tool's pre-existing capitalization where the original strings used it).
+
+### Scope decisions (per spawn-prompt directive)
+
+- **`till.create_task` legacy alias** (lines ~1501, 1507-1510) intentionally NOT touched. It routes through `handleActionItemOperation(..., "create")` — create-only path. Its `title mcp.Required()` is semantically correct on create; the description fields legitimately do not need omit-to-preserve semantics because there is no stored value to preserve. Out of A.1 scope.
+- **5-string-only scope honored.** No production code outside the description strings was modified. No test edits. No `Required()` flag changes. No struct shape changes. No new tests.
+- **Unknown surfaced (NOT fixed in round 2):** the legacy `till.update_task` tool (line 1528) still declares `title` with `mcp.Required()`. Post-A.1 the title is no longer required on update — preserved when omitted. The `mcp.Required()` flag enforces presence at the MCP wire layer BEFORE the handler runs, so a `till.update_task` call without `title` would still be rejected by the MCP framework even though the handler would now accept it. This is a structural drift, not a description-string drift, and it is out of round-2's tight scope. Recommend: orchestrator routes either to a small follow-up droplet (drop the `mcp.Required()` flag from line 1528) or accepts that the legacy `till.update_task` keeps its stricter contract while `till.action_item` is the canonical post-A.1 path. The description text now correctly documents the post-A.1 semantics either way; the `Required()` flag is the only structural inconsistency.
+
+### Targets run
+
+- `mage testPkg ./internal/adapters/server/mcpapi` → **171/172 PASS, 1 pre-existing skip** (`TestStewardIntegrationDropOrchSupersedeRejected` — same skip seen in A.1 round 1 + the cross-droplet sanity baselines). 1.11s. No regressions.
+- `mage formatCheck` → clean (no gofumpt drift introduced).
+
+### Falsification-mitigation status (round-2 specific)
+
+- **C1 (CONFIRMED counterexample from QA round 1) — MCP tool description string regressions on `title|description|priority|due_at|labels`:** RESOLVED. All 5 fields on the primary tool now document the new omit-vs-empty semantics; all 5 mirror fields on the legacy `till.update_task` alias are aligned. Title field explicitly notes the empty-string rejection (Title invariant) per spawn-prompt acceptance criterion #2.
+
+### Hylla feedback
+
+N/A — task touched a single Go file (Hylla-eligible in principle), but the spawn-prompt directive ("filesystem-MD coordination mode. NO Hylla calls.") routed all evidence through `Read` / `Bash` (`rg` for declaration audit) / `Edit` / `mage testPkg` / `mage formatCheck`. No Hylla query was attempted, so no miss to log.

@@ -154,8 +154,8 @@ func TestAssertOwnerStateGateUpdateActionItemDescriptionOnlyAgentSucceeds(t *tes
 	rejectingActor := stewardGatedActor("agent")
 	updated, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: stewardGated.ID,
-		Title:        "STEWARD parent — agent updated description",
-		Description:  "Drop-orchs may write description/details/metadata on STEWARD-owned items.",
+		Title:        ptrTo("STEWARD parent — agent updated description"),
+		Description:  ptrTo("Drop-orchs may write description/details/metadata on STEWARD-owned items."),
 		Actor:        rejectingActor,
 	})
 	if err != nil {
@@ -180,7 +180,7 @@ func TestAssertOwnerStateGateUpdateActionItemOwnerMutationAgentRejected(t *testi
 	rejectingActor := stewardGatedActor("agent")
 	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: stewardGated.ID,
-		Title:        stewardGated.Title,
+		Title:        ptrTo(stewardGated.Title),
 		Owner:        &clearedOwner,
 		Actor:        rejectingActor,
 	}); !errors.Is(err, ErrAuthorizationDenied) {
@@ -190,7 +190,7 @@ func TestAssertOwnerStateGateUpdateActionItemOwnerMutationAgentRejected(t *testi
 	mutatedOwner := "ROGUE"
 	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: stewardGated.ID,
-		Title:        stewardGated.Title,
+		Title:        ptrTo(stewardGated.Title),
 		Owner:        &mutatedOwner,
 		Actor:        rejectingActor,
 	}); !errors.Is(err, ErrAuthorizationDenied) {
@@ -208,7 +208,7 @@ func TestAssertOwnerStateGateUpdateActionItemOwnerMutationAgentRejected(t *testi
 	stewardActor := stewardGatedActor("steward")
 	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: stewardGated.ID,
-		Title:        stewardGated.Title,
+		Title:        ptrTo(stewardGated.Title),
 		Owner:        &mutatedOwner,
 		Actor:        stewardActor,
 	}); err != nil {
@@ -240,7 +240,7 @@ func TestAssertOwnerStateGateUpdateActionItemDropNumberMutationAgentRejected(t *
 	mutatedDropNumber := stewardGated.DropNumber + 1
 	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: stewardGated.ID,
-		Title:        stewardGated.Title,
+		Title:        ptrTo(stewardGated.Title),
 		DropNumber:   &mutatedDropNumber,
 		Actor:        rejectingActor,
 	}); !errors.Is(err, ErrAuthorizationDenied) {

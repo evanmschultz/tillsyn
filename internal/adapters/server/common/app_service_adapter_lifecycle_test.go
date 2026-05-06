@@ -168,10 +168,10 @@ func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	}
 	actionItem, err = fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: actionItem.ID,
-		Title:        "Parent actionItem updated",
-		Description:  "Updated body",
-		Priority:     "medium",
-		Labels:       []string{"docs", "review"},
+		Title:        ptrTo("Parent actionItem updated"),
+		Description:  ptrTo("Updated body"),
+		Priority:     ptrTo("medium"),
+		Labels:       ptrTo([]string{"docs", "review"}),
 		Actor:        actor,
 	})
 	if err != nil {

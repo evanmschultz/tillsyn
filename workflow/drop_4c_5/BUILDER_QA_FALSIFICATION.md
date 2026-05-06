@@ -295,3 +295,148 @@ Recommend D.1 closes.
 ### Hylla Feedback
 
 N/A — D.1 touched only non-Go files (`go.mod`, `go.sum`, MD plan/worklog updates). Hylla is Go-only today. All evidence resolved via `Read` (go.mod, go.sum diff, README.md, simple.ansi, highlighter.go imports, builder worklog) + `Bash` (`git diff`, `git log`, `rg "^replace "`). Direct verification of vendored bubbletea source for L1 was BLOCKED by sandbox (Read denied on `/Users/evanschultz/go/pkg/mod/charm.land/bubbletea/v2@v2.0.0-rc.2/cursed_renderer.go`); fell back to round-1 worklog's reproduced compile-error text. **Sandbox-environment gripe (not a Hylla miss):** Read access to the Go module cache would have hardened L1 verification beyond worklog-trust. Recommend the orchestrator note this in the "subagent sandboxing" refinement track.
+
+## Droplet A.1 — Round 1
+
+**Reviewer:** go-qa-falsification-agent
+**Date:** 2026-05-05
+**Verdict:** FAIL — one CONFIRMED counterexample (acceptance criterion miss on MCP tool description string update).
+
+### Attack Inventory
+
+**Attack 1 — `DueAt **time.Time` three-way correctness.**
+Verified against `internal/app/service.go:1282-1285` + `internal/adapters/server/common/app_service_adapter_mcp.go:838-855`. Adapter cleanly distinguishes:
+- `in.DueAt == nil` (wire absent) → `dueAtPtr = nil` → service preserves.
+- `in.DueAt = &""` (wire empty) → `dueAtPtr = &(*time.Time)(nil)` → service sets `dueAt := *in.DueAt = nil` → UpdateDetails normalizes nil → DueAt cleared.
+- `in.DueAt = &"2026-..."` (wire RFC3339) → parses to `&utc`, wraps to `&&utc` → service derefs once to `*time.Time` pointing at parsed time → UpdateDetails sets the new pointer.
+
+The struct field comment at `service.go:695-703` documents the three-way distinction. Tests in `TestUpdateActionItemPartialPATCHSemantics` only cover the **preserve** case (1 of 3 states); the **explicit-clear** and **explicit-set** paths are covered by `TestUpdateActionItem` (existing test, set path) and the adapter-level test at line 104 of `app_service_adapter_mcp_actor_attribution_test.go`. **REFUTED:** impl is correct, but coverage is asymmetric — see Finding F1 below.
+
+**Attack 2 — Title-empty-rejection asymmetry transactional safety.**
+`UpdateDetails` (`internal/domain/action_item.go:510-526`) is called at `service.go:1290`. Inspection: domain method validates title FIRST (line 513), returns `ErrInvalidTitle` BEFORE any field write to the in-memory struct. After `UpdateDetails` returns an error at line 1290, the function returns at line 1291 — so subsequent branches (Role, Owner, DropNumber, Persistent, DevGated, Paths, Packages, Files, StartCommit, EndCommit, Metadata) DO NOT execute. The test `title empty pointer rejected` (lines 1639-1647) asserts post-error stored state is unchanged — passing. **REFUTED:** transactional safety holds, no partial-write window.
+
+**Attack 3 — Existing test migration completeness.**
+Spot-checked 7 migrated sites:
+- `service_test.go:1351` — uses `ptrTo("new title")` etc. (full-field update).
+- `service_test.go:1393` — title-only via `ptrTo`.
+- `service_test.go:1469` — title-only via `ptrTo`.
+- `service_test.go:1512` — title-only via `ptrTo`.
+- `service_test.go:2496` — full-field via `ptrTo`, including `ptrTo(created.DueAt)` (which yields `**time.Time` pointing to `*time.Time`, type-checks).
+- `service_test.go:4636` — `ptrTo` on Title/Description/Priority.
+- `kind_capability_test.go:902` — `ptrTo` on Title/Description/Priority.
+
+`mage testPkg ./internal/app` runs locally → 397 tests pass (slight positive delta from worklog's 387, attributable to the 9 new TestUpdateActionItemPartialPATCHSemantics subtests being counted individually). All 21 occurrences of `UpdateActionItemInput{` in production + tests audited via `rg`; the only sites NOT migrated are dispatcher fixtures (`internal/app/dispatcher/dispatcher_test.go:566,638` + `service_adapter.go:44` + `conflict.go:319`) which only set `Metadata` + `ActionItemID` and benefit from the new PATCH semantics (out of A.1 scope per spawn note). **REFUTED.**
+
+**Attack 4 — Wire-format compat for null JSON values.**
+Pre-A.1 wire shape: `Description string` decoding `{"description": null}` → field stays `""` (Go's `json.Unmarshal` on null into a value-typed string is a no-op leaving the zero value). Pre-A.1 service unconditionally wrote that `""` → silently cleared.
+Post-A.1 wire shape: `Description *string` decoding `{"description": null}` → field becomes `nil` → service preserves.
+Post-A.1 wire shape: `Description *string` decoding `{"description": ""}` → field becomes `&""` → service applies → cleared.
+
+The `null` JSON path semantics shifted from "clobber to empty" to "preserve." Per worklog §"Unknowns" + REVISION_BRIEF §6 (pre-MVP no-tolerance scope), this is acceptable. No production client documented to depend on null-clobber. **REFUTED at acceptance level.**
+
+**Attack 5 — Defensive nil-check robustness on zero-value `UpdateActionItemInput{}`.**
+Trace for `UpdateActionItemInput{ActionItemID: "x"}` (everything else nil):
+- Service GetActionItem succeeds, GuardScopes resolved, mutation guard passes.
+- `title := actionItem.Title` (preserved); same for description, priority, dueAt, labels.
+- **`actionItem.UpdateDetails(...)` is called UNCONDITIONALLY** (line 1290) — even when all five input pointers are nil. Inside UpdateDetails: trim is no-op, normalizeDueAt round-trips (wraps in fresh `&ts` pointer with `Truncate(time.Second)`), normalizeLabels re-sorts/dedupéd. **`t.UpdatedAt = now.UTC()` is bumped unconditionally.**
+- Then `s.repo.UpdateActionItem(ctx, actionItem)` writes the (effectively unchanged) item back to storage; `enqueueActionItemEmbedding` re-enqueues; `publishActionItemChanged` fires.
+
+So a "fully-nil PATCH" is a no-op semantically but bumps `UpdatedAt` and triggers a spurious embedding re-enqueue + a publish event. Pre-A.1 behavior: same call would have FAILED with `ErrInvalidTitle` because title=`""` was unconditionally overwritten. So post-A.1 quietly succeeds where pre-A.1 rejected. **Per spec acceptance #1 (nil = preserve, no-op),** the new behavior is correct in semantics but produces observable side effects (UpdatedAt bump + embedding churn + publish event). Pre-A.1 callers that relied on the rejection are now silently no-op'd.
+
+**REFUTED at acceptance level** (semantics match spec). Flagged as Finding F2 below for orchestrator triage — this is the kind of background side-effect drift that bites in dispatcher loops or auto-refresh paths.
+
+**Attack 6 — TUI metadata-only update collapse correctness.**
+Three sites verified:
+- `model.go:8059` (`updateActionItemMetadataCmd`) — `Metadata: &metadata` only; T/D/P/DA/L all nil. Correct preserve semantics. Pre-A.1 this site presumably did the round-trip-current-values dance; the collapse is clean.
+- `model.go:8604` (resource-attached path) — `Metadata: &meta` only; T/D/P/DA/L all nil. Correct.
+- `model.go:11647` (labels-only path) — `Labels: &labelsCopy, Metadata: &actionItem.Metadata`; rest nil. Correct (labels get applied; metadata is a side-effect snapshot).
+
+The only behavioral concern: `model.go:11647` passes `Metadata: &actionItem.Metadata` which is a pointer to the IN-MEMORY pre-update metadata. If something else mutates `actionItem.Metadata` between this call site's pointer-take and the service consuming it, there's a TOCTOU. But the call closure is short and there's no concurrent mutation in the path. **REFUTED.**
+
+**Attack 7 — `buildCurrentEditActionItemInput` and `parseActionItemEditInput` blank-field semantics.**
+- `buildCurrentEditActionItemInput` (`model.go:6064-6128`): blank description in form → `vals["description"] == ""` → `descVal == ""` → `Description: &descVal` → service receives `&""` → **explicit clear**. Title falls back to existing on blank (line 6080-6083), so blank title in form preserves (post-fallback `titleVal = actionItem.Title` non-empty); cannot exercise title-empty-reject path from this entry.
+- `parseActionItemEditInput` (`model.go:19794-19863`): blank description in pipe-form → `parts[1] == ""` → `description = current.Description` (line 19813-15) → `descVal = current.Description` → `Description: &descVal` → service receives a non-nil pointer to existing description → **explicit re-set with same value (no observable change, but UpdatedAt bumps).**
+
+The two TUI paths produce DIFFERENT semantics for "blank description in form": `buildCurrentEditActionItemInput` clears, `parseActionItemEditInput` re-sets to current. This asymmetry **predates A.1** (pre-A.1: `buildCurrentEditActionItemInput` would have written `Description=""` on blank, clearing; `parseActionItemEditInput` would have written `Description=current.Description`, preserving). Post-A.1 the asymmetry is preserved with the same observable outcome. **Not a regression; flagged as Finding F3 (pre-existing TUI inconsistency, out of A.1 scope).**
+
+**Attack 8 — Concurrent A.1 / F.2.1 / E.1 / D.1 file-touches.**
+`git log --oneline -- internal/app/service.go` last 10 commits — no overlap with sibling-droplet activity (latest is 9036422 "feat(app): publish action item changed on restore rename archive reparent and import" pre-dating the 4c.5 wave). A.1's diff is uncommitted across 16 files; no sibling droplet touches A.1's primary path set. D.1's `go.mod` work and A.1's `service.go` work both showed up in the same dirty workspace per worklog's stash-maneuver. **REFUTED:** clean droplet-boundary, no accidental sibling-droplet adoption.
+
+**Attack 9 — `traceFormControlCharacterGuardPtr` nil-safety.**
+Reading `internal/tui/trace.go:233-244`:
+```go
+func (m Model) traceFormControlCharacterGuardPtr(entity, operation, field string, value *string) {
+    if value == nil {
+        return
+    }
+    m.traceFormControlCharacterGuard(entity, operation, field, *value)
+}
+```
+Behavior:
+- `value == nil` → no log (preserve case — caller didn't supply the field; nothing to validate).
+- `value = &""` → calls value-typed guard with `""` → `containsControlRunes("")` returns 0 → no log (no control chars; expected pre-A.1 behavior).
+- `value = &"text\x00"` → calls value-typed guard with control chars → logs as expected.
+
+There is no security regression: empty-string inputs that lack control characters skip logging (correct — there's nothing to flag). The pre-A.1 value-typed guard would also have skipped on `""`. **REFUTED.**
+
+**Attack 10 — MCP tool description string still says title required.**
+Reading `internal/adapters/server/mcpapi/extended_tools.go:1437`:
+```go
+mcp.WithString("title", mcp.Description("Title. Required for operation=create|update")),
+```
+And lines 1452-1455 (`description`, `priority`, `due_at`, `labels`): none document the new pointer-sentinel "omit to preserve, send empty to clear" semantics. Compare to `owner` (line 1443), `drop_number` (1444), `persistent` (1445), `dev_gated` (1446), `paths` (1447), `packages` (1448), `files` (1449), `start_commit` (1450), `end_commit` (1451), `role` (1441), `structural_type` (1442) — all of which DO document update-time semantics.
+
+**Per spec falsification mitigation #1 (THEME_A_PLAN.md line 88):**
+> "Mitigation: A.1 builder MUST update the MCP tool description string (`mcp.WithString("description", ...)`) to document 'omit to preserve, send empty string to explicitly clear'."
+
+Builder explicitly deferred this in worklog §"Unknowns routed back to orchestrator" (lines 368-370) to "D.2 hint sweep, A.2's wire-audit, or a small standalone docs-only droplet." **CONFIRMED counterexample:** the spec made the description-string update a MUST-DO inside A.1, not a deferral. The acceptance criteria #1-7 don't explicitly require docstring updates, but the falsification mitigation does — and mitigations are part of the build contract, not advisory.
+
+### Counterexamples (CONFIRMED)
+
+**C1 — MCP tool description string regressions on `title|description|priority|due_at|labels`.**
+File: `internal/adapters/server/mcpapi/extended_tools.go`
+- Line 1437: `Title. Required for operation=create|update` — **wrong post-A.1**: title is now optional on update (preserved when omitted; explicit empty rejects). Should read e.g. `Title. Required for operation=create. On operation=update: omit to preserve, send empty string to surface ErrInvalidTitle.`
+- Line 1452: `Action-item details in markdown-rich text` — **incomplete post-A.1**: should add `On operation=update: omit to preserve the existing value; send empty string to clear.`
+- Line 1453: `low|medium|high` — **incomplete**: should add `On operation=update: omit to preserve the existing value; non-empty applies (empty rejects with ErrInvalidPriority).`
+- Line 1454: `Optional RFC3339 timestamp` — **incomplete**: should add `On operation=update: omit to preserve the existing value; send empty string to clear; non-empty must parse as RFC3339.`
+- Line 1455: `Optional labels` — **incomplete**: should add `On operation=update: omit to preserve the existing slice; send any array (including empty) to replace.`
+
+**Reproduction:** any MCP client reading the tool schema sees the pre-A.1 contract; any agent following the schema-as-source-of-truth will pass title on every update (per the "Required" annotation), defeating the partial-update pattern A.1 ships.
+
+**Recommended fix:** orchestrator dispatches a small follow-up builder targeted at this single file (~5 mcp.Description string edits) before A.1's PR merges. Alternatively, accept the deferral but explicitly route to D.2 hint sweep with a hard-blocker note (orchestrator's call). Pre-MVP scope means the wire docstring drift doesn't immediately break production, but it WILL mislead any agent reading the schema during dogfood.
+
+### Mitigated / REFUTED
+
+REFUTED on attacks 1, 2, 3, 4, 5 (acceptance level), 6, 7 (pre-existing, out of scope), 8, 9. Each backed by a code-citation trace. CONFIRMED only on attack 10.
+
+### Findings (Non-Blocking)
+
+**F1 — DueAt explicit-clear and explicit-set paths under-tested in `TestUpdateActionItemPartialPATCHSemantics`.**
+The 9-row table covers `due_at nil preserves` only. The other two states (outer non-nil pointing to nil = clear; outer non-nil pointing to non-nil = set) are exercised at the adapter layer (`app_service_adapter_mcp_actor_attribution_test.go:104`) and the existing `TestUpdateActionItem`, but the canonical PATCH-semantics test should cover all three states for symmetry with description (preserve / clear / set). Recommend adding two rows: `due_at empty pointer clears` and `due_at non-nil pointer sets`. Non-blocking — coverage gap, not a logic gap.
+
+**F2 — Empty-input no-op writes UpdatedAt + re-enqueues embedding + publishes event.**
+A `UpdateActionItemInput{ActionItemID: "x"}` (everything else nil) is now a successful no-op semantically, but bumps `UpdatedAt` and fires `enqueueActionItemEmbedding` + `publishActionItemChanged`. If any future caller idiomatically constructs such inputs (e.g. a "ping refresh" pattern), it will silently churn the embedding queue and broadcast spurious change events. Recommend either (a) early-return when all `in.{Title,Description,Priority,DueAt,Labels,Role,StructuralType,Owner,DropNumber,Persistent,DevGated,Paths,Packages,Files,StartCommit,EndCommit,Metadata}` are nil/empty, or (b) document the side-effect in `UpdateActionItemInput` doc-comment. Non-blocking pre-MVP.
+
+**F3 — Pre-existing TUI blank-description asymmetry between `buildCurrentEditActionItemInput` and `parseActionItemEditInput`.**
+Predates A.1; preserved by A.1; not in A.1 scope. Recommend logging as a Drop 4c.5 refinement for later TUI hardening.
+
+**F4 — `priority empty pointer` behavior is undocumented and untested.**
+Sending `{"priority":""}` post-A.1 → service receives `*Priority` pointing to `Priority("")` → `slices.Contains(validPriorities, "")` returns false → `ErrInvalidPriority`. Defensible (matches title's "empty rejects"), but neither the spec acceptance table nor the test table covers the case. Recommend adding a `priority empty pointer rejected` row to the test table; orchestrator's call whether it gates A.1 close.
+
+### Conclusion
+
+**Verdict: FAIL (one CONFIRMED counterexample C1).**
+
+The code shape, struct semantics, test migrations, and integration paths are correct and well-documented. PATCH semantics fire the correct three-way distinction for DueAt; nil-vs-empty-pointer cleanly distinguishes preserve from clear; transactional safety holds on title-rejection; TUI metadata-only collapses are clean; trace wrapper is nil-safe.
+
+The single blocker is the MCP tool description string drift on the 5 fields A.1 shipped pointer-sentinels for. This is the wire-contract layer agents read; leaving it pre-A.1 means the agent surface advertises one contract while the implementation honors another. The spec named this a MUST-DO mitigation (THEME_A_PLAN.md line 88), and the builder explicitly deferred it. The orchestrator can either:
+
+1. **Spawn a tiny follow-up builder** to make the 5 docstring edits (lowest cost; cleanest A.1 close).
+2. **Re-spawn A.1 builder for round 2** with a focused directive on the docstring updates (matches the "round" worklog pattern).
+3. **Accept the deferral to D.2** with an explicit blocker-noted attention item ensuring D.2 doesn't drop it.
+
+Recommend option 1 — the 5 edits are mechanical, low-risk, single-file, and close A.1 cleanly without bouncing a bigger spawn.
+
+### Hylla Feedback
+
+N/A — A.1 review touched only Go source files via direct Read/Grep, no Hylla queries attempted (per spawn-prompt directive: filesystem-MD coordination mode, NO Hylla calls). All evidence resolved via `Read` + `rg` (where Bash-grep allowed) + `mage testPkg ./internal/app`. Builder's worklog claim of `mage ci` 2715 pass corroborated by `mage testPkg ./internal/app` 397/397 PASS in QA reproduction.

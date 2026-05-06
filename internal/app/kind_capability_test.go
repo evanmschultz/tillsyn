@@ -901,9 +901,9 @@ func TestQALeaseActionPolicy(t *testing.T) {
 	}
 	if _, err := svc.UpdateActionItem(qaCtx, UpdateActionItemInput{
 		ActionItemID: actionItem.ID,
-		Title:        "ActionItem A QA",
-		Description:  "qa-edited",
-		Priority:     domain.PriorityMedium,
+		Title:        ptrTo("ActionItem A QA"),
+		Description:  ptrTo("qa-edited"),
+		Priority:     ptrTo(domain.PriorityMedium),
 		UpdatedBy:    "qa-1",
 		UpdatedType:  domain.ActorTypeAgent,
 	}); err != nil {

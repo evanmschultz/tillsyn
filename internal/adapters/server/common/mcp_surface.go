@@ -187,13 +187,35 @@ type CreateActionItemRequest struct {
 }
 
 // UpdateActionItemRequest stores transport input for actionItem updates.
+//
+// Drop 4c.5 droplet A.1: Title / Description / Priority / DueAt / Labels
+// switched to pointer-sentinel shape. nil = "field absent at the wire" =
+// preserve the stored value at the service layer; non-nil = "caller
+// explicitly supplied this field" = apply (empty dereferenced
+// string/slice clears, except Title where empty still rejects with
+// ErrInvalidTitle). Pre-A.1 these were value-typed and partial updates
+// silently clobbered un-supplied fields with the value-typed zero.
 type UpdateActionItemRequest struct {
 	ActionItemID string
-	Title        string
-	Description  string
-	Priority     string
-	DueAt        string
-	Labels       []string
+	// Title optionally updates the title. nil preserves; non-nil applies
+	// the trimmed dereferenced string. Empty dereferenced string surfaces
+	// ErrInvalidTitle via domain.UpdateDetails — title is required.
+	Title *string
+	// Description optionally updates the description. nil preserves;
+	// non-nil applies the trimmed dereferenced string (empty clears).
+	Description *string
+	// Priority optionally updates the priority. nil preserves; non-nil
+	// applies the lowercase-normalized enum. The wire form is the closed
+	// "low|medium|high" string set; the adapter passes the typed value
+	// into UpdateActionItemInput.Priority untouched after lowercasing.
+	Priority *string
+	// DueAt optionally updates the RFC3339 due-at timestamp. nil
+	// preserves; non-nil applies the parsed time.Time (empty dereferenced
+	// string clears DueAt; non-empty parses as RFC3339).
+	DueAt *string
+	// Labels optionally updates the labels slice. nil preserves; non-nil
+	// applies the dereferenced slice (empty clears all labels).
+	Labels *[]string
 	// Role optionally updates the closed-enum role value. Empty string
 	// preserves the existing value (no-op); a non-empty value must match
 	// the closed Role enum or the service returns ErrInvalidRole.

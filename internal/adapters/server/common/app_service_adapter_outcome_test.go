@@ -150,7 +150,7 @@ func TestUpdateActionItemRejectsInvalidOutcome(t *testing.T) {
 	// Updating with an invalid outcome should fail.
 	_, err = fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: actionItem.ID,
-		Title:        "ActionItem for outcome test",
+		Title:        ptrTo("ActionItem for outcome test"),
 		Metadata:     &domain.ActionItemMetadata{Outcome: "banana"},
 		Actor:        actor,
 	})
@@ -164,7 +164,7 @@ func TestUpdateActionItemRejectsInvalidOutcome(t *testing.T) {
 	// Updating with a valid outcome should succeed.
 	updated, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: actionItem.ID,
-		Title:        "ActionItem for outcome test",
+		Title:        ptrTo("ActionItem for outcome test"),
 		Metadata:     &domain.ActionItemMetadata{Outcome: "success"},
 		Actor:        actor,
 	})
@@ -178,7 +178,7 @@ func TestUpdateActionItemRejectsInvalidOutcome(t *testing.T) {
 	// Updating with nil metadata should succeed (no validation needed).
 	_, err = fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
 		ActionItemID: actionItem.ID,
-		Title:        "ActionItem for outcome test updated",
+		Title:        ptrTo("ActionItem for outcome test updated"),
 		Metadata:     nil,
 		Actor:        actor,
 	})

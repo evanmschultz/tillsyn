@@ -662,13 +662,50 @@ type CreateActionItemInput struct {
 }
 
 // UpdateActionItemInput holds input values for update actionItem operations.
+//
+// PATCH semantics (Drop 4c.5 droplet A.1): Title / Description / Priority /
+// DueAt / Labels each use pointer-sentinels — nil preserves the existing
+// stored value (no-op), non-nil applies the dereferenced value. An empty
+// dereferenced string / slice clears the stored field (caller's explicit
+// intent), with the sole exception of Title where empty still surfaces
+// ErrInvalidTitle (title is required by domain.UpdateDetails). Pre-A.1
+// behavior unconditionally wrote every field, so an agent issuing a
+// "description-only" partial update would silently clobber Title /
+// Priority / DueAt / Labels with their value-typed zero values; the
+// pointer-sentinel pattern (already used by Owner / DropNumber /
+// Persistent / DevGated / Paths / Packages / Files / StartCommit /
+// EndCommit) extends the same shape to the original five fields.
 type UpdateActionItemInput struct {
 	ActionItemID string
-	Title        string
-	Description  string
-	Priority     domain.Priority
-	DueAt        *time.Time
-	Labels       []string
+	// Title optionally updates the action-item Title. nil preserves the
+	// existing value (no-op); non-nil applies the dereferenced string after
+	// trim. An empty dereferenced string still triggers ErrInvalidTitle via
+	// domain.UpdateDetails — title is required.
+	Title *string
+	// Description optionally updates the action-item Description. nil
+	// preserves the existing value (no-op); non-nil applies the
+	// dereferenced string after trim. An empty dereferenced string clears
+	// the stored description (caller's explicit intent).
+	Description *string
+	// Priority optionally updates the action-item Priority. nil preserves
+	// the existing value (no-op); non-nil applies the dereferenced enum
+	// after lowercase normalization. Pointer-sentinel replaces the
+	// pre-A.1 empty-string defaulting block.
+	Priority *domain.Priority
+	// DueAt optionally updates the action-item DueAt. nil (outer pointer)
+	// preserves the existing value (no-op); non-nil applies the
+	// dereferenced *time.Time. A non-nil outer pointer holding a nil inner
+	// pointer (or zero time) clears DueAt (caller's explicit intent).
+	// Double-pointer is required because *time.Time itself doubles as a
+	// presence sentinel inside the domain entity, so the partial-update
+	// shape needs a second level of indirection to distinguish "missing
+	// from input" from "explicitly cleared".
+	DueAt **time.Time
+	// Labels optionally updates the action-item Labels. nil preserves the
+	// existing slice (no-op); non-nil applies the dereferenced slice. An
+	// empty dereferenced slice clears all labels (caller's explicit intent,
+	// mirroring Paths / Packages).
+	Labels *[]string
 	// Role optionally updates the action item's closed-enum role. Empty
 	// string preserves the existing value (no-op). A non-empty value must
 	// match the closed Role enum or the service returns ErrInvalidRole.
@@ -1223,11 +1260,34 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 		actionItem.UpdatedByType = actorType
 	}
 	applyMutationActorToActionItem(ctx, &actionItem)
-	priority := in.Priority
-	if strings.TrimSpace(string(priority)) == "" {
-		priority = actionItem.Priority
+	// Pointer-sentinel PATCH (Drop 4c.5 droplet A.1): each of Title /
+	// Description / Priority / DueAt / Labels resolves to "preserve the
+	// existing value" when its input pointer is nil, otherwise the
+	// dereferenced value flows into the canonical domain.UpdateDetails
+	// validator. Title's empty-string rejection still applies via
+	// UpdateDetails — pointer-sentinel preserves field-presence semantics
+	// and does not relax the title-required invariant.
+	title := actionItem.Title
+	if in.Title != nil {
+		title = *in.Title
 	}
-	if err := actionItem.UpdateDetails(in.Title, in.Description, priority, in.DueAt, in.Labels, s.clock()); err != nil {
+	description := actionItem.Description
+	if in.Description != nil {
+		description = *in.Description
+	}
+	priority := actionItem.Priority
+	if in.Priority != nil {
+		priority = *in.Priority
+	}
+	dueAt := actionItem.DueAt
+	if in.DueAt != nil {
+		dueAt = *in.DueAt
+	}
+	labels := actionItem.Labels
+	if in.Labels != nil {
+		labels = *in.Labels
+	}
+	if err := actionItem.UpdateDetails(title, description, priority, dueAt, labels, s.clock()); err != nil {
 		return domain.ActionItem{}, err
 	}
 	// Role update: empty input preserves the existing role (no-op). A

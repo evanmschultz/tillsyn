@@ -735,28 +735,37 @@ func registerActionItemTools(
 		handleActionItemOperation := func(ctx context.Context, req mcp.CallToolRequest, toolLabel string, fixedOperation string) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args struct {
-				Operation       string                     `json:"operation"`
-				ProjectID       string                     `json:"project_id"`
-				ParentID        string                     `json:"parent_id"`
-				Kind            string                     `json:"kind"`
-				Scope           string                     `json:"scope"`
-				Role            string                     `json:"role"`
-				StructuralType  string                     `json:"structural_type"`
-				Owner           *string                    `json:"owner"`
-				DropNumber      *int                       `json:"drop_number"`
-				Persistent      *bool                      `json:"persistent"`
-				DevGated        *bool                      `json:"dev_gated"`
-				Paths           *[]string                  `json:"paths"`
-				Packages        *[]string                  `json:"packages"`
-				Files           *[]string                  `json:"files"`
-				StartCommit     *string                    `json:"start_commit"`
-				EndCommit       *string                    `json:"end_commit"`
-				ColumnID        string                     `json:"column_id"`
-				Title           string                     `json:"title"`
-				Description     string                     `json:"description"`
-				Priority        string                     `json:"priority"`
-				DueAt           string                     `json:"due_at"`
-				Labels          []string                   `json:"labels"`
+				Operation      string    `json:"operation"`
+				ProjectID      string    `json:"project_id"`
+				ParentID       string    `json:"parent_id"`
+				Kind           string    `json:"kind"`
+				Scope          string    `json:"scope"`
+				Role           string    `json:"role"`
+				StructuralType string    `json:"structural_type"`
+				Owner          *string   `json:"owner"`
+				DropNumber     *int      `json:"drop_number"`
+				Persistent     *bool     `json:"persistent"`
+				DevGated       *bool     `json:"dev_gated"`
+				Paths          *[]string `json:"paths"`
+				Packages       *[]string `json:"packages"`
+				Files          *[]string `json:"files"`
+				StartCommit    *string   `json:"start_commit"`
+				EndCommit      *string   `json:"end_commit"`
+				ColumnID       string    `json:"column_id"`
+				// Drop 4c.5 droplet A.1: Title / Description / Priority /
+				// DueAt / Labels switched to pointer-sentinel shape so the
+				// MCP boundary distinguishes "JSON key absent" (nil) from
+				// "JSON key present, empty string" (non-nil pointer to ""):
+				// preserve vs explicit-clear semantics on update. Create
+				// path dereferences with nil-handling at field-use sites.
+				// Wire-shape coordinated with A.2 strict-decoder; absent
+				// keys remain valid (DisallowUnknownFields rejects unknown
+				// keys, not absent known keys).
+				Title           *string                    `json:"title"`
+				Description     *string                    `json:"description"`
+				Priority        *string                    `json:"priority"`
+				DueAt           *string                    `json:"due_at"`
+				Labels          *[]string                  `json:"labels"`
 				Metadata        *domain.ActionItemMetadata `json:"metadata"`
 				ActionItemID    string                     `json:"action_item_id"`
 				ToColumnID      string                     `json:"to_column_id"`
@@ -890,8 +899,16 @@ func registerActionItemTools(
 					// silent precedence bugs can't leak through.
 					return mcp.NewToolResultError(`invalid_request: specify exactly one of "column_id" or "state", not both`), nil
 				}
-				title := strings.TrimSpace(args.Title)
-				if title == "" {
+				// Drop 4c.5 droplet A.1: Title / Description / Priority /
+				// DueAt / Labels are pointer-sentinels at the wire. Create
+				// dereferences with nil-handling — absent → empty value at
+				// the request layer. Title's required-on-create check
+				// works identically: nil → empty trim → reject.
+				var titleValue string
+				if args.Title != nil {
+					titleValue = strings.TrimSpace(*args.Title)
+				}
+				if titleValue == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "title" not found`), nil
 				}
 				caller, err := authorizeMCPMutation(
@@ -928,6 +945,26 @@ func registerActionItemTools(
 				if args.Metadata != nil {
 					metadata = *args.Metadata
 				}
+				// Drop 4c.5 droplet A.1: dereference create-path pointer-
+				// sentinels with nil-handling — nil collapses to the
+				// value-typed zero (empty string / empty slice) which
+				// CreateActionItem accepts as the create-time default.
+				var descriptionValue string
+				if args.Description != nil {
+					descriptionValue = *args.Description
+				}
+				var priorityValue string
+				if args.Priority != nil {
+					priorityValue = *args.Priority
+				}
+				var dueAtValue string
+				if args.DueAt != nil {
+					dueAtValue = *args.DueAt
+				}
+				var labelsValue []string
+				if args.Labels != nil {
+					labelsValue = append([]string(nil), (*args.Labels)...)
+				}
 				createReq := common.CreateActionItemRequest{
 					ProjectID:      args.ProjectID,
 					ParentID:       args.ParentID,
@@ -942,11 +979,11 @@ func registerActionItemTools(
 					// both-empty rejects are enforced one layer up at the
 					// handler boundary.
 					State:       args.State,
-					Title:       args.Title,
-					Description: args.Description,
-					Priority:    args.Priority,
-					DueAt:       args.DueAt,
-					Labels:      append([]string(nil), args.Labels...),
+					Title:       titleValue,
+					Description: descriptionValue,
+					Priority:    priorityValue,
+					DueAt:       dueAtValue,
+					Labels:      labelsValue,
 					Metadata:    metadata,
 					Actor:       actor,
 				}
@@ -1025,10 +1062,13 @@ func registerActionItemTools(
 				if err := rejectMutationDottedActionItemID(actionItemID); err != nil {
 					return toolResultFromError(err), nil
 				}
-				title := strings.TrimSpace(args.Title)
-				if title == "" {
-					return mcp.NewToolResultError(`invalid_request: required argument "title" not found`), nil
-				}
+				// Drop 4c.5 droplet A.1: pointer-sentinel PATCH semantics —
+				// title is now optional on update (nil = preserve). An
+				// explicit empty-string title (non-nil pointer to "") still
+				// surfaces ErrInvalidTitle at the service layer via
+				// domain.UpdateDetails. The pre-A.1 handler-level title-
+				// required check is removed so partial updates that omit
+				// title don't reject at the boundary.
 				caller, err := authorizeMCPMutation(
 					ctx,
 					pickMutationAuthorizer(tasks),
@@ -1053,13 +1093,21 @@ func registerActionItemTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
+				// Drop 4c.5 droplet A.1: Labels is *[]string at the wire;
+				// copy through verbatim. nil at the wire = preserve at the
+				// service; non-nil = apply the (defensively-copied) slice.
+				var labelsArg *[]string
+				if args.Labels != nil {
+					copied := append([]string(nil), (*args.Labels)...)
+					labelsArg = &copied
+				}
 				actionItem, err := tasks.UpdateActionItem(ctx, common.UpdateActionItemRequest{
 					ActionItemID:   args.ActionItemID,
 					Title:          args.Title,
 					Description:    args.Description,
 					Priority:       args.Priority,
 					DueAt:          args.DueAt,
-					Labels:         append([]string(nil), args.Labels...),
+					Labels:         labelsArg,
 					Role:           args.Role,
 					StructuralType: args.StructuralType,
 					// Pointer-sentinels pass through verbatim — nil preserves
@@ -1386,7 +1434,7 @@ func registerActionItemTools(
 				mcp.WithString("to_column_id", mcp.Description("Destination column identifier for operation=move. Optional when state is supplied — supply exactly one of to_column_id or state, not both. Legacy; prefer state for new agent code.")),
 				mcp.WithNumber("position", mcp.Description("Destination position. Required for operation=move")),
 				mcp.WithString("state", mcp.Description("Lifecycle state — todo|in_progress|complete|failed. Required for operation=move_state. Optional substitute for column_id on operation=create and for to_column_id on operation=move — supply exactly one of column_id/to_column_id or state, not both. The adapter resolves state to the destination column server-side, letting agents address columns by lifecycle vocabulary instead of resolving column_id themselves.")),
-				mcp.WithString("title", mcp.Description("Title. Required for operation=create|update")),
+				mcp.WithString("title", mcp.Description("Title. Required for operation=create. On operation=update, omit to preserve the existing title; sending an empty string is rejected (ErrInvalidTitle — title invariant).")),
 				mcp.WithString("parent_id", mcp.Description("Optional parent action-item id for operation=create, new parent id for operation=reparent, or child root for operation=list")),
 				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),
 				mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
@@ -1401,10 +1449,10 @@ func registerActionItemTools(
 				mcp.WithArray("files", mcp.Description("Optional Files string-array for operation=create|update — declares reference-material file paths the agent should read (forward-slash, repo-root-relative). Distinct from Paths, which declares write-scope / lock domain. Empty array on create = no reference files attached. On update, omit to preserve the existing slice; supplying any array (including empty) replaces the declared files. Domain trims + dedupes; whitespace-only / backslash-bearing entries reject with invalid_request. Disjoint-axis with Paths — Files (read attention) and Paths (write intent) may legitimately overlap (e.g. read-then-edit workflows), so no cross-axis coverage check applies. Path-exists is NOT enforced at the domain layer — the canonical consumer is the Drop 4.5 TUI file-viewer pane, which validates existence at view time. Domain primitive — Drop 4a L3 / WAVE_1_PLAN.md §1.3."), mcp.WithStringItems()),
 				mcp.WithString("start_commit", mcp.Description("Optional StartCommit free-form string for operation=create|update — records the git commit hash captured at the moment work begins on this action item, typically the current `git rev-parse HEAD` of the bare-root or active worktree at in_progress transition time. Empty string is the meaningful zero value (\"not yet captured\"). On update, omit to preserve the existing value; supplying any string (including empty) replaces it. Domain trims surrounding whitespace; no format check applies — short-SHAs (7-char), full-SHAs (40-char), and any caller-supplied identifier all round-trip. Opaque-domain field: the domain layer holds the value opaquely and never calls git itself — the caller (orchestrator pre-cascade; Wave 2 dispatcher; Drop 4b commit-agent) supplies it. Domain primitive — Drop 4a L3 / WAVE_1_PLAN.md §1.4. Drop 4b commit-agent consumes this for diff context (`git diff <start_commit>..<end_commit>` baseline).")),
 				mcp.WithString("end_commit", mcp.Description("Optional EndCommit free-form string for operation=create|update — records the git commit hash captured at the moment work completes on this action item, typically the current `git rev-parse HEAD` of the bare-root or active worktree captured just before the terminal state transition (caller populates via update BEFORE move_state). Empty string is the meaningful zero value (\"not yet captured\") and is valid until terminal state — domain does NOT enforce non-empty-on-terminal (Drop 4b dispatcher concern). On update, omit to preserve the existing value; supplying any string (including empty) replaces it. Domain trims surrounding whitespace; no format check applies — short-SHAs (7-char), full-SHAs (40-char), and any caller-supplied identifier all round-trip. Opaque-domain field: the domain layer holds the value opaquely and never calls git itself — the caller (orchestrator pre-cascade; Wave 2 dispatcher; Drop 4b commit-agent) supplies it. No chronology check against StartCommit. Domain primitive — Drop 4a L3 / WAVE_1_PLAN.md §1.5. Drop 4b commit-agent consumes this for diff context (`git diff <start_commit>..<end_commit>` baseline).")),
-				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text")),
-				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
-				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
-				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
+				mcp.WithString("description", mcp.Description("Action-item details in markdown-rich text. On operation=update, omit to preserve the existing value; send an empty string to explicitly clear it.")),
+				mcp.WithString("priority", mcp.Description("low|medium|high. On operation=update, omit to preserve the existing value; sending an empty string rejects with ErrInvalidPriority (priority must be one of the closed enum values)."), mcp.Enum("low", "medium", "high")),
+				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp. On operation=update, omit to preserve the existing value; send an empty string to explicitly clear it; non-empty values must parse as RFC3339.")),
+				mcp.WithArray("labels", mcp.Description("Optional labels. On operation=update, omit to preserve the existing slice; supplying any array (including the empty array) replaces the stored labels."), mcp.WithStringItems()),
 				mcp.WithObject("metadata", mcp.Description("Optional action-item metadata object")),
 				mcp.WithBoolean("include_archived", mcp.Description("Include archived action-items for operation=list|search")),
 				mcp.WithString("query", mcp.Description("Search query for operation=search")),
@@ -1477,11 +1525,11 @@ func registerActionItemTools(
 					"till.update_task",
 					mcp.WithDescription("Update one actionItem/work-item (legacy alias for till.action_item operation=update)."),
 					mcp.WithString("action_item_id", mcp.Required(), mcp.Description("ActionItem identifier")),
-					mcp.WithString("title", mcp.Required(), mcp.Description("ActionItem title")),
-					mcp.WithString("description", mcp.Description("ActionItem details in markdown-rich text")),
-					mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
-					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
-					mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
+					mcp.WithString("title", mcp.Required(), mcp.Description("ActionItem title. On operation=update, omit to preserve the existing title; sending an empty string is rejected (ErrInvalidTitle — title invariant).")),
+					mcp.WithString("description", mcp.Description("ActionItem details in markdown-rich text. On operation=update, omit to preserve the existing value; send an empty string to explicitly clear it.")),
+					mcp.WithString("priority", mcp.Description("low|medium|high. On operation=update, omit to preserve the existing value; sending an empty string rejects with ErrInvalidPriority (priority must be one of the closed enum values)."), mcp.Enum("low", "medium", "high")),
+					mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp. On operation=update, omit to preserve the existing value; send an empty string to explicitly clear it; non-empty values must parse as RFC3339.")),
+					mcp.WithArray("labels", mcp.Description("Optional labels. On operation=update, omit to preserve the existing slice; supplying any array (including the empty array) replaces the stored labels."), mcp.WithStringItems()),
 					mcp.WithString("role", mcp.Description("Optional role tag — closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research. Empty preserves prior value.")),
 					mcp.WithString("structural_type", mcp.Description("Optional structural-type update — closed enum: drop|segment|confluence|droplet (waterfall metaphor — see WIKI.md §Cascade Vocabulary). Empty preserves prior value."), mcp.Enum("drop", "segment", "confluence", "droplet")),
 					mcp.WithObject("metadata", mcp.Description("Optional actionItem metadata object")),
