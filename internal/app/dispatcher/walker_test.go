@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
@@ -13,8 +14,14 @@ import (
 // Tests construct one with pre-baked columns + items + an optional
 // move-result error to exercise EligibleForPromotion and Promote without
 // standing up a full *app.Service graph.
+//
+// columnsErr (when non-nil) is returned from ListColumns instead of the
+// configured columns — the dispatcher's Promote path lists columns to
+// resolve the in_progress column ID, so this seam exercises the error
+// propagation contract documented on Promote.
 type stubWalkerService struct {
 	columns        []domain.Column
+	columnsErr     error
 	items          []domain.ActionItem
 	moveResult     domain.ActionItem
 	moveErr        error
@@ -26,8 +33,13 @@ type stubWalkerService struct {
 
 // ListColumns returns the configured columns; includeArchived is ignored
 // because tests pass canonical state-named columns and do not exercise
-// archive filtering.
+// archive filtering. When columnsErr is non-nil, ListColumns returns nil
+// columns + the configured error so tests can pin Promote's error
+// propagation contract.
 func (s *stubWalkerService) ListColumns(_ context.Context, _ string, _ bool) ([]domain.Column, error) {
+	if s.columnsErr != nil {
+		return nil, s.columnsErr
+	}
 	return s.columns, nil
 }
 
@@ -209,6 +221,62 @@ func TestWalkerSkipsTodoItemWhoseParentIsTodo(t *testing.T) {
 	for _, it := range got {
 		if it.ID == "candidate-1" {
 			t.Fatalf("EligibleForPromotion() included candidate-1 with todo parent: %#v", got)
+		}
+	}
+}
+
+// TestWalkerTreatsArchivedParentAsNotEligible asserts the parent-state gate's
+// defense-in-depth contract for archived parents. Production code calls
+// ListActionItems with includeArchived=false, so an archived parent should
+// not normally surface — but the predicate still needs to reject the child
+// if a stale or test-injected fixture surfaces one. The stub's
+// ListActionItems ignores includeArchived (returns whatever is configured),
+// so this test pins the predicate's behavior independently of the upstream
+// includeArchived filter: a child whose parent has a non-nil ArchivedAt is
+// NOT eligible. If the predicate were silently relying on the upstream
+// filter alone, this test would be the regression-catcher for that drift.
+//
+// Today the predicate at isEligible (walker.go) does not explicitly check
+// ArchivedAt — it gates on parent.LifecycleState == StateInProgress (or
+// parent.Persistent==true). The fixture below pins the parent's
+// LifecycleState to StateTodo (the canonical post-archive state) so the
+// existing parent-state gate filters the child out; the assertion is on
+// the observable outcome (child not promoted) rather than on the internal
+// gate path that produced it. If a future refactor adds an explicit
+// ArchivedAt check (for example, to reject children of archived persistent
+// parents whose LifecycleState happens to be StateInProgress), this test
+// continues to pass because both gates produce the same result for this
+// fixture.
+func TestWalkerTreatsArchivedParentAsNotEligible(t *testing.T) {
+	t.Parallel()
+
+	archivedAt := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	items := []domain.ActionItem{
+		{
+			ID:             "parent-1",
+			ProjectID:      "proj-1",
+			LifecycleState: domain.StateTodo,
+			ColumnID:       "col-todo",
+			ArchivedAt:     &archivedAt,
+		},
+		{
+			ID:             "candidate-1",
+			ProjectID:      "proj-1",
+			ParentID:       "parent-1",
+			LifecycleState: domain.StateTodo,
+			ColumnID:       "col-todo",
+		},
+	}
+	svc := &stubWalkerService{columns: canonicalColumns(), items: items}
+	w := newTreeWalker(svc)
+
+	got, err := w.EligibleForPromotion(context.Background(), "proj-1")
+	if err != nil {
+		t.Fatalf("EligibleForPromotion() error = %v, want nil", err)
+	}
+	for _, it := range got {
+		if it.ID == "candidate-1" {
+			t.Fatalf("EligibleForPromotion() included candidate-1 with archived parent: %#v", got)
 		}
 	}
 }
@@ -459,6 +527,43 @@ func TestWalkerPromoteRejectsMissingInProgressColumn(t *testing.T) {
 	}
 	if svc.moveCalls != 0 {
 		t.Fatalf("svc.moveCalls = %d, want 0 (no MoveActionItem when column unresolved)", svc.moveCalls)
+	}
+}
+
+// TestWalkerListColumnsErrorPropagates asserts that an infrastructure
+// failure from ListColumns inside Promote surfaces as a wrapped error
+// (preserving errors.Is on the underlying sentinel) rather than being
+// silently dropped or rewritten as ErrPromotionBlocked. The walker's
+// ErrPromotionBlocked sentinel is reserved for service-layer transition
+// blockers; ListColumns failures are infrastructure failures and the
+// conflict detector treats them as non-recoverable.
+func TestWalkerListColumnsErrorPropagates(t *testing.T) {
+	t.Parallel()
+
+	infraErr := errors.New("simulated infra failure")
+	item := domain.ActionItem{
+		ID:             "candidate-1",
+		ProjectID:      "proj-1",
+		LifecycleState: domain.StateTodo,
+	}
+	svc := &stubWalkerService{
+		columnsErr: infraErr,
+		items:      []domain.ActionItem{item},
+	}
+	w := newTreeWalker(svc)
+
+	_, err := w.Promote(context.Background(), item)
+	if err == nil {
+		t.Fatalf("Promote() error = nil, want %v", infraErr)
+	}
+	if !errors.Is(err, infraErr) {
+		t.Fatalf("Promote() error = %v, want errors.Is(%v) (ListColumns failure must preserve the sentinel)", err, infraErr)
+	}
+	if errors.Is(err, ErrPromotionBlocked) {
+		t.Fatalf("Promote() wrapped ErrPromotionBlocked for ListColumns failure: %v (sentinel is reserved for service-layer transition blocks)", err)
+	}
+	if svc.moveCalls != 0 {
+		t.Fatalf("svc.moveCalls = %d, want 0 (no MoveActionItem when ListColumns fails)", svc.moveCalls)
 	}
 }
 

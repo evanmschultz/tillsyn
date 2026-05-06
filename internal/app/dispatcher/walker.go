@@ -47,10 +47,16 @@ import (
 //  1. The action item's LifecycleState is StateTodo. Items already
 //     in_progress / complete / failed / archived are filtered out.
 //  2. Every entry in actionItem.Metadata.BlockedBy resolves to an action
-//     item in StateComplete. Missing references (deleted siblings, typos)
-//     are treated as not-clear and skip the item — this is conservative on
-//     purpose: the planner sets BlockedBy and a missing target is a
-//     planner-side bug, not a walker-side override.
+//     item in StateComplete. Both failure modes — a missing reference
+//     (deleted sibling, typo, blocker outside the project listing) AND a
+//     reference resolved to a non-StateComplete blocker (StateTodo /
+//     StateInProgress / StateFailed / StateArchived) — are treated as
+//     "not-clear" and skip the item. This is conservative-by-design: the
+//     planner owns BlockedBy and a missing target is a planner-side bug; a
+//     planner-side bug should surface as a stalled-but-untouched item, not
+//     a wrongly-promoted one. The walker is not the place to override
+//     planner intent — call sites that need to bypass a stalled blocker
+//     reach for the supersede / archive paths instead.
 //  3. Children-complete is NOT required for promotion to in_progress. The
 //     children-complete invariant is enforced by Service.MoveActionItem
 //     when the destination state is complete (see

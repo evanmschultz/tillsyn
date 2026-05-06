@@ -176,6 +176,8 @@
 
 ### E.2 — Tree walker test rigor: archived-parent + ListColumns error path + blocker-state doc
 
+**State:** done
+
 **Source:** memory R5 (Drop 4a 4a.18 R1/R2/R3).
 
 **Files:**

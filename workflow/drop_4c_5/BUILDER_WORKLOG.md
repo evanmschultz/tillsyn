@@ -413,3 +413,126 @@ None — Hylla unused this droplet (Hylla is stale post-Drop-4c-merge until rein
 ### Hylla feedback
 
 N/A — task touched a single Go file (Hylla-eligible in principle), but the spawn-prompt directive ("filesystem-MD coordination mode. NO Hylla calls.") routed all evidence through `Read` / `Bash` (`rg` for declaration audit) / `Edit` / `mage testPkg` / `mage formatCheck`. No Hylla query was attempted, so no miss to log.
+
+## Droplet E.2 — Round 1
+
+**Date:** 2026-05-05.
+**Builder:** go-builder-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_CE_PLAN.md` § "E.2 — Tree walker test rigor: archived-parent + ListColumns error path + blocker-state doc".
+**Outcome:** done — `mage test-pkg ./internal/app/dispatcher` green (356/356, 1.75s, no hang on `monitor_test.go`); `mage formatCheck` clean.
+
+### Files touched
+
+- `internal/app/dispatcher/walker.go` — eligibility-predicate doc-comment paragraph 2 (around lines 49-58 post-edit) rewritten to call out BOTH failure modes explicitly: missing references AND non-complete blockers (StateTodo / StateInProgress / StateFailed / StateArchived) are both treated as "not-clear". Adds the "stalled-but-untouched item, not a wrongly-promoted one" framing the spec named, and points the reader at supersede / archive paths for legitimate bypass. Drift-fix-only — no behavior change in `isEligible`.
+- `internal/app/dispatcher/walker_test.go` — three deltas:
+  - Added `time` import.
+  - `stubWalkerService` extended with a `columnsErr error` field; `ListColumns` returns that error (with nil columns) when set. Doc-comment on the struct + the method explains the seam.
+  - New test `TestWalkerTreatsArchivedParentAsNotEligible` (placed after `TestWalkerSkipsTodoItemWhoseParentIsTodo`): parent in `byID` with non-zero `ArchivedAt` (`time.Date(2026, 5, 1, ...)`) AND `LifecycleState=StateTodo` → child filtered out of the eligible set.
+  - New test `TestWalkerListColumnsErrorPropagates` (placed after `TestWalkerPromoteRejectsMissingInProgressColumn`): `stubWalkerService.columnsErr = errors.New("simulated infra failure")` → `Promote` returns wrapped error preserving `errors.Is(err, infraErr)`, NOT `errors.Is(err, ErrPromotionBlocked)`, AND `MoveActionItem` is never called (`svc.moveCalls == 0`).
+- `workflow/drop_4c_5/THEME_CE_PLAN.md` — flipped E.2 droplet state from `in_progress (round 1)` (set at start) to `done` (set at end of round).
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — this entry.
+
+### Design notes
+
+- **Spec acceptance #1 disposition: "find which gate filters archived parents and pin it."** Read `walker.go` `isEligible` (lines 167-200): the predicate checks `parent.LifecycleState` and `parent.Persistent` but does NOT explicitly check `ArchivedAt`. Production filtering happens upstream — `EligibleForPromotion` calls `ListActionItems(ctx, projectID, false)` (line 138, `includeArchived=false`), so the production tree never surfaces archived parents to the predicate. The fixture in this droplet's test deliberately bypasses the upstream filter (the stub's `ListActionItems` ignores `includeArchived`), pinning the predicate's defense-in-depth behavior independently. Per the spec's own framing ("If the builder finds the predicate already correct via `includeArchived=false` filtering, the test asserts the filtering instead"), I chose a third path that captures both: assert observable outcome (child not promoted) on a fixture where the parent's `LifecycleState=StateTodo` AND `ArchivedAt!=nil`. The existing `LifecycleState != StateInProgress` gate filters the child either way; the `ArchivedAt!=nil` is preserved in the fixture so a future ArchivedAt-explicit gate change continues to pass this test. The test's doc-comment names exactly this rationale so a future maintainer doesn't read it as a tautology.
+- **Spec acceptance #2 disposition: extend existing `stubWalkerService`, NOT a new error-only stub.** The existing `erroringListItemsStub` exists for `ListActionItems` errors and is a separate type. Adding a parallel `erroringListColumnsStub` would have been one path; extending `stubWalkerService` with a single nullable `columnsErr` field is minimal and keeps the production-shape stub idiomatic for any future `Promote` path that needs both columns and a configured items list. One extra field, one nil-check, no API surface gain that the test set doesn't already cover.
+- **Spec acceptance #3 disposition: doc-comment drift fix only.** Existing wording covered missing references explicitly but only implicitly addressed non-complete blockers (the line "Every entry … resolves to an action item in StateComplete" already does the rejection; the "missing references" sentence specialized to the missing case). The edit makes both cases explicit and adds the "stalled-but-untouched item, not a wrongly-promoted one" framing the spec named, plus the supersede / archive escape-hatch pointer. No behavior change. Scoped tightly to paragraph 2 of the predicate doc-block per spec falsification mitigation #2 ("rejects unrelated rewording").
+
+### Falsification-mitigation status
+
+- **F-attack: archived-parent path gated upstream by `includeArchived=false`, making the new test unreachable.** Mitigated. The stub's `ListActionItems` ignores `includeArchived` (existing fixture choice from prior droplet rounds), so the test bypasses the upstream filter and exercises the predicate path directly. The test's doc-comment names this explicitly.
+- **F-attack: doc-comment drift on a different concern.** Mitigated. Edit is scoped to paragraph 2 (lines 45-75) of the eligibility predicate doc-block, specifically the BlockedBy resolution clause. No other doc paragraphs touched. No production code touched in `walker.go`.
+- **F-attack: test pins behavior the predicate doesn't actually implement (false coverage).** Mitigated. The test asserts the observable outcome (`got` does not contain `candidate-1`); the existing `LifecycleState != StateInProgress` gate provides the rejection on the current code. If a future refactor adds an explicit `ArchivedAt!=nil` reject (without removing the LifecycleState gate), the test continues to pass. If a future refactor REMOVES the LifecycleState gate while not adding an ArchivedAt gate, the test fails — which is exactly the regression-catcher behavior the defense-in-depth contract calls for.
+
+### Sandbox hang note
+
+Per spawn-prompt, `mage test-pkg ./internal/app/dispatcher` may hang on `monitor_test.go`'s `exec.Command("go", "build", ...)`. **Did NOT hang** in this builder session — full 356-test run completed in 1.75s and emitted the canonical `[SUCCESS] All tests passed` line. Same behavior observed in the E.1 round 1 build (354/354 in 1.46s). Not reproducing the hang here may be artifact-environment-specific; orchestrator's `mage ci` remains authoritative.
+
+### Targets run
+
+- `mage test-pkg ./internal/app/dispatcher` → **356/356 PASS** (1.75s; 354 existing + 2 new = `TestWalkerTreatsArchivedParentAsNotEligible` + `TestWalkerListColumnsErrorPropagates`).
+- `mage formatCheck` → clean (no gofumpt drift introduced).
+
+### Hylla feedback
+
+N/A — per spawn-prompt directive ("NO Hylla calls"), no Hylla queries were attempted. Evidence-gathering used `Read` / `Bash` (`rg ArchivedAt` for the domain field shape only) / `Edit` / `mage test-pkg` / `mage formatCheck`. The task's Go-only edits would have been candidates for Hylla under normal rules, but the Drop 4c.5 cascade is in filesystem-MD mode with stale Hylla state post-Drop-4c-merge.
+
+## Droplet F.2.2 — Round 1
+
+**Date:** 2026-05-05.
+**Builder:** go-builder-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.2.2 — Add default-generic.toml (language-agnostic showcase)".
+**Outcome:** done — `mage testPkg ./internal/templates` 381/381 PASS (one new test: `TestLoadDefaultGenericTemplate`); `mage formatCheck` clean.
+
+### Files touched
+
+- `internal/templates/builtin/default-generic.toml` — **NEW.** Language-agnostic showcase sibling to `default-go.toml`. Ships the closed 12-kind catalog, four standard `[[child_rules]]` (build→build-qa-proof, build→build-qa-falsification, plan→plan-qa-proof, plan→plan-qa-falsification), six STEWARD `[[steward_seeds]]` (DISCUSSIONS / HYLLA_FINDINGS / LEDGER / WIKI_CHANGELOG / REFINEMENTS / HYLLA_REFINEMENTS), and the build-only `[gates]` sequence (`["mage_ci", "commit", "push"]`). TWO deliberate omissions vs default-go: (1) NO `[agent_bindings]` table (agent identities are language-specific); (2) NO drop-narrowed `[[child_rules]]` entries (drop-level cascade is Tillsyn-runtime-specific scaffolding). Header comment names the rationale + cross-references F.1.3 (the language-aware resolver successor).
+- `internal/templates/embed.go` — `//go:embed` directive extended from `builtin/default-go.toml` to `builtin/default-go.toml builtin/default-generic.toml` (explicit two-file list, NOT a glob — preserves F.2.1 falsification mitigation #2 against accidentally picking up unrelated `.toml` fixtures). Doc-comment expanded to record F.2.2's addition + restate that `LoadDefaultTemplate()` semantics are unchanged this round (continues to read `default-go.toml` directly until F.1.3 lands the resolver).
+- `internal/templates/embed_test.go` — added `TestLoadDefaultGenericTemplate` (~125 lines including doc-comment). Exercises the new file via `DefaultTemplateFS.Open("builtin/default-generic.toml")` + `Load(f)` (since the F.1.3 resolver entry point is not yet in the chain) and asserts: parses + validates, `SchemaVersion == "v1"`, `len(Kinds) == 12` matching `allKinds`, `len(ChildRules) == 4` with the four edges named explicitly + a defensive guard rejecting any drop-narrowed entry, `len(StewardSeeds) == 6` with the six titles named explicitly, `len(AgentBindings) == 0`.
+
+### Targets run
+
+- `mage testPkg ./internal/templates` → **381/381 PASS** (0.29s; 380 existing + 1 new = `TestLoadDefaultGenericTemplate`).
+- `mage formatCheck` → clean (no gofumpt drift introduced; the new test is gofumpt-shape from authoring).
+
+### Design notes
+
+- **Drop-narrowed child_rules omitted in generic.** Spec test scenarios said "the two drop-narrowed entries (drop-level QA twins) MAY be omitted in generic — drop-level cascade is Tillsyn-cascade-specific. Document in doc-comment." Spec test acceptance #4 said `child_rules count == 4`. The spawn prompt requirement "same 4 standard child_rules ... as default-go.toml" reads cleanly against the 4-only test assertion if the drop-narrowed entries are omitted (default-go ships 4 standard + 2 drop-narrowed = 6 total; generic ships only the 4 standard). This is the consistent reading across spec + acceptance + falsification mitigations and what the file ships. Doc-comment in the TOML names the rationale + the regression-guard test.
+- **`[agent_bindings]` table fully omitted, not empty.** Spec acceptance #2 allowed either "OMIT entirely OR empty table". OMIT is the cleaner showcase — empty `[agent_bindings]` reads like a leftover scaffold while complete absence reads like an intentional opt-out. F.2.2 falsification mitigation F2 said "if a validator rejects, switch to `[agent_bindings] = {}` (empty table)" — the validator did NOT reject (the existing `templates.Load` validates an absent `agent_bindings` table cleanly because Go's TOML decoder leaves the map as nil and `validateAgentBinding*` validators iterate over the map's entries; nil map iterates zero times → all validators pass).
+- **Test entry-point chosen: direct `DefaultTemplateFS.Open` + `Load`.** F.1.3 will land `LoadDefaultTemplateForLanguage("")` as the production entry point that selects this file; until then, the test exercises the file via direct embed.FS open. This preserves `LoadDefaultTemplate()` semantics for F.2.2 (per spawn-prompt rule "Continue to load `default-go.toml` directly") and avoids pre-shipping F.1.3's API surface. The test's doc-comment names the F.1.3 successor so future readers understand the temporary direct-open shape.
+- **Drop-narrowed defensive guard in test.** The test inspects each `ChildRule.WhenParentStructuralType` and rejects any non-empty value. This is a regression guard against future drops silently re-introducing the drop-narrowed entries to default-generic.toml without intent. Tied to the doc-comment in the TOML that names the omission rationale.
+- **STEWARD seeds preserved 1:1.** STEWARD coordination scaffolding (DISCUSSIONS / LEDGER / etc.) is language-agnostic — applies to any adopter who follows the cascade workflow. Generic and Go templates ship identical seed lists.
+- **Gates preserved 1:1.** `[gates.build] = ["mage_ci", "commit", "push"]` is identical to default-go. Gate kinds (`mage_ci`, `mage_test_pkg`, `commit`, `push`) are language-agnostic enough to apply to any project; runtime gating via project-metadata toggles (`DispatcherCommitEnabled`, `DispatcherPushEnabled`) keeps commit + push opt-in per adopter, default OFF.
+- **Spawn prompt's "Generic file contains valid v1 schema" — verified via existing pipeline.** Every `templates.Load` validator (version pre-pass, strict decode, `validateMapKeys`, `validateChildRuleKinds`, `validateChildRuleCycles`, `validateGateKinds`, `validateAgentBindingEnvNames`, `validateAgentBindingContext`, `validateAgentBindingToolGating`, `validateTillsyn`, `validateChildRuleReachability`) runs in the test's `Load(f)` call. No validator rejects; the file parses cleanly.
+
+### Hylla feedback
+
+N/A — task touched only Go-eligible files in principle (`embed.go`, `embed_test.go`) plus a new TOML and workflow MDs, but per spawn-prompt directive "filesystem-MD coordination mode. NO Hylla calls." All evidence resolved via `Read` / `Bash` (`rg` for `allKinds` + `ChildRule` struct shape + `StructuralType` underlying type) / `Edit` / `mage testPkg` / `mage formatCheck`. No Hylla query was attempted, so no miss to log.
+
+## Droplet F.2.3 — Round 1
+
+**Date:** 2026-05-05.
+**Builder:** go-builder-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.2.3 — Self-host `<project_root>/.tillsyn/template.toml` for tillsyn".
+**Outcome:** done — `mage ci` GREEN (2719 passed / 1 pre-existing skip / 24/24 packages green / all coverage ≥ 70% / build clean). New tracked file at `.tillsyn/template.toml`; `.gitignore` re-include rule wired so the repo can ship the dogfood seed without breaking runtime-state ignore.
+
+### Files touched
+
+- `.tillsyn/template.toml` — NEW. 696-line TOML; body content faithful to `internal/templates/builtin/default-go.toml` (12 kinds, 6 child_rules, 6 steward_seeds, [gates.build] = ["mage_ci", "commit", "push"], 12 agent_bindings with the full F.7.18 context blocks). Header comment names this as the tillsyn self-host template (vs the embedded-builtin headering); explains the byte-copy rationale + the two intentional adjustments (header + [tillsyn] block); cross-references F.1.2 walk activation. New `[tillsyn]` block at the bottom carries `spawn_temp_root = "os_tmp"` with rationale documenting the consumer-time-default match (dispatcher's `bundle.go:248` resolves empty → `SpawnTempRootOSTmp`) and the deferred path to `"project"` mode (waiting on F.7.7 + F.7.8).
+- `.gitignore` — refactored the `# Tillsyn runtime state` section. Replaced the broad `.tillsyn/` rule with `.tillsyn/*` followed by `!.tillsyn/template.toml`. Reasoning lives in a 5-line comment block above the rules: gitignore docs say re-inclusion under an excluded directory requires excluding the directory's CONTENTS (`.tillsyn/*`), NOT the directory itself (`.tillsyn/`). The earlier verification claim in the F.2.3 falsification mitigation F3 ("existing rule is `.tillsyn/spawns/`") was wrong — the actual rule on disk pre-droplet was `.tillsyn/`, which would have ignored the new file silently. `git check-ignore -v` post-fix shows `.tillsyn/template.toml` is re-included while `.tillsyn/spawns/foo`, `.tillsyn/tillsyn.db`, `.tillsyn/log/orch.log` all stay ignored.
+- `workflow/drop_4c_5/THEME_F_PLAN.md` — flipped F.2.3 droplet state line (`**State:** in_progress (round 1)` → `**State:** done (round 1)`). Matches the per-droplet heading-form convention established by F.2.1 / E.1 / D.1 / A.1 round entries above.
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — this entry.
+
+### `spawn_temp_root` choice rationale
+
+Per spec acceptance #1 — pick `"os_tmp"` or `"project"` after confirming current behavior. Read `internal/templates/schema.go` `Tillsyn.SpawnTempRoot` doc-comment (lines 263-281) + `internal/app/dispatcher/bundle.go` `resolveSpawnTempRoot` (lines 246-256, the consumer):
+
+- Empty string → `SpawnTempRootOSTmp` (dispatcher's consumer-time default).
+- `"os_tmp"` → bundles materialize under `os.TempDir()` with `tillsyn-spawn-` prefix, terminal-state cleanup hook reaps them.
+- `"project"` → bundles under `<worktree>/.tillsyn/spawns/<spawn-id>/`, requires F.7.7 (gitignore auto-add) + F.7.8 (orphan scan) which have NOT shipped.
+
+`"os_tmp"` matches the dispatcher's current default semantics (empty resolves to it). Stating it explicitly here makes the dogfood policy observable on inspection without changing runtime behavior. `"project"` would silently route bundles into the worktree but the F.7.7 gitignore auto-add isn't there yet, which would cause `mage ci` to surface untracked spawn dirs on every run — wrong for the self-host until those gates land. Doc-comment in the TOML names the choice + the deferred path.
+
+### Targets run
+
+- `mage ci` — GREEN. 2719 passed, 1 pre-existing skip (`TestStewardIntegrationDropOrchSupersedeRejected` — same skip seen across all earlier rounds, unrelated to F.2.3), 24/24 packages green, all packages ≥ 70% coverage (templates 97.0%; min `internal/tui` 71.0%), build clean.
+- `git ls-files --others --exclude-standard .tillsyn/` → `.tillsyn/template.toml` (the file shows up as a new tracked-eligible entry, confirming the gitignore re-include rule works).
+- `git status --ignored --porcelain | grep tillsyn` → `.tillsyn/template.toml` shows `??` (untracked-but-includable) while `.tillsyn/config.toml`, `.tillsyn/livewait.secret`, `.tillsyn/logs/`, `.tillsyn/tillsyn.db`, `.tillsyn/tillsyn.db-shm`, `.tillsyn/tillsyn.db-wal` all show `!!` (ignored). Exactly the surgical re-include the spec required.
+
+### Design notes
+
+- **Body-content faithfulness to `default-go.toml` body** — every `[kinds.*]`, `[[child_rules]]`, `[[steward_seeds]]`, `[gates]`, `[agent_bindings.*]`, and `[agent_bindings.*.context]` block is byte-equivalent to the embedded default. Verified line-count delta `wc -l`: default-go = 653 lines, self-host = 696 lines, delta = +43 lines, attributable to the +8-line header expansion + +33-line `[tillsyn]` block + ~+2 lines whitespace/separator nudging. No silent body drift.
+- **`[tillsyn]` block placement** — appended at the bottom rather than inserted between `[kinds]` and `[[child_rules]]` so future drift between this file and the embedded default-go.toml stays at the boundary (header + tail) rather than splicing through the body. Easier diff inspection during drop closeout audits.
+- **`MaxContextBundleChars` / `MaxAggregatorDuration` / `RequiresPlugins` omitted** — engine-time defaults are correct for the tillsyn dogfood today. Adopters who need explicit caps add them as a per-project knob; the self-host doesn't need to surface them.
+- **`.gitignore` pattern correction is load-bearing for adopter onboarding too** — the prior `.tillsyn/` rule meant any adopter who ran `till project create` and then tried to commit a project-scoped `<worktree>/.tillsyn/template.toml` (the documented self-host pattern per F.1.2's walk) would silently fail to track the file. The fix here unblocks the F.1.x walk for the tillsyn project AND for any future adopter who copies the gitignore pattern. Cross-references the canonical gitignore semantics ("re-inclusion under an excluded directory requires excluding the directory's CONTENTS").
+- **No Go test added** — per acceptance criterion #2 + spec test scenarios ("none — no Go-level tests"), the file is parsed by NO test today. The F.1.2 walk + F.2.4 caller audit will land Go-level coverage of the new walk path. F.2.3's gate is `mage ci` green (validates no other test or build regressed) plus `git ls-files` showing the file as tracked-eligible.
+
+### Falsification-mitigation status
+
+- **F1 (test isolation)** — mitigated. `mage ci` ran from the repo root, every test fixture in the templates / app / dispatcher / mcpapi / common / tui packages uses `t.TempDir()` for project-paths or in-memory `testing/fstest`-style setups; no test reads `<repo_root>/.tillsyn/template.toml` directly. Production `loadProjectTemplate` is the only walker for that file (F.1.2, not yet shipped) and it takes explicit project paths. Self-host file is inert today as F.2.3's spec acknowledged.
+- **F2 (drift over time)** — mitigated. Byte-faithful copy + header rationale documents the intentional adjustments + drop-tracked drift policy. Future drift will be visible in PR diffs vs the embedded default.
+- **F3 (gitignore catches the file)** — RESOLVED via gitignore refactor. Spec's pre-droplet verification claim was wrong; the fix tightens the rule to surgically re-include `template.toml` while preserving every other ignore.
+
+### Hylla feedback
+
+N/A — task touched only non-Go files (TOML + dotfile + workflow MDs). Hylla is Go-only today per `feedback_hylla_go_only_today.md`. All evidence resolved via `Read` / `Bash` (`rg` for `SpawnTempRoot` consumers + `git check-ignore` + `git ls-files` + `git status --ignored`) / `Edit` / `Write` / `mage ci`. No Hylla query was attempted, so no miss to log.

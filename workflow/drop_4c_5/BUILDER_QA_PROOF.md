@@ -234,3 +234,103 @@ PASS. Droplet A.1 implements pointer-sentinel PATCH semantics on `Service.Update
 ### Hylla Feedback
 
 N/A -- A.1 review touched Go source files but Hylla is stale post-Drop-4c-merge per the spawn-prompt's filesystem-MD-coordination directive (NO Hylla calls). All evidence resolved via Read / Grep / Bash (`rg`). Per project rule "Hylla Indexes Only Go Files Today" the Go-source review would normally favor Hylla; the override is drop-specific, not a Hylla ergonomics signal.
+
+## Droplet E.2 — Round 1
+
+**Reviewer:** go-qa-proof-agent
+**Date:** 2026-05-05
+**Verdict:** PASS
+
+### Trace Coverage
+
+1. **Acceptance #1 — `TestWalkerTreatsArchivedParentAsNotEligible` exists with archived-parent fixture; pins eligibility behavior.** COVERED. `walker_test.go:250-282` defines the test: parent fixture has `LifecycleState=StateTodo`, `ArchivedAt: &archivedAt` (a `time.Date(2026, 5, 1, ...)` value), and a child with `ParentID="parent-1"` + `LifecycleState=StateTodo`. Assertion at lines 277-281 walks the eligible set and fails if `candidate-1` appears. Domain field `ArchivedAt *time.Time` confirmed at `internal/domain/action_item.go:173` — fixture compiles correctly. The test's doc-comment (lines 228-249) explicitly addresses the "predicate doesn't currently check `ArchivedAt`; the existing `LifecycleState != StateInProgress` gate produces the rejection" reality and pins the observable contract (child not promoted) so a future ArchivedAt-explicit refactor stays passing — exactly the third-path framing the spec acceptance #1 endorsed ("If the predicate already correct via `includeArchived=false` filtering, the test asserts the filtering instead").
+
+2. **Acceptance #2 — `TestWalkerListColumnsErrorPropagates` asserts wrapped-error preservation + `ErrPromotionBlocked`-not-set + `MoveActionItem`-not-called.** COVERED. `walker_test.go:540-568` defines the test. Three independent assertions land:
+   - Line 559: `errors.Is(err, infraErr)` — wrapped sentinel preservation.
+   - Line 562: `errors.Is(err, ErrPromotionBlocked)` MUST be false — sentinel reservation contract (ErrPromotionBlocked is for service-layer transition blocks only, not infra failures).
+   - Line 565: `svc.moveCalls == 0` — `MoveActionItem` never called when `ListColumns` errors.
+
+   All three match the spec acceptance #2 contract verbatim ("`Promote` returns wrapped error preserving `errors.Is(err, infraErr)`, NOT `errors.Is(err, ErrPromotionBlocked)`, AND `MoveActionItem` is never called"). The three-pronged shape is the right discriminator: a future regression where Promote silently maps infra-errors to ErrPromotionBlocked, OR drops the wrapped sentinel, OR calls MoveActionItem before the column-resolve step, all surface as test failures with distinct messages.
+
+3. **Acceptance #3 — Doc-comment lines 45-75 clarifies BlockedBy resolution treats missing references AND non-complete blockers as "not-clear". Drift fix only, matches impl.** COVERED. Verified via `git diff`: `walker.go:49-58` is the only doc-comment touched. Pre-edit (single sentence): "Missing references (deleted siblings, typos) are treated as not-clear and skip the item — this is conservative on purpose: the planner sets BlockedBy and a missing target is a planner-side bug, not a walker-side override." Post-edit (multi-line): names BOTH failure modes explicitly ("a missing reference … AND a reference resolved to a non-StateComplete blocker (StateTodo / StateInProgress / StateFailed / StateArchived)"), restates the conservative-by-design framing ("planner-side bug should surface as a stalled-but-untouched item, not a wrongly-promoted one"), and adds the supersede / archive escape-hatch pointer. Behavior unchanged: `walker.go:185-187` still uses `if blocker.LifecycleState != domain.StateComplete { return false }` — the doc now matches impl. No production code outside the doc-comment touched.
+
+4. **Test infrastructure — `stubWalkerService` extended with `columnsErr` field; injection seam works.** COVERED. `walker_test.go:14-32` (struct definition) carries the `columnsErr error` field. `walker_test.go:39-44` (ListColumns method) returns `(nil, s.columnsErr)` when set, else falls through to `(s.columns, nil)`. Doc-comments on the struct (lines 13-21) and the method (lines 34-38) explicitly explain the seam. Existing tests are unaffected — the new field defaults to nil-zero-value, so `TestWalkerFindsTodoItemWithClearedBlockers`, `TestWalkerPromotesEligibleItem`, etc. still hit the success path. The single-field extension is minimal and idiomatic (the alternative — a parallel `erroringListColumnsStub` mirroring the existing `erroringListItemsStub` — would have been busier; builder's worklog acknowledges and rejects it for good reason).
+
+5. **Test rigor — both new tests have docstrings; both pin observable behavior, not implementation specifics.**
+   - `TestWalkerTreatsArchivedParentAsNotEligible` doc-comment (lines 228-249): 22 lines explaining the defense-in-depth framing, the predicate-vs-upstream-filter split, and the future-refactor compatibility argument. Pin is on observable outcome (eligible set does not contain `candidate-1`), not on the internal gate path producing the rejection.
+   - `TestWalkerListColumnsErrorPropagates` doc-comment (lines 533-539): 7 lines explaining the sentinel-reservation rationale (ErrPromotionBlocked is for service-layer transition blocks; infra failures stay distinguishable). Three independent assertions match three independent regression vectors as analyzed in §2 above.
+
+6. **Worklog completeness — files-touched / targets-run / design notes / Hylla feedback section.** COVERED. `BUILDER_WORKLOG.md` § "Droplet E.2 — Round 1" (lines 417-458) carries:
+   - **Files touched** (lines 425-433): walker.go (doc paragraph 2 rewrite), walker_test.go (`time` import + stub extension + 2 new tests), THEME_CE_PLAN.md state flip, BUILDER_WORKLOG.md self-entry.
+   - **Design notes** (lines 435-439): explicit dispositions for spec acceptance #1/#2/#3, rationale for the third-path test design + minimal-stub-extension choice + scoped doc-edit.
+   - **Falsification-mitigation status** (lines 441-445): all three F-attacks named in spec line 202-204 explicitly addressed (upstream-filter bypass, doc-drift scope, false-coverage trap).
+   - **Sandbox hang note** (lines 447-449): builder reports no `monitor_test.go` hang; `mage test-pkg` ran 1.75s clean.
+   - **Targets run** (lines 451-454): `mage test-pkg ./internal/app/dispatcher` 356/356 PASS + `mage formatCheck` clean.
+   - **Hylla feedback** (lines 456-458): N/A per spawn-prompt directive.
+
+7. **Builder claim — 356/356 (354 existing + 2 new).** COVERED arithmetically. E.1 round 1 reported 354 existing tests (worklog line 61). E.2 adds exactly 2 new test functions: `TestWalkerTreatsArchivedParentAsNotEligible` (line 250) and `TestWalkerListColumnsErrorPropagates` (line 540). 354 + 2 = 356 — matches the claimed test count.
+
+### Findings
+
+None. The build is tight: minimal scope, accurate doc-fix, well-rationalized test choices, infrastructure extension via single nullable field, and worklog completeness covering every required surface. The "predicate doesn't currently check ArchivedAt" gap is acknowledged in the test's own doc-comment and addressed via observable-outcome pinning rather than tautological assertion — the test catches both the existing LifecycleState gate AND a hypothetical future ArchivedAt-explicit gate, which is exactly what defense-in-depth contracts call for.
+
+### Conclusion
+
+PASS. E.2 lands all three acceptance criteria precisely as scoped. The two new tests pin observable predicate / Promote behavior with three-pronged assertions where the spec named them, the `stubWalkerService` extension is minimal and the seam is documented, and the doc-comment edit is a tight drift fix on paragraph 2 with no behavior change. Builder-claimed `mage test-pkg ./internal/app/dispatcher` 356/356 PASS + `mage formatCheck` clean is consistent with the file diffs (one production file gets a doc-only change; one test file adds 1 import + 1 field on the stub + 2 new test functions). No regressions to existing tests visible from the diff.
+
+### Hylla Feedback
+
+N/A — E.2 review touched Go source files but Hylla is stale post-Drop-4c-merge per the spawn-prompt's filesystem-MD-coordination directive (NO Hylla calls). All evidence resolved via Read / Bash (`rg ArchivedAt` for one domain-field cross-check) / `git diff`. Per project rule "Hylla Indexes Only Go Files Today" the Go-source review would normally favor Hylla; the override is drop-specific, not a Hylla ergonomics signal.
+
+## Droplet F.2.2 — Round 1
+
+**Reviewer:** go-qa-proof-agent
+**Date:** 2026-05-05
+**Verdict:** PASS
+
+### Trace Coverage
+
+1. **Acceptance #1 — valid v1 schema, 12-kind catalog, 4 child_rules, 6 STEWARD seeds.** COVERED.
+   - `internal/templates/builtin/default-generic.toml:56` — `schema_version = "v1"`.
+   - 12 `[kinds.<kind>]` sections at lines 75-205: plan, research, build, plan-qa-proof, plan-qa-falsification, build-qa-proof, build-qa-falsification, closeout, commit, refinement, discussion, human-verify.
+   - 4 `[[child_rules]]` entries at lines 224-249: build→build-qa-proof, build→build-qa-falsification, plan→plan-qa-proof, plan→plan-qa-falsification. Drop-narrowed entries explicitly omitted; comment block at lines 251-265 names the rationale.
+   - 6 `[[steward_seeds]]` entries at lines 284-306: DISCUSSIONS, HYLLA_FINDINGS, LEDGER, WIKI_CHANGELOG, REFINEMENTS, HYLLA_REFINEMENTS.
+
+2. **Acceptance #2 — `[agent_bindings]` table absent; test pins `len == 0`.** COVERED.
+   - `default-generic.toml:325-336` — explicit prose-comment block names the omission as a load-bearing contract; no `[agent_bindings]` table or sub-keys present.
+   - `embed_test.go:157-159` — `if got := len(tpl.AgentBindings); got != 0 { t.Fatalf(...) }`. Direct regression guard.
+
+3. **Acceptance #3 — file loads through `templates.Load` validator chain.** COVERED. `embed_test.go:79-88` opens via `DefaultTemplateFS.Open("builtin/default-generic.toml")` then calls `Load(f)`. Builder reports `mage testPkg ./internal/templates` 381/381 PASS — every `Load` validator (version pre-pass, strict decode, validateMapKeys, validateChildRuleKinds, validateChildRuleCycles, validateGateKinds, validateAgentBindingEnvNames, validateAgentBindingContext, validateAgentBindingToolGating, validateTillsyn, validateChildRuleReachability) ran in that path and accepted.
+
+4. **Acceptance #4 — `TestLoadDefaultGenericTemplate` exists with all required assertions.** COVERED. `embed_test.go:76-160`:
+   - Opens via embed.FS (line 79-83).
+   - `Load(f)` round-trip (line 85-88).
+   - `SchemaVersion == SchemaVersionV1` (line 90-92).
+   - `len(Kinds) == len(allKinds)` (i.e. 12) plus per-kind presence loop (line 95-102).
+   - `len(ChildRules) == 4` plus edge-by-edge enumeration over a `wantChildRuleEdges` map; defensive guard rejects any non-empty `WhenParentStructuralType` (line 104-130).
+   - `len(StewardSeeds) == 6` plus title-by-title enumeration over a `wantSeedTitles` map (line 132-154).
+   - `len(AgentBindings) == 0` (line 157-159).
+
+5. **Acceptance #5 — embed directive uses explicit two-file form.** COVERED. `embed.go:29` reads:
+
+   ```
+   //go:embed builtin/default-go.toml builtin/default-generic.toml
+   ```
+
+   Two filenames space-separated, NOT a glob (`builtin/*.toml`). Doc-comment at `embed.go:7-17` explicitly names this choice and ties it to F.2.1 falsification mitigation #2 (carried forward to F.2.2): an explicit list cannot accidentally pick up unrelated `.toml` fixtures or stray files in `builtin/`.
+
+6. **Acceptance #6 — `LoadDefaultTemplate()` API unchanged.** COVERED. `embed.go:58-65` keeps the function signature identical to F.2.1's round and still calls `DefaultTemplateFS.Open("builtin/default-go.toml")`. Doc-comment at `embed.go:32-57` notes the F.1.3 successor that will reduce this function to a thin wrapper around `LoadDefaultTemplateForLanguage` but explicitly preserves byte-for-byte behavior pre-F.1.3. The `TestDefaultTemplateGoLoadsCleanly` canary (renamed in F.2.1) still passes per the 381/381 result.
+
+7. **Worklog completeness.** COVERED. `BUILDER_WORKLOG.md` § "Droplet F.2.2 — Round 1" (line 460-491) contains: (a) date + builder + source-spec pointer (line 462-465); (b) Files-touched section detailing the new TOML, the embed directive extension, and the new test (line 467-471); (c) Targets-run section with the 381/381 PASS count + `mage formatCheck` clean (line 473-476); (d) Design-notes section explaining the drop-narrowed omission, the OMIT-vs-empty agent_bindings choice and its falsification linkage (F2 — validator did not reject), the test entry-point choice (direct embed.FS open until F.1.3 lands), the defensive drop-narrowed guard, the STEWARD seed and gate parity rationales, and per-validator clean-pass enumeration (line 478-486); (e) Hylla-feedback section with `N/A — task touched only Go-eligible files in principle ... per spawn-prompt directive "filesystem-MD coordination mode. NO Hylla calls"` (line 488-490). THEME_F_PLAN.md droplet F.2.2 heading shows `**State:** done (round 1)` at line 185.
+
+### Findings
+
+None. All six acceptance criteria + worklog completeness landed clean. The `[agent_bindings]` omission is implemented as full table absence (cleaner showcase contract than an empty table) AND pinned in the test as `len == 0` — the load-bearing regression guard. The drop-narrowed `[[child_rules]]` omission is similarly pinned both in the TOML's prose comment AND as a defensive `WhenParentStructuralType != ""` reject inside the test loop, preventing future drops from silently re-introducing them.
+
+### Hylla Feedback
+
+N/A — F.2.2 review touched Go-eligible files (`embed.go`, `embed_test.go`) plus a new TOML and workflow MDs. Per spawn-prompt directive "filesystem-MD coordination mode. NO Hylla calls" all evidence resolved via Read / git diff (verified via mtime + the worklog manifest of files touched). Per project rule "Hylla Indexes Only Go Files Today" the Go-source review would normally favor Hylla; the override is drop-specific, not a Hylla ergonomics signal.
+
+### Conclusion
+
+PASS. F.2.2 ships the language-agnostic showcase precisely as scoped: the closed 12-kind catalog, the four standard `[[child_rules]]`, the six STEWARD seeds, the `[gates.build]` sequence parity with default-go, and the deliberate `[agent_bindings]`-table omission — every one pinned via direct test assertion. The embed directive uses the spec-mandated explicit two-file form. `LoadDefaultTemplate()` semantics are preserved byte-for-byte (F.1.3 will generalize later). `mage testPkg ./internal/templates` 381/381 PASS = 380 prior + 1 new (`TestLoadDefaultGenericTemplate`) — arithmetic checks against F.2.1's 380-test baseline. Worklog is complete with explicit Hylla-feedback rationale.
