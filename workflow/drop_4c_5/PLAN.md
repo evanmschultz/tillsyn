@@ -94,13 +94,13 @@ Droplets are grouped by package-lock chain. Within each chain droplets serialize
 | F.5.1 | `validateAgentBindingFiles` (warn-only) + `validateRequiredChildRules`        | `load.go`, `load_test.go`                                | `THEME_F_PLAN.md`  | E.6         |
 | F.5.2 | `validateChildRuleReachability` + `validateKindStructuralCoherence`           | `load.go`, `load_test.go`                                | `THEME_F_PLAN.md`  | F.5.1       |
 
-#### Chain 5 — `internal/adapters/server/common/app_service_adapter_mcp.go` file-lock chain (1 droplet, plus A.1 + B.1 cross-chain)
+#### Chain 5 — `internal/adapters/server/common/app_service_adapter_mcp.go` file-lock chain (1 droplet, plus A.1 + A.4 + B.1 cross-chain)
 
-A.1 and B.1 (already in Chain 1) ALSO edit `internal/adapters/server/common/app_service_adapter_mcp.go` as secondary file. C.1's primary edits target this file. Per CLAUDE.md "File- and package-level blocking" — droplets sharing a file MUST have explicit `blocked_by`. C.1 lands AFTER both A.1 and B.1 to avoid mechanical merge conflicts on this file.
+A.1, A.4, and B.1 (all already in Chain 1) ALSO edit `internal/adapters/server/common/app_service_adapter_mcp.go` as a secondary surface — A.1 modifies the `UpdateActionItem` adapter mapping, A.4 adds a cross-reference comment near `validateMetadataOutcome` (per THEME_A_PLAN.md line ~201), and B.1 adds the `SupersedeActionItem` passthrough. C.1's primary edits target this same file (the `assertOwnerStateGateUpdateFields` gate). Per CLAUDE.md "File- and package-level blocking" — droplets sharing a file MUST have explicit `blocked_by`. Chain 1 already serializes A.1 → A.4 → B.1; C.1 lands after B.1 (transitively after A.1 + A.4) so the adapter file is in stable A+A+B shape before C.1's gate-extension edits.
 
-| ID    | Title (short)                                                          | Files (primary)                                                                                              | Source PLAN MD     | Blocked by                              |
-| ----- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------ | --------------------------------------- |
-| C.1   | Extend `assertOwnerStateGateUpdateFields` to Persistent / DevGated     | `app_service_adapter_mcp.go`, `app_service_adapter_steward_gate_test.go` (`internal/adapters/server/common`) | `THEME_CE_PLAN.md` | B.1 (transitively A.1 via Chain 1)      |
+| ID    | Title (short)                                                          | Files (primary)                                                                                              | Source PLAN MD     | Blocked by                                                  |
+| ----- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------ | ----------------------------------------------------------- |
+| C.1   | Extend `assertOwnerStateGateUpdateFields` to Persistent / DevGated     | `app_service_adapter_mcp.go`, `app_service_adapter_steward_gate_test.go` (`internal/adapters/server/common`) | `THEME_CE_PLAN.md` | B.1 (transitively A.1 + A.4 via Chain 1's serialization)    |
 
 #### Independent (no package-lock collision)
 
@@ -114,7 +114,7 @@ A.1 and B.1 (already in Chain 1) ALSO edit `internal/adapters/server/common/app_
 ### Cross-Theme Blocked-By Justifications
 
 - **A.2 → A.1.** Both touch the wire-format for action-item update (A.1 makes `description` distinguishable absent-vs-empty via `*string`; A.2 strict-decoder must NOT reject null-pointer fields from A.1's struct shape change). Cross-chain blocker because A.1 is in the `internal/app` chain and A.2 is in the `mcpapi` chain.
-- **C.1 → B.1 (cross-chain Chain 1 → Chain 5).** A.1 + B.1 both edit `internal/adapters/server/common/app_service_adapter_mcp.go` as secondary surface (UpdateActionItem mapping in A.1; SupersedeActionItem passthrough in B.1). C.1's primary surface is the same file (`assertOwnerStateGateUpdateFields` body + caller). File-collision rule per CLAUDE.md "Paths and Packages" requires explicit `blocked_by`. Chosen ordering: C.1 lands after B.1 (which transitively follows A.1 in Chain 1), so the adapter file is in stable A+B shape before C.1's gate-extension edits. Per Theme C+E plan acceptance #3, C.1 also semantically depends on A.1's pointer-sentinel framework: "Caller (`UpdateActionItem` at line 845) extends pre-fetch trigger to include `in.Persistent != nil || in.DevGated != nil`."
+- **C.1 → B.1 (cross-chain Chain 1 → Chain 5).** A.1, A.4, and B.1 all edit `internal/adapters/server/common/app_service_adapter_mcp.go` as secondary surface — UpdateActionItem mapping (A.1), `validateMetadataOutcome` cross-reference comment (A.4 per THEME_A_PLAN.md line ~201), SupersedeActionItem passthrough (B.1). C.1's primary surface is the same file (`assertOwnerStateGateUpdateFields` body + caller). File-collision rule per CLAUDE.md "Paths and Packages" requires explicit `blocked_by`. Chosen ordering: C.1 lands after B.1 (which transitively follows A.4 then A.1 in Chain 1), so the adapter file is in stable A+A+B shape before C.1's gate-extension edits. Per Theme C+E plan acceptance #3, C.1 also semantically depends on A.1's pointer-sentinel framework: "Caller (`UpdateActionItem` at line 845) extends pre-fetch trigger to include `in.Persistent != nil || in.DevGated != nil`."
 - **E.6 → F.1.3 (cross-chain Theme F → Theme E).** F.1.3 lands the language-aware resolver that loads embedded TOML files; E.6's canonicalization changes the validator chain that runs during `Load`. E.6 lands AFTER F.1.3 to avoid the canonicalization touching F.1.3's walk semantics. Could potentially flip; plan-QA assesses.
 - **F.5.1 → E.6.** Both edit `internal/templates/load.go` validator chain; sequential edits to avoid merge conflict.
 - **F.5.1 transitively → F.2.1.** F.5.1's tests load the embedded default; the rebadge from `default.toml` → `default-go.toml` (F.2.1) must land first. Transitive via E.6 → F.1.3 → F.2.1, but called out for traceability.
@@ -156,7 +156,7 @@ A.1 and B.1 (already in Chain 1) ALSO edit `internal/adapters/server/common/app_
 
 - **Wave E — Final:**
   - C.2, C.3, E.8 in Chain 1 (remaining mid-chain droplets — see chain ordering above)
-  - C.1 (Chain 5; blocked_by: B.1 — must follow B.1's adapter-file edits)
+  - C.1 (Chain 5; blocked_by: B.1 — must follow B.1's adapter-file edits, which transitively follow A.4 then A.1 via Chain 1's serialization)
 
 (Wave structure is approximate; cross-chain blockers create natural barriers. Plan-QA may re-sequence. Chain 1's serial path through 12 droplets is the wall-clock bottleneck.)
 
