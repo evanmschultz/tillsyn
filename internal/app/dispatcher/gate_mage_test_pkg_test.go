@@ -360,6 +360,122 @@ func TestGateMageTestPkgHonorsContextCancel(t *testing.T) {
 	if !strings.Contains(result.Err.Error(), "pkg1") {
 		t.Fatalf("Err = %v, want substring %q (failed package named)", result.Err, "pkg1")
 	}
+	// Halt-on-first-failure call-count pin: the gate must observe ctx.Err() on
+	// the first iteration and return immediately, NOT continue to invoke the
+	// runner for pkg2. Mirrors the call-count assertion pattern at lines
+	// 183-184 + 219-220 in the failure tests so a future regression where the
+	// gate forgets to check ctx between iterations would surface here.
+	if len(runner.calls) != 1 {
+		t.Fatalf("runner.calls = %d, want 1 (ctx-cancel must halt before pkg2)", len(runner.calls))
+	}
+}
+
+// TestGateMageTestPkgDoesNotDedupePackages asserts the gate iterates
+// item.Packages by literal occurrence, NOT by deduplicated set: declaring the
+// same package twice causes two runner invocations, not one. The contract
+// matters because a planner that intentionally re-runs a flaky package by
+// listing it twice expects two runs; silent dedup would mask the second run
+// and break the planner's intent.
+//
+// Both calls return success so the iteration runs to completion (halt-on-
+// first-failure does not fire); the assertion is purely on call count and
+// argument forwarding. If a future change introduced a `seen map[string]bool`
+// dedup layer in the iteration loop at gate_mage_test_pkg.go:108, this test
+// would fail.
+func TestGateMageTestPkgDoesNotDedupePackages(t *testing.T) {
+	pkgs := []string{"foo", "foo"}
+	runner := &scriptedCommandRunner{
+		script: []scriptedCall{
+			{stdout: []byte("foo run-1 ok\n"), exitCode: 0},
+			{stdout: []byte("foo run-2 ok\n"), exitCode: 0},
+		},
+	}
+	withFakeCommandRunner(t, runner)
+
+	result := gateMageTestPkg(context.Background(), gateMageTestPkgFixtureItem(pkgs), gateMageTestPkgFixtureProject())
+
+	if result.Status != GateStatusPassed {
+		t.Fatalf("Status = %q, want %q", result.Status, GateStatusPassed)
+	}
+	if result.Err != nil {
+		t.Fatalf("Err = %v, want nil", result.Err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("runner.calls = %d, want 2 (gate must NOT dedup duplicate packages)", len(runner.calls))
+	}
+	for i, call := range runner.calls {
+		if len(call.args) != 2 {
+			t.Fatalf("call[%d].args = %v, want 2 args", i, call.args)
+		}
+		if call.args[0] != "test-pkg" {
+			t.Fatalf("call[%d].args[0] = %q, want %q", i, call.args[0], "test-pkg")
+		}
+		if call.args[1] != "foo" {
+			t.Fatalf("call[%d].args[1] = %q, want %q (literal duplicate forwarded)", i, call.args[1], "foo")
+		}
+	}
+}
+
+// TestGateMageTestPkgRejectsEmptyStringPackage pins the gate's behavior when
+// item.Packages contains an empty string. Per the gate's "Per-package
+// empty-string handling" doc-comment paragraph, the gate does NOT pre-
+// validate per-element strings: the empty string is forwarded verbatim to
+// `mage test-pkg ""`, which the simulated runner rejects with a start error.
+// The gate routes through the runErr branch at gate_mage_test_pkg.go:138 and
+// produces a fail-loud verdict naming the empty entry's runner failure.
+//
+// The test deliberately stubs the domain layer — constructs a domain.ActionItem
+// directly with `Packages = ["", "pkg2"]` — bypassing any constructor
+// normalization (per WAVE_A_PLAN.md PQA-4 the domain layer is expected to
+// reject empties on construction). Bypassing the constructor exercises the
+// gate's fail-loud contract in isolation: even if a planner injected an
+// empty post-construction, the gate surfaces the failure rather than
+// silently skipping.
+//
+// Halt-on-first-failure: the second package ("pkg2") must NOT be invoked
+// once the empty entry's runner error fires.
+func TestGateMageTestPkgRejectsEmptyStringPackage(t *testing.T) {
+	pkgs := []string{"", "pkg2"}
+	startErr := errors.New("exec: empty positional argument rejected by mage")
+	runner := &scriptedCommandRunner{
+		script: []scriptedCall{
+			{err: startErr},
+			// pkg2 entry deliberately absent — overflow panics if reached.
+		},
+	}
+	withFakeCommandRunner(t, runner)
+
+	result := gateMageTestPkg(context.Background(), gateMageTestPkgFixtureItem(pkgs), gateMageTestPkgFixtureProject())
+
+	if result.Status != GateStatusFailed {
+		t.Fatalf("Status = %q, want %q (empty-string element must surface as runner failure)",
+			result.Status, GateStatusFailed)
+	}
+	if result.Err == nil {
+		t.Fatal("Err = nil, want non-nil naming the empty-package failure")
+	}
+	if !errors.Is(result.Err, startErr) {
+		t.Fatalf("Err = %v, want errors.Is %v (runErr must wrap underlying)", result.Err, startErr)
+	}
+	if !strings.Contains(result.Err.Error(), "start failed") {
+		t.Fatalf("Err = %v, want substring %q (start-error branch)", result.Err, "start failed")
+	}
+	// The Err message names the package; for the empty entry the substring is
+	// "mage test-pkg " (trailing space + no package name). Pin the gate's
+	// per-package-naming behavior on the empty case so a future regression
+	// that swapped pkg into a default placeholder ("(empty)") would surface.
+	if !strings.Contains(result.Err.Error(), "mage test-pkg ") {
+		t.Fatalf("Err = %v, want substring %q (gate names the package even when empty)",
+			result.Err, "mage test-pkg ")
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("runner.calls = %d, want 1 (pkg2 must NOT be invoked after empty-entry failure)",
+			len(runner.calls))
+	}
+	if runner.calls[0].args[1] != "" {
+		t.Fatalf("runner.calls[0].args[1] = %q, want empty string (gate forwards verbatim)",
+			runner.calls[0].args[1])
+	}
 }
 
 // TestGateMageTestPkgAggregatesOutputAcrossPackages asserts the gate's

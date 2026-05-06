@@ -1286,3 +1286,38 @@ T2. None — eight attack categories REFUTED with file/line evidence + green `ma
 T3. Verdict **PASS**. B.2 ships clean. 696 tests across both packages pass.
 T4. N/A — Hylla not consulted per spawn directive.
 
+## Droplet E.7 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, opus)
+**Date:** 2026-05-06
+**Verdict:** PASS-WITH-NIT
+**Scope:** E.7-declared paths only — `internal/app/dispatcher/gate_mage_test_pkg.go`, `internal/app/dispatcher/gate_mage_test_pkg_test.go`, `workflow/drop_4c_5/THEME_CE_PLAN.md` (theme plan), `workflow/drop_4c_5/BUILDER_WORKLOG.md`.
+
+### 1. Findings
+
+- **1.1 No-dedup contract correctness (Attack 1).** REFUTED. Production code at `gate_mage_test_pkg.go:121-128` iterates `item.Packages` literally with `for _, pkg := range item.Packages` and calls `defaultCommandRunner.Run(... "test-pkg", pkg)` per element — no `seen map`, no dedup. `TestGateMageTestPkgDoesNotDedupePackages` (lines 385-417) constructs `Packages: []string{"foo", "foo"}` directly via `gateMageTestPkgFixtureItem` (which sets `Packages: pkgs` on a bare `domain.ActionItem` literal at lines 89-95, NOT through `NewActionItem`). At the gate boundary duplicates DO arrive; gate forwards both calls. Assertion `len(runner.calls) != 2` (line 403) pins this. Counterexample REFUTED.
+- **1.2 Halt-call-count assertion strength (Attack 2).** REFUTED. The `scriptedCommandRunner` (lines 41-75) records calls synchronously in `Run` (line 56-65) — no pre-queueing, no goroutines, no buffering. `len(runner.calls) == 1` after the pre-cancelled-ctx test (line 368-370) is exact: gate's `for` loop body at gate_mage_test_pkg.go:121-128 calls `Run` once, then checks `ctx.Err()` at line 139-149 and returns immediately. The new call-count pin (test_go.go:368) tightens existing slop where the ctx-cancel test had no halt assertion — strict improvement, not brittle.
+- **1.3 Empty-string fail-loud accuracy (Attack 3).** PASS-WITH-NIT. Production gate at `gate_mage_test_pkg.go:121-128` forwards `pkg` verbatim — no `if pkg == ""` short-circuit. Test simulates runner returning a `startErr` for the empty-string call. Gate routes through the runErr branch at `gate_mage_test_pkg.go:151-161`, returns Failed, names `"mage test-pkg "` (with trailing space, no package name) per `fmt.Errorf("mage test-pkg %s start failed: %w", pkg, runErr)`. Test internally consistent. **NIT:** the test's fail-loud verdict depends entirely on the SIMULATED runner returning an error. Real-world `mage test-pkg ""` behavior — silent-pass vs reject-with-error — is unverified by this test; the gate's actual production fail-loud-on-empty contract is not exercised against real mage. Test prose at lines 422-424 acknowledges this ("which mage rejects as an invalid argument") as a real-world prediction, not a verified property. Acceptable for a unit test of gate-level routing; flagged for completeness.
+- **1.4 Doc-comment paragraph contract drift (Attack 4).** **CONFIRMED counterexample.** New doc-comment paragraph at `gate_mage_test_pkg.go:54-66` reads: *"Per-element normalization (trim, reject empties) is the domain layer's responsibility on action-item construction (see WAVE_A_PLAN.md PQA-4)."* Direct read of `workflow/drop_4b/WAVE_A_PLAN.md:306` shows PQA-4 addresses the **whole-`Packages` empty-slice semantic** ("no packages declared = success" — later flipped by WA-A5 to fail-loud), NOT per-element string normalization. PQA-4 says zero about trim/reject-empties on individual entries. The actual normalization implementation lives in `internal/domain/action_item.go:780-798` (`normalizeActionItemPackages` — trims via `strings.TrimSpace`, rejects empties with `ErrInvalidPackages` at line 789, dedupes via `seen` map at line 791-794) — but no plan document tag attaches to that helper. The cross-reference is **incorrect**. Test rationale at `gate_mage_test_pkg_test.go:419-436` repeats the same incorrect attribution: *"per WAVE_A_PLAN.md PQA-4 the domain layer is expected to reject empties on construction"* — and uses future-tense "expected to" while the domain layer ALREADY does this (since Wave A's domain-layer landing earlier in Drop 4). **Severity:** documentation-only; behavior is correct. **Fix-direction options:** (a) drop the PQA-4 reference and cite `internal/domain/action_item.go:normalizeActionItemPackages` directly; (b) add a domain-layer plan-tag (e.g., DOM-A1) and reference it; (c) rewrite to "is the domain layer's responsibility on action-item construction (see `internal/domain/action_item.go normalizeActionItemPackages`)." Recommend (c) as lowest-cost. Same edit applies to both `gate_mage_test_pkg.go:62` and `gate_mage_test_pkg_test.go:431-432`.
+- **1.5 Test fixture overlap with sibling tests (Attack 5).** REFUTED. `git grep` across `internal/` shows `scriptedCommandRunner`, `scriptedCall`, `scriptedInvocation`, `gateMageTestPkgFixtureProject`, `gateMageTestPkgFixtureItem` ALL appear ONLY in `internal/app/dispatcher/gate_mage_test_pkg_test.go`. Fixture project ID `proj-mage-test-pkg-1` and item ID `ai-mage-test-pkg-1` similarly unique. No collision with sibling tests in the package or repo.
+
+### 2. Counterexamples
+
+- **2.1 [Finding 1.4] Doc-comment cross-reference is inaccurate.** `gate_mage_test_pkg.go:62` and `gate_mage_test_pkg_test.go:431-432` cite `WAVE_A_PLAN.md PQA-4` as the owner of "domain layer reject-empties responsibility." PQA-4 (line 306 of `workflow/drop_4b/WAVE_A_PLAN.md`) is about whole-`Packages`-slice semantics, not per-element normalization. Reproduction: `git grep -n "PQA-4" workflow/drop_4b/WAVE_A_PLAN.md` returns one line addressing empty-slice default; no per-element content. Actual normalization owner: `internal/domain/action_item.go:780-798 normalizeActionItemPackages`. Behavior unaffected; documentation is misleading.
+
+### 3. Summary
+
+**Verdict: PASS-WITH-NIT.** Five attacks: four REFUTED with file/line evidence, one CONFIRMED documentation-only drift (Attack 4 / Finding 1.4 / Counterexample 2.1). Production behavior is correct. Test coverage is correct. The drift is in the cross-reference identifier; cheapest fix is replacing the `WAVE_A_PLAN.md PQA-4` citation in two locations with a direct pointer to `internal/domain/action_item.go normalizeActionItemPackages` (or a future-drop plan-tag once one is assigned).
+
+C.2 transient-compile claim: only E.7's two files are dirty in `internal/app/dispatcher/`; no other staged or unstaged edits in that package. No compile risk to E.7's tests from sibling C.2 work in the current tree.
+
+### Hylla Feedback
+
+N/A — per spawn directive ("NO Hylla calls"), no Hylla queries attempted. Evidence used `Read` + `git diff` + `git grep` only.
+
+### TL;DR
+
+T1. Five attacks: dedup contract, halt-call-count, empty-string fail-loud, doc cross-reference, fixture collision. Four REFUTED, one CONFIRMED nit on documentation.
+T2. CONFIRMED: doc-comment at `gate_mage_test_pkg.go:62` and test at `gate_mage_test_pkg_test.go:431-432` cite `WAVE_A_PLAN.md PQA-4` for per-element normalization responsibility, but PQA-4 is about whole-slice empty-`Packages` semantic, not per-element. Actual owner: `internal/domain/action_item.go normalizeActionItemPackages`. Documentation-only.
+T3. **PASS-WITH-NIT** — production behavior correct, fix the two cross-references in a follow-up.
+

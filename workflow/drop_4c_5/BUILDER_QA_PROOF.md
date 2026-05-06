@@ -1053,3 +1053,45 @@ None. PASS.
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode forbids Hylla calls (per spawn prompt). All evidence resolved via `Read` + `Bash rg` + `git status` on the uncommitted working tree.
+
+## Droplet E.7 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, sibling-C.2 compile cascade — test gate skipped per orchestrator instruction).
+**Date:** 2026-05-06
+**Verdict:** PASS
+
+### Trace Coverage
+
+1. **Acceptance #1 — `TestGateMageTestPkgDoesNotDedupePackages` exists, asserts no dedup.** COVERED. `gate_mage_test_pkg_test.go:385-417` defines the test. Line 386: `pkgs := []string{"foo", "foo"}`. Lines 387-392: scripted runner returns success on both calls (so iteration runs to completion, halt-on-first-failure does not preempt). Line 403-405: `if len(runner.calls) != 2 { t.Fatalf("runner.calls = %d, want 2 (gate must NOT dedup duplicate packages)", ...) }`. Lines 406-416 additionally pin both args to literal `"foo"`. The doc-comment lines 380-384 explicitly call out the regression vector ("If a future change introduced a `seen map[string]bool` dedup layer in the iteration loop at gate_mage_test_pkg.go:108, this test would fail"). Matches spec acceptance-1 verbatim.
+
+2. **Acceptance #2 — `TestGateMageTestPkgHonorsContextCancel` extended with `len(runner.calls) == 1`.** COVERED. `gate_mage_test_pkg_test.go:333-371`. The pre-existing test scope is preserved (lines 347-362 keep status / err / no-start-fail / pkg-name assertions). The new assertion lives at lines 363-370: doc-comment "Halt-on-first-failure call-count pin: the gate must observe ctx.Err() on the first iteration and return immediately, NOT continue to invoke the runner for pkg2. Mirrors the call-count assertion pattern at lines 183-184 + 219-220 in the failure tests" + `if len(runner.calls) != 1 { t.Fatalf("runner.calls = %d, want 1 (ctx-cancel must halt before pkg2)", ...) }`. The setup at line 334 (`pkgs := []string{"pkg1", "pkg2"}`) is the load-bearing input — two declared packages so a missing ctx-check between iterations would surface as 2 calls. Matches spec acceptance-2 verbatim.
+
+3. **Acceptance #3 — `TestGateMageTestPkgRejectsEmptyStringPackage` pins `["", "pkg2"]` behavior.** COVERED. `gate_mage_test_pkg_test.go:437-479`. Line 438: `pkgs := []string{"", "pkg2"}`. Lines 439-445 script a runner that returns a start-error on the first call (mage rejecting the empty positional argument). Assertions: status Failed (line 450), `errors.Is(result.Err, startErr)` (line 457), "start failed" substring (line 460), "mage test-pkg " trailing-space substring (lines 467-470 — pinning the empty-package-name surfacing), `len(runner.calls) == 1` halts before pkg2 (line 471), `runner.calls[0].args[1] == ""` proving the gate forwards the empty string verbatim (line 475). Doc-comment lines 419-436 explicitly cite the gate's "Per-package empty-string handling" doc-comment + WAVE_A_PLAN.md PQA-4 + the bypass-the-constructor test design rationale from the spec's falsification mitigations. Matches spec acceptance-3 verbatim, including the falsification mitigation about stubbing the domain layer.
+
+4. **Acceptance #4 — Doc-comment "Per-package empty-string handling" paragraph.** COVERED. `gate_mage_test_pkg.go:54-66` carries the new bullet within the Behavior summary block. Content cross-references PQA-4, the runner call site at lines 109-115, the runErr / exit branches, the halt-on-first-failure interaction, and the domain-layer normalization responsibility. **Spec hint vs reality:** spec said "lines 22-29 area"; the actual placement is lines 54-66. The hint was a position estimate based on the original file size; builder placed the paragraph immediately after the "Process-start failure mid-iteration" bullet (line 51-53) since the empty-string case manifests as a start-error — keeps related contracts adjacent. Documented in builder worklog "Design notes: Doc-comment placement." Substance is correct, placement is logical, and the hint's intent (paragraph exists in the Behavior summary near related contracts) is satisfied.
+
+5. **Worklog completeness.** COVERED. `BUILDER_WORKLOG.md:1320-1361` carries the full Round 1 entry: files touched, three-test breakdown, targets run (with explicit cascade explanation tying the `mage testPkg` failure to sibling C.2's `auto_generate_steward.go` edits, probed via `mage testFunc ./internal/app TestRaiseRefinementsGateForgotten`), design notes (gate-level vs domain-level empty-string contract, success-then-success script rationale, ctx-cancel call-count pin justification, scriptedCommandRunner reuse, doc-comment placement), cross-droplet coordination notes (E.4 predecessor, E.1/E.2/E.3 already shipped, in-flight C.1/E.5/E.6), Hylla feedback (N/A per filesystem-MD mode), unknowns routed back (cascade build error explained + row-state observation about external mid-build edit).
+
+### Static-evidence verification of test-gate skip
+
+Per orchestrator instruction, the test-run gate is skipped due to sibling C.2's transient compile failure in `internal/app/auto_generate_steward.go`. Static verification confirms E.7's changes are isolated:
+
+- E.7 touches only `gate_mage_test_pkg.go` (doc-comment) + `gate_mage_test_pkg_test.go` (3 test changes).
+- All test infrastructure used (`scriptedCommandRunner`, `gateMageTestPkgFixtureProject`, `gateMageTestPkgFixtureItem`, `withFakeCommandRunner`) is pre-existing in the same test file or sibling test files (`scriptedCommandRunner` defined at lines 24-75 of the same file; `withFakeCommandRunner` from `gate_mage_ci_test.go`).
+- All imports already present (`context`, `errors`, `fmt`, `strings`, `testing`, `domain`, `templates`).
+- New tests use only stdlib + already-imported packages — no new package dependencies.
+- Doc-comment edit is comment-only — no functional code change in `gate_mage_test_pkg.go`.
+
+The cascade `mage testPkg` failure surfaces from `internal/app/auto_generate_steward.go` (sibling C.2's in-progress lane), NOT from E.7's edits. The worklog's `mage testFunc ./internal/app TestRaiseRefinementsGateForgotten` probe confirms origin. Trust orchestrator's drop-end `mage ci` once Chain 1 + Chain 3 settle.
+
+### Findings
+
+- **None.** All 4 acceptance criteria + worklog completeness pass on static inspection. Doc-comment placement at lines 54-66 (vs spec hint "22-29 area") is a hint-vs-reality mismatch only — the substance is in the Behavior summary block adjacent to the related start-failure bullet, exactly where the spec's falsification mitigation pointed builders ("doc-comment lines 22-29 gain a 'Per-package empty-string handling' paragraph to make the contract explicit"). Logical placement is preserved.
+
+### Missing Evidence
+
+- **Test-execution evidence deferred to drop-end `mage ci`** per orchestrator instruction. Static verification establishes isolation; runtime confirmation routes through the sibling-settled `mage ci` gate.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode forbids Hylla calls (per spawn prompt). All evidence resolved via `Read` on the uncommitted working tree files (gate source + tests + spec + worklog).

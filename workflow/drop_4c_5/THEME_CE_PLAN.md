@@ -45,6 +45,8 @@
 
 ### C.2 — Idempotency: `raiseRefinementsGateForgottenAttention` doc vs impl
 
+**State:** in_progress (impl + test landed; verification blocked by unrelated `internal/templates/load.go` compile error in a concurrent lane — orchestrator-routed)
+
 **Source:** memory R2 (Drop 3 NIT 3.22 1.2.1).
 
 **Files:**
@@ -336,6 +338,8 @@
 ---
 
 ### E.7 — `gate_mage_test_pkg` test rigor: no-dedup contract + halt-call-count + empty-string element
+
+**State:** done
 
 **Source:** memory 4b R2 (Drop 4b 4b.4 NITs 3.1/3.2/3.3).
 

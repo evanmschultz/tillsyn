@@ -51,6 +51,19 @@ import (
 //   - Process-start failure mid-iteration (mage not on PATH, worktree dir
 //     missing, fork errno) → GateStatusFailed. Err wraps the underlying
 //     os/exec error and names the package whose Run did not start.
+//   - Per-package empty-string handling: this gate does NOT pre-validate
+//     individual entries in item.Packages — an empty string is forwarded
+//     verbatim to `mage test-pkg ""` (see the runner call at lines 109-115),
+//     which mage rejects as an invalid argument. The resulting non-zero
+//     exit or os/exec start-error surfaces through this gate's runErr / exit
+//     branches as a runner-error verdict naming the empty entry (e.g. "mage
+//     test-pkg "" failed: exit code N"). Per-element normalization (trim,
+//     reject empties) is the domain layer's responsibility on action-item
+//     construction (see WAVE_A_PLAN.md PQA-4); the gate's contract is
+//     fail-loud at the runner boundary so a planner that injected an empty
+//     string post-construction still gets an observable failure rather
+//     than a silent skip. Halt-on-first-failure means later packages are
+//     NOT invoked once the empty entry's runner-error fires.
 //   - ctx cancellation → GateStatusFailed. Err wraps ctx.Err(); the gate
 //     distinguishes this from start-failure by checking ctx.Err() before
 //     reading the runner's err. The child process is killed by
