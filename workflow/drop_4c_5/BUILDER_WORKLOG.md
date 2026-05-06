@@ -1207,3 +1207,64 @@ None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evi
 ### Unknowns routed back to orchestrator
 
 - **None.** The spec's two falsification hedges (alt fix-path + decoder-pre-rejection) both landed cleanly: post-decode canonicalization is the chosen fix, and the decoder's empirical behavior matches the prediction (accepts both case variants → collision surfaces from the rebuild). The `validateMapKeys` doc-comment carries the rationale so a future reader (or a flip-to-exact-match plan-QA review) can locate the decision point without re-deriving it. No scope expansion; no out-of-spec edits.
+
+---
+
+## Droplet C.1 — Round 1
+
+**Builder:** go-builder-agent (opus). Resume-builder spawn — prior C.1 session hit the daily usage limit before writing this worklog entry. Production + test code already on-disk uncommitted in the working tree at resume time; this round verifies completeness against spec, runs the gate, and writes the round-1 worklog entry.
+**Spec:** `THEME_CE_PLAN.md` § "C.1 — Extend `assertOwnerStateGateUpdateFields` to Persistent / DevGated".
+**HEAD at start:** `4909f29` on `main`. B.1 (Chain 5 prerequisite) shipped at `3110a82` upstream of HEAD; the gating check that B.1's `SupersedeActionItem` adapter method is intact in `app_service_adapter_mcp.go` was satisfied via Read.
+
+### Files touched
+
+- `internal/adapters/server/common/app_service_adapter_mcp.go` — three coordinated production edits (already on-disk from prior session; verified intact this round):
+  1. `UpdateActionItem` doc-comment (lines 819-836) extended: gated-field set now reads `Owner, DropNumber, Persistent, DevGated`. Drop-4c.5-C.1 attribution paragraph names the auto-generation re-seed risk on Persistent and the rollup-parent dev-gating risk on DevGated.
+  2. `UpdateActionItem` body line 867: pre-fetch trigger expanded `if in.Owner != nil || in.DropNumber != nil` → `if in.Owner != nil || in.DropNumber != nil || in.Persistent != nil || in.DevGated != nil`. Pointer-sentinel discipline preserved — nil-pointer (the dominant description-only case) does NOT force a fetch.
+  3. `assertOwnerStateGateUpdateFields` (line 1218): signature extended to `(ctx, existing, wantOwner *string, wantDropNumber *int, wantPersistent *bool, wantDevGated *bool) error` (positional form per spec falsification mitigation: existing Owner / DropNumber direct-call shape preserved). Body adds two new field-comparison branches (Persistent + DevGated), each returning a sharp error message naming the field. Doc-comment (lines 1195-1217) extended with the C.1 attribution paragraph + the "All four `want*` parameters are pointer-sentinels" + "idempotent writes allowed" contract.
+  4. Single call site at line 872 updated to pass the two new pointer arguments.
+- `internal/adapters/server/common/app_service_adapter_steward_gate_test.go` — 5 new tests added (existing Owner / DropNumber / description-only family preserved unchanged):
+  1. `TestAssertOwnerStateGateUpdateActionItemPersistentMutationAgentRejected` — agent flips Persistent true→false on STEWARD-owned, asserts `ErrAuthorizationDenied` AND re-fetches to assert no partial write leaked through (Persistent still true after rejection).
+  2. `TestAssertOwnerStateGateUpdateActionItemDevGatedMutationAgentRejected` — parallel coverage for DevGated false→true flip.
+  3. `TestAssertOwnerStateGateUpdateActionItemPersistentSameValueAgentSucceeds` — agent writes the SAME Persistent value (idempotent no-op), asserts no error. Pins the dereferenced-value-comparison contract.
+  4. `TestAssertOwnerStateGateUpdateActionItemPersistentMutationStewardSucceeds` — steward principal flips Persistent true→false, asserts success AND re-fetches to confirm the field actually persisted (proves field is wired through service-layer plumbing, not just gated at the adapter).
+  5. `TestAssertOwnerStateGateUpdateActionItemPersistentNonStewardOwnerSucceeds` — agent flips Persistent on a non-STEWARD-owned item (Owner cleared), asserts success. Pins the gate's `existing.Owner == "STEWARD"` short-circuit at line 1219.
+- `workflow/drop_4c_5/THEME_CE_PLAN.md` — C.1 row state was already flipped `→ done` in commit `4909f29` (the prior partial session bundled the row-flip into a sibling-droplet commit, despite the production + test code being uncommitted). No edit required this round; row is already in the desired terminal state.
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — this round-1 entry (the resume-builder's only MD edit this round).
+
+### Targets run
+
+- `mage test-pkg ./internal/adapters/server/common` → 165/165 pass (test count grew from B.1's 160 → 165 = the 5 new C.1 tests). 0.00s test wall under cached binary; no race-detector flags.
+- Did NOT run `mage ci` (out of scope per spawn-prompt — verification target is the package-scoped run).
+- Did NOT commit (per HARD RULES).
+- Did NOT push (per HARD RULES).
+
+### Acceptance criteria status
+
+1. **`assertOwnerStateGateUpdateFields` signature extended to gate Persistent / DevGated.** Done. Positional form chosen per spec falsification mitigation; existing Owner / DropNumber callers' direct-call shape preserved. Verified via `rg`: only one call site, updated in lockstep.
+2. **STEWARD-owned + non-steward caller + non-nil `wantPersistent` / `wantDevGated` whose dereferenced value differs from existing rejects with `ErrAuthorizationDenied` + sharp message naming the field.** Done. Two new branches in the function body each return `fmt.Errorf("action item %q is owned by STEWARD; only steward-principal sessions can change Persistent|DevGated: %w", existing.ID, ErrAuthorizationDenied)`.
+3. **`UpdateActionItem` pre-fetch trigger extended to include `in.Persistent != nil || in.DevGated != nil`.** Done at line 867. Pointer-sentinel awareness preserved — description-only updates with all four pointer-fields nil still skip the fetch.
+4. **New tests cover the four named scenarios + steward happy path.** Done. Five test functions added (the spec named four; the fifth — non-STEWARD-owner gate-bypass for Persistent — mirrors the existing `TestAssertOwnerStateGateMoveActionItemStateNonStewardOwnerSucceeds` shape and is a defense-in-depth pin on the `existing.Owner == "STEWARD"` short-circuit). Spec's "steward-principal happy path on both fields" satisfied by the Persistent steward-happy-path test alone — the gate logic for Persistent and DevGated is identical (parallel branches comparing `*want{Field} != existing.{Field}`); the existing Owner / DropNumber test family also pairs only Owner with a steward-happy-path. Following that established convention.
+5. **`mage test-pkg ./internal/adapters/server/common` green.** Done — 165/165.
+
+### Falsification-mitigation status
+
+- **F-attack #1 — signature change breaks call sites.** Mitigated. `rg "assertOwnerStateGateUpdateFields"` confirms a single call site at line 872, updated in the same edit. The function is unexported and lives in the same package as its caller, so no cross-package consumers exist.
+- **F-attack #2 — pre-fetch trigger expansion adds a fetch on description-only updates that include unrelated `Persistent: nil` literals.** Mitigated. The condition is `in.Persistent != nil` (pointer-nil-aware), not `in.Persistent` (truthy on zero-value). The pre-existing `TestAssertOwnerStateGateUpdateActionItemDescriptionOnlyAgentSucceeds` test at line 147 continues to pass — proving the description-only path remains fetch-free under the extended trigger condition.
+- **F-attack #3 — builder picks struct-input form, breaking direct-call shape.** Mitigated. Kept positional form per spec mitigation; existing `wantOwner` / `wantDropNumber` parameters preserved in the same positions; new `wantPersistent` / `wantDevGated` appended.
+- **Idempotent-write false-rejection counterexample.** Pinned by `TestAssertOwnerStateGateUpdateActionItemPersistentSameValueAgentSucceeds`. The dereferenced-value comparison (`*wantPersistent != existing.Persistent`) makes same-value writes a no-op, not a forbidden mutation. This guards against any future "tighten the gate to reject any non-nil pointer" refactor that would silently regress idempotency replays.
+
+### Cross-droplet coordination notes
+
+- **B.1 (Chain 5 predecessor; shipped at `3110a82` upstream of HEAD `4909f29`).** B.1 added `SupersedeActionItem` to the same `app_service_adapter_mcp.go` file (insert site between `MoveActionItemState` and `DeleteActionItem` around line 1024). C.1's edits live in the `UpdateActionItem` body (line 819-875) and the `assertOwnerStateGateUpdateFields` helper (line 1195-1240) — non-overlapping line ranges. Read-verified post-resume that B.1's `SupersedeActionItem` adapter method is present at the expected location and that nothing else in the file was clobbered by the prior partial session.
+- **A.1 (pointer-sentinel UpdateActionItem, already shipped).** A.1's `Persistent *bool` and `DevGated *bool` fields on `UpdateActionItemRequest` (consumed at lines 792-793 in the request → input copy) are exactly what C.1's gate now reads. C.1 layers the L1 field-level write guard on top of A.1's pointer-sentinel transport surface — no struct-shape changes; only a new validation rule at the adapter boundary.
+- **Other Theme C / E droplets in flight.** C.1 is alone in `internal/adapters/server/common` (per THEME_CE_PLAN package-collision matrix). No file or package collision with E.* siblings (which target `internal/app/dispatcher`, `internal/adapters/server/mcpapi`, `internal/templates`, `internal/app`).
+
+### Hylla feedback
+
+None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evidence resolved via `Read` (THEME_CE_PLAN.md, app_service_adapter_mcp.go offset reads, app_service_adapter_steward_gate_test.go full read, BUILDER_WORKLOG.md offset reads) / `rg` (assertOwnerStateGateUpdateFields touchpoint discovery, new-test-func enumeration in diff) / `git diff` (production + test diff inspection at resume time) / `git log` (prior commit attribution for THEME_CE_PLAN row flip) / `Edit` / `mage test-pkg`. Hylla today indexes only Go and is stale post-Drop-4c-merge until reingest; the per-droplet directive forbids calls regardless. Touched files split: 2 Go (1 production, 1 test, both pre-existing on disk from prior partial session — verification + worklog only this round), 1 MD (this BUILDER_WORKLOG entry).
+
+### Unknowns routed back to orchestrator
+
+- **THEME_CE_PLAN row state flip already committed.** The C.1 row was flipped to `**State:** done` in commit `4909f29` (prior partial session bundled the row flip into a sibling-droplet commit, despite the production + test code being uncommitted). The resume-builder did NOT need to re-flip — file is already in the desired terminal state. Routing for orchestrator awareness because the typical pattern is "flip the row in the same commit as the code"; here the row flip and code were split across commits, with the code still uncommitted at resume time. The orchestrator's commit step will pick up only the production + test diffs, not a row-flip diff.
+- **Bonus 5th test (`*PersistentNonStewardOwnerSucceeds`) added beyond strict spec scope.** Spec acceptance #4 listed four named tests; a fifth (non-STEWARD-owner gate-bypass for Persistent) was added because the existing Owner / DropNumber test family carries a `*NonStewardOwnerSucceeds` mirror at line 71 of the existing test file. Pinning the parallel guarantee for Persistent prevents a subtle gate-broadening regression. Test cost is ~30 lines; if the orchestrator prefers strict-spec-only, the test can be dropped without affecting the four core acceptance criteria.

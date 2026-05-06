@@ -2,6 +2,7 @@ package templates
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1478,4 +1479,253 @@ requires_plugins = ["Context7", "context7"]
 	if got, want := tpl.Tillsyn.RequiresPlugins, []string{"Context7", "context7"}; !equalStringSlices(got, want) {
 		t.Fatalf("tpl.Tillsyn.RequiresPlugins = %v; want %v", got, want)
 	}
+}
+
+// TestValidateMapKeysCanonicalizesGatesKeys verifies the Drop 4c.5 E.6
+// post-decode canonicalization contract for tpl.Gates: a TOML document that
+// writes [gates.BUILD] (uppercase) loads cleanly AND tpl.Gates indexes by the
+// canonical lowercase domain.KindBuild. The pre-canonicalization key
+// Kind("BUILD") MUST NOT survive the rebuild.
+func TestValidateMapKeysCanonicalizesGatesKeys(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[gates]
+BUILD = ["mage_ci"]
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error on uppercase [gates] key: %v", err)
+	}
+	gateSeq, ok := tpl.Gates[domain.KindBuild]
+	if !ok {
+		t.Fatalf("tpl.Gates[%q] missing after canonicalization (got map keys %v)", domain.KindBuild, mapKeys(tpl.Gates))
+	}
+	if got, want := len(gateSeq), 1; got != want {
+		t.Fatalf("len(tpl.Gates[%q]) = %d; want %d", domain.KindBuild, got, want)
+	}
+	if got, want := gateSeq[0], GateKind("mage_ci"); got != want {
+		t.Fatalf("tpl.Gates[%q][0] = %q; want %q", domain.KindBuild, got, want)
+	}
+	// Pre-canonicalization key must not survive.
+	if _, leaked := tpl.Gates[domain.Kind("BUILD")]; leaked {
+		t.Fatalf("tpl.Gates retained pre-canonicalization key %q", "BUILD")
+	}
+}
+
+// TestValidateMapKeysCanonicalizesKindsKeys verifies the same contract for
+// tpl.Kinds: TOML [kinds.BUILD] loads + indexes by domain.KindBuild.
+func TestValidateMapKeysCanonicalizesKindsKeys(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[kinds.BUILD]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = ["build-qa-proof", "build-qa-falsification"]
+structural_type = "droplet"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error on uppercase [kinds] key: %v", err)
+	}
+	if _, ok := tpl.Kinds[domain.KindBuild]; !ok {
+		t.Fatalf("tpl.Kinds[%q] missing after canonicalization (got map keys %v)", domain.KindBuild, mapKeys(tpl.Kinds))
+	}
+	if _, leaked := tpl.Kinds[domain.Kind("BUILD")]; leaked {
+		t.Fatalf("tpl.Kinds retained pre-canonicalization key %q", "BUILD")
+	}
+}
+
+// TestValidateMapKeysCanonicalizesAgentBindingsKeys verifies the same contract
+// for tpl.AgentBindings: TOML [agent_bindings.BUILD] loads + indexes by
+// domain.KindBuild.
+func TestValidateMapKeysCanonicalizesAgentBindingsKeys(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[agent_bindings.BUILD]
+agent_name = "go-builder-agent"
+model = "opus"
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error on uppercase [agent_bindings] key: %v", err)
+	}
+	binding, ok := tpl.AgentBindings[domain.KindBuild]
+	if !ok {
+		t.Fatalf("tpl.AgentBindings[%q] missing after canonicalization (got map keys %v)", domain.KindBuild, mapKeys(tpl.AgentBindings))
+	}
+	if got, want := binding.AgentName, "go-builder-agent"; got != want {
+		t.Fatalf("tpl.AgentBindings[%q].AgentName = %q; want %q", domain.KindBuild, got, want)
+	}
+	if _, leaked := tpl.AgentBindings[domain.Kind("BUILD")]; leaked {
+		t.Fatalf("tpl.AgentBindings retained pre-canonicalization key %q", "BUILD")
+	}
+}
+
+// TestValidateMapKeysCanonicalizesTitlecaseGatesKey is a parallel coverage
+// case for [gates.Build] (titlecase, NOT all-caps) — confirms the
+// canonicalization handles every case-fold variant the same way, not just the
+// all-uppercase happy path.
+func TestValidateMapKeysCanonicalizesTitlecaseGatesKey(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[gates]
+Build = ["mage_ci"]
+`
+	tpl, err := Load(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Load: unexpected error on titlecase [gates] key: %v", err)
+	}
+	if _, ok := tpl.Gates[domain.KindBuild]; !ok {
+		t.Fatalf("tpl.Gates[%q] missing after canonicalization (got map keys %v)", domain.KindBuild, mapKeys(tpl.Gates))
+	}
+	if _, leaked := tpl.Gates[domain.Kind("Build")]; leaked {
+		t.Fatalf("tpl.Gates retained pre-canonicalization key %q", "Build")
+	}
+}
+
+// TestValidateMapKeysCollidesOnCaseFold verifies the post-canonicalization
+// collision-detection contract: a TOML document with BOTH [gates.BUILD] AND
+// [gates.build] reaches validateMapKeys with two distinct sibling map keys
+// (the pelletier/go-toml/v2 decoder is case-sensitive at the TOML layer per
+// the 2026-05-05 probe). Canonicalization folds both to "build", and the
+// collision surfaces as ErrUnknownKindReference wrapping a message that names
+// the duplicated key.
+func TestValidateMapKeysCollidesOnCaseFold(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[gates]
+BUILD = ["mage_ci"]
+build = ["mage_test_pkg"]
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownKindReference (case-fold collision); got nil")
+	}
+	if !errors.Is(err, ErrUnknownKindReference) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownKindReference) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("Load: err = %q; want substring %q", err.Error(), "duplicate")
+	}
+	if !strings.Contains(err.Error(), "build") {
+		t.Fatalf("Load: err = %q; want canonical key %q in collision message", err.Error(), "build")
+	}
+	if !strings.Contains(err.Error(), "gates") {
+		t.Fatalf("Load: err = %q; want field name %q in message", err.Error(), "gates")
+	}
+}
+
+// TestValidateMapKeysCollidesOnCaseFoldKindsTable mirrors the collision check
+// for [kinds.BUILD] vs [kinds.build] so the rebuild path is exercised on
+// every map (not only Gates). Same canonicalization-then-collision contract.
+func TestValidateMapKeysCollidesOnCaseFoldKindsTable(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[kinds.BUILD]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = []
+structural_type = "droplet"
+
+[kinds.build]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = []
+structural_type = "droplet"
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownKindReference (case-fold collision on kinds); got nil")
+	}
+	if !errors.Is(err, ErrUnknownKindReference) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownKindReference) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "kinds") {
+		t.Fatalf("Load: err = %q; want field name %q in message", err.Error(), "kinds")
+	}
+}
+
+// TestValidateMapKeysRejectsBogusKeyAfterCaseFoldVariant pins the existing
+// rejection contract under the new canonicalization regime: a typo like
+// [gates.BULID] (transposed letters) MUST still surface as
+// ErrUnknownKindReference. Case-folding to "bulid" does not turn a typo into
+// a valid kind — IsValidKind's enum-membership check fires first.
+func TestValidateMapKeysRejectsBogusKeyAfterCaseFoldVariant(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+[gates]
+BULID = ["mage_ci"]
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrUnknownKindReference (typo); got nil")
+	}
+	if !errors.Is(err, ErrUnknownKindReference) {
+		t.Fatalf("Load: errors.Is(_, ErrUnknownKindReference) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "BULID") {
+		t.Fatalf("Load: err = %q; want offending key %q in message", err.Error(), "BULID")
+	}
+}
+
+// TestValidateMapKeysDefaultTemplateRegression is the regression hedge for the
+// embedded default-template path: every key in the Go default template
+// (`builtin/default-go.toml`, the language-aware resolver's primary
+// agent-bindings-rich payload) is already lowercase, so the canonicalization
+// rebuild MUST be a no-op (the pre-scan short-circuit returns nil and Load
+// leaves the maps untouched). Failing this test signals either the embedded
+// default drifted to mixed-case (template-author error) or the rebuild path
+// runs even when not needed (performance regression on the cold-load happy
+// path).
+//
+// Uses LoadDefaultTemplateForLanguage("go") rather than reading the embed
+// bytes directly — exercises the canonical adopter entry point, which
+// guarantees the canonicalization contract holds end-to-end (FS open + TOML
+// decode + Load + validateMapKeys), not just on the raw-byte path.
+func TestValidateMapKeysDefaultTemplateRegression(t *testing.T) {
+	tpl, err := LoadDefaultTemplateForLanguage("go")
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\"): unexpected error: %v", err)
+	}
+	// Every key in the embedded default must be already-canonical.
+	for k := range tpl.Kinds {
+		if domain.Kind(strings.ToLower(strings.TrimSpace(string(k)))) != k {
+			t.Fatalf("default template Kinds key %q is not canonical lowercase", k)
+		}
+	}
+	for k := range tpl.AgentBindings {
+		if domain.Kind(strings.ToLower(strings.TrimSpace(string(k)))) != k {
+			t.Fatalf("default template AgentBindings key %q is not canonical lowercase", k)
+		}
+	}
+	for k := range tpl.Gates {
+		if domain.Kind(strings.ToLower(strings.TrimSpace(string(k)))) != k {
+			t.Fatalf("default template Gates key %q is not canonical lowercase", k)
+		}
+	}
+	// Sanity check: domain.KindBuild is present (default template has a
+	// build row); confirms the lookup-by-canonical-key contract works on the
+	// existing default.
+	if _, ok := tpl.Kinds[domain.KindBuild]; !ok {
+		t.Fatalf("default template missing Kinds[%q] — sanity check failed", domain.KindBuild)
+	}
+}
+
+// mapKeys returns a sorted slice of map keys for deterministic error UX in
+// the new canonicalization tests. Sorted for stable diff output when a
+// failing test surfaces the actual map shape.
+func mapKeys[V any](m map[domain.Kind]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, string(k))
+	}
+	slices.Sort(out)
+	return out
 }

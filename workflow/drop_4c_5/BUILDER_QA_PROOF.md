@@ -910,3 +910,67 @@ Worklog at lines 1061-1118 contains: scope statement, files-touched breakdown (p
 ### Hylla Feedback
 
 N/A — review touched only Go source + tests under filesystem-MD coordination mode. Per spawn prompt directive ("NO Hylla calls"), no Hylla queries attempted. Evidence resolved via `Read` + `git diff` + `mage testFunc` on the uncommitted working tree.
+
+---
+
+## Droplet E.6 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, Section 0 4-pass).
+**Source spec:** `THEME_CE_PLAN.md` § "E.6 — `validateMapKeys` case-fold footgun: post-decode canonicalization" (lines 302-336).
+**Builder worklog:** `BUILDER_WORKLOG.md` § "Droplet E.6 — Round 1" (lines 1149-1209).
+**Evidence basis:** `git diff` against `internal/templates/load.go` + `internal/templates/load_test.go`; `Read` of `load.go:122-373` + `load_test.go:1484-1731`; `rg` for `validateMapKeys` call-site enumeration. Builder's reported `mage test-pkg ./internal/templates` 394/394 PASS taken as authoritative per spawn-prompt premise.
+
+### 1. Acceptance verification
+
+| # | Acceptance criterion | Status | Evidence |
+| - | -------------------- | ------ | -------- |
+| 1 | Signature `func validateMapKeys(tpl *Template) error` + caller at `load.go:125` updated. | **PASS** | `load.go:308` declares `func validateMapKeys(tpl *Template) error`. `load.go:125` reads `if err := validateMapKeys(&tpl); err != nil`. `rg validateMapKeys` confirms exactly one production call site (`load.go:125`); other matches are doc-comments + tests. Pointer-receiver rationale documented in `load.go:296-300`. |
+| 2 | Canonicalization test for `[gates.BUILD]` → indexable by `domain.KindBuild`. | **PASS** | `TestValidateMapKeysCanonicalizesGatesKeys` (`load_test.go:1489-1514`): TOML uppercase `[gates] BUILD = ["mage_ci"]` loads, asserts `tpl.Gates[domain.KindBuild]` present, `len == 1`, `gateSeq[0] == "mage_ci"`, and pre-canonicalization key `Kind("BUILD")` does NOT survive (leak guard). |
+| 3 | Canonicalization test for `[kinds.BUILD]` → indexable by `domain.KindBuild`. | **PASS** | `TestValidateMapKeysCanonicalizesKindsKeys` (`load_test.go:1518-1538`): TOML `[kinds.BUILD]` with full row body loads, asserts `tpl.Kinds[domain.KindBuild]` present + leak-guard on uppercase key. |
+| 4 | Canonicalization test for `[agent_bindings.BUILD]` → indexable by `domain.KindBuild`. | **PASS** | `TestValidateMapKeysCanonicalizesAgentBindingsKeys` (`load_test.go:1543-1565`): TOML `[agent_bindings.BUILD] agent_name="go-builder-agent"` loads, asserts `tpl.AgentBindings[domain.KindBuild].AgentName == "go-builder-agent"` + leak-guard. |
+| 5 | Collision test — `[gates.BUILD]` + `[gates.build]` rejects with clear error. | **PASS** | `TestValidateMapKeysCollidesOnCaseFold` (`load_test.go:1597-1621`): both sibling tables in same document → `errors.Is(err, ErrUnknownKindReference)` AND error contains `"duplicate"` + `"build"` + `"gates"`. Confirms decoder accepts both as distinct map keys (mitigation #3 in spec) and the rebuild path's collision branch fires. Mirror test on Kinds table (`load_test.go:1626-1652`) bonus coverage. |
+| 6 | Default template regression — `default-go.toml` continues to load. | **PASS** | `TestValidateMapKeysDefaultTemplateRegression` (`load_test.go:1692-1719`): calls `LoadDefaultTemplateForLanguage("go")`, asserts every key in `tpl.Kinds` / `tpl.AgentBindings` / `tpl.Gates` is already-canonical lowercase (so the rebuild short-circuit fires — performance regression hedge), and confirms `tpl.Kinds[domain.KindBuild]` is present. |
+| 7 | `mage test-pkg ./internal/templates` green. | **PASS** (per builder report) | Spawn prompt premise: 394/394 PASS. Re-running not in spawn directive; trusted per prompt. |
+
+### 2. Trace coverage — non-spec hedges
+
+- **Titlecase variant** — `TestValidateMapKeysCanonicalizesTitlecaseGatesKey` (`load_test.go:1571-1588`): exercises `[gates.Build]` (titlecase) → confirms canonicalization handles every case-fold variant uniformly, not only the all-uppercase corner. Strict superset of spec scope; non-blocking gain.
+- **Bogus-key-after-canonicalization** — `TestValidateMapKeysRejectsBogusKeyAfterCaseFoldVariant` (`load_test.go:1659-1676`): `[gates.BULID]` (typo) → `IsValidKind`'s enum-membership check fires BEFORE canonicalization; pins the existing rejection contract under the new regime so the case-fold path can't accidentally turn a typo into a valid kind. Defense-in-depth.
+
+### 3. Implementation read
+
+`canonicalizeMapKeys[V any]` (`load.go:341-373`) — generic over the value type, three-tuple return contract `(rebuilt, nil)` / `(nil, nil)` / `(nil, err)`:
+
+- **Pre-scan loop** (lines 348-356) validates every key via `domain.IsValidKind` AND tracks `needsRebuild` via `Kind(strings.ToLower(strings.TrimSpace(string(k)))) != k`. Cheap — single pass over keys, no allocation.
+- **Short-circuit** (lines 357-359) returns `(nil, nil)` when every key was already canonical → embedded default templates avoid the rebuild allocation.
+- **Rebuild loop** (lines 364-371) constructs a new map, canonicalizes each key, and detects post-canonicalization duplicates via `_, dup := rebuilt[canon]` lookup → wraps `ErrUnknownKindReference` with field-name + canonical key for adopter UX.
+
+`validateMapKeys` body (`load.go:308-325`) — three calls to `canonicalizeMapKeys` for `tpl.Kinds` / `tpl.AgentBindings` / `tpl.Gates`, each guards via `else if rebuilt != nil` to swap the map only when the canonicalization actually mutated. Correct.
+
+### 4. Findings
+
+None blocking. Two NIT-class observations:
+
+**4.1 `TrimSpace` inside the canonicalization (intentional but novel).** `load.go:353` + `load.go:366` both call `strings.ToLower(strings.TrimSpace(string(k)))`. The `TrimSpace` is harmless but TOML decoder doesn't preserve surrounding whitespace in bare keys (only quoted keys can carry whitespace, and those are rejected by `IsValidKind` anyway). The trim mirrors `domain.IsValidKind`'s implementation (kind.go:50-52 per builder doc-comment), so the symmetry is the right call — but the trim is functionally dead code for the production decoder path. **Non-blocking, intentional symmetry.**
+
+**4.2 Worklog notes "Resume of a prior E.6 spawn that hit the daily usage limit" with production code already on-disk.** `BUILDER_WORKLOG.md:1151` describes a resume scenario where the working tree carried prior unpublished E.6 work. Verified via `git diff --stat` showing 108 + 250 line additions exclusively to E.6 declared files (load.go + load_test.go) — no scope leak from the prior partial run. **Non-blocking, transparent.**
+
+### 5. Worklog completeness
+
+`BUILDER_WORKLOG.md` § "Droplet E.6 — Round 1" (lines 1149-1209) carries: spawn-time + resume context, source spec pointer, goal statement, files-touched breakdown (production helper + signature change + 8 new tests + 1 helper), explicit acceptance checklist (5 items aligned with spec), falsification-mitigation status (3 items, all locked), cross-droplet coordination notes (no in-package collisions; F.2.* dependency for default-template regression test), Hylla feedback (None — directive-compliant), Unknowns (none). Complete.
+
+### 6. Summary
+
+**Verdict: PASS.** All five spec-declared acceptance criteria PASS plus two non-spec hedges (titlecase + bogus-key-after-canonicalization) add defense-in-depth. Signature change `Template` → `*Template` correctly propagated to the single call site. Generic helper `canonicalizeMapKeys[V any]` cleanly factored; pre-scan short-circuit hedges the cold-load happy path. Collision detection fires from the rebuild branch as predicted (decoder accepts both case variants per the 2026-05-05 probe noted in load.go:306). Default-template regression test exercises the full `LoadDefaultTemplateForLanguage("go")` path end-to-end. Two NIT-class observations are non-blocking. No round-2 work required for E.6.
+
+### TL;DR
+
+- T1 — All five acceptance criteria PASS; signature `*Template`, single call site updated, three canonicalization tests + collision test + default-template regression test all present and aligned with spec.
+- T2 — Two non-spec hedges (titlecase variant + bogus-key-after-canonicalization) add defense-in-depth without scope expansion.
+- T3 — `canonicalizeMapKeys[V any]` correctly factored: pre-scan + short-circuit on already-canonical maps, rebuild path detects collisions via `rebuilt[canon]` lookup wrapping `ErrUnknownKindReference`.
+- T4 — Two NIT-class non-blocking observations: intentional `TrimSpace` symmetry with `IsValidKind`, transparent resume scenario from prior partial spawn (no scope leak verified).
+- T5 — Worklog complete with all sections; no missing evidence; no round-2 needed.
+
+### Hylla Feedback
+
+N/A — review touched only Go source + tests under filesystem-MD coordination mode. Per spawn prompt directive ("NO Hylla calls"), no Hylla queries attempted. Evidence resolved via `Read` + `git diff` + `rg` on the uncommitted working tree.

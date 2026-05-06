@@ -1083,3 +1083,65 @@ T1. Five attack vectors (case ordering, text leak, regression guard, wrap covera
 T2. None — no CONFIRMED counterexamples.
 T3. Verdict **PASS**. Droplet E.5 ships clean. Defensive ordering forward-compat-correct; sharp-prefix surfaces toggle-disabled separately from generic auth-denied without shadowing; production wrap shape exactly mirrored in unit test.
 T4. N/A — Hylla not consulted per spawn directive.
+
+---
+
+## Droplet E.6 — Round 1
+
+### Section 1 — Findings
+
+#### 1.1 — Generic helper `canonicalizeMapKeys[V any]` correctness: REFUTED
+
+`internal/templates/load.go:341-373` defines `canonicalizeMapKeys[V any](m map[domain.Kind]V, fieldName string) (map[domain.Kind]V, error)`. Three return paths verified:
+
+- **Happy path `(nil, nil)`**: line 357-359 short-circuits before any allocation when no key needs canonicalization. The empty-map case is also `(nil, nil)` at line 342-344. Confirmed no `make(map[...]V)` call reachable on the all-lowercase input.
+- **Rebuild path `(rebuilt, nil)`**: line 364 allocates `make(map[domain.Kind]V, len(m))` and the loop at 365-371 copies values under the canonicalized key.
+- **Error path `(nil, err)`**: line 351 (unknown kind) and line 368 (post-canonicalization collision) both return nil map alongside a wrapped `ErrUnknownKindReference`.
+
+The generic constraint `any` is appropriate — invariant in V — and the call sites in `validateMapKeys` (load.go:308-325) handle each return shape correctly with the `if rebuilt != nil { tpl.X = rebuilt }` guard.
+
+#### 1.2 — Collision detection edge cases: REFUTED
+
+`TestValidateMapKeysCollidesOnCaseFold` (load_test.go:1597-1621) covers BOTH `[gates.BUILD]` AND `[gates.build]` — collision message asserted to contain `"duplicate"`, `"build"` (canonical key), AND `"gates"` (field name). `TestValidateMapKeysCollidesOnCaseFoldKindsTable` (load_test.go:1626-1652) mirrors for the kinds map. Titlecase `Build` is covered separately by `TestValidateMapKeysCanonicalizesTitlecaseGatesKey` (1571-1588). The titlecase + uppercase collision case (`[gates.Build]` AND `[gates.BUILD]`) is not explicitly tested but is identical-by-construction: line 366 lowercases via `strings.ToLower(strings.TrimSpace(...))` then line 367-369 detects the collision regardless of pre-canonicalization variant — uppercase-vs-titlecase collision is the same code path. Builder accepted REFUTED, did not file as a coverage gap.
+
+#### 1.3 — Signature change call-site coverage: REFUTED
+
+`rg "validateMapKeys|canonicalizeMapKeys" --type go` returns:
+- Production call: exactly one site at `load.go:125` (`if err := validateMapKeys(&tpl); err != nil`).
+- Doc-comment references: load.go (8 lines), schema.go:177, load_test.go (4 doc-comment mentions). None are call sites.
+- Test invocations: all routed through `Load(strings.NewReader(...))`, never call `validateMapKeys` directly.
+
+Signature flip from `func validateMapKeys(tpl Template) error` → `func validateMapKeys(tpl *Template) error` lands cleanly at the single production call site. Verified.
+
+#### 1.4 — Default template regression: REFUTED
+
+`TestValidateMapKeysDefaultTemplateRegression` (load_test.go:1692-1719) calls `LoadDefaultTemplateForLanguage("go")` (post-F.2.1 entry point) and asserts every key in `tpl.Kinds`, `tpl.AgentBindings`, and `tpl.Gates` is already canonical-lowercase. Sanity-check at line 1716 confirms `tpl.Kinds[domain.KindBuild]` indexes correctly. `mage test-pkg ./internal/templates` returns 394/394 GREEN — full default-go.toml load pipeline regression test passes.
+
+#### 1.5 — Typo case `[gates.BULID]` still rejects: REFUTED
+
+`TestValidateMapKeysRejectsBogusKeyAfterCaseFoldVariant` (load_test.go:1659-1676) asserts `[gates.BULID]` surfaces `ErrUnknownKindReference` with the literal `"BULID"` in the wrapped message. Implementation at load.go:350-352 calls `domain.IsValidKind(k)` BEFORE the case-fold check at line 353; `IsValidKind` case-folds internally (per doc-comment at load.go:288 referencing kind.go:50-52), so `BULID` → `bulid` → not-in-enum → reject. Typo trapped before the canonicalization-needed branch can run.
+
+#### 1.6 — Doc-comment lock on fix-path decision: REFUTED
+
+`load.go:287-294` carries explicit lock language: `"Drop 4c.5 E.6 fix-path decision: post-decode canonicalization (NOT exact-match rejection)."` followed by rationale citing `domain.IsValidKind`'s existing case-fold at kind.go:50-52. The alternative is named ("exact-match rejection") and the swappability framing aligns with THEME_CE_PLAN.md §E.6 mitigation 1 (lines 332-334). Doc-comment lock satisfied.
+
+### Section 2 — Counterexamples
+
+None. Six attack categories independently REFUTED.
+
+### Section 3 — Summary
+
+Verdict **PASS**. Droplet E.6 lands cleanly. The generic `canonicalizeMapKeys[V any]` helper correctly implements three return shapes; collision detection covers BUILD/build/Build; single production call site at load.go:125; default-go.toml regression test green (no rebuild on canonical input); typo `BULID` still rejects via IsValidKind firing before case-fold; doc-comment locks the canonicalization decision and names the swappable alternative.
+
+`mage test-pkg ./internal/templates` reconfirmed 394/394 PASS.
+
+### Section 4 — Hylla Feedback
+
+N/A — spawn-prompt directive ("NO Hylla calls") routed all evidence through `Read` + `Bash` (`rg`/mage). Hylla stale post-Drop-4c-merge regardless. No miss to log.
+
+### TL;DR
+
+T1. Six attack vectors (generic helper correctness, collision edges, single call site, default-go regression, typo rejection, doc-comment lock) each independently REFUTED via direct read of load.go:308-373 + load_test.go:1484-1719.
+T2. None — no CONFIRMED counterexamples.
+T3. Verdict **PASS**. E.6 ships clean. Generic helper has correct (nil,nil)/(rebuilt,nil)/(nil,err) shape. Collision detection covers BUILD/build/Build. Single production call site at load.go:125. Default-go regression covered by TestValidateMapKeysDefaultTemplateRegression. BULID typo trapped by IsValidKind firing before canonicalization. Doc-comment locks fix-path with named swappable alternative.
+T4. N/A — Hylla not consulted per spawn directive.

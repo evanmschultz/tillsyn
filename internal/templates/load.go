@@ -122,7 +122,7 @@ func Load(r io.Reader) (Template, error) {
 	// Step 4 — load-time validators. Order matters: map-key membership and
 	// child-rule kind membership run first so cycle detection never
 	// traverses a corrupt vocabulary.
-	if err := validateMapKeys(tpl); err != nil {
+	if err := validateMapKeys(&tpl); err != nil {
 		return Template{}, err
 	}
 	if err := validateChildRuleKinds(tpl.ChildRules); err != nil {
@@ -275,29 +275,101 @@ var (
 
 // validateMapKeys asserts every key in Template.Kinds,
 // Template.AgentBindings, and Template.Gates is a member of the closed
-// 12-value domain.Kind enum. Catches typos like [kinds.bulid] (transposed
-// letters), [agent_bindings.totally-bogus], or [gates.bogus-kind] at load
-// time rather than letting them silently coexist with the real entries —
-// strict decode validates fields inside a row but not the map keys themselves,
-// because pelletier/go-toml/v2 treats arbitrary keys as legitimate map
-// entries when the destination type is a map.
-func validateMapKeys(tpl Template) error {
-	for k := range tpl.Kinds {
-		if !domain.IsValidKind(k) {
-			return fmt.Errorf("%w: kinds map key %q", ErrUnknownKindReference, k)
-		}
+// 12-value domain.Kind enum AND canonicalizes those keys to their lowercase
+// form so consumer-side lookups by domain.KindBuild succeed even when the
+// authoring template wrote [kinds.BUILD] / [gates.Build] / etc. Catches typos
+// like [kinds.bulid] (transposed letters), [agent_bindings.totally-bogus], or
+// [gates.bogus-kind] at load time rather than letting them silently coexist
+// with the real entries — strict decode validates fields inside a row but not
+// the map keys themselves, because pelletier/go-toml/v2 treats arbitrary keys
+// as legitimate map entries when the destination type is a map.
+//
+// Drop 4c.5 E.6 fix-path decision: post-decode canonicalization (NOT
+// exact-match rejection). Rationale: domain.IsValidKind already case-folds
+// (kind.go:50-52 trims + lowers before slice-contains), so the validation
+// surface ALREADY tolerates uppercase. Forcing exact-match here would diverge
+// the value-validation contract from the key-validation contract for no
+// adopter-visible win. Canonicalization keeps the load surface tolerant of
+// authoring case-drift while ensuring downstream consumers can index by the
+// canonical lowercase domain.Kind constants without first re-folding.
+//
+// The signature takes *Template (not Template by value) so the canonicalized
+// rebuild is visible to the caller. Each map is rebuilt only if at least one
+// key actually canonicalized (cheap pre-scan), to avoid touching the map's
+// underlying allocation on the all-lowercase happy path that the embedded
+// default templates exercise.
+//
+// Collision: if two distinct TOML keys (e.g. [gates.BUILD] AND [gates.build])
+// canonicalize to the same domain.Kind, the rebuild detects the collision and
+// returns ErrUnknownKindReference wrapping a message that names the offending
+// kind. The TOML decoder accepts the two as legitimate sibling tables (probed
+// 2026-05-05 against pelletier/go-toml/v2 — case-sensitive at the TOML layer);
+// the collision surfaces only after canonicalization.
+func validateMapKeys(tpl *Template) error {
+	if rebuilt, err := canonicalizeMapKeys(tpl.Kinds, "kinds"); err != nil {
+		return err
+	} else if rebuilt != nil {
+		tpl.Kinds = rebuilt
 	}
-	for k := range tpl.AgentBindings {
-		if !domain.IsValidKind(k) {
-			return fmt.Errorf("%w: agent_bindings map key %q", ErrUnknownKindReference, k)
-		}
+	if rebuilt, err := canonicalizeMapKeys(tpl.AgentBindings, "agent_bindings"); err != nil {
+		return err
+	} else if rebuilt != nil {
+		tpl.AgentBindings = rebuilt
 	}
-	for k := range tpl.Gates {
-		if !domain.IsValidKind(k) {
-			return fmt.Errorf("%w: gates map key %q", ErrUnknownKindReference, k)
-		}
+	if rebuilt, err := canonicalizeMapKeys(tpl.Gates, "gates"); err != nil {
+		return err
+	} else if rebuilt != nil {
+		tpl.Gates = rebuilt
 	}
 	return nil
+}
+
+// canonicalizeMapKeys validates and canonicalizes every key in m. Returns
+// (rebuilt, nil) when canonicalization actually changed at least one key
+// (caller should swap the map), (nil, nil) when every key was already
+// canonical (caller leaves the map alone), or (nil, err) when validation
+// fails — either an unknown kind or a post-canonicalization collision.
+//
+// The fieldName argument names the TOML field ("kinds" / "agent_bindings" /
+// "gates") so the error UX points adopters at the exact line they need to
+// fix.
+//
+// Generic over the value type so all three Template maps share the same
+// validation + canonicalization path. The constraint is `any` because Go
+// generics do not let us express "any value type V such that map[Kind]V is
+// the destination" more precisely; the function is invariant in V.
+func canonicalizeMapKeys[V any](m map[domain.Kind]V, fieldName string) (map[domain.Kind]V, error) {
+	if len(m) == 0 {
+		return nil, nil
+	}
+	// Pre-scan: validate every key + detect whether any key needs
+	// canonicalization. The all-lowercase happy path returns early without
+	// allocating a new map.
+	needsRebuild := false
+	for k := range m {
+		if !domain.IsValidKind(k) {
+			return nil, fmt.Errorf("%w: %s map key %q", ErrUnknownKindReference, fieldName, k)
+		}
+		if domain.Kind(strings.ToLower(strings.TrimSpace(string(k)))) != k {
+			needsRebuild = true
+		}
+	}
+	if !needsRebuild {
+		return nil, nil
+	}
+	// Rebuild with canonicalized keys. A post-canonicalization collision
+	// (two distinct authoring keys folding to the same domain.Kind) surfaces
+	// here as ErrUnknownKindReference wrapping a message that names the
+	// duplicated canonical form.
+	rebuilt := make(map[domain.Kind]V, len(m))
+	for k, v := range m {
+		canon := domain.Kind(strings.ToLower(strings.TrimSpace(string(k))))
+		if _, dup := rebuilt[canon]; dup {
+			return nil, fmt.Errorf("%w: %s map has duplicate key %q after case-fold canonicalization", ErrUnknownKindReference, fieldName, canon)
+		}
+		rebuilt[canon] = v
+	}
+	return rebuilt, nil
 }
 
 // validateChildRuleKinds asserts every Kind referenced in [child_rules] is a
