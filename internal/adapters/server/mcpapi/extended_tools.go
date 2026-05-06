@@ -164,6 +164,10 @@ type capabilityLeaseMutationArgs struct {
 	Reason                    string `json:"reason"`
 	SessionID                 string `json:"session_id"`
 	SessionSecret             string `json:"session_secret"`
+	// AuthContextID mirrors the schema-declared "auth_context_id" key so the
+	// Drop 4c.5 A.2 strict decoder accepts it; the value itself is consumed
+	// by withMCPToolAuthRuntime from raw req params before decode.
+	AuthContextID string `json:"auth_context_id"`
 }
 
 // handleCapabilityLeaseMutation routes one lease lifecycle operation through the shared tool surface.
@@ -468,11 +472,15 @@ func registerProjectTools(
 				DevMcpServerName    string                 `json:"dev_mcp_server_name"`
 				SessionID           string                 `json:"session_id"`
 				SessionSecret       string                 `json:"session_secret"`
-				AgentInstanceID     string                 `json:"agent_instance_id"`
-				LeaseToken          string                 `json:"lease_token"`
-				OverrideToken       string                 `json:"override_token"`
+				// AuthContextID mirrors the schema-declared "auth_context_id" key
+				// so the Drop 4c.5 A.2 strict decoder accepts it; the value itself
+				// is consumed by withMCPToolAuthRuntime from raw req params.
+				AuthContextID   string `json:"auth_context_id"`
+				AgentInstanceID string `json:"agent_instance_id"`
+				LeaseToken      string `json:"lease_token"`
+				OverrideToken   string `json:"override_token"`
 			}
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			switch strings.TrimSpace(args.Operation) {
@@ -786,11 +794,16 @@ func registerActionItemTools(
 				Mode            string                     `json:"mode"`
 				SessionID       string                     `json:"session_id"`
 				SessionSecret   string                     `json:"session_secret"`
-				AgentInstanceID string                     `json:"agent_instance_id"`
-				LeaseToken      string                     `json:"lease_token"`
-				OverrideToken   string                     `json:"override_token"`
+				// AuthContextID mirrors the schema-declared "auth_context_id"
+				// key so the Drop 4c.5 A.2 strict decoder accepts it; the
+				// value itself is consumed by withMCPToolAuthRuntime from raw
+				// req params before decode.
+				AuthContextID   string `json:"auth_context_id"`
+				AgentInstanceID string `json:"agent_instance_id"`
+				LeaseToken      string `json:"lease_token"`
+				OverrideToken   string `json:"override_token"`
 			}
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			operation := strings.TrimSpace(fixedOperation)
@@ -1799,7 +1812,7 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 					SessionID     string   `json:"session_id"`
 					SessionSecret string   `json:"session_secret"`
 				}
-				if err := req.BindArguments(&args); err != nil {
+				if err := bindArgumentsStrict(req, &args); err != nil {
 					return invalidRequestToolResult(err), nil
 				}
 				projectID := strings.TrimSpace(args.ProjectID)
@@ -1876,7 +1889,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args capabilityLeaseMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			return handleCapabilityLeaseMutation(ctx, leases, args)
@@ -1901,7 +1914,7 @@ func registerLegacyCapabilityLeaseReadTool(srv *mcpserver.MCPServer, leases comm
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args capabilityLeaseMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "list"
@@ -1930,7 +1943,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args capabilityLeaseMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "issue"
@@ -1949,7 +1962,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args capabilityLeaseMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "heartbeat"
@@ -1969,7 +1982,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args capabilityLeaseMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "renew"
@@ -1988,7 +2001,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args capabilityLeaseMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "revoke"
@@ -2009,7 +2022,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args capabilityLeaseMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "revoke_all"
@@ -2045,19 +2058,29 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args struct {
-				ProjectID       string `json:"project_id"`
-				TargetType      string `json:"target_type"`
-				TargetID        string `json:"target_id"`
-				WaitTimeout     string `json:"wait_timeout"`
-				Summary         string `json:"summary"`
-				BodyMarkdown    string `json:"body_markdown"`
-				SessionID       string `json:"session_id"`
-				SessionSecret   string `json:"session_secret"`
+				// Operation mirrors the schema-declared "operation" key so the
+				// Drop 4c.5 A.2 strict decoder accepts it. The handler still
+				// reads the value via req.GetString below so this field is
+				// populated for the strict decoder's field-set check only.
+				Operation     string `json:"operation"`
+				ProjectID     string `json:"project_id"`
+				TargetType    string `json:"target_type"`
+				TargetID      string `json:"target_id"`
+				WaitTimeout   string `json:"wait_timeout"`
+				Summary       string `json:"summary"`
+				BodyMarkdown  string `json:"body_markdown"`
+				SessionID     string `json:"session_id"`
+				SessionSecret string `json:"session_secret"`
+				// AuthContextID mirrors the schema-declared "auth_context_id"
+				// key so the strict decoder accepts it; the value itself is
+				// consumed by withMCPToolAuthRuntime from raw req params
+				// before decode.
+				AuthContextID   string `json:"auth_context_id"`
 				AgentInstanceID string `json:"agent_instance_id"`
 				LeaseToken      string `json:"lease_token"`
 				OverrideToken   string `json:"override_token"`
 			}
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			projectID := strings.TrimSpace(args.ProjectID)

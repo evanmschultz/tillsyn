@@ -54,7 +54,7 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args handoffMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			return handleHandoffMutation(ctx, handoffs, args)
@@ -90,9 +90,13 @@ type handoffMutationArgs struct {
 	WaitTimeout     string   `json:"wait_timeout"`
 	SessionID       string   `json:"session_id"`
 	SessionSecret   string   `json:"session_secret"`
-	AgentInstanceID string   `json:"agent_instance_id"`
-	LeaseToken      string   `json:"lease_token"`
-	OverrideToken   string   `json:"override_token"`
+	// AuthContextID mirrors the schema-declared "auth_context_id" key so the
+	// Drop 4c.5 A.2 strict decoder accepts it; the value itself is consumed
+	// by withMCPToolAuthRuntime from raw req params before decode.
+	AuthContextID   string `json:"auth_context_id"`
+	AgentInstanceID string `json:"agent_instance_id"`
+	LeaseToken      string `json:"lease_token"`
+	OverrideToken   string `json:"override_token"`
 }
 
 func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs common.HandoffService) {
@@ -104,7 +108,7 @@ func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs common.Ha
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args handoffMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "get"
@@ -126,7 +130,7 @@ func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs common.Ha
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args handoffMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "list"
@@ -162,7 +166,7 @@ func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs commo
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args handoffMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "create"
@@ -194,7 +198,7 @@ func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs commo
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args handoffMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "update"

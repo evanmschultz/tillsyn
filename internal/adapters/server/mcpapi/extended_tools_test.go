@@ -3546,6 +3546,96 @@ func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	}
 }
 
+// TestHandlerExpandedToolRejectsUnknownJSONKeys verifies the Drop 4c.5 A.2
+// strict-decoder hardening at the MCP wire boundary: an unknown key on a
+// tool's arguments object now produces an "invalid_request: unknown field
+// ..." error that names BOTH the offending field and the tool. The cases
+// cover one tool from each of the three production-source files
+// (extended_tools.go, handler.go, handoff_tools.go) so the swap-coverage is
+// proven end-to-end rather than only at the helper unit-test layer.
+func TestHandlerExpandedToolRejectsUnknownJSONKeys(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		tool      string
+		args      map[string]any
+		wantField string
+	}{
+		{
+			// extended_tools.go: till.project create with a typo'd "made_up_key".
+			name: "till.project unknown key rejected with field name",
+			tool: "till.project",
+			args: map[string]any{
+				"operation":   "create",
+				"name":        "Project One",
+				"made_up_key": "x",
+			},
+			wantField: "made_up_key",
+		},
+		{
+			// handler.go: till.auth_request create with a stray "ttl" (no such field).
+			name: "till.auth_request unknown key rejected with field name",
+			tool: "till.auth_request",
+			args: map[string]any{
+				"operation":    "create",
+				"path":         "/project/p-1",
+				"principal_id": "principal-1",
+				"client_id":    "client-1",
+				"reason":       "test",
+				"ttl":          "8h",
+			},
+			wantField: "ttl",
+		},
+		{
+			// handoff_tools.go: till.handoff create with a typo'd "tartget".
+			name: "till.handoff typo'd key rejected with field name",
+			tool: "till.handoff",
+			args: map[string]any{
+				"operation": "create",
+				"summary":   "stub",
+				"tartget":   "typo",
+			},
+			wantField: "tartget",
+		},
+	}
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	for idx, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(900+idx, tc.tool, tc.args))
+			if isError, _ := callResp.Result["isError"].(bool); !isError {
+				t.Fatalf("isError = %v, want true (unknown key must reject)", callResp.Result["isError"])
+			}
+			text := toolResultText(t, callResp.Result)
+			if !strings.HasPrefix(text, "invalid_request:") {
+				t.Fatalf("error text = %q, want prefix invalid_request:", text)
+			}
+			if !strings.Contains(text, "unknown field") {
+				t.Fatalf("error text = %q, want it to mention \"unknown field\"", text)
+			}
+			if !strings.Contains(text, `"`+tc.wantField+`"`) {
+				t.Fatalf("error text = %q, want it to name the offending field %q", text, tc.wantField)
+			}
+			if !strings.Contains(text, `"`+tc.tool+`"`) {
+				t.Fatalf("error text = %q, want it to name the tool %q", text, tc.tool)
+			}
+		})
+	}
+}
+
 // TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope verifies global/bootstrap admin tools authorize against a rooted project scope.
 func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing.T) {
 	t.Parallel()

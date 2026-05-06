@@ -484,3 +484,75 @@ N/A — A.4 review touched only Go files but Drop 4c.5 is in filesystem-MD coord
 - T4 — Pre-existing tests `TestMoveActionItemToFailedUsesMarkFailedCapability` (4981), `TestMoveActionItemToFailedSkipsCompletionCriteria` (5023), and adapter `TestMoveActionItemStateToFailed` (1006) all correctly updated to set `Outcome: "failure"` before move.
 - T5 — Worklog claims "11-row" table; actual count is 10. Doc nit, not a defect.
 - T6 — R-A.4-1 correctly raised: dispatcher's crash-recovery paths violate metadata-before-move order; orchestrator-routed for closeout refinements list.
+
+## Droplet A.2 — Round 1
+
+**Reviewer:** go-qa-proof-agent
+**Date:** 2026-05-05
+**Verdict:** PASS
+
+### Trace Coverage
+
+**Check 1 — Acceptance #1: `bindArgumentsStrict` exists with the documented signature.** COVERED. `internal/adapters/server/mcpapi/strict_decode.go:64` declares `func bindArgumentsStrict(req mcp.CallToolRequest, target any) error` — exact signature the spec mandates and the same shape `mark3labs/mcp-go.CallToolRequest.BindArguments` exposes. Doc-comment block at lines 37-63 names the parity contract (non-nil pointer guard, json.RawMessage fast-path, re-marshal fallback), the null-value preservation contract for A.1's pointer-sentinel fields, and the error shape `unknown field %q on tool %q: %w`.
+
+**Check 2 — Acceptance #2: implementation strategy matches spec.** COVERED. Lines 64-94 of `strict_decode.go` execute the spec's strategy:
+- Line 65-67: non-nil pointer guard (mirrors `BindArguments` wording).
+- Line 69: trims `req.Params.Name` for the error-surface tool name.
+- Lines 72-80: fast-path on `json.RawMessage`; otherwise `json.Marshal(req.Params.Arguments)` re-marshal.
+- Lines 85-87: `json.NewDecoder(bytes.NewReader(data))` → `dec.DisallowUnknownFields()` → `dec.Decode(target)`.
+- Lines 88-90: on rejection, `unknownFieldName(err)` extracts the offending key from the std-lib's `json: unknown field "<key>"` message via the `jsonUnknownFieldPrefix` constant + `strconv.Unquote`, then wraps as `fmt.Errorf("unknown field %q on tool %q: %w", fieldName, toolName, errUnknownField)`. Defensive fallback path at lines 124-127 handles any future std-lib format drift.
+
+**Check 3 — Acceptance #3: all 21 production `BindArguments` call sites swapped.** COVERED. `rg "BindArguments\(" internal/adapters/server/mcpapi/handler.go internal/adapters/server/mcpapi/handoff_tools.go internal/adapters/server/mcpapi/extended_tools.go` returns ZERO non-strict matches (the only hits are inside `bindArgumentsStrict`'s own doc-comment). `rg "bindArgumentsStrict\(" internal/adapters/server/mcpapi/ -g '!*_test.go'` returns exactly 21 production sites: 5 in `handler.go` (lines 166, 642, 670, 700, 722), 5 in `handoff_tools.go` (57, 111, 133, 169, 201), 11 in `extended_tools.go` (483, 806, 1815, 1892, 1917, 1946, 1965, 1985, 2004, 2025, 2083). Counts match the spec's 5+5+11 = 21 exactly.
+
+**Check 4 — Acceptance #4: error flows through `invalidRequestToolResult` unchanged.** COVERED. `invalidRequestToolResult` defined at `extended_tools.go:2183-2188` returns `mcp.NewToolResultError("invalid_request: " + err.Error())`. Every swap site uses the pattern `if err := bindArgumentsStrict(req, &args); err != nil { return invalidRequestToolResult(err), nil }` — verified by sampling all three files (handler.go:166-168, handoff_tools.go:57-59, extended_tools.go:483-485, 806-808, 2083-2085). Surface text becomes `invalid_request: unknown field "<key>" on tool "<name>"` — single canonical prefix because the helper deliberately omits its own `invalid_request:` prefix to avoid double-stamping (builder's design decision documented in worklog and verified by `TestHandlerExpandedToolRejectsUnknownJSONKeys` assertions).
+
+**Check 5 — Acceptance #5: unknown-key tests across at least 3 tools.** COVERED. `extended_tools_test.go:3556` defines `TestHandlerExpandedToolRejectsUnknownJSONKeys` with three table cases that exercise one tool from each of the three production source files end-to-end via `httptest.NewServer(handler)`:
+- `till.project` (extended_tools.go) with `made_up_key: x` — line 3567.
+- `till.auth_request` (handler.go) with `ttl: 8h` — line 3580.
+- `till.handoff` (handoff_tools.go) with typo'd `tartget: typo` — line 3593.
+Each case asserts `isError=true` (3619), surface text starts with `invalid_request:` (3623), contains `unknown field` (3626), names the offending field with quotes (3629), and names the tool with quotes (3632). Spec Test Scenarios rows 2 / 4 / 5 are all covered.
+
+**Check 6 — Acceptance #6: `mage test-pkg ./internal/adapters/server/mcpapi` passes.** COVERED via builder claim. Worklog reports 191/192 (1 pre-existing skip) + `mage ci` 2749 passed across 24 packages, mcpapi at 73.9% coverage. Per spawn directive ("trust 2749 pass claim") not re-executed.
+
+**Check 7 — Schema-vs-struct gap fixes.** COVERED. The spec called out 4 fixes; builder identified 6 (4 reactive + 4 proactive — overlap of 2 between the lists). Verified each `AuthContextID` insertion via direct read:
+- `attentionItemMutationArgs` (handler.go:582-606) — `AuthContextID` field at line 602 with explanatory comment crosslinking to A.2 + `withMCPToolAuthRuntime`.
+- `handoffMutationArgs` (handoff_tools.go:70-100) — `AuthContextID` at line 96, same pattern.
+- `capabilityLeaseMutationArgs` (extended_tools.go:149-176) — comment block at lines 167-169, field follows.
+- `till.project` anonymous struct (extended_tools.go:458-481) — `AuthContextID` at line 478 with explanatory comment 475-477.
+- `handleActionItemOperation` anonymous struct (extended_tools.go:745-805) — `AuthContextID` at line 801 with comment 797-800.
+- `till.comment` anonymous struct (extended_tools.go:2060-2082) — both `Operation` (line 2065, with explanatory comment 2061-2064) AND `AuthContextID` (line 2078, comment 2074-2077). The `Operation` field is declared-only; the handler reads via `req.GetString("operation", "")` at line 2098 (preserves prior behavior).
+
+All six insertions carry rationale comments cross-linking A.2 + `withMCPToolAuthRuntime`. None are dead code by accident — each tool's schema declares the corresponding `mcp.WithString(...)` key, so without the struct-side mirror the strict decoder rejects the tool's own declared key.
+
+**Check 8 — A.1 wire-shape preservation (Q-A-1).** COVERED. `strict_decode_test.go:66` defines `TestBindArgumentsStrictPreservesNullPointer` exercising `{"operation":"update","description":null,"title":null,"labels":null}` against a fixture struct that mixes plain-string and post-A.1 pointer-sentinel fields (`Title *string`, `Description *string`, `Labels *[]string`). Assertions: `bindArgumentsStrict` returns nil error; each pointer field decodes to typed nil; `Operation == "update"` survives. This pins Q-A-1's plan-QA falsification concern — `DisallowUnknownFields` is orthogonal to value-type checking, so null on a known pointer-shape field is accepted exactly as bare `json.Unmarshal` would handle it. Round-trip proof is end-to-end at the helper boundary, which is sufficient since every production swap site goes through this helper.
+
+**Check 9 — Worklog completeness + R-A.2-1 + R-A.2-2 raised.** COVERED.
+- Worklog at `BUILDER_WORKLOG.md` § "Droplet A.2 — Round 1" (lines 593-655) contains: date + builder + source-spec pointer; Files-touched (production) with each struct field gap fix line-cited; Files-touched (tests) listing both new test files; Stale-fixture findings paragraph documenting the 4 reactive + 4 proactive symmetry fixes; Targets-run with specific counts (191 passed in mcpapi pkg + 2749 in `mage ci`); Design decisions explaining the single-`invalid_request:` prefix choice, package-internal sentinel rationale, std-lib error-format-prefix matching, per-tool struct contract; Falsification-mitigation status block; Cross-droplet coordination notes for A.1 / A.3 / A.4 / F.3.x; Hylla-feedback `None — Hylla unused` block per spawn directive.
+- **R-A.2-1 (schema/struct symmetry doc):** raised in "Unknowns routed back to orchestrator" at line 654 — recommends adding a per-tool checklist item to `CLI_ADAPTER_AUTHORING.md` or new `MCP_TOOL_AUTHORING.md` requiring every `mcp.WithString` schema declaration to have a matching JSON-tagged struct field.
+- **R-A.2-2 (`till.comment` Operation declared-not-read):** raised at line 655 — flags that `Operation` is now on the typed struct but the handler still reads via `req.GetString("operation", "")`. Recommends a small follow-up droplet to unify the read-from-typed-struct pattern across all tools.
+
+### Findings
+
+None. All nine checks landed clean. Builder's claim aligns with on-disk evidence at every checkpoint; `mage ci` 2749 passed is consistent with the swap count + struct field additions + new tests.
+
+### Missing Evidence
+
+None. Spec, code, and tests align with the worklog narrative and the surface-text contract verified end-to-end.
+
+### Conclusion
+
+PASS. A.2 ships the spec-mandated `bindArgumentsStrict` helper with documented signature, implements the spec's exact decode strategy (re-marshal → `DisallowUnknownFields` → field-name extraction via stable std-lib prefix), swaps all 21 production call sites with zero residual `BindArguments(` matches in production source, preserves A.1's pointer-sentinel null-handling via a dedicated regression test, and surfaces the 6 schema-vs-struct gaps with line-cited rationale comments. End-to-end test coverage at three tools (one per source file) hits every Acceptance Test Scenarios row the spec listed (typo'd key, unknown field, deep tool-name surface). The design decision to omit the `invalid_request:` prefix in the helper (so `invalidRequestToolResult` adds the single canonical prefix) is correct and verified by the new test's assertion shape.
+
+### Hylla Feedback
+
+N/A — A.2 review touched only Go files but Drop 4c.5 is in filesystem-MD coordination mode and Hylla is stale post-Drop-4c-merge. Per spawn directive ("NO Hylla calls"), no Hylla query attempted; all evidence resolved via `Read` + `rg` on disk + builder worklog cross-reference. Project memory `feedback_hylla_go_only_today.md` permits the Go-on-disk fallback for stale-ingest windows; no miss to log.
+
+### TL;DR
+
+- T1 — PASS. `bindArgumentsStrict` shipped with documented signature `(mcp.CallToolRequest, any) error` at `strict_decode.go:64`; spec-exact decode strategy via `json.NewDecoder + DisallowUnknownFields` with stable-prefix field-name recovery; package-internal `errUnknownField` sentinel for assertion clarity.
+- T2 — All 21 production `BindArguments` call sites swapped (5+5+11 = 21 in handler.go + handoff_tools.go + extended_tools.go); zero residual non-strict matches in production code; test files appropriately retain `BindArguments` (none actually do — verified zero residuals total in production paths).
+- T3 — Surface error flows through `invalidRequestToolResult` exactly as today; helper deliberately omits its own `invalid_request:` prefix to avoid double-stamping (single-prefix design verified end-to-end by the new `TestHandlerExpandedToolRejectsUnknownJSONKeys` assertions).
+- T4 — Three end-to-end tests (one tool per source file) plus eight helper-level unit tests including null-pointer preservation (Q-A-1 mitigation), multiple-unknown-keys-stop-at-first, nil/empty-args parity with `BindArguments`, non-pointer/nil target diagnostics, raw-message fast-path, and `unknownFieldName` parser edge cases.
+- T5 — 6 schema-vs-struct gap fixes (`AuthContextID` on attention/handoff/lease/project/action-item/comment, plus `Operation` on comment) all carry rationale comments cross-linking A.2 + `withMCPToolAuthRuntime`. None are accidental dead code; each mirrors a `mcp.WithString` schema declaration that the strict decoder would otherwise reject.
+- T6 — A.1 wire-shape preservation pinned by `TestBindArgumentsStrictPreservesNullPointer` (null on pointer-shape fields decodes to typed nil; strict mode does not reject — orthogonal to `DisallowUnknownFields`).
+- T7 — Worklog complete with file inventory, target results, design rationale, falsification status, cross-droplet notes; R-A.2-1 (schema/struct symmetry doc invariant) and R-A.2-2 (`till.comment` Operation declared-not-read pattern) both routed for orchestrator's closeout list.

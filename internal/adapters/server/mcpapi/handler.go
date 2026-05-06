@@ -163,7 +163,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				AgentInstanceID     string `json:"agent_instance_id"`
 				LeaseToken          string `json:"lease_token"`
 			}
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			switch strings.TrimSpace(args.Operation) {
@@ -596,9 +596,13 @@ type attentionItemMutationArgs struct {
 	Reason             string `json:"reason"`
 	SessionID          string `json:"session_id"`
 	SessionSecret      string `json:"session_secret"`
-	AgentInstanceID    string `json:"agent_instance_id"`
-	LeaseToken         string `json:"lease_token"`
-	OverrideToken      string `json:"override_token"`
+	// AuthContextID mirrors the schema-declared "auth_context_id" key so the
+	// Drop 4c.5 A.2 strict decoder accepts it; the value itself is consumed
+	// by withMCPToolAuthRuntime from raw req params before decode.
+	AuthContextID   string `json:"auth_context_id"`
+	AgentInstanceID string `json:"agent_instance_id"`
+	LeaseToken      string `json:"lease_token"`
+	OverrideToken   string `json:"override_token"`
 }
 
 // registerAttentionTools registers optional attention list/raise/resolve tools.
@@ -635,7 +639,7 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx = withMCPToolAuthRuntime(ctx, authContexts, req)
 			var args attentionItemMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			return handleAttentionItemMutation(ctx, attention, args)
@@ -663,7 +667,7 @@ func registerLegacyAttentionListTool(srv *mcpserver.MCPServer, attention common.
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args attentionItemMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "list"
@@ -693,7 +697,7 @@ func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention co
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args attentionItemMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "raise"
@@ -715,7 +719,7 @@ func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention co
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args attentionItemMutationArgs
-			if err := req.BindArguments(&args); err != nil {
+			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
 			}
 			args.Operation = "resolve"
