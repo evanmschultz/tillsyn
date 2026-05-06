@@ -1,13 +1,15 @@
 # Drop 4c.5 — Theme C + Theme E Planner Output
 
 **Author:** Theme C+E planner subagent (filesystem-MD mode, no Tillsyn runtime).
-**Status:** initial decomposition — feeds master synthesis + plan-QA twins.
+**Status:** initial decomposition — feeds master synthesis + plan-QA twins. E.6 state: in_progress.
 **Source briefs:** `REVISION_BRIEF.md` §3.3 (Theme C) + §3.5 (Theme E); memory `project_drop_3_refinements_raised.md` (R1/R2/R3/R5); `project_drop_4a_refinements_raised.md` (R4/R7/R5/R8/R9/R12); `project_drop_4b_refinements_raised.md` (R1/R2/R3/R4).
 **Q3 disposition (REVISION_BRIEF §9):** correctness gaps mandatory; pure doc-only NITs INCLUDED only when they ride along on a correctness droplet (no separate doc-only droplet). C.4 is the one exception — it is intentionally a WIKI-only droplet because its scope is documentation precision.
 
 ## Droplets
 
 ### C.1 — Extend `assertOwnerStateGateUpdateFields` to Persistent / DevGated
+
+**State:** done
 
 **Source:** memory R1 (Drop 3 NIT 3.21).
 
@@ -237,6 +239,8 @@
 
 ### E.4 — Process monitor: `Track` doc-comment + atomicity edge case + `for-range int` modernization
 
+**State:** done
+
 **Source:** memory R9 (Drop 4a 4a.21 NITs).
 
 **Files:**
@@ -266,6 +270,8 @@
 
 ### E.5 — `mapToolError` adds `ErrOrchSelfApprovalDisabled` sharp-prefix case
 
+**State:** done
+
 **Source:** memory R12 (Drop 4a 4a.27).
 
 **Files:**
@@ -294,6 +300,8 @@
 ---
 
 ### E.6 — `validateMapKeys` case-fold footgun: post-decode canonicalization
+
+**State:** in_progress
 
 **Source:** memory 4b R1 (Drop 4b 4b.1 F4).
 

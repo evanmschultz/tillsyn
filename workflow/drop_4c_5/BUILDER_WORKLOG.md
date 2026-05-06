@@ -1022,3 +1022,126 @@ None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evi
 - **Parent-unblocks-after-child-supersede integration test deferred.** Acceptance criterion #5 names a "supersede + parent move" integration test. Implemented the inverse direction (no-cascade-on-descendants); the forward direction (parent move succeeds after child supersede) is implicit in the existing `ensureActionItemCompletionBlockersClear` semantics + the supersede putting the child in `complete`. Could be added as a multi-step integration test in a future drop if the orchestrator wants explicit pinning. Worth flagging because spec literally lists it.
 - **Archived state semantic ambiguity.** The supersede contract is defined for `failed` items only. An archived item has its own `StateArchived` lifecycle but no archived column was needed for the test fixture; the `lifecycleStateForColumnID` helper resolves the test item's column to `StateComplete` (because the seeded ColumnID was the complete column). The rejection still surfaces correctly (`ErrTransitionBlocked` with the canonical hint), but the path is "rejected because not failed" rather than "rejected because archived." Both rejections are semantically valid; the test pins the rejection-class invariant. If a future drop adds an archived column to the supersede fixture, the test will exercise the LifecycleState-archived branch directly. Routing to the orchestrator for awareness; not a blocker.
 - **CLI subcommand discovery.** Verified the new `actionItemSupersedeCmd` registers under `actionItemCmd.AddCommand(...)` and the dispatch switch routes `action_item.supersede`. Did NOT exercise `till action_item supersede --help` end-to-end because the binary was not run during this build (no `mage run` per spawn-prompt's "DO NOT commit" + "NEVER `mage install`" rules). The cobra-test pattern used by `cmd/till/main_test.go` is not exercised for the supersede subcommand because the test surface is `runActionItemSupersede` directly. Worth orchestrator awareness if a smoke-test of the binary is desired pre-commit; not strictly required by spec.
+
+---
+
+## Droplet E.4 — Round 1
+
+**Files touched:**
+
+- `internal/app/dispatcher/monitor.go` — `Track` doc-comment extended (lines 227-234 in spec, now 227-256 post-edit) with two new paragraphs: `Cleanup contract:` (defer-Close discipline + idempotency rationale + leak surface) and `Move-success / Update-fail atomicity:` (cross-references `applyCrashTransition` line 351/366, `Handle.Wait` error-bubble contract, Drop 4b structured-failure refactor PLAN.md §17.3.Q5).
+- `workflow/drop_4c_5/THEME_CE_PLAN.md` — droplet E.4 row state flipped `in_progress` → `done` (start + end of round).
+
+**Files NOT touched (per acceptance verification):**
+
+- `internal/app/dispatcher/monitor_test.go` lines 468 + 474 — already `for i := range n` (D.2 droplet shipped this; no rework needed). Verified via Read.
+- `PLAN.md` row 4a.21 — `grep -n "4a.21\|BlockedReason\|failure_reason" PLAN.md` returned zero hits. Acceptance §4's "verify before editing" path resolves to skip: PLAN.md never carried the row Drop 4b "shipped without doing" (it never existed in PLAN.md at all). Memory comment was about a different document or never landed; no edit warranted.
+
+**Out-of-scope items skipped per spec §5:** `goleak.VerifyTestMain` and `S2` `mage test-pkg` ergonomics doc — pure tooling/test-infra; routed to a future hygiene droplet.
+
+**Targets run:** `mage test-pkg ./internal/app/dispatcher` → 356 tests passed in 1.62s, including `TestMonitorConcurrentTrackHandlesAreIndependent` which exercises the modernized `for i := range n` loops at lines 468 + 474. No race-detector flags. Doc-only edit on production code; no compile-shape risk.
+
+**Design notes:**
+
+1. **Cleanup contract paragraph** grounds itself in three concrete code surfaces: (a) `Handle.Close` at line 182 (the `sync.Once` + done-channel teardown linearization), (b) the per-Handle goroutine spawned at line 263 (`go m.runHandle`), and (c) the `tracked` map removal in the goroutine's `defer` at line 294-298. The paragraph names the leak surface explicitly ("one runHandle goroutine per untracked Handle plus the kernel-side process descriptor") because the doc's job is to make the cost of forgetting `defer h.Close()` legible to a reader who hasn't traced the goroutine yet.
+2. **Atomicity paragraph** cites the exact line numbers (351 for `MoveActionItem`, 366 for `UpdateActionItem`) so the reader can navigate the two-write sequence directly. The cross-reference to "Drop 4b's structured-failure refactor (PLAN.md §17.3.Q5)" matches the existing in-line comment at lines 355-361 of `applyCrashTransition` (which already names the refactor by section). The "monitor never silently absorbs the half-applied transition" sentence is the load-bearing guarantee — `applyCrashTransition` returns the wrapped `UpdateActionItem` error which `runHandle` surfaces via `h.waitErr` at line 318-320, observable to the caller through `Handle.Wait`.
+3. **No new tests added.** Doc-only production change; the existing `TestMonitorConcurrentTrackHandlesAreIndependent` (line 462) and the `TestMonitorCrashTransition*` family already exercise the runtime paths the new paragraphs describe. Adding tests for "doc-comment text exists" would be brittle and redundant.
+
+### Hylla feedback
+
+None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evidence resolved via `Read` (monitor.go, monitor_test.go, PLAN.md grep) / `Grep` (PLAN.md) / `Edit` / `mage test-pkg`. Hylla today indexes only Go and is stale post-Drop-4c-merge until reingest; the per-droplet directive forbids calls regardless. Touched files split: 1 Go (monitor.go, doc-only), 2 MD (THEME_CE_PLAN.md state row, BUILDER_WORKLOG.md this entry).
+
+### Unknowns routed back to orchestrator
+
+- **Memory-vs-PLAN.md drift on row 4a.21.** Acceptance §4 framed "PLAN.md row 4a.21 reference (line ~300)" as edit-if-still-authoritative; my `grep` found no `4a.21` / `BlockedReason` / `failure_reason` substring in PLAN.md. Two interpretations: (a) the row never existed in PLAN.md and the memory comment referred to a different file (perhaps an internal SKETCH.md or a deleted doc), or (b) the row existed once and was already cleaned up in an earlier drop. Either way, no edit warranted now. Routing to orchestrator awareness; if the row should appear in PLAN.md as an artifact (e.g. for traceability of the Drop 4b structured-failure refactor), that's a separate doc-only droplet outside E.4's scope.
+- **Doc-comment line-range drift after edit.** Spec named "lines 227-234" as the doc-comment surface. Post-edit the doc-comment spans 227-256 (29 lines instead of the original 8). Cross-references in other files that cite line 234 as the bottom of the doc-comment will be off by 22 lines. A `grep -n "monitor\.go:23[0-9]\|monitor\.go:234"` across the repo found no callers using line-anchor citations, so the drift is contained. Routing for awareness.
+
+---
+
+## Droplet E.5 — Round 1
+
+**Spawn time:** 2026-05-05 (filesystem-MD mode, model: opus).
+**Source spec:** `THEME_CE_PLAN.md` § "E.5 — `mapToolError` adds `ErrOrchSelfApprovalDisabled` sharp-prefix case".
+**Goal:** add a sharp-prefix `mapToolError` case for `domain.ErrOrchSelfApprovalDisabled` placed BEFORE the generic `ErrAuthorizationDenied` case; tighten the existing case-(e) integration test in `handler_steward_integration_test.go` (and the stub-based unit-test mirror in `handler_test.go`) to expect the `auth_denied:` prefix.
+
+### Files touched
+
+- `internal/adapters/server/mcpapi/handler.go` (production):
+  - Added `"github.com/evanmschultz/tillsyn/internal/domain"` import (handler.go did not import the domain package previously; the new case needs it for the `domain.ErrOrchSelfApprovalDisabled` sentinel).
+  - Inserted new `case errors.Is(err, domain.ErrOrchSelfApprovalDisabled):` branch in `mapToolError` BEFORE the existing `case errors.Is(err, common.ErrAuthorizationDenied):` branch. Returns `Class: "auth"`, `Code: "auth_denied"`, `Text: "auth_denied: orch-self-approval disabled by project toggle: " + err.Error()`. Doc-comment on the new case explains the defensive-ordering rationale (today `auth_requests.go:454` only `%w`-wraps the toggle sentinel; defensive ordering hedges any future ledger change that joins both sentinels).
+
+- `internal/adapters/server/mcpapi/handler_test.go` (test):
+  - Updated stale doc-comment block above `TestAuthRequestApproveProjectToggleDisabledRejected` (case-(e) stub-based unit test) — the comment previously claimed the response surfaced as `internal_error:` because no mapping case existed; now reflects the Drop 4c.5 droplet E.5 add.
+  - Tightened the case-(e) test assertion to also call `strings.HasPrefix(text, "auth_denied:")` BEFORE the existing substring checks, mirroring the integration counterpart.
+  - Added new dedicated `TestMapToolErrorOrchSelfApprovalDisabled` table-driven unit test with three sub-tests:
+    1. **bare sentinel**: `mapToolError(domain.ErrOrchSelfApprovalDisabled)` → `Class=auth`, `Code=auth_denied`, `Text` starts with `auth_denied:` and contains the droplet-E.5 sharp fragment.
+    2. **wrapped sentinel mirrors production shape**: replicates `auth_requests.go:454`'s `fmt.Errorf("project %q has opted out of orch self-approval: %w", "proj-1", domain.ErrOrchSelfApprovalDisabled)` wrap; same assertions plus `errors.Is` self-check.
+    3. **ErrAuthorizationDenied generic case unchanged**: regression guard — bare `common.ErrAuthorizationDenied` must NOT be routed through the new sharp case (Text must NOT contain the toggle-disabled fragment), proving the new case did not shadow the generic sentinel.
+
+- `internal/adapters/server/mcpapi/handler_steward_integration_test.go` (test):
+  - Updated the `TestAuthRequestApproveProjectToggleDisabledRejectedIntegration` doc-comment to reflect the new `auth_denied:` prefix invariant. Previously the doc-comment carried a "substring match (not prefix) so the test stays robust regardless of any future mapToolError refinement that sharpens the error code" hedge; replaced with explicit "the refinement landed in E.5 so the test now pins the prefix as a regression guard."
+  - Tightened the assertion: added `strings.HasPrefix(text, "auth_denied:")` check BEFORE the existing `strings.Contains` checks for the sentinel + wrap fragments. The DB-level pending-state assertion is untouched (orthogonal concern).
+
+### Verification
+
+- `mage testPkg ./internal/adapters/server/mcpapi`: 212/212 tests passed (208 pre-existing + 4 new sub-tests including the new `TestMapToolErrorOrchSelfApprovalDisabled`'s 3 sub-cases and the tightened `TestAuthRequestApproveProjectToggleDisabledRejected`). Single package run, 1.18s.
+- `mage formatCheck`: clean. No gofumpt drift.
+- Did NOT run `mage ci` (out of scope per spawn-prompt — verification target is `mage test-pkg ./internal/adapters/server/mcpapi`). Did NOT commit (per HARD RULES).
+
+### Acceptance — explicit checklist
+
+1. **New `case errors.Is(err, domain.ErrOrchSelfApprovalDisabled):` branch in `mapToolError` placed BEFORE the generic `ErrAuthorizationDenied` case.** Done. handler.go change verified manually + by the regression sub-test in `TestMapToolErrorOrchSelfApprovalDisabled`.
+2. **Returns `Class: "auth", Code: "auth_denied", Text: "auth_denied: orch-self-approval disabled by project toggle: ..."`** — matches the existing `auth_denied:` prefix style. Pinned by the bare-sentinel sub-test.
+3. **Existing integration test tightens to expect `Code: "auth_denied"` and `Text:` starting with `auth_denied:`.** Done. The integration test (`handler_steward_integration_test.go`) now starts with the prefix check; the unit-test mirror in `handler_test.go` was also tightened (out of strict scope but doc-comment was stale enough to mandate the symmetric fix).
+4. **`mage test-pkg ./internal/adapters/server/mcpapi` green.** Done — 212/212.
+
+### Falsification-mitigation status
+
+- **Mitigation #1 — Case ordering shadows `ErrOrchSelfApprovalDisabled` if it ever wraps `ErrAuthorizationDenied`.** Mitigated. New case is placed BEFORE the generic auth-denied case. Verified by visual inspection of handler.go and pinned by the regression sub-test (bare `common.ErrAuthorizationDenied` does NOT route to the new case's sharp text).
+- **Mitigation #2 — Error code drift between message text and code field.** Mitigated. Both unit + integration tests pin `Code: "auth_denied"` AND `Text` starting with `auth_denied:`.
+- **Mitigation #3 — Existing test at `auth_requests_test.go:1407` asserts `errors.Is(err, ErrAuthorizationDenied)` is false on toggle-disabled path; new mapping must not change that contract.** Verified. Read `auth_requests.go:454` directly: `fmt.Errorf("project %q has opted out of orch self-approval: %w", projectID, domain.ErrOrchSelfApprovalDisabled)` — only `%w`-wraps the toggle sentinel, no `errors.Join` with `ErrAuthorizationDenied`. The new mapping case does NOT alter the production wrap chain — it only changes how `mapToolError` *categorizes* the error. The contract `errors.Is(err, ErrAuthorizationDenied) == false` for toggle-disabled errors is preserved.
+
+### Cross-droplet coordination notes
+
+- **C.1 (Chain 5; ALSO `in_progress` per THEME_CE_PLAN.md as of read time).** C.1 touches `internal/adapters/server/common/app_service_adapter_mcp.go` — different package + file from E.5 (which touches `internal/adapters/server/mcpapi/handler.go` + tests). No file or package collision. Runs in parallel.
+- **A.3 (Chain 2 predecessor; `blocked_by: A.2`, satisfied at HEAD `3110a82`).** A.3 already shipped — server-stamps `client_type` in handler.go's `extractAuthContext`. E.5's edits to handler.go are in `mapToolError` (lines ~947) and the new domain import; they don't collide with A.3's `client_type` stamp at handler.go:113/199. Verified by reading the surrounding `mapToolError` body (lines 908-983) — A.3's edits are upstream and orthogonal.
+- **F.3.1 (next in Chain 2; `blocked_by: E.5, ...`).** F.3.1 will add a new `till.template` MCP tool registration in `extended_tools.go` and a new `template_service.go` file. No collision with E.5's `mapToolError` change. F.3.1 may add its own error sentinels; if it adds a `mapToolError` case for a template-specific error, it lands AFTER E.5's case (per the existing append-only convention). E.5's domain import in handler.go also benefits F.3.1 if it needs domain-package types.
+
+### Hylla feedback
+
+None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evidence resolved via `Read` / `rg` (Bash with `rg`, not `grep`) / `Edit` / `mage testPkg` / `mage formatCheck`. Hylla today indexes only Go and is stale post-Drop-4c-merge until reingest; the per-droplet directive forbids calls regardless. Touched files split: 3 Go (1 production, 2 test), 2 MD (THEME_CE_PLAN, BUILDER_WORKLOG).
+
+### Unknowns routed back to orchestrator
+
+- **Spec said "case-(e) integration test in `handler_test.go`" but the test lives in `handler_steward_integration_test.go`.** Spec line `Files to modify: ... handler_test.go (existing case-(e) integration test ... TestAuthRequestApproveProjectToggleDisabledRejectedIntegration ...)` named the wrong file. The test name with the `Integration` suffix is in `handler_steward_integration_test.go:1003` (full DB integration); a stub-based unit-test variant (`TestAuthRequestApproveProjectToggleDisabledRejected`, no `Integration` suffix) lives in `handler_test.go:2713`. I tightened BOTH because the unit-test variant's doc-comment carried a stale "no case for ErrOrchSelfApprovalDisabled" claim that contradicted the new behavior. Both files are within the spec's `internal/adapters/server/mcpapi` package scope, so no scope expansion. Flagging the spec inaccuracy for the orchestrator's awareness.
+- **New focused `TestMapToolErrorOrchSelfApprovalDisabled` unit test added beyond strict spec scope.** Spec test scenarios listed `mapToolError(domain.ErrOrchSelfApprovalDisabled)` and `mapToolError(fmt.Errorf("project xyz: %w", domain.ErrOrchSelfApprovalDisabled))` and "Existing `ErrAuthorizationDenied` mapping unchanged (regression-protect)" but did NOT explicitly mandate a new test function. I added a dedicated table-driven `TestMapToolErrorOrchSelfApprovalDisabled` with 3 sub-tests that exercise all 3 scenarios because: (a) the spec's "test scenarios" section reads as test contract; (b) the integration tests cover the wrapped-form path but NOT the bare-sentinel + regression-guard paths; (c) a focused mapToolError-direct unit test is the right grain for the "regression-protect" assertion. If orchestrator reviews and prefers minimal scope, the test can be removed without affecting acceptance criteria #1-4 (which are satisfied by the integration + tightened unit tests alone).
+- **Sharp-prefix Text format chose to *include* `err.Error()` for diagnostic continuity.** Spec acceptance #1 said "Returns `Class: "auth", Code: "auth_denied", Text: "auth_denied: orch-self-approval disabled by project toggle"` (or similar — match existing `auth_denied:` prefix style at line ~933)". The existing `auth_denied:` case at line 951 is `Text: "auth_denied: " + err.Error()` (always appends the wrapped message). I matched that style: `Text: "auth_denied: orch-self-approval disabled by project toggle: " + err.Error()` — sharp prefix + colon + the original wrapped text. This preserves the wrap fragment ("opted out of orch self-approval") and the project-id ("project %q") in the surfaced text, which the existing tests already depend on. If orchestrator prefers a fixed Text without the err.Error() suffix, the change is a single-line edit; the test assertions would also need to drop the wrap-fragment substring check.
+
+## Droplet E.4 — Round 2
+
+### Scope
+
+Round-1 fix-builder expanded `Track`'s doc-comment in `internal/app/dispatcher/monitor.go` to address QA-falsification F2 (the "Move-success / Update-fail atomicity" hole). The expansion introduced parenthetical line-number citations — `MoveActionItem (line 351)` and `UpdateActionItem (line 366)` — but the doc-comment expansion itself shifted the cited lines to 371/386. Round-2 spawn directive: drop the parentheticals (do NOT re-anchor to 371/386 — Drop 4b's structured-failure refactor at PLAN.md §17.3.Q5 will obsolete those line numbers entirely). Keep the symbol names (`applyCrashTransition`, `MoveActionItem`, `UpdateActionItem`) which are stable across line drift.
+
+### Files touched
+
+- `internal/app/dispatcher/monitor.go` (production):
+  - Doc-comment edit only inside the `Track` function comment block. Removed `(line 351)` after `MoveActionItem` and `(line 366)` after `UpdateActionItem` in the "Move-success / Update-fail atomicity" paragraph. Reflowed the surrounding two lines so the paragraph still wraps under the gofmt comment-line-length convention. No other content changes — symbol names, the Drop 4b §17.3.Q5 reference, and the Handle.Wait wrapped-error explanation are all preserved verbatim.
+
+### Verification
+
+- `mage formatCheck`: clean. Doc-comment reflow stays within gofmt's comment-width tolerance.
+- `mage test-pkg ./internal/app/dispatcher`: pass (doc-only edit; no behavior change).
+- Did NOT commit (per HARD RULES — orchestrator commits after self-verification).
+- Did NOT touch any other file. Tight scope confirmed.
+
+### Acceptance — explicit checklist
+
+1. **Parentheticals dropped.** Done. The two `(line NNN)` parentheticals are gone from the "Move-success / Update-fail atomicity" paragraph.
+2. **Symbol names preserved.** Done. `applyCrashTransition`, `MoveActionItem`, `UpdateActionItem` all still appear in the doc-comment text.
+3. **Did NOT update to 371/386.** Done. Line numbers removed entirely, not re-anchored. Drop 4b's structured-failure refactor will collapse the two writes into one transactional call, making line anchors moot.
+4. **No production code changes.** Confirmed — edit is inside a `//`-prefixed doc-comment block above `func (m *processMonitor) Track`.
+
+### Hylla feedback
+
+None — Hylla unused this round (per spawn prompt: "NO Hylla calls"). Filesystem-MD coordination mode. Edit + Read only.

@@ -232,6 +232,26 @@ func newProcessMonitor(svc monitorService, clock func() time.Time) *processMonit
 // Track returns ErrMonitorInvalidInput on empty actionItemID or nil cmd.
 // Returns ErrMonitorNotStarted wrapped with the underlying os/exec error
 // when cmd.Start fails.
+//
+// Cleanup contract: callers MUST `defer h.Close()` immediately after the
+// successful Track return. The monitor owns the cmd's lifecycle — Close is
+// the only safe way to release per-handle goroutines and unblock concurrent
+// waiters. Close is idempotent (sync.Once + the done channel linearize the
+// teardown) so deferring it costs nothing on the happy path where the
+// process exits cleanly. Failure to defer Close leaks one runHandle
+// goroutine per untracked Handle plus the kernel-side process descriptor
+// for any cmd that has not yet exited.
+//
+// Move-success / Update-fail atomicity: when applyCrashTransition routes a
+// crash through MoveActionItem followed by UpdateActionItem, a partial
+// failure of the second call leaves the action item in `failed` lifecycle
+// state without metadata.BlockedReason populated. The
+// monitor returns the wrapped UpdateActionItem error via Handle.Wait so
+// dispatcher subscribers can re-fetch and re-attempt the metadata write on
+// transient errors. Drop 4b's structured-failure refactor (PLAN.md §17.3.Q5)
+// will collapse the two writes into one transactional call; until then the
+// caller-side retry is the contract — the monitor never silently absorbs
+// the half-applied transition.
 func (m *processMonitor) Track(ctx context.Context, actionItemID string, cmd *exec.Cmd) (*Handle, error) {
 	if m == nil || m.svc == nil {
 		return nil, fmt.Errorf("%w: process monitor service is nil", ErrInvalidDispatcherConfig)

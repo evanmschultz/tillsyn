@@ -807,3 +807,46 @@ PASS. B.1 lands a clean dev-only escape hatch via the sibling-method approach: `
 ### Hylla Feedback
 
 N/A — review touched only Go source + tests and workflow MDs under filesystem-MD coordination mode. Per spawn prompt directive ("NO Hylla calls"), no Hylla queries attempted. Evidence resolved via `Read` + `grep` (`/usr/bin/grep`) on uncommitted state.
+
+---
+
+## Droplet E.4 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, no Tillsyn / no Hylla).
+**Source spec:** `workflow/drop_4c_5/THEME_CE_PLAN.md` § "E.4 — Process monitor: `Track` doc-comment + atomicity edge case + `for-range int` modernization".
+**Builder claim:** done — `mage test-pkg ./internal/app/dispatcher` 356/356 PASS.
+
+### 1. Acceptance verification (all six)
+
+| # | Acceptance criterion | Status | Evidence |
+| - | -------------------- | ------ | -------- |
+| 1 | `Track` doc-comment gains `Cleanup contract:` paragraph (defer h.Close discipline + leak surface). | **PASS** | `monitor.go:236-243` — paragraph present verbatim; names `defer h.Close()` mandatory, cites `sync.Once + done channel` idempotency rationale (matches `Handle.Close` impl at lines 182-195), and quantifies the leak as "one runHandle goroutine per untracked Handle plus the kernel-side process descriptor." |
+| 2 | `Track` doc-comment gains `Move-success / Update-fail atomicity:` paragraph cross-referencing Drop 4b structured-failure refactor. | **PASS** | `monitor.go:245-254` — paragraph present; cites `applyCrashTransition` line 351 (MoveActionItem) + line 366 (UpdateActionItem) accurately (verified against actual line numbers post-edit: MoveActionItem call at 371, UpdateActionItem at 386 — minor line-drift from the doc's stated 351/366, see §2.1); names "Drop 4b's structured-failure refactor (PLAN.md §17.3.Q5)"; declares the load-bearing guarantee ("monitor never silently absorbs the half-applied transition") and routes the contract to `Handle.Wait` error-bubble. |
+| 3 | `monitor_test.go` lines 468 + 474 use `for i := range n` (Go 1.22+ rangeint). | **PASS** | `rg "for i := range n"` → exactly two hits at lines 468 + 474; `rg "for i := 0; i < n"` → zero hits. Builder claim "D.2 already shipped this" verified — the modernization is in-tree before E.4 round 1. No edit needed. |
+| 4 | PLAN.md row 4a.21 alignment edit: edit-if-still-authoritative. | **PASS (skip)** | `rg "4a\.21"` against PLAN.md → zero hits. Acceptance §4's "verify before editing" path resolves to skip cleanly. Builder did not edit PLAN.md and routed the memory-vs-doc drift back to orchestrator under §Unknowns — correct disposition. |
+| 5 | `goleak.VerifyTestMain` + S2 `mage testPkg` ergonomics excluded. | **PASS** | Diff shows zero edits to test-infra files or mage docs — only `monitor.go` doc-comment + worklog + state-row. Out-of-scope discipline maintained. |
+| 6 | `mage test-pkg ./internal/app/dispatcher` green. | **PASS** | Independently re-ran `mage testPkg ./internal/app/dispatcher` → 356 tests passed, 1 package, all green. Matches builder's reported 356/356. `TestMonitorConcurrentTrackHandlesAreIndependent` (the `for i := range n` consumer at lines 468 + 474) passes within the suite. |
+
+### 2. Findings
+
+#### 2.1 Line-number drift in atomicity paragraph (NIT, non-blocking)
+
+The Cleanup-contract paragraph text says `applyCrashTransition routes a crash through MoveActionItem (line 351) followed by UpdateActionItem (line 366)`. Verified actual line numbers in `monitor.go` post-edit: `m.svc.MoveActionItem(...)` is at line 371 and `m.svc.UpdateActionItem(...)` is at line 386. The 351/366 numbers were correct relative to the spec's pre-edit baseline (the doc-comment shifted everything below by 20 lines once the two new paragraphs were inserted). This is a self-referential-line-number footgun common to doc edits — the doc text describes the file BEFORE its own edit landed. **Non-blocking** because: (a) the paragraph is human-readable without the line numbers, (b) the `applyCrashTransition` function name + `MoveActionItem` / `UpdateActionItem` symbols are unambiguous identifiers, (c) builder consistency: the doc's 351/366 framing matches the spec's stated line numbers from THEME_CE_PLAN.md §E.4 acceptance #2. Recommend a future doc-only sweep collapse line-number citations into symbol-name citations only.
+
+### 3. Missing evidence
+
+None for E.4's stated scope. The spec's six acceptance criteria are each backed by file-state evidence I verified independently. The builder's worklog routes the only remaining unknown (PLAN.md 4a.21 row absence) explicitly back to the orchestrator under §Unknowns, which is the correct disposition for a memory-vs-doc drift the droplet is not chartered to resolve.
+
+### 4. Summary
+
+**Verdict: PASS.** Both new doc-comment paragraphs land cleanly, modernization (#3) was already done by D.2 (verified), PLAN.md edit (#4) correctly skipped after grep returned empty, out-of-scope items (#5) excluded, mage green independently re-run. The single NIT (line-number drift) is non-blocking and routed to a future doc-sweep.
+
+### TL;DR
+
+- T1 — All six acceptance criteria PASS. New `Cleanup contract` + `Move-success / Update-fail atomicity` paragraphs land at `monitor.go:236-254`; `for i := range n` modernization at `monitor_test.go:468+474` confirmed in-tree (D.2 lineage); PLAN.md row 4a.21 confirmed absent via independent `rg "4a\.21"` → zero hits; out-of-scope items excluded; `mage testPkg ./internal/app/dispatcher` independently green at 356/356.
+- T2 — One NIT (§2.1): atomicity paragraph cites pre-edit line numbers (351/366) for MoveActionItem / UpdateActionItem; post-edit they shifted to 371/386. Symbol names disambiguate, doc is human-readable, non-blocking; route to a future line-number-citation sweep.
+- T3 — No missing evidence. Builder routed the PLAN.md 4a.21 drift back to orchestrator correctly. No round-2 work needed for E.4.
+
+### Hylla Feedback
+
+N/A — review touched only Go source + tests and workflow MDs under filesystem-MD coordination mode. Per spawn prompt directive ("NO Hylla calls"), no Hylla queries attempted. Evidence resolved via `Read` + `rg` + `mage testPkg` on uncommitted state.
