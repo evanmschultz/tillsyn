@@ -1116,6 +1116,29 @@ func (s *Service) MoveActionItem(ctx context.Context, actionItemID, toColumnID s
 	if domain.IsTerminalState(fromState) && fromState != toState {
 		return domain.ActionItem{}, fmt.Errorf("%w: cannot transition from terminal state %q without override auth", domain.ErrTransitionBlocked, fromState)
 	}
+	// Drop 4c.5 droplet A.4: require a non-empty `metadata.outcome` from the
+	// closed set {"failure", "blocked", "superseded"} on transitions into
+	// `failed`. The check is positioned after the terminal-state guard so it
+	// cannot race with partial state mutations, and it explicitly carves out
+	// idempotent failed→failed self-moves so pre-A.4 data rows (action items
+	// already at `failed` with empty outcome) are not retroactively rejected.
+	// Asymmetric — the transition into `complete` does NOT require an
+	// outcome; agents claiming success leave outcome unset by convention.
+	// The expected agent pattern is `UpdateActionItem` to set
+	// `metadata.outcome` BEFORE `MoveActionItem` flips the column (see
+	// CLAUDE.md § "Action-Item Lifecycle"); this guard is a regression net
+	// for buggy agents that skip the update step. `"success"` is rejected on
+	// `→failed` because it is semantically nonsense (a success outcome on a
+	// failed transition).
+	if toState == domain.StateFailed && fromState != domain.StateFailed {
+		outcome := strings.TrimSpace(strings.ToLower(actionItem.Metadata.Outcome))
+		switch outcome {
+		case "failure", "blocked", "superseded":
+			// accepted
+		default:
+			return domain.ActionItem{}, fmt.Errorf("%w: metadata.outcome must be one of {failure, blocked, superseded} on transition to failed (got %q)", domain.ErrInvalidMetadataOutcome, actionItem.Metadata.Outcome)
+		}
+	}
 	if fromState == domain.StateTodo && toState == domain.StateInProgress {
 		if unmet := actionItem.StartCriteriaUnmet(); len(unmet) > 0 {
 			return domain.ActionItem{}, fmt.Errorf("%w: start criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))

@@ -4970,6 +4970,15 @@ func TestMoveActionItemToFailedUsesMarkFailedCapability(t *testing.T) {
 		Title:          "failing actionItem",
 		Priority:       domain.PriorityMedium,
 		LifecycleState: domain.StateInProgress,
+		// Drop 4c.5 droplet A.4: transitions into StateFailed require
+		// metadata.outcome ∈ {"failure", "blocked", "superseded"}. The
+		// pre-A.4 version of this test left outcome empty and relied on the
+		// service to accept the move; the new invariant rejects that path,
+		// so we pre-populate the outcome here. Production agents follow the
+		// same documented order — UpdateActionItem to set metadata BEFORE
+		// MoveActionItem flips the column (CLAUDE.md § "Action-Item
+		// Lifecycle").
+		Metadata: domain.ActionItemMetadata{Outcome: "failure"},
 	}, now)
 	repo.tasks[actionItem.ID] = actionItem
 
@@ -5007,6 +5016,11 @@ func TestMoveActionItemToFailedSkipsCompletionCriteria(t *testing.T) {
 		Priority:       domain.PriorityHigh,
 		LifecycleState: domain.StateInProgress,
 		Metadata: domain.ActionItemMetadata{
+			// Drop 4c.5 droplet A.4: transitions into StateFailed require a
+			// non-empty metadata.outcome. The completion-criteria-bypass
+			// behavior under test is orthogonal to outcome; we set
+			// "failure" here because the parent is genuinely failing.
+			Outcome: "failure",
 			CompletionContract: domain.CompletionContract{
 				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Complete: false}},
 			},
@@ -5130,6 +5144,178 @@ func TestMoveActionItemFromFailedIdempotentAllowed(t *testing.T) {
 	}
 	if moved.LifecycleState != domain.StateFailed {
 		t.Fatalf("expected failed lifecycle state, got %q", moved.LifecycleState)
+	}
+}
+
+// TestMoveActionItemFailedTransitionRequiresOutcome pins the Drop 4c.5
+// droplet A.4 invariant: transitions INTO StateFailed require a non-empty
+// metadata.outcome from the closed set {"failure", "blocked", "superseded"}.
+// The check is asymmetric — moves into StateComplete or StateInProgress do
+// NOT enforce outcome shape. Idempotent failed→failed self-moves carve out
+// (existing test TestMoveActionItemFromFailedIdempotentAllowed pins that
+// path; this test focuses on the actual transition into failed).
+//
+// Each row sets up an in_progress action item with a specific
+// metadata.outcome value, attempts a Move into the named destination state,
+// and asserts the wrapped error class plus post-move lifecycle state.
+func TestMoveActionItemFailedTransitionRequiresOutcome(t *testing.T) {
+	type row struct {
+		name           string
+		outcome        string
+		toStateColumn  string // "failed" | "complete" | "in_progress"
+		wantErrIs      error  // nil = move must succeed
+		wantFinalState domain.LifecycleState
+	}
+
+	rows := []row{
+		{
+			name:          "failed-no-outcome rejected",
+			outcome:       "",
+			toStateColumn: "failed",
+			wantErrIs:     domain.ErrInvalidMetadataOutcome,
+			// State unchanged on rejection — guard fires before column move.
+			wantFinalState: domain.StateInProgress,
+		},
+		{
+			name:           "failed-whitespace-outcome rejected",
+			outcome:        "   ",
+			toStateColumn:  "failed",
+			wantErrIs:      domain.ErrInvalidMetadataOutcome,
+			wantFinalState: domain.StateInProgress,
+		},
+		{
+			name:           "failed-with-success-outcome rejected",
+			outcome:        "success",
+			toStateColumn:  "failed",
+			wantErrIs:      domain.ErrInvalidMetadataOutcome,
+			wantFinalState: domain.StateInProgress,
+		},
+		{
+			name:           "failed-with-garbage-outcome rejected",
+			outcome:        "garbage-not-in-enum",
+			toStateColumn:  "failed",
+			wantErrIs:      domain.ErrInvalidMetadataOutcome,
+			wantFinalState: domain.StateInProgress,
+		},
+		{
+			name:           "failed-with-failure-outcome accepted",
+			outcome:        "failure",
+			toStateColumn:  "failed",
+			wantErrIs:      nil,
+			wantFinalState: domain.StateFailed,
+		},
+		{
+			name:           "failed-with-blocked-outcome accepted",
+			outcome:        "blocked",
+			toStateColumn:  "failed",
+			wantErrIs:      nil,
+			wantFinalState: domain.StateFailed,
+		},
+		{
+			name:           "failed-with-superseded-outcome accepted",
+			outcome:        "superseded",
+			toStateColumn:  "failed",
+			wantErrIs:      nil,
+			wantFinalState: domain.StateFailed,
+		},
+		{
+			name: "failed-with-mixed-case-outcome accepted (case-insensitive)",
+			// The validator lowercases on compare so callers that send
+			// "Failure" / "BLOCKED" / "Superseded" match the enum. This row
+			// pins the case-insensitivity contract.
+			outcome:        "Failure",
+			toStateColumn:  "failed",
+			wantErrIs:      nil,
+			wantFinalState: domain.StateFailed,
+		},
+		{
+			// Asymmetry assertion: the same empty-outcome shape that fails
+			// the failed transition succeeds on transition into complete.
+			name:           "complete-no-outcome accepted (asymmetry)",
+			outcome:        "",
+			toStateColumn:  "complete",
+			wantErrIs:      nil,
+			wantFinalState: domain.StateComplete,
+		},
+		{
+			// Sanity row: the in_progress→in_progress (different position
+			// only) move is a no-op for the outcome guard regardless of
+			// outcome shape.
+			name:           "in_progress-no-outcome accepted",
+			outcome:        "",
+			toStateColumn:  "in_progress",
+			wantErrIs:      nil,
+			wantFinalState: domain.StateInProgress,
+		},
+	}
+
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+			project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+			repo.projects[project.ID] = project
+			progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
+			done, _ := domain.NewColumn("c3", project.ID, "Complete", 2, 0, now)
+			failed, _ := domain.NewColumn("c4", project.ID, "Failed", 3, 0, now)
+			repo.columns[progress.ID] = progress
+			repo.columns[done.ID] = done
+			repo.columns[failed.ID] = failed
+
+			actionItem, _ := domain.NewActionItemForTest(domain.ActionItemInput{
+				Kind:           domain.KindPlan,
+				ID:             "t-a4",
+				ProjectID:      project.ID,
+				ColumnID:       progress.ID,
+				Position:       0,
+				Title:          "A.4 outcome guard test",
+				Priority:       domain.PriorityMedium,
+				LifecycleState: domain.StateInProgress,
+				Metadata:       domain.ActionItemMetadata{Outcome: r.outcome},
+			}, now)
+			repo.tasks[actionItem.ID] = actionItem
+
+			var targetCol domain.Column
+			switch r.toStateColumn {
+			case "failed":
+				targetCol = failed
+			case "complete":
+				targetCol = done
+			case "in_progress":
+				targetCol = progress
+			default:
+				t.Fatalf("unknown toStateColumn fixture %q", r.toStateColumn)
+			}
+
+			svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+			moved, err := svc.MoveActionItem(context.Background(), actionItem.ID, targetCol.ID, 0)
+
+			if r.wantErrIs == nil {
+				if err != nil {
+					t.Fatalf("MoveActionItem() error = %v, want nil", err)
+				}
+				if moved.LifecycleState != r.wantFinalState {
+					t.Fatalf("MoveActionItem() final state = %q, want %q", moved.LifecycleState, r.wantFinalState)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("MoveActionItem() error = nil, want errors.Is(err, %v)", r.wantErrIs)
+			}
+			if !errors.Is(err, r.wantErrIs) {
+				t.Fatalf("MoveActionItem() error = %v, want errors.Is(err, %v)", err, r.wantErrIs)
+			}
+			// Item must remain at its starting state — guard fires before
+			// the column move and the metadata write.
+			refetched, getErr := svc.GetActionItem(context.Background(), actionItem.ID)
+			if getErr != nil {
+				t.Fatalf("GetActionItem() after rejected move error = %v", getErr)
+			}
+			if refetched.LifecycleState != r.wantFinalState {
+				t.Fatalf("post-rejection lifecycle state = %q, want %q (guard must fire before column move)", refetched.LifecycleState, r.wantFinalState)
+			}
+		})
 	}
 }
 

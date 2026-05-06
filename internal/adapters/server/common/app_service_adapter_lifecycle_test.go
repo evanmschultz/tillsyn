@@ -995,6 +995,20 @@ func TestMoveActionItemStateToFailed(t *testing.T) {
 		t.Fatalf("CreateActionItem() error = %v", err)
 	}
 
+	// Drop 4c.5 droplet A.4: transitions into StateFailed require a
+	// non-empty metadata.outcome from {"failure", "blocked", "superseded"}.
+	// Pre-A.4, this test moved straight to "failed" with empty metadata;
+	// that path now wraps domain.ErrInvalidMetadataOutcome. Set the outcome
+	// via a partial update first — production agents follow the same
+	// documented order (CLAUDE.md § "Action-Item Lifecycle").
+	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: actionItem.ID,
+		Metadata:     &domain.ActionItemMetadata{Outcome: "failure"},
+		Actor:        actor,
+	}); err != nil {
+		t.Fatalf("UpdateActionItem(set outcome=failure) error = %v", err)
+	}
+
 	actionItem, err = fixture.adapter.MoveActionItemState(ctx, MoveActionItemStateRequest{
 		ActionItemID: actionItem.ID,
 		State:        "failed",

@@ -409,3 +409,78 @@ PASS. F.2.3 round 1 satisfies every acceptance criterion with evidence pinned to
 ### Hylla Feedback
 
 N/A — droplet under review touched only non-Go files (TOML + dotfile + workflow MDs). Hylla is Go-only today per project memory `feedback_hylla_go_only_today.md`. All evidence resolved via `Read` / `Bash` (`git ls-files`, `git status --porcelain`, `git check-ignore -v`) / file content inspection. No Hylla query was attempted, so no miss to log.
+
+---
+
+## Droplet A.4 — Round 1
+
+**Reviewer:** go-qa-proof-agent. **Date:** 2026-05-05. **Verdict:** PASS.
+
+### Premises
+
+1. `ErrInvalidMetadataOutcome` declared in `internal/domain/errors.go` with comprehensive doc.
+2. Guard in `Service.MoveActionItem` rejects empty/whitespace/non-enum outcome on `→failed`.
+3. Guard placed AFTER terminal-state guard, BEFORE column move (no partial-mutation race).
+4. `→complete` does NOT require outcome (asymmetric).
+5. Idempotent `failed→failed` carve-out preserves pre-A.4 data.
+6. Strict closed-enum `{failure, blocked, superseded}` rejects `success` per master PLAN cross-cutting decision.
+7. Two pre-existing tests + one adapter test fixed to populate `Outcome="failure"` before move.
+8. New table-driven test added (acceptance #5: 5+ rows; spec lists 7; impl ships 10).
+9. R-A.4-1 refinement raised: dispatcher's `applyCrashTransition` / `transitionToFailed` violate "metadata-before-move" order and would fail under the new guard in production.
+
+### Evidence
+
+- `internal/domain/errors.go:61-72` — `ErrInvalidMetadataOutcome` sentinel + 12-line doc-comment covering closed enum, asymmetry, carve-out.
+- `internal/app/service.go:1116-1141` — terminal-state guard at 1116; A.4 guard at 1119-1141 with case-insensitive match (`strings.TrimSpace + strings.ToLower`); column move (`actionItem.Move`) at 1159. Wrapped error format `%w: ... (got %q)` preserves raw caller value for debug logs.
+- `internal/app/service_test.go:5150-5320` — `TestMoveActionItemFailedTransitionRequiresOutcome` 10-row table. Each rejection row asserts both `errors.Is(err, ErrInvalidMetadataOutcome)` AND post-rejection lifecycle state unchanged via `GetActionItem` re-read (proving guard fires before column write).
+- `internal/app/service_test.go:4981` + `:5023` — pre-existing `TestMoveActionItemToFailedUsesMarkFailedCapability` and `TestMoveActionItemToFailedSkipsCompletionCriteria` updated to set `Outcome: "failure"`.
+- `internal/adapters/server/common/app_service_adapter_lifecycle_test.go:1006` — adapter test updated to set `Outcome: "failure"`.
+- `internal/adapters/server/common/app_service_adapter_mcp.go:1193-1222` — `validateMetadataOutcome` doc-comment extended with A.4 cross-reference (lines 1197-1206); function body unchanged (per acceptance criterion).
+- Mage: `mage testPkg ./internal/app` 408/408, `./internal/adapters/server/common` 160/160, `./internal/domain` 303/303, `mage testFunc ./internal/app TestMoveActionItemFailedTransitionRequiresOutcome` 11/11 (counts subtests).
+
+### Trace or cases
+
+1. New `→failed` w/ empty outcome → `outcome == ""` → switch default → `ErrInvalidMetadataOutcome`. Lifecycle stays `in_progress`. **Verified row 1.**
+2. Whitespace outcome `"   "` → `TrimSpace` → "" → reject. **Row 2.**
+3. `success` on `→failed` → not in `{failure, blocked, superseded}` → reject. **Row 3.** Strict-enum check enforced.
+4. Garbage outcome → reject. **Row 4.**
+5. `failure` / `blocked` / `superseded` accepted → state flips. **Rows 5-7.**
+6. `Failure` (mixed case) → `ToLower` → "failure" → accept. **Row 8.**
+7. `→complete` w/ empty outcome → `toState != StateFailed` → guard skipped → succeed. **Row 9.**
+8. `→in_progress` → guard skipped. **Row 10.**
+9. Idempotent failed→failed: `fromState == StateFailed` → carve-out skips guard → succeed (pre-existing `TestMoveActionItemFromFailedIdempotentAllowed` still passes per builder note).
+
+### Conclusion
+
+PASS. All 7 acceptance criteria met:
+- AC#1 (wrapped `ErrInvalidMetadataOutcome` on empty post-trim): met + extended to closed-enum.
+- AC#2 (placement after terminal-state guard, before column move): verified at lines 1116→1119→1159.
+- AC#3 (`→complete` does not require outcome): pinned by row 9.
+- AC#4 (dispatcher pattern preserved): A.4 itself preserves the documented order; R-A.4-1 correctly raises that the dispatcher's CURRENT impl violates it (orchestrator-routed, not a builder defect).
+- AC#5 (5+ new tests): 10 rows shipped.
+- AC#6 (`mage test-pkg ./internal/app -race`): 408/408 green.
+- AC#7 (`mage ci` clean on A.4 surface): builder's `mage ci` block at `formatCheck` is on `internal/adapters/server/mcpapi/extended_tools_test.go` — outside A.4's declared paths and traceable to a sibling droplet. A.4's own packages all pass.
+
+Master PLAN cross-cutting decision (`reject success on →failed`): IMPLEMENTED. Verified at row 3 + service.go:1136 closed switch.
+
+### Findings
+
+- **F1 (minor doc-drift, NOT a defect).** Worklog claims "11-row table-driven test"; actual count is 10 rows. Coverage still vastly exceeds spec's 5-row floor and includes every acceptance row. Builder may correct the worklog count opportunistically; no rebuild required.
+- **F2 (informational, R-A.4-1 acknowledged).** Builder correctly raised R-A.4-1: dispatcher's `internal/app/dispatcher/monitor.go:applyCrashTransition` (~351-371) and `dispatcher.go:transitionToFailed` (~639-664) call `MoveActionItem(... → failed)` BEFORE setting `metadata.outcome`. Production runs would now hit `ErrInvalidMetadataOutcome`. The dispatcher tests stub the Service so this is not caught by the test suite. Routed correctly to orchestrator for refinement-list closeout entry; out of A.4's declared paths.
+
+### Missing Evidence
+
+None. Spec, code, tests, and worklog all align.
+
+### Hylla Feedback
+
+N/A — A.4 review touched only Go files but Drop 4c.5 is in filesystem-MD coordination mode and Hylla is stale post-Drop-4c-merge. Per spawn directive ("NO Hylla calls"), no Hylla query attempted; all evidence resolved via `Read` + `rg` on disk + git diff. Project memory `feedback_hylla_go_only_today.md` permits the Go-on-disk fallback for stale-ingest windows; no miss to log.
+
+### TL;DR
+
+- T1 — PASS. Guard at `service.go:1133-1141` correctly placed between terminal-state guard (1116) and column move (1159); strict closed-enum {failure, blocked, superseded} with `TrimSpace + ToLower`; idempotent failed→failed carve-out via `fromState != StateFailed`; asymmetric (complete unaffected).
+- T2 — `success`-on-failed rejection (master PLAN cross-cutting decision) implemented and pinned by test row 3.
+- T3 — 10-row table covers all 7 spec rows + 3 bonus rows (success rejected, garbage rejected, mixed-case accepted); each rejection row verifies state-unchanged via GetActionItem re-read.
+- T4 — Pre-existing tests `TestMoveActionItemToFailedUsesMarkFailedCapability` (4981), `TestMoveActionItemToFailedSkipsCompletionCriteria` (5023), and adapter `TestMoveActionItemStateToFailed` (1006) all correctly updated to set `Outcome: "failure"` before move.
+- T5 — Worklog claims "11-row" table; actual count is 10. Doc nit, not a defect.
+- T6 — R-A.4-1 correctly raised: dispatcher's crash-recovery paths violate metadata-before-move order; orchestrator-routed for closeout refinements list.

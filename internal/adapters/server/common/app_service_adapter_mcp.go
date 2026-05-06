@@ -1193,6 +1193,17 @@ func normalizeActionItemStateInput(raw string) (domain.LifecycleState, error) {
 // validateMetadataOutcome rejects unrecognized metadata.outcome values at the
 // MCP adapter boundary. Empty is valid (outcome not yet set). The valid set is
 // small and stable: success, failure, blocked, superseded.
+//
+// State-transition coupling (Drop 4c.5 droplet A.4): the service-level
+// `Service.MoveActionItem` enforces a stricter, asymmetric invariant on
+// transitions into `StateFailed` — it rejects empty outcomes and any value
+// outside the closed set {"failure", "blocked", "superseded"} (note that
+// "success" is REJECTED on the failed transition because it is semantically
+// nonsense). That guard wraps `domain.ErrInvalidMetadataOutcome`. This
+// adapter-side validator stays permissive (empty + "success" still pass)
+// because outcomes legitimately propagate ahead of state changes — for
+// example, an agent may set `metadata.outcome = "success"` while the item
+// is still in_progress before flipping it to `complete`.
 func validateMetadataOutcome(md *domain.ActionItemMetadata) error {
 	if md == nil {
 		return nil

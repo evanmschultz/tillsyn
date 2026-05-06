@@ -1,7 +1,7 @@
 # Drop 4c.5 — Theme A Plan (Silent-Data-Loss + Agent-Surface Hardening)
 
 **Author:** Theme A planner.
-**Status:** decomposition draft awaiting plan-QA. A.1 state: done.
+**Status:** decomposition draft awaiting plan-QA. A.1 state: done. A.4 state: done.
 **Source brief:** `workflow/drop_4c_5/REVISION_BRIEF.md` §3.1.
 **Evidence basis:** direct code reads (LSP/Read/Grep) on `main` HEAD `7cd84ec`. No Hylla calls (stale post-Drop-4c-merge).
 
@@ -92,6 +92,8 @@ Resolution: A.4 `blocked_by: A.1`. Builder for A.4 picks up A.1's pointer-sentin
 ---
 
 ### A.2 — Reject Unknown JSON Keys At MCP Boundary
+
+**State:** done
 
 **Purpose:** Stop schema-drift bugs (typo'd field names, deprecated-then-deleted fields) from landing as silent no-ops. An MCP tool call carrying `{"descrption": "..."}` (typo) today drops it; after A.2 it returns a structured error naming the offending key.
 

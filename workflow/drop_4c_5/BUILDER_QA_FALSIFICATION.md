@@ -2,6 +2,70 @@
 
 Append a `## Droplet <ID> — Round K` section per QA falsification round. See `workflow/example/drops/WORKFLOW.md § "Phase 5 — QA"` for what each section should contain.
 
+## Droplet A.4 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, opus)
+**Date:** 2026-05-05
+**Verdict:** PASS
+**Scope:** A.4-declared paths only — `internal/domain/errors.go`, `internal/app/service.go`, `internal/app/service_test.go`, `internal/adapters/server/common/app_service_adapter_mcp.go`, `internal/adapters/server/common/app_service_adapter_lifecycle_test.go`, `workflow/drop_4c_5/THEME_A_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`.
+
+### 1. Findings
+
+- **1.1 Guard placement (Attack 1).** REFUTED. `service.go:1133` places the new `toState == StateFailed && fromState != StateFailed` guard immediately after the terminal-state guard (line 1116) and well before the `actionItem.Move` column flip at line 1159. Sits cleanly between the terminal-state cluster and the completion-criteria check at line 1147.
+- **1.2 `fromState != StateFailed` carve-out (Attack 2).** REFUTED. Carve-out present at line 1133. Existing `TestMoveActionItemFromFailedIdempotentAllowed` (`service_test.go:5120`) passes with empty outcome on a `failed→failed` self-move because the carve-out skips the guard. Spec semantics: A.4 enforces correctness ON the transition INTO failed, not retroactively on items already there. Note: the carve-out also lets `failed→failed` accept any outcome shape including `"success"` — by design, idempotency preservation; the spec did not require tightening idempotent self-moves.
+- **1.3 Strict-enum check (Attack 3).** REFUTED. Implementation at lines 1134-1140 uses `outcome := strings.TrimSpace(strings.ToLower(actionItem.Metadata.Outcome))` then `switch outcome { case "failure", "blocked", "superseded": ... default: reject }`. NOT a substring check. `"success"` falls into the default branch → rejected. Mixed-case (`"Failure"`) is normalized via `ToLower` → accepted. The trim-then-lower order is commutative for ASCII whitespace, behavior-equivalent to lower-then-trim.
+- **1.4 Pre-existing test fixes (Attack 4).** REFUTED. Three call sites were correctly fixed:
+  - `service_test.go:4953` `TestMoveActionItemToFailedUsesMarkFailedCapability` — fixture `domain.ActionItemInput.Metadata.Outcome` set to `"failure"` BEFORE the move call. TDD-correct path: pre-populate metadata, then move.
+  - `service_test.go:4998` `TestMoveActionItemToFailedSkipsCompletionCriteria` — same shape; outcome `"failure"` set on the parent fixture before `MoveActionItem`.
+  - `app_service_adapter_lifecycle_test.go:957` `TestMoveActionItemStateToFailed` — adapter test now calls `fixture.adapter.UpdateActionItem(... Metadata: &domain.ActionItemMetadata{Outcome: "failure"})` BEFORE the `MoveActionItemState(... "failed")` call. Mirrors production agent order documented in `CLAUDE.md § "Action-Item Lifecycle"`.
+  No hacky patches (e.g., `metadata.outcome = "failure"` injected mid-flow); each fix updates the test's intent to follow the production-required order.
+- **1.5 Adapter doc-comment cross-reference (Attack 5).** REFUTED. `app_service_adapter_mcp.go:1193-1206` doc-comment correctly:
+  - Names the service-level enforcer: `Service.MoveActionItem` ✓
+  - Names the typed error: `domain.ErrInvalidMetadataOutcome` ✓
+  - Lists the closed enum `{failure, blocked, superseded}` ✓
+  - Documents the asymmetry between adapter validator (permissive, accepts `success`) and service guard (strict, rejects `success`) ✓
+  - Names the rationale (outcomes legitimately propagate ahead of state changes) ✓
+- **1.6 R-A.4-1 refinement validity (Attack 6).** REFUTED — refinement is VALID. Verified by direct read:
+  - `internal/app/dispatcher/monitor.go:applyCrashTransition` lines 351 / 366: calls `MoveActionItem(... → failedColumnID)` at line 351 BEFORE `UpdateActionItem` sets `Outcome = "failure"` at line 366. With the new A.4 guard, `MoveActionItem` would reject because `current.Metadata.Outcome` is empty when the move fires.
+  - `internal/app/dispatcher/dispatcher.go:transitionToFailed` lines 651 / 657: same pattern — `MoveActionItem` at 651 BEFORE `UpdateActionItem` at 657. Same rejection mode.
+  - Dispatcher test stub `richDispatchService.MoveActionItem` at `dispatcher_test.go:526` does NOT enforce the real `Service.MoveActionItem` guard, so the existing test suite does not catch this. Production runs against the real service would surface as `ErrInvalidMetadataOutcome` rejections during dispatcher crash-recovery.
+  Refinement is correctly scoped (deferred to Drop 5 / dispatcher hardening), pre-MVP no production agent currently exercises this path.
+- **1.7 Test rigor (Attack 7).** REFUTED with one minor metadata observation. The new `TestMoveActionItemFailedTransitionRequiresOutcome` table at `service_test.go:5170-5250` covers: empty (`""`), whitespace-only (`"   "`), `"success"` rejected, `"garbage-not-in-enum"` rejected, all three valid enum values accepted (`"failure"`, `"blocked"`, `"superseded"`), mixed-case acceptance (`"Failure"`), complete-no-outcome asymmetry, and in_progress-no-outcome no-op. Each rejection row also asserts post-rejection lifecycle state via a `GetActionItem` re-fetch (lines 5311-5317), which proves the guard fires BEFORE the column move — strictly stronger than just asserting the error class. **Minor metadata drift (NOT a counterexample):** worklog claims "11 rows" but the actual literal count is **10 rows** (4 rejected + 4 valid-failed + 1 complete + 1 in_progress). Doc-only inaccuracy in `BUILDER_WORKLOG.md` line 559; code is correct. Recommend orchestrator note for round 2 OR accept as-is (code coverage is exhaustive enough).
+- **1.8 Wrapping vs non-wrapping error (Attack 8).** REFUTED. `service.go:1139` returns `fmt.Errorf("%w: metadata.outcome must be one of {failure, blocked, superseded} on transition to failed (got %q)", domain.ErrInvalidMetadataOutcome, actionItem.Metadata.Outcome)` — uses `%w` correctly. `errors.Is(err, domain.ErrInvalidMetadataOutcome)` works as expected; new test at line 5306 uses `errors.Is` and 4 rejection rows exercise that path.
+
+### 2. Counterexamples
+
+None. No CONFIRMED counterexample produced after honest attempts across all 8 attack categories. The R-A.4-1 refinement (1.6) is a real latent dispatcher bug surfaced by A.4's new invariant, but it is correctly out-of-scope for A.4 — A.4's spec acceptance criterion #4 says "the dispatcher's existing pattern is preserved" and the builder responsibly raised it as a deferred refinement rather than scope-creeping into `internal/app/dispatcher/`.
+
+### 3. Summary
+
+PASS. The A.4 droplet correctly:
+- Adds `domain.ErrInvalidMetadataOutcome` typed sentinel with full doc-comment.
+- Inserts the strict-enum + asymmetric guard in `Service.MoveActionItem` at the correct position (between terminal-state guard and column move).
+- Carves out `failed→failed` idempotent self-moves (preserves existing test + pre-A.4 data rows).
+- Strict enum `{failure, blocked, superseded}` enforced via `switch` (rejects `"success"` on `→failed` per master PLAN cross-cutting decision); case-insensitive via `ToLower`; whitespace-trimmed.
+- Wraps the sentinel with `%w`; `errors.Is` test coverage in 4 rejection rows.
+- TDD-correct fixes for all 3 pre-existing tests that previously moved into failed without setting outcome.
+- Accurate doc-comment cross-reference at the adapter-side `validateMetadataOutcome` linking the asymmetric service guard.
+- Correctly raises R-A.4-1 as a follow-up refinement for the dispatcher's crash-handling order, with concrete fix shape and routing recommendation.
+
+One sub-counterexample-class observation, NOT blocking: worklog row count claim "11 rows" is actually 10. Doc drift only.
+
+### 4. Hylla Feedback
+
+N/A — task touched only Go files, but the spawn-prompt directive ("filesystem-MD coordination mode. NO Hylla calls.") routed all evidence through `Read` / `Bash` (`grep -n` for symbol locations) / `Edit`. No Hylla query attempted, so no miss to log. The Drop 4c.5 cascade is in filesystem-MD mode with stale Hylla state post-Drop-4c-merge per the worklog convention.
+
+### TL;DR
+
+- **T1.** Guard correctly placed at `service.go:1133`, between terminal-state guard (1116) and column move (1159).
+- **T2.** `fromState != StateFailed` carve-out preserves existing idempotent test; spec-correct.
+- **T3.** Strict enum via `switch`, case-insensitive `ToLower`, rejects `"success"` on `→failed`.
+- **T4.** Three pre-existing tests fixed TDD-correctly (pre-populate outcome, then move).
+- **T5.** Adapter doc-comment names service guard, error sentinel, closed enum, asymmetry — accurate.
+- **T6.** R-A.4-1 verified VALID: `monitor.go:351` + `dispatcher.go:651` both call `MoveActionItem(→failed)` before `UpdateActionItem(outcome)` — correctly deferred.
+- **T7.** 10-row table (worklog says 11; minor doc drift only) covers empty / whitespace / success-rejected / garbage / 3 valid / mixed-case / complete-asymmetry / in_progress-noop.
+- **T8.** Error wraps `ErrInvalidMetadataOutcome` with `%w`; `errors.Is` works.
+
 ## Droplet E.1 — Round 1
 
 **Reviewer:** go-qa-falsification-agent

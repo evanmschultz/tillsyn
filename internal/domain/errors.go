@@ -58,8 +58,20 @@ var (
 	ErrOverrideTokenRequired       = errors.New("override token is required for overlapping orchestrator lease")
 	ErrOverrideTokenInvalid        = errors.New("override token is invalid")
 	ErrTransitionBlocked           = errors.New("transition blocked by completion contract")
-	ErrAuthRequestNotPending       = errors.New("auth request is not pending")
-	ErrAuthRequestExpired          = errors.New("auth request is expired")
+	// ErrInvalidMetadataOutcome reports that a state transition into
+	// StateFailed was attempted with `metadata.outcome` empty (post-trim) or
+	// set to a value that is not in the closed set {"failure", "blocked",
+	// "superseded"}. Drop 4c.5 droplet A.4 invariant: the transition into
+	// `failed` carries a non-empty, semantically meaningful outcome so the
+	// orchestrator's inbox surface and the dispatcher's gate evaluator can
+	// distinguish failure cause from absent metadata. Asymmetric — the
+	// transition into `complete` does NOT require an outcome; agents that
+	// claim success leave outcome unset by convention. The check skips
+	// idempotent self-moves (already-at-failed → failed) so pre-A.4 data
+	// rows are not retroactively rejected.
+	ErrInvalidMetadataOutcome = errors.New("invalid metadata outcome for failed transition")
+	ErrAuthRequestNotPending  = errors.New("auth request is not pending")
+	ErrAuthRequestExpired     = errors.New("auth request is expired")
 	// ErrAuthorizationDenied reports that a valid caller was denied by auth
 	// policy. Drop 4a Wave 3 W3.1 lifted this from the
 	// `internal/adapters/server/common` package into `domain` so the app

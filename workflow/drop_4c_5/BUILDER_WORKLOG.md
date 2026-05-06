@@ -589,3 +589,67 @@ N/A — task touched only non-Go files (TOML + dotfile + workflow MDs). Hylla is
 ### Hylla feedback
 
 N/A — task touched only Go files but Hylla is stale post-Drop-4c-merge until reingest (per spawn prompt: "filesystem-MD coordination mode. NO Tillsyn runtime calls. NO Hylla calls"). All evidence resolved via `Read` / `Bash` (`rg` for `MoveActionItem`, `StateFailed`, `Outcome`, `validateMetadataOutcome`) / `Edit` / `mage testPkg` / `mage formatPath`. No Hylla query attempted; no miss to log.
+
+## Droplet A.2 — Round 1
+
+**Date:** 2026-05-05.
+**Builder:** go-builder-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_A_PLAN.md` § "A.2 — Reject Unknown JSON Keys At MCP Boundary".
+**Outcome:** done — `mage ci` green (2749 passed / 1 pre-existing skip / 24 packages all ≥ 70% coverage / mcpapi at 73.9% / build clean).
+
+### Files touched (production)
+
+- `internal/adapters/server/mcpapi/strict_decode.go` — NEW. Exports `bindArgumentsStrict(req mcp.CallToolRequest, target any) error`. Mirrors mark3labs `BindArguments` happy-path semantics (non-nil pointer guard, json.RawMessage fast-path, re-marshal fallback) but routes the decode through `json.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()`. On unknown-field rejection, extracts the offending key from the std-lib's `json: unknown field "<key>"` error message via `strings.HasPrefix` + `strconv.Unquote` and returns `fmt.Errorf("unknown field %q on tool %q: %w", fieldName, toolName, errUnknownField)`. Helper file ships package-internal `errUnknownField` sentinel for `errors.Is` programmatic detection.
+- `internal/adapters/server/mcpapi/handler.go` — 5 production `BindArguments` call sites swapped to `bindArgumentsStrict` (line 166 auth-request handler + 4 attention-item handlers at lines 638/666/696/718). Added `AuthContextID string \`json:"auth_context_id"\`` field to `attentionItemMutationArgs` struct (line 582) so the schema-declared `auth_context_id` key passes the strict field-set check; the value itself is consumed by `withMCPToolAuthRuntime` from raw req params before decode (no behavior change).
+- `internal/adapters/server/mcpapi/handoff_tools.go` — 5 `BindArguments` call sites (lines 57/107/129/165/197) swapped to `bindArgumentsStrict`. Added `AuthContextID string \`json:"auth_context_id"\`` field to `handoffMutationArgs` struct (line 70) for the same strict-decode reason.
+- `internal/adapters/server/mcpapi/extended_tools.go` — 11 `BindArguments` call sites swapped to `bindArgumentsStrict`. Added `AuthContextID string \`json:"auth_context_id"\`` field to four tool argument shapes whose schemas already declared the key but whose typed structs did not carry it: `capabilityLeaseMutationArgs` (line 149), the `till.project` anonymous struct (line 454), the `handleActionItemOperation` anonymous struct (line 737), and the `till.comment` anonymous struct (line 2047). The `till.comment` struct also gained an `Operation string \`json:"operation"\`` field — the schema declares `operation` as `mcp.Required()` but the handler reads it via `req.GetString("operation", "")` rather than the typed struct, so the strict decoder's field-set check needed the field declared (handler reads stay unchanged).
+
+### Files touched (tests)
+
+- `internal/adapters/server/mcpapi/strict_decode_test.go` — NEW. Eight test functions covering: valid-input parity (mixes plain-string + post-A.1 pointer-sentinel fields); explicit-`null`-pointer preservation across known pointer-shape fields (proves A.1's wire shape is not regressed by strict decode — `DisallowUnknownFields` checks names, not values); typo'd-key rejection with field+tool name in the surface text; multiple-unknown-keys → first one wins (json.Decoder stop-at-first-error semantics pinned); nil-arguments and empty-`{}` arguments handled identically to legacy `BindArguments`; non-pointer / nil target produces the BindArguments-shape "non-nil pointer" diagnostic; raw-message fast-path round-trip (valid + unknown-key cases) proves the shortcut branch is reached and obeys strict mode; `unknownFieldName` recovery edge cases pin both the std-lib stable-format path AND the bare-token fallback path.
+- `internal/adapters/server/mcpapi/extended_tools_test.go` — added `TestHandlerExpandedToolRejectsUnknownJSONKeys` table-driven test asserting strict-decoder behavior end-to-end at the MCP wire boundary across THREE tools (one from each production-source file): `till.project` create with `made_up_key` (extended_tools.go), `till.auth_request` create with `ttl` (handler.go), `till.handoff` create with typo'd `tartget` (handoff_tools.go). Each case asserts `isError=true`, the surface text starts with `invalid_request:`, contains the literal `unknown field`, and names BOTH the offending field AND the tool — covering spec test-scenarios table rows 2/4/5.
+
+### Stale-fixture findings (per spec falsification mitigation #1)
+
+The first `mage test-pkg ./internal/adapters/server/mcpapi` run after the 21-site swap surfaced 4 test failures. All 4 traced to schema-vs-struct gaps that the legacy `BindArguments` silently tolerated but `bindArgumentsStrict` correctly rejects:
+
+- 3 failures rejected `"operation"` on `till.comment`. Cause: tool schema declares `operation` as `mcp.Required()` (line 2031); handler reads it via `req.GetString` (line 2075); typed struct (line 2047) had no `Operation` field. Fix: add the `Operation` field to the struct (declared-only, never read from the field — the handler's `req.GetString` path stays).
+- 1 failure rejected `"auth_context_id"` on `till.project`. Cause: tool schema declares `auth_context_id` (line 447); `withMCPToolAuthRuntime` consumes it from raw req params; typed struct (line 454) had no `AuthContextID` field. Fix: add the field to the struct (declared-only).
+
+A pre-emptive audit found the same shape in 4 more tools whose existing tests didn't happen to send `auth_context_id` but where the schema-vs-struct gap exists: `capabilityLeaseMutationArgs`, `handleActionItemOperation`'s anonymous struct, `attentionItemMutationArgs`, and `handoffMutationArgs`. All 4 fixed proactively to keep the strict decoder honest the moment any future test or external client sends `auth_context_id` against them. Each new field carries an explanatory comment crosslinking back to A.2 + the `withMCPToolAuthRuntime` raw-req consumption path so a future reader doesn't think the field is dead code.
+
+### Targets run
+
+- `mage test-pkg ./internal/adapters/server/mcpapi` → **191 passed / 1 pre-existing skip** (1.30s, then 0.00s on cache-warm rerun). The 1 skip is `TestStewardIntegrationDropOrchSupersedeRejected`, the same skip every recent A.x / E.x / F.x round has logged.
+- `mage formatCheck` → required gofumpt rewrite on `extended_tools.go` after the struct-field additions; ran `mage format` to apply, then `mage formatCheck` clean.
+- `mage ci` → **GREEN.** 2749 tests passed across 24 packages, 1 pre-existing skip, all 24 packages at or above 70% coverage (`internal/adapters/server/mcpapi` at 73.9%, up from 73.x pre-A.2; `internal/app` 71.2%, `internal/tui` 71.0%, others higher), build clean.
+
+### Design decisions
+
+- **Error-message format chose single `invalid_request:` prefix at the wire.** The spec text suggests `fmt.Errorf("invalid_request: unknown field %q on tool %q: %w", ...)` but `invalidRequestToolResult` already prepends `"invalid_request: "` to the error string; using the spec's literal would double-prefix the surface text (`"invalid_request: invalid_request: unknown field ..."`). Spec acceptance criterion #4 expects the user-facing message to read `invalid_request: unknown field "descrption" on tool "till.action_item"` (single prefix), so the helper returns `unknown field %q on tool %q: %w` (no prefix) and lets `invalidRequestToolResult` add the single canonical prefix. Captures the spec's intent without literal-text drift.
+- **`errUnknownField` sentinel is package-internal.** No call site outside `mcpapi` needs to differentiate `errors.Is(err, errUnknownField)` programmatically — every consumer renders the error as a string via `invalidRequestToolResult`. Tests use the sentinel for assertion clarity. Lowercase keeps the name out of the public API surface.
+- **Field-name extraction by std-lib error-format prefix matching.** Go's `encoding/json` does not export a typed error for `DisallowUnknownFields` rejections; the rejection produces a plain `fmt.Errorf("json: unknown field %q", key)` value. The helper matches on the prefix `"json: unknown field "` and unquotes the tail via `strconv.Unquote`. Defensive fallback to a manual one-layer-quote-trim handles any future std-lib format drift; the std lib has held this format stable since Go 1.10. Test `TestUnknownFieldNameRecoveryEdgeCases` pins both the primary path AND the fallback path so any std-lib drift is caught immediately.
+- **Per-tool struct-shape audit, not framework-wide schema validation.** Spec § "Strict-decode is per-tool, not framework-wide" — each tool's anonymous struct is the authoritative schema for what keys the tool accepts. The pre-emptive `auth_context_id` fix-up to all 4 affected tools tightens the per-tool contracts uniformly without introducing a generic "for every WithString in the schema, assert the struct has a matching json-tag" check (over-engineered for pre-MVP).
+- **A.1 wire-shape preservation verified.** Per spec falsification mitigation #1 + Q-A-1, the strict decoder must NOT reject `null` JSON values for the post-A.1 pointer-sentinel fields (`Title`, `Description`, `Priority`, `DueAt`, `Labels` on the action-item update tool). Test `TestBindArgumentsStrictPreservesNullPointer` proves this end-to-end: `{"description": null, "title": null, "labels": null}` decodes to typed nil pointers AND the strict decoder does not reject — `DisallowUnknownFields` checks the field-name set, not the field-value type.
+
+### Falsification-mitigation status
+
+- **Stale fixtures break (spec mitigation #1):** mitigated. All 4 test failures fixed by adding the missing struct fields; pre-emptive audit caught 4 more tools with the same latent gap before any test surfaced them.
+- **Generic anonymous-struct decoder bypass (spec mitigation #2):** mitigated. Helper signature `bindArgumentsStrict(req mcp.CallToolRequest, target any) error` matches `BindArguments` exactly; target type is `any` and the strict-decode logic does not require static knowledge of the target type. The std-lib's `DisallowUnknownFields` is the only mechanism touching the type, and it does so reflectively at decode time (not compile time).
+- **Backward-compat regression for tolerant clients (spec mitigation #3):** orchestrator-flagged as deliberate breaking change for closeout. Pre-MVP no production clients depend on tolerance.
+
+### Cross-droplet coordination notes
+
+- **A.1 wire shape:** preserved fully. `TestBindArgumentsStrictPreservesNullPointer` is the explicit regression net.
+- **A.3 (next in chain, blocked_by: A.2):** A.3 will edit the same `mcpapi/handler.go` (auth-request branch lines 187-205) and `cmd/till/main.go`. A.2's changes to `handler.go` are scoped to (a) the swap of `BindArguments` → `bindArgumentsStrict` (5 call sites) and (b) one new `AuthContextID` field on `attentionItemMutationArgs` — both well outside A.3's edit range.
+- **A.4 (in progress in Chain 1, blocked_by: A.1):** A.4 edits `internal/app/service.go` (`MoveActionItem`) — different package, no collision.
+- **F.3.x (template MCP tool, future, blocked_by: A.3):** when `till.template` lands, its anonymous struct should declare every key its schema declares OR explicitly NOT declare ones it omits. The strict decoder is now the contract — schema and struct must match.
+
+### Hylla feedback
+
+None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evidence resolved via `Read` / `Bash` (`rg` for `BindArguments`, `auth_context_id`, `AuthContextID`, `withMCPToolAuthRuntime`, `invalidRequestToolResult`) / `Edit` / `mage test-pkg` / `mage formatCheck` / `mage format` / `mage ci`. The task touched only Go files (Hylla-eligible in principle) but Hylla is stale post-Drop-4c-merge until reingest, and the per-droplet directive says no calls.
+
+### Unknowns routed back to orchestrator
+
+- **`auth_context_id` schema-vs-struct symmetry as a permanent invariant.** Drop 4c.5 A.2 added the missing `AuthContextID` fields to 6 tool argument shapes. Future tool registrations should follow this pattern — every `mcp.WithString("X", ...)` schema declaration must have a matching JSON-tagged field on the typed struct OR the strict decoder will reject the schema's own declared key. Worth adding to `CLI_ADAPTER_AUTHORING.md` or a new `MCP_TOOL_AUTHORING.md` section as a checklist item. Out of A.2 scope; recommend orchestrator routes to the closeout doc-update list or a follow-up F.x droplet.
+- **`till.comment` `operation` field declared-not-read pattern.** The `till.comment` handler declares `Operation` on the anonymous struct (post-A.2) but reads it via `req.GetString("operation", "")` (legacy non-strict accessor). This is a deliberately narrow fix — the simpler alternative would be to switch the read path to `args.Operation` for symmetry, but that's a behavior change beyond A.2's spec. Worth flagging for orchestrator consideration: a small follow-up droplet could unify the read-from-typed-struct pattern across all tools (every other tool already reads via `args.Operation`).
