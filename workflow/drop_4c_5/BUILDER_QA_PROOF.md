@@ -556,3 +556,43 @@ N/A — A.2 review touched only Go files but Drop 4c.5 is in filesystem-MD coord
 - T5 — 6 schema-vs-struct gap fixes (`AuthContextID` on attention/handoff/lease/project/action-item/comment, plus `Operation` on comment) all carry rationale comments cross-linking A.2 + `withMCPToolAuthRuntime`. None are accidental dead code; each mirrors a `mcp.WithString` schema declaration that the strict decoder would otherwise reject.
 - T6 — A.1 wire-shape preservation pinned by `TestBindArgumentsStrictPreservesNullPointer` (null on pointer-shape fields decodes to typed nil; strict mode does not reject — orthogonal to `DisallowUnknownFields`).
 - T7 — Worklog complete with file inventory, target results, design rationale, falsification status, cross-droplet notes; R-A.2-1 (schema/struct symmetry doc invariant) and R-A.2-2 (`till.comment` Operation declared-not-read pattern) both routed for orchestrator's closeout list.
+
+## Droplet E.3 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, opus, 2026-05-05).
+**Source spec:** `THEME_CE_PLAN.md` § "E.3 — Conflict detector: assert both file+package overlap entries + path canonicalization doc".
+**Builder claim:** done — `mage test-pkg ./internal/app/dispatcher` 356/356 PASS; doc + test extension only; A13 untouched.
+**Verdict:** PASS.
+
+### Acceptance verification
+
+1. **A1 — `TestDetectorFindsFileOverlapBetweenSiblings` extended with independent presence loops, NOT length-based.** Verified at `internal/app/dispatcher/conflict_test.go:56-124`. The test now contains TWO independent `for i := range overlaps` presence loops: lines 85-91 select the file overlap into `fileGot`, lines 105-111 select the package overlap into `packageGot`. No `len(overlaps) == 2` or equivalent length assertion appears. Failure mode names the missing kind (`"DetectSiblingOverlap() returned no file overlap"` / `"... no package overlap"`), matching the spec's falsification mitigation #1 verbatim. Comment block at lines 79-84 explicitly documents the design choice ("NOT via len(overlaps) == 2").
+2. **A2 — `OverlapValue` doc-comment extended with path canonicalization contract.** Verified at `internal/app/dispatcher/conflict.go:89-99`. The struct-field comment for `OverlapValue` now contains: "Path canonicalization is the planner's / walker's responsibility upstream — the detector does no normalization beyond `domain.NewActionItem`'s trim/dedupe. Two siblings declaring `\"./a/b.go\"` and `\"a/b.go\"` will NOT register as overlapping; the upstream caller MUST normalize before handing items to the detector." Names planner AND walker as upstream owners; uses spec's exact `./a/b.go` / `a/b.go` worked example for grep symmetry.
+3. **A3 — `mage test-pkg ./internal/app/dispatcher` green.** Trusted per spawn prompt: builder reports 356/356 PASS (1.67s, race enabled). Worklog corroborates with the `mage test-func ./internal/app/dispatcher TestDetectorFindsFileOverlapBetweenSiblings` (1.32s, race enabled, green) plus `mage format` clean.
+4. **A4 — A13 (concurrent `InsertRuntimeBlockedBy` single-flight) NOT touched.** Verified by reading `conflict.go:271-351` (`InsertRuntimeBlockedBy` body): no single-flight wrapper, no `sync.Mutex`/`sync.Map` introduced; the existing comment at lines 286-293 about non-atomic `Update + Attention` coupling is unmodified. Worklog files-touched list (lines 666-669) names only `conflict.go` (doc-comment), `conflict_test.go` (test), `THEME_CE_PLAN.md` (state row), `BUILDER_WORKLOG.md` (this entry) — no `InsertRuntimeBlockedBy` body edits. Falsification mitigation #2 explicitly satisfied.
+5. **A5 — Worklog complete.** `BUILDER_WORKLOG.md:657-697` carries the full Round 1 entry: author, source spec, state-at-start (`todo`, blocker E.2 satisfied), state-at-end (`done`), files-touched inventory (4 files), targets-run (3 mage invocations, all green), design notes (5 bullets covering loop shape, variable rename rationale, doc placement choice, worked-example phrasing, no-prod-behavior-change), falsification-mitigation status (mitigations #1 + #2 both green), Hylla feedback section, unknowns section (none).
+
+### Out-of-scope discipline
+
+- **Variable renames `got` → `fileGot` / `want` → `wantFile`** are mechanical disambiguation for the new pair (`packageGot` / `wantPackage`), preserve all existing semantics, and do not alter the file-overlap assertion content (still `OverlapKind: SiblingOverlapFile`, `OverlapValue: "internal/app/dispatcher/walker.go"`, `HasExplicitBlockedBy: false` on `SiblingID: "sibling"`). Scope-bounded.
+- **No collateral edits.** `TestDetectorFindsPackageOverlapBetweenSiblings` (lines 128-164) remains untouched; it still uses local `want` scope. `TestDetectorIgnoresNonSiblings` (lines 169-195) untouched. Detector implementation (`DetectSiblingOverlap`, `TieBreakSibling`, `InsertRuntimeBlockedBy`) untouched.
+
+### Certificate
+
+- **Premises:** (P1) test independent-loop shape, no length assertion; (P2) doc-comment extension on OverlapValue names planner/walker; (P3) test-pkg green; (P4) A13 untouched; (P5) worklog complete.
+- **Evidence:** `conflict_test.go:79-123` (P1), `conflict.go:89-99` (P2), worklog `mage test-pkg` line + builder claim (P3), `conflict.go:271-351` unchanged + worklog files-touched (P4), `BUILDER_WORKLOG.md:657-697` (P5).
+- **Trace:** Read THEME_CE_PLAN.md §E.3 → read BUILDER_WORKLOG.md §E.3 Round 1 → read conflict.go (full file) → read conflict_test.go:1-200 → cross-checked each acceptance bullet against actual file content.
+- **Conclusion:** PASS. All five acceptance criteria met; out-of-scope items respected.
+- **Unknowns:** None. Builder's worklog "Unknowns routed back to orchestrator" section reads "None"; my own pass found no gaps.
+
+### Hylla feedback
+
+N/A — per spawn prompt directive (filesystem-MD mode, NO Hylla calls).
+
+### TL;DR
+
+- T1 — PASS. Test extension at `conflict_test.go:79-123` uses two independent presence loops (file at 85-91, package at 105-111); no length-based assertion; failure modes name missing kind specifically.
+- T2 — Doc-comment extension at `conflict.go:89-99` names planner AND walker as upstream canonicalization owners and uses spec's exact `./a/b.go` / `a/b.go` worked example.
+- T3 — `mage test-pkg ./internal/app/dispatcher` 356/356 PASS trusted per spawn prompt; worklog corroborates with `mage test-func` (1.32s, race) + `mage format` clean.
+- T4 — A13 (`InsertRuntimeBlockedBy` single-flight) untouched: file inventory in worklog covers only doc + test + workflow MDs; `conflict.go:271-351` body unchanged.
+- T5 — Worklog at `BUILDER_WORKLOG.md:657-697` covers all required sections (author, spec, state, files, targets, design notes, falsification status, Hylla feedback, unknowns).

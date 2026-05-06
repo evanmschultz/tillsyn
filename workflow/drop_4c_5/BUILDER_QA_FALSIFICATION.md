@@ -782,3 +782,36 @@ N/A — A.2 review touched Go files (Hylla-eligible in principle) but the spawn-
 ### TL;DR
 
 T1. PASS WITH FINDINGS — A.2's mechanical contract is met exactly (21/21 swaps, helper correctness, A.1 null preservation, four gap-fixes + four pre-emptive); one spec-vs-stated-goal gap (R-A.2-3: 5 MCP tools bypass strict-decode entirely) raised as a follow-up refinement, NOT an A.2 counterexample.
+
+## Droplet E.3 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (filesystem-MD mode, opus, 2026-05-05).
+**Source artifact:** `internal/app/dispatcher/conflict.go` + `internal/app/dispatcher/conflict_test.go` (uncommitted) + `BUILDER_WORKLOG.md` § "Droplet E.3 — Round 1".
+**Verdict:** PASS.
+
+### 1. Findings
+
+- 1.1 **Length-based assertion forbidden by spec — REFUTED.** Test uses two independent `for i := range overlaps` presence loops (`conflict_test.go:86-91` and `:105-111`) plus `*fileGot != wantFile` / `*packageGot != wantPackage` equality checks. No `len(overlaps) == 2` rigid assertion. Spec falsification mitigation #1 (`THEME_CE_PLAN.md:233`) honored exactly.
+- 1.2 **Test fixture declares both same path AND same package — REFUTED.** Fixture (`conflict_test.go:59-72`) gives item AND sibling identical `Paths: ["internal/app/dispatcher/walker.go"]` and `Packages: ["internal/app/dispatcher"]`. Spec acceptance #1 fixture requirement met directly; no fixture extension needed since the original test already declared the overlap pair (worklog confirms).
+- 1.3 **Pre-existing package-only / file-only coverage preserved — REFUTED.** Diff scope (`git diff conflict_test.go`) shows ONLY `TestDetectorFindsFileOverlapBetweenSiblings` mutated. `TestDetectorFindsPackageOverlapBetweenSiblings` (`:128-164`) untouched and still asserts `len(overlaps) == 1` against package-only fixture. NIT — no dedicated file-only-overlap test exists in the suite (path-shared, package-disjoint case); spec test scenario row 3 said "verify; if not, add" — builder verified absence + did NOT add. Routed as Unknown (1.5 below), not a counterexample, because the existing package-only test exercises the disjoint-paths-shared-package leg and the new combined test exercises both-shared, leaving the both-disjoint negative covered by `TestDetectorIgnoresNonSiblings`.
+- 1.4 **Doc-comment "domain.NewActionItem trim/dedupes" claim — REFUTED.** Verified via `internal/domain/action_item.go:728-749` `normalizeActionItemPaths`: `TrimSpace`, reject empty/whitespace-only, reject backslashes, exact-string dedupe via `seen` map. NO `path.Clean` / `filepath.Clean` / lexical normalization. Doc-comment claim accurate verbatim.
+- 1.5 **Worked example `./a/b.go` vs `a/b.go` non-overlap claim — REFUTED.** Given (1.4): both strings pass forward-slash + non-empty checks intact, end up as DISTINCT entries in `Paths`. Detector's `DetectSiblingOverlap` (`conflict.go:171-178`) builds `itemPaths` map keyed on the literal trimmed string and intersects via exact-match `itemPaths[sp]`. Therefore `./a/b.go` and `a/b.go` would each occupy their own map slot and never trigger overlap. Doc claim is true under current detector + domain semantics.
+- 1.6 **A13 single-flight scope creep — REFUTED.** `git diff conflict.go` is doc-comment-only (5 lines added inside the `OverlapValue` field comment); zero behavior change. No mutex / `sync.Once` / channel / goroutine added. A13 routed to Drop 4b daemon-mode per `PLAN.md` lines 32 + 171 + 495 (worklog cross-checks the same memory).
+- 1.7 **Variable rename ergonomics — NIT, not counterexample.** Builder renamed `got` → `fileGot`, `want` → `wantFile` for symmetry with new `packageGot` / `wantPackage`. `mage test-pkg ./internal/app/dispatcher` reports 356/356 PASS in worklog, confirming compile + behavior.
+- 1.8 **Dedup-key collision risk — REFUTED.** `conflict.go:188-189` builds `key = siblingID + "\x00" + kind + "\x00" + value`; the same-sibling+different-kind+different-value cases produce distinct keys. The both-shared fixture emits exactly two distinct seen-keys → two slice entries, validating the test's two-presence-loops shape.
+
+### 2. Counterexamples
+
+- None CONFIRMED. All six attack categories from the spawn prompt either refuted via direct evidence (1.1/1.2/1.4/1.5/1.6) or determined out-of-scope-but-unaffected (1.3 NIT). The doc-only conflict.go change carries no behavior risk; the test extension correctly mirrors the spec mitigation pattern.
+
+### 3. Summary
+
+**PASS.** E.3 lands a tight doc + test-rigor-only delta. The five-line `OverlapValue` doc-comment expansion is accurate against `internal/domain/action_item.go`'s `normalizeActionItemPaths` (verified). The `TestDetectorFindsFileOverlapBetweenSiblings` extension uses two independent presence loops with exact equality matches against `wantFile` / `wantPackage` — no `len()` rigidity per spec mitigation #1. Existing package-only test (`TestDetectorFindsPackageOverlapBetweenSiblings`) untouched and intact. A13 single-flight work correctly deferred to Drop 4b. Worked example `./a/b.go` vs `a/b.go` non-overlap claim is true under current detector + domain semantics. One NIT (1.3): test naming `TestDetectorFindsFileOverlapBetweenSiblings` is mildly misleading post-edit since it now also asserts package overlap; cosmetic, no behavior risk. Recommend droplet E.3 closes; no refinements raised.
+
+### Hylla Feedback
+
+N/A — E.3 review touched Go files (Hylla-eligible in principle) but the spawn-prompt directive ("NO Hylla calls") routed all evidence through `Read` + `Bash` (`rg` for `func NewActionItem` + `normalizePath` + `dedup`). Hylla is stale post-Drop-4c-merge until reingest, so no miss to log.
+
+### TL;DR
+
+T1. PASS — E.3's doc + test-rigor delta is clean: independent presence loops (no `len(overlaps) == 2`), fixture declares both shared-path-and-package, package-only test preserved, doc-comment claim verified against `normalizeActionItemPaths` (TrimSpace + dedupe, no Clean), `./a/b.go` vs `a/b.go` non-overlap example accurate, A13 deferred. One cosmetic NIT (test name now covers both kinds), zero counterexamples, zero refinements raised.

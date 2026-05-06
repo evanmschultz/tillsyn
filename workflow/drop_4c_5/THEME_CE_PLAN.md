@@ -207,6 +207,8 @@
 
 ### E.3 — Conflict detector: assert both file+package overlap entries + path canonicalization doc
 
+**State:** done
+
 **Source:** memory R8 (Drop 4a 4a.20 A14 + A6).
 
 **Files:**

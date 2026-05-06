@@ -90,6 +90,12 @@ type SiblingOverlap struct {
 	// import path (kind=package). Treated as opaque by the detector — no
 	// canonicalization beyond the trim/dedupe domain.NewActionItem
 	// already applies on create.
+	//
+	// Path canonicalization is the planner's / walker's responsibility
+	// upstream — the detector does no normalization beyond
+	// domain.NewActionItem's trim/dedupe. Two siblings declaring
+	// "./a/b.go" and "a/b.go" will NOT register as overlapping; the
+	// upstream caller MUST normalize before handing items to the detector.
 	OverlapValue string
 	// HasExplicitBlockedBy is true when the planner has already wired an
 	// explicit blocked_by edge from item to siblingID. The caller treats

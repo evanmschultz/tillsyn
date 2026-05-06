@@ -653,3 +653,45 @@ None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evi
 
 - **`auth_context_id` schema-vs-struct symmetry as a permanent invariant.** Drop 4c.5 A.2 added the missing `AuthContextID` fields to 6 tool argument shapes. Future tool registrations should follow this pattern — every `mcp.WithString("X", ...)` schema declaration must have a matching JSON-tagged field on the typed struct OR the strict decoder will reject the schema's own declared key. Worth adding to `CLI_ADAPTER_AUTHORING.md` or a new `MCP_TOOL_AUTHORING.md` section as a checklist item. Out of A.2 scope; recommend orchestrator routes to the closeout doc-update list or a follow-up F.x droplet.
 - **`till.comment` `operation` field declared-not-read pattern.** The `till.comment` handler declares `Operation` on the anonymous struct (post-A.2) but reads it via `req.GetString("operation", "")` (legacy non-strict accessor). This is a deliberately narrow fix — the simpler alternative would be to switch the read path to `args.Operation` for symmetry, but that's a behavior change beyond A.2's spec. Worth flagging for orchestrator consideration: a small follow-up droplet could unify the read-from-typed-struct pattern across all tools (every other tool already reads via `args.Operation`).
+
+## Droplet E.3 — Round 1
+
+**Author:** go-builder-agent (filesystem-MD mode, opus, 2026-05-05).
+**Source spec:** `THEME_CE_PLAN.md` § "E.3 — Conflict detector: assert both file+package overlap entries + path canonicalization doc".
+**State at start:** todo (E.2 complete, blocker satisfied).
+**State at end:** done.
+
+### Files touched
+
+- `internal/app/dispatcher/conflict.go` — extended `OverlapValue` doc-comment (struct-field comment on `SiblingOverlap`) with a path-canonicalization paragraph naming the planner/walker as upstream owners and showing the worked example (`./a/b.go` vs `a/b.go` won't register as overlapping).
+- `internal/app/dispatcher/conflict_test.go` — extended `TestDetectorFindsFileOverlapBetweenSiblings` with a parallel package-overlap presence loop and equality check. Added a comment block above the loops explaining why two independent loops (NOT a length-based assertion) match the existing `for i := range overlaps` shape used elsewhere in the file.
+- `workflow/drop_4c_5/THEME_CE_PLAN.md` — flipped E.3 row's `State:` field from missing → `in_progress` → `done`.
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — this entry.
+
+### Targets run
+
+- `mage test-func ./internal/app/dispatcher TestDetectorFindsFileOverlapBetweenSiblings` — green, the extended test passes (1 test, 1.32s, race enabled).
+- `mage format` — green, no diff.
+- `mage test-pkg ./internal/app/dispatcher` — green, all 356 tests pass (1.67s). Sandbox-hang warning noted but did NOT manifest this run.
+
+### Design notes
+
+- **Independent presence loops, NOT length-based assertion.** Spec falsification mitigation #1 (line 231 of THEME_CE_PLAN.md) explicitly calls out that `len(overlaps) == 2` would be brittle to any future detector emission of additional kinds. The new package-overlap assertion mirrors the existing `var got *SiblingOverlap` + `for i := range overlaps` shape rather than asserting slice length. The failure-mode of the new assertion is "no package overlap" rather than "wrong length," which names the missing kind specifically.
+- **Variable rename: `got` → `fileGot` / `want` → `wantFile`.** Adding the second pair (`packageGot` / `wantPackage`) required disambiguating; renamed the existing pair for symmetry rather than introducing asymmetric naming. No semantic change to the file-overlap assertion itself.
+- **Doc-comment placement on `OverlapValue`, not on the function or the type.** The path-canonicalization rule is a property of the `OverlapValue` field's contract — what kind of strings end up in it and what the detector does (or does not) do to them. Placing the paragraph as a continuation of the existing `OverlapValue` comment keeps the contract local to the field. Considered placing it on `DetectSiblingOverlap` instead but the function's existing doc-comment (lines 127-154) covers behavior; the canonicalization rule is about value semantics.
+- **Worked example uses the spec's exact phrasing** (`./a/b.go` and `a/b.go`) so the plan-spec / code drift surface is minimized. Falsification can grep both files for the same phrase.
+- **No production behavior change.** This is a doc + test-rigor droplet only. The detector's actual normalization behavior is unchanged — the doc-comment now explicitly names what the detector is NOT responsible for.
+- **A13 (concurrent `InsertRuntimeBlockedBy` single-flight) deliberately untouched** per spec falsification mitigation #2 (line 232) — that's Drop 4b daemon-mode work.
+
+### Falsification-mitigation status
+
+- **`len(overlaps) == 2` rigid assertion** (spec mitigation #1): mitigated. Two independent presence loops, no length assertion. New detector emissions in future drops won't break this test.
+- **A13 scope creep** (spec mitigation #2): mitigated. Memory cross-checked; A13 routed to Drop 4b daemon-mode planning per master `PLAN.md` line 32, line 171, line 495.
+
+### Hylla feedback
+
+None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evidence resolved via `Read` / `Bash` / `Edit` / `mage test-func` / `mage test-pkg` / `mage format`. The task touched only Go files (Hylla-eligible in principle) but the per-droplet directive says no calls.
+
+### Unknowns routed back to orchestrator
+
+None. Spec, files, line numbers, and acceptance criteria all matched the disk state on read. The doc-comment on `OverlapValue` lived at lines 89-93 as the spec promised (now extended to lines 89-99), and `TestDetectorFindsFileOverlapBetweenSiblings` lived at lines 56-100 (now 56-127 after extension). Test fixture already declared overlapping file AND package, so no fixture extension was needed beyond adding the package-overlap assertion against the existing data.

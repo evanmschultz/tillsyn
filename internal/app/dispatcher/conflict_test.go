@@ -76,26 +76,50 @@ func TestDetectorFindsFileOverlapBetweenSiblings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectSiblingOverlap() error = %v, want nil", err)
 	}
-	// Both file and package overlap should appear; assert file is present
-	// and check its shape.
-	var got *SiblingOverlap
+	// Both file and package overlap should appear in the same overlaps
+	// slice when siblings share both a path AND a package. Assert each
+	// entry independently (NOT via len(overlaps) == 2) so the test
+	// remains robust to future detector additions that emit additional
+	// kinds — and so the assertion failure mode names the specific
+	// missing kind rather than just a length mismatch.
+	var fileGot *SiblingOverlap
 	for i := range overlaps {
 		if overlaps[i].OverlapKind == SiblingOverlapFile {
-			got = &overlaps[i]
+			fileGot = &overlaps[i]
 			break
 		}
 	}
-	if got == nil {
+	if fileGot == nil {
 		t.Fatalf("DetectSiblingOverlap() returned no file overlap: %+v", overlaps)
 	}
-	want := SiblingOverlap{
+	wantFile := SiblingOverlap{
 		SiblingID:            "sibling",
 		OverlapKind:          SiblingOverlapFile,
 		OverlapValue:         "internal/app/dispatcher/walker.go",
 		HasExplicitBlockedBy: false,
 	}
-	if *got != want {
-		t.Fatalf("file overlap mismatch: got %+v, want %+v", *got, want)
+	if *fileGot != wantFile {
+		t.Fatalf("file overlap mismatch: got %+v, want %+v", *fileGot, wantFile)
+	}
+
+	var packageGot *SiblingOverlap
+	for i := range overlaps {
+		if overlaps[i].OverlapKind == SiblingOverlapPackage {
+			packageGot = &overlaps[i]
+			break
+		}
+	}
+	if packageGot == nil {
+		t.Fatalf("DetectSiblingOverlap() returned no package overlap: %+v", overlaps)
+	}
+	wantPackage := SiblingOverlap{
+		SiblingID:            "sibling",
+		OverlapKind:          SiblingOverlapPackage,
+		OverlapValue:         "internal/app/dispatcher",
+		HasExplicitBlockedBy: false,
+	}
+	if *packageGot != wantPackage {
+		t.Fatalf("package overlap mismatch: got %+v, want %+v", *packageGot, wantPackage)
 	}
 }
 
