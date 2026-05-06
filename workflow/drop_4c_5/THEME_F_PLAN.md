@@ -143,6 +143,7 @@
 
 ### Droplet F.2.1 — Rebadge default.toml → default-go.toml
 
+**State:** done (round 1)
 **Title:** `4c.5.F.2.1 — rename default.toml to default-go.toml in builtin/`.
 
 **Files / paths:**

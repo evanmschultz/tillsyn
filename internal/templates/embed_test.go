@@ -21,11 +21,14 @@ func loadDefaultOrFatal(t *testing.T) Template {
 	return tpl
 }
 
-// TestDefaultTemplateLoadsCleanly verifies the embedded builtin/default.toml
-// parses + validates without error. Any sentinel from load.go (unknown key,
-// schema-version mismatch, unknown kind reference, child-rule cycle) would
-// surface here, so this is the canary for the whole embed pipeline.
-func TestDefaultTemplateLoadsCleanly(t *testing.T) {
+// TestDefaultTemplateGoLoadsCleanly verifies the embedded
+// builtin/default-go.toml parses + validates without error. Any sentinel
+// from load.go (unknown key, schema-version mismatch, unknown kind
+// reference, child-rule cycle) would surface here, so this is the canary
+// for the whole embed pipeline. Renamed from `TestDefaultTemplateLoadsCleanly`
+// in Drop 4c.5 droplet F.2.1 alongside the `default.toml` → `default-go.toml`
+// file rebadge.
+func TestDefaultTemplateGoLoadsCleanly(t *testing.T) {
 	t.Parallel()
 
 	tpl, err := LoadDefaultTemplate()
@@ -202,7 +205,7 @@ func TestDefaultTemplateChildRulesForPlan(t *testing.T) {
 //
 // The drop-planner droplet rule named by PLAN.md § 19.3 line 1635 is
 // DEFERRED because it produces a plan->plan self-loop the load-time
-// cycle validator rejects (see comment in default.toml). The drop-orch
+// cycle validator rejects (see comment in default-go.toml). The drop-orch
 // creates the drop-planner manually pre-cascade.
 func TestDefaultTemplateChildRulesForDropPlan(t *testing.T) {
 	t.Parallel()
@@ -288,7 +291,7 @@ func TestDefaultTemplateBuildersRunOpus(t *testing.T) {
 }
 
 // TestDefaultTemplateMatchesNestingFixture cross-validates the loaded
-// default.toml against the hand-coded fixtureTemplate() in nesting_test.go
+// default-go.toml against the hand-coded fixtureTemplate() in nesting_test.go
 // per finding 5.B.12 (CE7). The two assertion paths share one source of
 // truth: the four reverse-hierarchy prohibitions. We assert that for every
 // (parent, child) pair the hand-coded fixture rejects, the loaded template
@@ -310,10 +313,10 @@ func TestDefaultTemplateMatchesNestingFixture(t *testing.T) {
 			}
 			loadedAllow, loadedReason := loaded.AllowsNesting(parent, child)
 			if loadedAllow {
-				t.Fatalf("loaded default.toml AllowsNesting(%q, %q) = true; fixture rejects — prohibition set drifted", parent, child)
+				t.Fatalf("loaded default-go.toml AllowsNesting(%q, %q) = true; fixture rejects — prohibition set drifted", parent, child)
 			}
 			if loadedReason == "" {
-				t.Fatalf("loaded default.toml AllowsNesting(%q, %q) reason empty; fixture rejects with non-empty reason", parent, child)
+				t.Fatalf("loaded default-go.toml AllowsNesting(%q, %q) reason empty; fixture rejects with non-empty reason", parent, child)
 			}
 		}
 	}
@@ -343,8 +346,8 @@ func TestDefaultTemplateStewardOwnedKinds(t *testing.T) {
 	}
 }
 
-// TestDefaultTemplateLoadsWithGates asserts the embedded default.toml decodes
-// the [gates] section with the Drop 4c F.7.16 shape:
+// TestDefaultTemplateLoadsWithGates asserts the embedded default-go.toml
+// decodes the [gates] section with the Drop 4c F.7.16 shape:
 // [gates.build] = ["mage_ci", "commit", "push"]. Drop 4b Wave A 4b.1 originally
 // shipped only ["mage_ci"]; Drop 4c F.7.16 expanded the sequence per master
 // PLAN.md L20 — commit + push gates ship in the LIST but are INDEPENDENTLY
@@ -400,7 +403,7 @@ func TestDefaultTemplateLoadsWithGates(t *testing.T) {
 // + validates clean (closed-enum gate kinds all valid post-F.7.13/14)."
 //
 // Regression guard against two distinct failure modes:
-//  1. Someone adds a new string to [gates.build] in default.toml without
+//  1. Someone adds a new string to [gates.build] in default-go.toml without
 //     also extending the closed GateKind enum + validGateKinds in schema.go.
 //  2. Someone removes a GateKind constant in schema.go without checking
 //     that no template TOML still references it.

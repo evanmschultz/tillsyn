@@ -1,7 +1,11 @@
-# Tillsyn default cascade template (builtin).
+# Tillsyn Go default cascade template (builtin).
 #
 # Authoritative source for the closed 12-kind catalog, agent bindings, and
-# auto-create [child_rules] consumed by the cascade dispatcher.
+# auto-create [child_rules] consumed by the cascade dispatcher for Go-flavored
+# projects. Renamed from `default.toml` to `default-go.toml` in Drop 4c.5
+# Theme F droplet F.2.1 to make room for sibling builtins (default-generic.toml
+# in F.2.2). Drop 4c.5 droplet F.1.3 lands the language-aware resolver;
+# until then, `LoadDefaultTemplate()` reads this file directly.
 #
 # Loaded via internal/templates.LoadDefaultTemplate (embed.FS at
 # internal/templates/embed.go). Projects ship without an explicit

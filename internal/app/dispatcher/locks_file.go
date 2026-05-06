@@ -67,6 +67,25 @@ func newFileLockManager() *fileLockManager {
 // This makes Acquire safe to retry without the caller having to track which
 // paths it already owns.
 //
+// Input-order semantics: the acquired slice mirrors the caller's paths
+// argument exactly, element-by-element, with conflicting entries elided in
+// place. Given paths = ["c", "a", "b"] against an empty manager, acquired
+// is ["c", "a", "b"] — never sorted, never permuted. Callers that depend on
+// this ordering (e.g. for log determinism or downstream zip operations
+// against the input slice) can rely on it as a contract; tests pin the
+// guarantee with slices.Equal rather than sort-then-compare.
+//
+// Duplicate-input semantics: when paths contains duplicates of the same
+// string, Acquire treats each occurrence independently. Same-holder
+// occurrences (the second and subsequent visits to a path already held by
+// actionItemID, including a duplicate within the SAME call) are idempotent
+// successes — each appears in acquired in its original input position. The
+// manager's internal holders[path] and itemPaths[id][path] end identical to
+// the de-duplicated case (one entry each), because both are maps; only the
+// returned acquired slice carries the duplicate. Acquire does NOT dedupe
+// the input. Callers that want a deduped acquired slice MUST dedupe paths
+// before calling.
+//
 // Empty inputs: an empty paths slice returns an empty acquired slice and an
 // empty conflicts map; an empty actionItemID is treated as opaque (no
 // validation in this droplet). Both forms are deterministic no-ops or

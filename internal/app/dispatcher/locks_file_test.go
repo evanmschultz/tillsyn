@@ -1,7 +1,7 @@
 package dispatcher
 
 import (
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -75,8 +75,8 @@ func TestFileLockReleaseFreesAllPathsHeldByItem(t *testing.T) {
 	if len(conflicts) != 0 {
 		t.Fatalf("expected zero conflicts after Release, got %v", conflicts)
 	}
-	if got := append([]string(nil), acquired...); !equalStringSlices(got, []string{"a", "b", "c"}) {
-		t.Fatalf("expected acquired=[a b c], got %v", got)
+	if !slices.Equal(acquired, []string{"a", "b", "c"}) {
+		t.Fatalf("expected acquired=[a b c], got %v", acquired)
 	}
 }
 
@@ -96,7 +96,7 @@ func TestFileLockAcquirePartialConflictReturnsConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire item-2: %v", err)
 	}
-	if !equalStringSlices(acquired, []string{"a"}) {
+	if !slices.Equal(acquired, []string{"a"}) {
 		t.Fatalf("expected acquired=[a], got %v", acquired)
 	}
 	if len(conflicts) != 1 || conflicts["b"] != "item-1" {
@@ -110,7 +110,7 @@ func TestFileLockAcquirePartialConflictReturnsConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire item-2 retry: %v", err)
 	}
-	if !equalStringSlices(acquired2, []string{"a", "c"}) {
+	if !slices.Equal(acquired2, []string{"a", "c"}) {
 		t.Fatalf("expected acquired=[a c] on idempotent retry, got %v", acquired2)
 	}
 	if len(conflicts2) != 0 {
@@ -189,7 +189,7 @@ func TestFileLockConcurrentAcquireRaceFree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recovery Acquire: %v", err)
 	}
-	if !equalStringSlices(acquired, []string{path}) || len(conflicts) != 0 {
+	if !slices.Equal(acquired, []string{path}) || len(conflicts) != 0 {
 		t.Fatalf("expected recovery acquire to succeed cleanly, got acquired=%v conflicts=%v",
 			acquired, conflicts)
 	}
@@ -212,7 +212,7 @@ func TestFileLockPathsAreOpaque(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire item-2: %v", err)
 	}
-	if !equalStringSlices(acquired, []string{"a"}) {
+	if !slices.Equal(acquired, []string{"a"}) {
 		t.Fatalf("expected acquired=[a] (distinct key from ./a), got %v", acquired)
 	}
 	if len(conflicts) != 0 {
@@ -260,7 +260,7 @@ func TestFileLockEmptyInputsAreNoOps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire item-1 [a] (re): %v", err)
 	}
-	if !equalStringSlices(acquired, []string{"a"}) {
+	if !slices.Equal(acquired, []string{"a"}) {
 		t.Fatalf("expected idempotent reacquire to return acquired=[a], got %v", acquired)
 	}
 	if len(conflicts) != 0 {
@@ -281,7 +281,7 @@ func TestFileLockZeroValueIsUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("zero-value Acquire: %v", err)
 	}
-	if !equalStringSlices(acquired, []string{"a"}) {
+	if !slices.Equal(acquired, []string{"a"}) {
 		t.Fatalf("expected acquired=[a], got %v", acquired)
 	}
 	if len(conflicts) != 0 {
@@ -295,27 +295,114 @@ func TestFileLockZeroValueIsUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("zero-value Acquire item-2: %v", err)
 	}
-	if !equalStringSlices(acquired2, []string{"a"}) {
+	if !slices.Equal(acquired2, []string{"a"}) {
 		t.Fatalf("expected acquired=[a] for item-2, got %v", acquired2)
 	}
 }
 
-// equalStringSlices is a local helper that compares two slices order-insensitively
-// after sorting. The tests above pass paths in fixed input order, but Acquire's
-// preserve-input-order guarantee is documented per-path, not as a global sort,
-// so a sort-then-compare reads more clearly than per-test ordering assertions.
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
+// TestFileLockManagerAcquirePreservesInputOrder pins the input-order semantics
+// documented on Acquire: given paths in arbitrary input order against an
+// empty manager, acquired mirrors the caller's argument exactly,
+// element-by-element. The assertion uses slices.Equal (not sort-then-compare)
+// so a future implementation that sorts internally for deadlock-avoidance
+// would surface here as a behavior change requiring its own droplet.
+func TestFileLockManagerAcquirePreservesInputOrder(t *testing.T) {
+	t.Parallel()
+
+	mgr := newFileLockManager()
+
+	input := []string{"c", "a", "b"}
+	acquired, conflicts, err := mgr.Acquire("item-1", input)
+	if err != nil {
+		t.Fatalf("Acquire item-1: %v", err)
 	}
-	ac := append([]string(nil), a...)
-	bc := append([]string(nil), b...)
-	sort.Strings(ac)
-	sort.Strings(bc)
-	for i := range ac {
-		if ac[i] != bc[i] {
-			return false
-		}
+	if len(conflicts) != 0 {
+		t.Fatalf("expected zero conflicts on empty manager, got %v", conflicts)
 	}
-	return true
+	if !slices.Equal(acquired, []string{"c", "a", "b"}) {
+		t.Fatalf("expected acquired=[c a b] preserving input order, got %v", acquired)
+	}
+
+	// Mixed conflict + free input: item-2 asks for [b, x, a, y] where item-1
+	// already holds a + b. Free entries (x, y) must appear in acquired in
+	// their input positions; held entries (a, b) must appear in conflicts;
+	// neither slice is sorted by the manager.
+	acquired2, conflicts2, err := mgr.Acquire("item-2", []string{"b", "x", "a", "y"})
+	if err != nil {
+		t.Fatalf("Acquire item-2: %v", err)
+	}
+	if !slices.Equal(acquired2, []string{"x", "y"}) {
+		t.Fatalf("expected acquired=[x y] preserving input order, got %v", acquired2)
+	}
+	if got, want := conflicts2["a"], "item-1"; got != want {
+		t.Fatalf("expected conflicts[a]=%q, got %q", want, got)
+	}
+	if got, want := conflicts2["b"], "item-1"; got != want {
+		t.Fatalf("expected conflicts[b]=%q, got %q", want, got)
+	}
+	if len(conflicts2) != 2 {
+		t.Fatalf("expected exactly two conflicts, got %d: %v", len(conflicts2), conflicts2)
+	}
+}
+
+// TestFileLockManagerAcquireDuplicateInputIdempotent pins the duplicate-input
+// semantics documented on Acquire: a duplicate within a single call is a
+// same-holder idempotent success per occurrence. Each duplicate appears in
+// acquired in its original input position, while the manager's internal
+// holders / itemPaths maps end identical to the de-duplicated case (one
+// entry each). This pins the chosen behavior; a future change to dedupe-on-
+// input would be a behavior shift requiring its own droplet.
+func TestFileLockManagerAcquireDuplicateInputIdempotent(t *testing.T) {
+	t.Parallel()
+
+	mgr := newFileLockManager()
+
+	input := []string{"a", "a", "b"}
+	acquired, conflicts, err := mgr.Acquire("item-1", input)
+	if err != nil {
+		t.Fatalf("Acquire item-1: %v", err)
+	}
+	if len(conflicts) != 0 {
+		t.Fatalf("expected zero conflicts on empty manager, got %v", conflicts)
+	}
+	// Per the documented semantics: each occurrence is recorded
+	// independently, so acquired carries the duplicate.
+	if !slices.Equal(acquired, []string{"a", "a", "b"}) {
+		t.Fatalf("expected acquired=[a a b] (each occurrence preserved), got %v", acquired)
+	}
+
+	// Internal state is collapsed: one holder per distinct path. We probe
+	// this externally by asking item-2 to acquire [a, b]; both must
+	// register as conflicts held by item-1. If duplicates had created two
+	// "holders" of "a" inside the manager, the second would overwrite the
+	// first — but holders[path] is a single string, so the invariant is
+	// observable as: item-2 sees one conflict per distinct path, not two.
+	_, conflicts2, err := mgr.Acquire("item-2", []string{"a", "b"})
+	if err != nil {
+		t.Fatalf("Acquire item-2: %v", err)
+	}
+	if len(conflicts2) != 2 {
+		t.Fatalf("expected two conflicts (one per distinct path), got %d: %v",
+			len(conflicts2), conflicts2)
+	}
+	if got, want := conflicts2["a"], "item-1"; got != want {
+		t.Fatalf("expected conflicts[a]=%q, got %q", want, got)
+	}
+	if got, want := conflicts2["b"], "item-1"; got != want {
+		t.Fatalf("expected conflicts[b]=%q, got %q", want, got)
+	}
+
+	// Release item-1 and verify both distinct paths free up — confirming the
+	// duplicate input did not leave a stray holder entry behind.
+	mgr.Release("item-1")
+	acquired3, conflicts3, err := mgr.Acquire("item-3", []string{"a", "b"})
+	if err != nil {
+		t.Fatalf("Acquire item-3 after Release: %v", err)
+	}
+	if !slices.Equal(acquired3, []string{"a", "b"}) {
+		t.Fatalf("expected acquired=[a b] after item-1 Release, got %v", acquired3)
+	}
+	if len(conflicts3) != 0 {
+		t.Fatalf("expected zero conflicts after item-1 Release, got %v", conflicts3)
+	}
 }

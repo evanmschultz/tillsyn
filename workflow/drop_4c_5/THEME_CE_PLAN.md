@@ -138,6 +138,8 @@
 
 ### E.1 — Lock manager doc + test contract: input-order + duplicate-input
 
+**State:** done
+
 **Source:** memory R4 (Drop 4a 4a.16 F1+F2) + R7 (Drop 4a 4a.17 mirror).
 
 **Files:**
