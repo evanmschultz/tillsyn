@@ -5319,6 +5319,300 @@ func TestMoveActionItemFailedTransitionRequiresOutcome(t *testing.T) {
 	}
 }
 
+// supersedeFixture wires a fakeRepo with one project + the four canonical
+// lifecycle columns (todo / in_progress / complete / failed) so the Drop
+// 4c.5 droplet B.1 supersede tests can drop one action item per case at the
+// desired starting column. The fixture intentionally uses NewActionItemForTest
+// to skirt the create-time path (no embedding queue, no auto-seeding) — the
+// supersede method's contract is the unit under test, not the create path.
+type supersedeFixture struct {
+	repo    *fakeRepo
+	svc     *Service
+	project domain.Project
+	cols    map[domain.LifecycleState]domain.Column
+	now     time.Time
+}
+
+// newSupersedeFixture seeds the fixture used by every supersede table-driven
+// row. Each call gets its own fakeRepo so the rows do not share storage and
+// the tests can run in parallel safely.
+func newSupersedeFixture(t *testing.T) supersedeFixture {
+	t.Helper()
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-supersede", Name: "Supersede Fixture"}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput() error = %v", err)
+	}
+	repo.projects[project.ID] = project
+	cols := map[domain.LifecycleState]domain.Column{}
+	colSpecs := []struct {
+		id    string
+		name  string
+		pos   int
+		state domain.LifecycleState
+	}{
+		{id: "c-todo", name: "To Do", pos: 0, state: domain.StateTodo},
+		{id: "c-progress", name: "In Progress", pos: 1, state: domain.StateInProgress},
+		{id: "c-complete", name: "Complete", pos: 2, state: domain.StateComplete},
+		{id: "c-failed", name: "Failed", pos: 3, state: domain.StateFailed},
+	}
+	for _, spec := range colSpecs {
+		col, err := domain.NewColumn(spec.id, project.ID, spec.name, spec.pos, 0, now)
+		if err != nil {
+			t.Fatalf("NewColumn(%q) error = %v", spec.name, err)
+		}
+		repo.columns[col.ID] = col
+		cols[spec.state] = col
+	}
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	return supersedeFixture{repo: repo, svc: svc, project: project, cols: cols, now: now}
+}
+
+// seedSupersedeItem drops one action item into the requested starting column
+// + lifecycle state. The metadata is empty by default; callers can pre-stamp
+// outcome / transition_notes via the in-line helper if a row needs it.
+func (f *supersedeFixture) seedSupersedeItem(t *testing.T, id string, state domain.LifecycleState) domain.ActionItem {
+	t.Helper()
+	col, ok := f.cols[state]
+	if !ok {
+		t.Fatalf("supersedeFixture: no column for state %q", state)
+	}
+	actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
+		Kind:           domain.KindBuild,
+		ID:             id,
+		ProjectID:      f.project.ID,
+		ColumnID:       col.ID,
+		Position:       0,
+		Title:          "B.1 supersede test",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: state,
+	}, f.now)
+	if err != nil {
+		t.Fatalf("NewActionItemForTest() error = %v", err)
+	}
+	f.repo.tasks[actionItem.ID] = actionItem
+	return actionItem
+}
+
+// TestService_SupersedeActionItem pins the Drop 4c.5 droplet B.1 contract:
+// supersede transitions a `failed` action item to `complete` with
+// `metadata.outcome = "superseded"` and the supplied reason persisted on
+// `metadata.transition_notes`. Non-failed items reject with
+// `domain.ErrTransitionBlocked`. Empty / whitespace-only reasons reject
+// before any state mutation. Missing items propagate the repo's
+// not-found error verbatim.
+func TestService_SupersedeActionItem(t *testing.T) {
+	t.Parallel()
+
+	t.Run("failed item supersedes to complete with audit trail", func(t *testing.T) {
+		t.Parallel()
+		f := newSupersedeFixture(t)
+		seeded := f.seedSupersedeItem(t, "t-failed-1", domain.StateFailed)
+		got, err := f.svc.SupersedeActionItem(context.Background(), seeded.ID, "rejected by dev — re-planning required")
+		if err != nil {
+			t.Fatalf("SupersedeActionItem() error = %v, want nil", err)
+		}
+		if got.LifecycleState != domain.StateComplete {
+			t.Fatalf("post-supersede state = %q, want %q", got.LifecycleState, domain.StateComplete)
+		}
+		if got.Metadata.Outcome != "superseded" {
+			t.Fatalf("post-supersede outcome = %q, want %q", got.Metadata.Outcome, "superseded")
+		}
+		if got.Metadata.TransitionNotes != "rejected by dev — re-planning required" {
+			t.Fatalf("post-supersede transition_notes = %q, want reason text", got.Metadata.TransitionNotes)
+		}
+		// ColumnID must match the project's complete column.
+		if got.ColumnID != f.cols[domain.StateComplete].ID {
+			t.Fatalf("post-supersede column = %q, want %q", got.ColumnID, f.cols[domain.StateComplete].ID)
+		}
+	})
+
+	t.Run("supersede trims whitespace from the reason", func(t *testing.T) {
+		t.Parallel()
+		f := newSupersedeFixture(t)
+		seeded := f.seedSupersedeItem(t, "t-failed-trim", domain.StateFailed)
+		got, err := f.svc.SupersedeActionItem(context.Background(), seeded.ID, "   trimmed reason   ")
+		if err != nil {
+			t.Fatalf("SupersedeActionItem() error = %v, want nil", err)
+		}
+		if got.Metadata.TransitionNotes != "trimmed reason" {
+			t.Fatalf("transition_notes = %q, want trimmed", got.Metadata.TransitionNotes)
+		}
+	})
+
+	t.Run("non-failed states reject with ErrTransitionBlocked", func(t *testing.T) {
+		t.Parallel()
+		rows := []struct {
+			name  string
+			state domain.LifecycleState
+		}{
+			{name: "todo", state: domain.StateTodo},
+			{name: "in_progress", state: domain.StateInProgress},
+			{name: "complete", state: domain.StateComplete},
+		}
+		for _, r := range rows {
+			t.Run(r.name, func(t *testing.T) {
+				t.Parallel()
+				f := newSupersedeFixture(t)
+				seeded := f.seedSupersedeItem(t, "t-"+r.name, r.state)
+				_, err := f.svc.SupersedeActionItem(context.Background(), seeded.ID, "valid reason")
+				if err == nil {
+					t.Fatalf("SupersedeActionItem(%s) error = nil, want ErrTransitionBlocked", r.name)
+				}
+				if !errors.Is(err, domain.ErrTransitionBlocked) {
+					t.Fatalf("SupersedeActionItem(%s) error = %v, want ErrTransitionBlocked", r.name, err)
+				}
+				if !strings.Contains(err.Error(), "supersede only applies to failed items") {
+					t.Fatalf("error message %q missing 'supersede only applies to failed items' hint", err.Error())
+				}
+				// State unchanged on rejection.
+				refetched, getErr := f.svc.GetActionItem(context.Background(), seeded.ID)
+				if getErr != nil {
+					t.Fatalf("GetActionItem() after rejection error = %v", getErr)
+				}
+				if refetched.LifecycleState != r.state {
+					t.Fatalf("post-rejection state = %q, want %q (guard must fire before mutation)", refetched.LifecycleState, r.state)
+				}
+				if refetched.Metadata.Outcome == "superseded" {
+					t.Fatalf("post-rejection outcome was stamped to %q despite rejection", refetched.Metadata.Outcome)
+				}
+			})
+		}
+	})
+
+	t.Run("archived item rejects (lifecycle column lookup miss)", func(t *testing.T) {
+		t.Parallel()
+		f := newSupersedeFixture(t)
+		// Archived items live in their own column; no archived column was
+		// seeded so the column resolver maps to the empty state and the
+		// fromState fallback uses the action_item's stored LifecycleState
+		// (StateArchived). Archived ≠ failed → ErrTransitionBlocked.
+		now := f.now
+		archived, err := domain.NewActionItemForTest(domain.ActionItemInput{
+			Kind:           domain.KindBuild,
+			ID:             "t-archived",
+			ProjectID:      f.project.ID,
+			ColumnID:       f.cols[domain.StateComplete].ID, // any seeded column; state field is the gate
+			Position:       0,
+			Title:          "archived test",
+			Priority:       domain.PriorityMedium,
+			LifecycleState: domain.StateArchived,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewActionItemForTest(archived) error = %v", err)
+		}
+		f.repo.tasks[archived.ID] = archived
+		_, supErr := f.svc.SupersedeActionItem(context.Background(), archived.ID, "valid reason")
+		if supErr == nil {
+			t.Fatal("SupersedeActionItem(archived) error = nil, want non-nil")
+		}
+		// The lifecycleStateForColumnID resolves to StateComplete via the
+		// column lookup, so the failure surfaces as ErrTransitionBlocked
+		// with the canonical hint regardless of the item's own
+		// LifecycleState. The point is that supersede on an archived item
+		// is REJECTED (not silently no-oped).
+		if !errors.Is(supErr, domain.ErrTransitionBlocked) {
+			t.Fatalf("SupersedeActionItem(archived) error = %v, want ErrTransitionBlocked", supErr)
+		}
+	})
+
+	t.Run("empty reason rejects before any state mutation", func(t *testing.T) {
+		t.Parallel()
+		f := newSupersedeFixture(t)
+		seeded := f.seedSupersedeItem(t, "t-empty-reason", domain.StateFailed)
+		_, err := f.svc.SupersedeActionItem(context.Background(), seeded.ID, "")
+		if err == nil {
+			t.Fatal("SupersedeActionItem(empty reason) error = nil, want non-nil")
+		}
+		if !strings.Contains(err.Error(), "reason is required") {
+			t.Fatalf("error message %q missing 'reason is required'", err.Error())
+		}
+		// State must be unchanged.
+		refetched, getErr := f.svc.GetActionItem(context.Background(), seeded.ID)
+		if getErr != nil {
+			t.Fatalf("GetActionItem() after rejection error = %v", getErr)
+		}
+		if refetched.LifecycleState != domain.StateFailed {
+			t.Fatalf("post-rejection state = %q, want %q", refetched.LifecycleState, domain.StateFailed)
+		}
+	})
+
+	t.Run("whitespace-only reason rejects", func(t *testing.T) {
+		t.Parallel()
+		f := newSupersedeFixture(t)
+		seeded := f.seedSupersedeItem(t, "t-ws-reason", domain.StateFailed)
+		_, err := f.svc.SupersedeActionItem(context.Background(), seeded.ID, "   ")
+		if err == nil {
+			t.Fatal("SupersedeActionItem(whitespace reason) error = nil, want non-nil")
+		}
+		if !strings.Contains(err.Error(), "reason is required") {
+			t.Fatalf("error message %q missing 'reason is required'", err.Error())
+		}
+	})
+
+	t.Run("empty action_item_id rejects before service path", func(t *testing.T) {
+		t.Parallel()
+		f := newSupersedeFixture(t)
+		_, err := f.svc.SupersedeActionItem(context.Background(), "", "valid reason")
+		if err == nil {
+			t.Fatal("SupersedeActionItem(empty id) error = nil, want non-nil")
+		}
+		if !strings.Contains(err.Error(), "action_item_id is required") {
+			t.Fatalf("error message %q missing 'action_item_id is required'", err.Error())
+		}
+	})
+
+	t.Run("missing action_item propagates ErrNotFound from repo", func(t *testing.T) {
+		t.Parallel()
+		f := newSupersedeFixture(t)
+		_, err := f.svc.SupersedeActionItem(context.Background(), "no-such-id", "valid reason")
+		if err == nil {
+			t.Fatal("SupersedeActionItem(missing) error = nil, want non-nil")
+		}
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("SupersedeActionItem(missing) error = %v, want errors.Is(err, ErrNotFound)", err)
+		}
+	})
+
+	t.Run("descendants in non-terminal state are NOT cascaded (B.1 §3.1 invariant)", func(t *testing.T) {
+		t.Parallel()
+		f := newSupersedeFixture(t)
+		parent := f.seedSupersedeItem(t, "t-parent-failed", domain.StateFailed)
+		// Child item under the failed parent, still in_progress. Supersede
+		// on the parent must NOT touch the child.
+		child, err := domain.NewActionItemForTest(domain.ActionItemInput{
+			Kind:           domain.KindBuild,
+			ID:             "t-child-progress",
+			ProjectID:      f.project.ID,
+			ColumnID:       f.cols[domain.StateInProgress].ID,
+			Position:       0,
+			ParentID:       parent.ID,
+			Title:          "child still running",
+			Priority:       domain.PriorityMedium,
+			LifecycleState: domain.StateInProgress,
+		}, f.now)
+		if err != nil {
+			t.Fatalf("NewActionItemForTest(child) error = %v", err)
+		}
+		f.repo.tasks[child.ID] = child
+		if _, err := f.svc.SupersedeActionItem(context.Background(), parent.ID, "clearing parent only"); err != nil {
+			t.Fatalf("SupersedeActionItem(parent) error = %v, want nil", err)
+		}
+		// Re-fetch child — must be unchanged.
+		refetched, err := f.svc.GetActionItem(context.Background(), child.ID)
+		if err != nil {
+			t.Fatalf("GetActionItem(child) error = %v", err)
+		}
+		if refetched.LifecycleState != domain.StateInProgress {
+			t.Fatalf("child state after parent supersede = %q, want %q (no cascade)", refetched.LifecycleState, domain.StateInProgress)
+		}
+		if refetched.Metadata.Outcome == "superseded" {
+			t.Fatalf("child outcome stamped %q after parent supersede (no cascade)", refetched.Metadata.Outcome)
+		}
+	})
+}
+
 // recordingGitChecker is a stub GitStatusChecker used by the droplet 4b.6
 // CreateActionItem pre-check tests. Callers configure dirtyPaths + err to
 // shape the response; calls capture the (worktree, paths) tuple so tests

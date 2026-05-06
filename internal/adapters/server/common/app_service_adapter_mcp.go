@@ -1023,6 +1023,46 @@ func (a *AppServiceAdapter) MoveActionItemState(ctx context.Context, in MoveActi
 	return moved, nil
 }
 
+// SupersedeActionItem is the adapter passthrough for the dev-only supersede
+// escape hatch (Drop 4c.5 droplet B.1). It transitions one `failed` action
+// item to `complete` with `metadata.outcome = "superseded"` and the supplied
+// reason persisted on `metadata.transition_notes`. The boundary contract
+// mirrors `MoveActionItem`'s STEWARD owner-state-lock — drop-orchs operate
+// as agent-principal sessions and are blocked from superseding STEWARD-owned
+// items regardless of state delta (per finding 5.C.13's gate semantics
+// pinned in `handler_steward_integration_test.go`).
+//
+// No MCP tool registration exposes this method today; the CLI is the only
+// surface invoking it (per THEME_BD_PLAN §3.5: pre-MVP CLI-only escape
+// hatch, agent-driven supersede via MCP is a future drop). Keeping the
+// adapter method in place gives the future MCP tool a ready boundary
+// without re-plumbing through the service.
+func (a *AppServiceAdapter) SupersedeActionItem(ctx context.Context, in SupersedeActionItemRequest) (domain.ActionItem, error) {
+	if a == nil || a.service == nil {
+		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	ctx, _, err := withMutationGuardContext(ctx, in.Actor)
+	if err != nil {
+		return domain.ActionItem{}, err
+	}
+	actionItemID := strings.TrimSpace(in.ActionItemID)
+	if actionItemID == "" {
+		return domain.ActionItem{}, fmt.Errorf("action_item_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	existing, err := a.service.GetActionItem(ctx, actionItemID)
+	if err != nil {
+		return domain.ActionItem{}, mapAppError("supersede actionItem", err)
+	}
+	if err := assertOwnerStateGate(ctx, existing); err != nil {
+		return domain.ActionItem{}, err
+	}
+	actionItem, err := a.service.SupersedeActionItem(ctx, actionItemID, in.Reason)
+	if err != nil {
+		return domain.ActionItem{}, mapAppError("supersede actionItem", err)
+	}
+	return actionItem, nil
+}
+
 // DeleteActionItem applies archive/hard delete behavior for one actionItem.
 func (a *AppServiceAdapter) DeleteActionItem(ctx context.Context, in DeleteActionItemRequest) error {
 	if a == nil || a.service == nil {

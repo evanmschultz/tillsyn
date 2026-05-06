@@ -449,17 +449,80 @@ func TestStewardIntegrationDropOrchReparentRejected(t *testing.T) {
 }
 
 // TestStewardIntegrationDropOrchSupersedeRejected covers Test 5 of
-// droplet 3.22 (per finding 5.C.13 — supersede gate). Pre-Drop-1 the
-// supersede path on action items does not exist as a real state-mutating
-// operation in the codebase (handoffs have a HandoffStatusSuperseded; the
-// outcome adapter recognizes "superseded" as a metadata.outcome value;
-// neither is a state transition the gate guards). The droplet's own
-// pre-conditions / hints block calls this out: "If `supersede` is not yet
-// a real path pre-Drop-1, gate the assertion behind a TODO + skip with
-// `t.Skip` + a rationale comment that points at the future supersede
-// landing — DO NOT invent it."
+// droplet 3.22 (per finding 5.C.13 — supersede gate). Drop 4c.5 droplet B.1
+// landed `Service.SupersedeActionItem` + `AppServiceAdapter.SupersedeActionItem`
+// as the real state-mutating supersede path; this test exercises the
+// adapter-layer STEWARD owner-state-lock against a drop-orch-scoped caller
+// to confirm the L1 gate fires identically to MoveActionItem.
+//
+// Setup: a STEWARD-owned `failed` finding (DROP_3_HYLLA_FINDINGS) reached
+// via the standard fixture-seeded path; the fixture creates the finding
+// in the todo column, so the test promotes it through `failed` first
+// (steward-principal moves bypass the L1 gate; A.4 outcome guard satisfied
+// by stamping `metadata.outcome="failure"`). Then a drop-orch-scoped
+// supersede attempt MUST reject with `ErrAuthorizationDenied` regardless
+// of the otherwise-valid supersede preconditions.
 func TestStewardIntegrationDropOrchSupersedeRejected(t *testing.T) {
-	t.Skip("supersede on action_item is not yet a real state-mutating path pre-Drop-1; the outcome adapter recognizes \"superseded\" as a metadata.outcome value but no SupersedeActionItem method exists on the adapter or app service. Re-enable when Drop 1 lands the supersede transition (per finding 5.C.13 — the gate must apply identically to MoveActionItem at that point).")
+	fixture := newStewardIntegrationFixture(t)
+	ctx := context.Background()
+	dropOrch := stewardIntegrationDropOrchActor()
+	steward := stewardIntegrationStewardActor()
+
+	hyllaFindingsID := fixture.findingIDs["DROP_3_HYLLA_FINDINGS"]
+
+	// Stamp metadata.outcome="failure" BEFORE the move into failed so the
+	// Drop 4c.5 droplet A.4 guard accepts the transition. Steward-principal
+	// caller bypasses the L1 owner-state-lock for this setup move. Read
+	// existing metadata first and only mutate Outcome so the seeded
+	// blocked_by / structural fields survive the update (UpdateActionItem's
+	// Metadata pointer-sentinel REPLACES the entire metadata blob via
+	// UpdatePlanningMetadata).
+	finding, err := fixture.adapter.GetActionItem(ctx, hyllaFindingsID)
+	if err != nil {
+		t.Fatalf("GetActionItem(finding) error = %v", err)
+	}
+	updatedMeta := finding.Metadata
+	updatedMeta.Outcome = "failure"
+	if _, err := fixture.adapter.UpdateActionItem(ctx, servercommon.UpdateActionItemRequest{
+		ActionItemID: hyllaFindingsID,
+		Metadata:     &updatedMeta,
+		Actor:        steward,
+	}); err != nil {
+		t.Fatalf("UpdateActionItem(stamp outcome=failure as steward) error = %v", err)
+	}
+	// Steward moves the finding into failed (L1 lock would reject a
+	// drop-orch on a STEWARD-owned item).
+	if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+		ActionItemID: hyllaFindingsID,
+		State:        string(domain.StateFailed),
+		Actor:        steward,
+	}); err != nil {
+		t.Fatalf("MoveActionItemState(steward → failed) error = %v", err)
+	}
+
+	// Drop-orch supersede attempt on the now-failed STEWARD-owned finding
+	// MUST reject with ErrAuthorizationDenied — this is the L1 gate firing
+	// identically to MoveActionItem per finding 5.C.13.
+	if _, err := fixture.adapter.SupersedeActionItem(ctx, servercommon.SupersedeActionItemRequest{
+		ActionItemID: hyllaFindingsID,
+		Reason:       "drop-orch attempt to clear STEWARD-owned finding",
+		Actor:        dropOrch,
+	}); !errors.Is(err, servercommon.ErrAuthorizationDenied) {
+		t.Fatalf("SupersedeActionItem(drop-orch on STEWARD-owned) error = %v, want ErrAuthorizationDenied", err)
+	}
+
+	// State unchanged after the rejection — finding stays in failed, no
+	// supersede metadata stamped.
+	after, err := fixture.adapter.GetActionItem(ctx, hyllaFindingsID)
+	if err != nil {
+		t.Fatalf("GetActionItem() after rejection error = %v", err)
+	}
+	if after.LifecycleState != domain.StateFailed {
+		t.Fatalf("rejected supersede mutated lifecycle_state: got %q, want %q", after.LifecycleState, domain.StateFailed)
+	}
+	if after.Metadata.Outcome != "failure" {
+		t.Fatalf("rejected supersede mutated metadata.outcome: got %q, want %q", after.Metadata.Outcome, "failure")
+	}
 }
 
 // TestStewardIntegrationDropOrchOwnerMutationRejected covers Test 6 of

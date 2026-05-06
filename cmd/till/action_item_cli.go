@@ -55,6 +55,53 @@ func runActionItemGet(ctx context.Context, svc *app.Service, opts actionItemComm
 	return writeActionItemJSON(stdout, actionItem)
 }
 
+// runActionItemSupersede is the CLI flow for the Drop 4c.5 droplet B.1
+// supersede escape hatch. The flow is the dev's "I am clearing THIS failed
+// item so its parent can move forward" affordance — it transitions one
+// `failed` action item to `complete` with `metadata.outcome = "superseded"`
+// and the supplied reason persisted on `metadata.transition_notes`.
+//
+// Pre-service-call validation order (each failure surfaces a distinct
+// error class):
+//
+//  1. Empty / whitespace-only `--reason` rejects with a clear "reason
+//     required" error before any service call. The supersede CLI's whole
+//     point is recording dev intent; an empty reason defeats it.
+//  2. Empty / dotted-form `action_item_id` rejects via
+//     `app.ValidateActionItemIDForMutation` (mutations require UUID — same
+//     gate as `update`/`move`/`delete`/`restore`/`reparent`).
+//  3. UUID-shaped input passes the gate and reaches
+//     `Service.SupersedeActionItem`, which enforces the failed-only
+//     transition + writes the audit-trail metadata + flips the column.
+//
+// On success, the post-supersede action item is rendered as JSON on stdout
+// (matching the `runActionItemGet` rendering convention) so the dev can
+// confirm the new column placement + outcome stamp.
+func runActionItemSupersede(ctx context.Context, svc *app.Service, opts actionItemCommandOptions, stdout io.Writer) error {
+	// Validate the input shape BEFORE the service-availability check so the
+	// CLI's user-facing error messages reflect what's wrong with the
+	// invocation rather than the runtime wiring. Validation order:
+	//
+	//  1. Empty / whitespace-only --reason (required content gate).
+	//  2. UUID-shape gate (mutations-require-UUID across CLI mutation paths).
+	//  3. App-service availability (runtime wiring sanity check).
+	reason := strings.TrimSpace(opts.reason)
+	if reason == "" {
+		return fmt.Errorf("action_item supersede: --reason is required (whitespace-only rejected)")
+	}
+	if err := app.ValidateActionItemIDForMutation(opts.actionItemID); err != nil {
+		return fmt.Errorf("action_item supersede: %w", err)
+	}
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	actionItem, err := svc.SupersedeActionItem(ctx, strings.TrimSpace(opts.actionItemID), reason)
+	if err != nil {
+		return fmt.Errorf("action_item supersede %q: %w", opts.actionItemID, err)
+	}
+	return writeActionItemJSON(stdout, actionItem)
+}
+
 // runActionItemMutationGate enforces the mutations-require-UUID rule for CLI
 // mutation subcommands. The CLI does NOT yet implement the mutation operations
 // themselves (Drop 2 wires only the validator + reject path so MCP and CLI

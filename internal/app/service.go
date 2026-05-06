@@ -1186,6 +1186,124 @@ func (s *Service) MoveActionItem(ctx context.Context, actionItemID, toColumnID s
 	return actionItem, nil
 }
 
+// SupersedeActionItem is the dev-only escape hatch (Drop 4c.5 droplet B.1)
+// that transitions one action item from `failed` to `complete` with
+// `metadata.outcome = "superseded"` and the supplied dev-intent reason
+// persisted on `metadata.transition_notes`. The supersede path bypasses
+// `MoveActionItem`'s terminal-state guard (`service.go` ~line 1116) — that
+// guard rejects every `failed → complete` move unconditionally pre-D3
+// override-auth; this method is the typed escape hatch the project is
+// willing to accept pre-MVP.
+//
+// Semantics (per THEME_BD_PLAN §3.1):
+//
+//   - Operates on EXACTLY the named node. NO cascade. Descendants in
+//     non-terminal state keep their own state — supersede is "clear THIS
+//     failure," not "abandon this whole subtree." The parent-blocks-on-
+//     incomplete-child invariant still gates any subsequent attempt to move
+//     a higher ancestor through complete via the existing
+//     `ensureActionItemCompletionBlockersClear` chain.
+//   - Only `failed` items are eligible. `todo` / `in_progress` /
+//     `complete` / `archived` items reject with `domain.ErrTransitionBlocked`
+//     wrapped with a "supersede only applies to failed items" hint. The
+//     reject is NOT a silent no-op — calling supersede on a non-failed item
+//     is operator confusion and must surface.
+//   - Empty / whitespace-only reason rejects with a clear error. The reason
+//     is the audit-trail substance the escape hatch exists to capture; an
+//     empty reason defeats the point. The CLI layer also pre-rejects empty
+//     reasons before invoking this method.
+//   - The reason text persists on `metadata.transition_notes` (existing
+//     free-form field on `ActionItemMetadata`). No new
+//     `Metadata.SupersedeReason` field is added (YAGNI per THEME_BD_PLAN
+//     §3.4 + cross-theme decisions).
+//   - The capability guard runs with `CapabilityActionMarkComplete` for
+//     symmetry with `MoveActionItem`'s `→complete` branch. No new
+//     `CapabilityActionSupersede` action is introduced (YAGNI).
+//   - STEWARD owner-state-lock: the adapter-layer caller is responsible for
+//     the `assertOwnerStateGate` check before invoking this method, mirror-
+//     ing the `MoveActionItem` adapter's pattern. See
+//     `internal/adapters/server/common/app_service_adapter_mcp.go` for the
+//     adapter passthrough.
+//
+// Returns the post-supersede `domain.ActionItem` with `LifecycleState =
+// StateComplete`, `Metadata.Outcome = "superseded"`, and
+// `Metadata.TransitionNotes = trimmed reason`. Errors propagate the
+// underlying repo `ErrNotFound`, the in-method `ErrTransitionBlocked`, and
+// any guard rejection verbatim.
+func (s *Service) SupersedeActionItem(ctx context.Context, actionItemID, reason string) (domain.ActionItem, error) {
+	actionItemID = strings.TrimSpace(actionItemID)
+	if actionItemID == "" {
+		return domain.ActionItem{}, fmt.Errorf("supersede: action_item_id is required")
+	}
+	trimmedReason := strings.TrimSpace(reason)
+	if trimmedReason == "" {
+		return domain.ActionItem{}, fmt.Errorf("supersede: reason is required (whitespace-only rejected)")
+	}
+	actionItem, err := s.repo.GetActionItem(ctx, actionItemID)
+	if err != nil {
+		return domain.ActionItem{}, err
+	}
+	guardScopes, err := s.capabilityScopesForActionItemLineage(ctx, actionItem)
+	if err != nil {
+		return domain.ActionItem{}, err
+	}
+	if err := s.enforceMutationGuardAcrossScopes(ctx, actionItem.ProjectID, currentMutationActorType(ctx, ""), guardScopes, domain.CapabilityActionMarkComplete); err != nil {
+		return domain.ActionItem{}, err
+	}
+	columns, err := s.repo.ListColumns(ctx, actionItem.ProjectID, true)
+	if err != nil {
+		return domain.ActionItem{}, err
+	}
+	fromState := lifecycleStateForColumnID(columns, actionItem.ColumnID)
+	if fromState == "" {
+		fromState = actionItem.LifecycleState
+	}
+	if fromState != domain.StateFailed {
+		return domain.ActionItem{}, fmt.Errorf("%w: supersede only applies to failed items (got state %q)", domain.ErrTransitionBlocked, fromState)
+	}
+	// Resolve the destination `complete` column for this project. The
+	// auto-created column set always seeds a complete column; a missing
+	// mapping signals project-wiring corruption rather than a normal flow
+	// and surfaces explicitly so the dev sees the cause.
+	completeColumnID := ""
+	for _, column := range columns {
+		if lifecycleStateForColumnID(columns, column.ID) == domain.StateComplete {
+			completeColumnID = column.ID
+			break
+		}
+	}
+	if completeColumnID == "" {
+		return domain.ActionItem{}, fmt.Errorf("supersede: project %q has no column mapped to lifecycle state %q", actionItem.ProjectID, domain.StateComplete)
+	}
+	// Stamp the audit-trail metadata BEFORE the column move. `outcome` and
+	// `transition_notes` are existing free-form fields; the canonical
+	// "superseded" outcome value is already accepted by
+	// `validateMetadataOutcome` at the MCP adapter boundary
+	// (app_service_adapter_mcp.go:1216). Direct field assignment is
+	// intentional — we are NOT routing through the public
+	// `UpdatePlanningMetadata` path because that path re-runs the full
+	// metadata normalizer and would clobber any already-canonical fields the
+	// caller did not touch. Trimming here mirrors the normalizer's
+	// trim-on-input rule for `Outcome` and `TransitionNotes`.
+	actionItem.Metadata.Outcome = "superseded"
+	actionItem.Metadata.TransitionNotes = trimmedReason
+	if err := actionItem.Move(completeColumnID, actionItem.Position, s.clock()); err != nil {
+		return domain.ActionItem{}, err
+	}
+	if err := actionItem.SetLifecycleState(domain.StateComplete, s.clock()); err != nil {
+		return domain.ActionItem{}, err
+	}
+	applyMutationActorToActionItem(ctx, &actionItem)
+	if err := s.repo.UpdateActionItem(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, err
+	}
+	if _, err := s.enqueueActionItemEmbedding(ctx, actionItem, false, "task_superseded"); err != nil {
+		return domain.ActionItem{}, err
+	}
+	s.publishActionItemChanged(actionItem.ProjectID)
+	return actionItem, nil
+}
+
 // RestoreActionItem restores actionItem.
 func (s *Service) RestoreActionItem(ctx context.Context, actionItemID string) (domain.ActionItem, error) {
 	actionItem, err := s.repo.GetActionItem(ctx, actionItemID)

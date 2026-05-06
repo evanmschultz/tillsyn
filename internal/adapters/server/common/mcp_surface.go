@@ -340,6 +340,20 @@ type MoveActionItemStateRequest struct {
 	Actor        ActorLeaseTuple
 }
 
+// SupersedeActionItemRequest stores transport input for the dev-only
+// supersede escape hatch (Drop 4c.5 droplet B.1). The supersede transitions
+// one `failed` action item to `complete` with `metadata.outcome =
+// "superseded"` and the supplied dev-intent reason persisted on
+// `metadata.transition_notes`. The CLI is the only surface invoking this
+// today; no MCP tool registration exposes supersede so agent-driven flows
+// cannot reach it. The shared transport request type lives here so a
+// future MCP tool can reuse the same boundary type without reshaping.
+type SupersedeActionItemRequest struct {
+	ActionItemID string
+	Reason       string
+	Actor        ActorLeaseTuple
+}
+
 // DeleteActionItemRequest stores transport input for actionItem delete operations.
 type DeleteActionItemRequest struct {
 	ActionItemID string
