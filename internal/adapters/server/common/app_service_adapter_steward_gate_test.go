@@ -248,6 +248,169 @@ func TestAssertOwnerStateGateUpdateActionItemDropNumberMutationAgentRejected(t *
 	}
 }
 
+// TestAssertOwnerStateGateUpdateActionItemPersistentMutationAgentRejected
+// verifies Persistent is gated identically to Owner / DropNumber under the
+// L1 field-level write guard (Drop 4c.5 droplet C.1). The fixture seeds
+// Persistent=true; the agent attempts to flip it to false and is rejected.
+// Persistent=true is a load-bearing marker on STEWARD anchor nodes — an
+// agent silently flipping it would let auto-generation re-seed the node
+// or allow archive flows the persistent-anchor invariant exists to
+// prevent.
+func TestAssertOwnerStateGateUpdateActionItemPersistentMutationAgentRejected(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	stewardGated := newStewardGatedActionItem(t, fixture, "")
+	if !stewardGated.Persistent {
+		t.Fatalf("test fixture must seed Persistent=true so the flip-to-false mutation is meaningful")
+	}
+
+	rejectingActor := stewardGatedActor("agent")
+	flipped := false
+	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: stewardGated.ID,
+		Title:        ptrTo(stewardGated.Title),
+		Persistent:   &flipped,
+		Actor:        rejectingActor,
+	}); !errors.Is(err, ErrAuthorizationDenied) {
+		t.Fatalf("UpdateActionItem(agent flipping Persistent true→false) error = %v, want ErrAuthorizationDenied", err)
+	}
+
+	// Re-fetch and assert the seeded value is intact — rejection MUST NOT
+	// have leaked a partial write.
+	after, getErr := fixture.adapter.GetActionItem(ctx, stewardGated.ID)
+	if getErr != nil {
+		t.Fatalf("GetActionItem() error = %v", getErr)
+	}
+	if !after.Persistent {
+		t.Fatalf("UpdateActionItem rejection mutated Persistent: before=true after=%v", after.Persistent)
+	}
+}
+
+// TestAssertOwnerStateGateUpdateActionItemDevGatedMutationAgentRejected
+// verifies DevGated is gated identically to Persistent (Drop 4c.5 droplet
+// C.1). The fixture seeds DevGated=false (default); the agent attempts to
+// flip it to true and is rejected.
+func TestAssertOwnerStateGateUpdateActionItemDevGatedMutationAgentRejected(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	stewardGated := newStewardGatedActionItem(t, fixture, "")
+	if stewardGated.DevGated {
+		t.Fatalf("test fixture must seed DevGated=false (default) so the flip-to-true mutation is meaningful")
+	}
+
+	rejectingActor := stewardGatedActor("agent")
+	flipped := true
+	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: stewardGated.ID,
+		Title:        ptrTo(stewardGated.Title),
+		DevGated:     &flipped,
+		Actor:        rejectingActor,
+	}); !errors.Is(err, ErrAuthorizationDenied) {
+		t.Fatalf("UpdateActionItem(agent flipping DevGated false→true) error = %v, want ErrAuthorizationDenied", err)
+	}
+
+	after, getErr := fixture.adapter.GetActionItem(ctx, stewardGated.ID)
+	if getErr != nil {
+		t.Fatalf("GetActionItem() error = %v", getErr)
+	}
+	if after.DevGated {
+		t.Fatalf("UpdateActionItem rejection mutated DevGated: before=false after=%v", after.DevGated)
+	}
+}
+
+// TestAssertOwnerStateGateUpdateActionItemPersistentSameValueAgentSucceeds
+// verifies the gate's idempotency contract: an agent writing the SAME
+// Persistent value as existing on a STEWARD-owned item is ALLOWED. The
+// gate compares dereferenced values, so non-nil-pointer-but-equal-value
+// is a no-op write, not a forbidden mutation. Critical for adapter-side
+// idempotency replays where a caller may include the existing value
+// verbatim without intending to mutate.
+func TestAssertOwnerStateGateUpdateActionItemPersistentSameValueAgentSucceeds(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	stewardGated := newStewardGatedActionItem(t, fixture, "")
+	if !stewardGated.Persistent {
+		t.Fatalf("test fixture must seed Persistent=true so the same-value write is meaningful")
+	}
+
+	rejectingActor := stewardGatedActor("agent")
+	sameValue := stewardGated.Persistent
+	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: stewardGated.ID,
+		Title:        ptrTo(stewardGated.Title),
+		Persistent:   &sameValue,
+		Actor:        rejectingActor,
+	}); err != nil {
+		t.Fatalf("UpdateActionItem(agent writing same Persistent value) error = %v, want nil (idempotent allow)", err)
+	}
+}
+
+// TestAssertOwnerStateGateUpdateActionItemPersistentMutationStewardSucceeds
+// verifies the steward-principal happy path: a steward session CAN flip
+// Persistent on a STEWARD-owned item, and the change is persisted.
+func TestAssertOwnerStateGateUpdateActionItemPersistentMutationStewardSucceeds(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	stewardGated := newStewardGatedActionItem(t, fixture, "")
+	if !stewardGated.Persistent {
+		t.Fatalf("test fixture must seed Persistent=true so the steward flip is meaningful")
+	}
+
+	stewardActor := stewardGatedActor("steward")
+	flipped := false
+	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: stewardGated.ID,
+		Title:        ptrTo(stewardGated.Title),
+		Persistent:   &flipped,
+		Actor:        stewardActor,
+	}); err != nil {
+		t.Fatalf("UpdateActionItem(steward flipping Persistent) error = %v", err)
+	}
+
+	after, getErr := fixture.adapter.GetActionItem(ctx, stewardGated.ID)
+	if getErr != nil {
+		t.Fatalf("GetActionItem() error = %v", getErr)
+	}
+	if after.Persistent {
+		t.Fatalf("UpdateActionItem(steward) did not persist Persistent flip: still true")
+	}
+}
+
+// TestAssertOwnerStateGateUpdateActionItemPersistentNonStewardOwnerSucceeds
+// verifies the gate only fires on Owner="STEWARD" items — an agent
+// flipping Persistent on a non-STEWARD-owned item is allowed (the gate
+// bypasses the field-level checks entirely when the owner doesn't match).
+func TestAssertOwnerStateGateUpdateActionItemPersistentNonStewardOwnerSucceeds(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	plain := newStewardGatedActionItem(t, fixture, "")
+	plain.Owner = "" // clear the seeded STEWARD owner — gate should NOT fire.
+	if err := fixture.repo.UpdateActionItem(ctx, plain); err != nil {
+		t.Fatalf("repo.UpdateActionItem() clear owner error = %v", err)
+	}
+
+	rejectingActor := stewardGatedActor("agent")
+	flipped := false
+	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: plain.ID,
+		Title:        ptrTo(plain.Title),
+		Persistent:   &flipped,
+		Actor:        rejectingActor,
+	}); err != nil {
+		t.Fatalf("UpdateActionItem(agent on non-STEWARD-owned, flipping Persistent) error = %v", err)
+	}
+}
+
 // TestAssertOwnerStateGateReparentActionItemAgentRejected verifies the L8
 // reparent gate: changing the parent of a STEWARD-owned item by an agent is
 // REJECTED.

@@ -1268,3 +1268,51 @@ None — Hylla unused this droplet (per spawn prompt: "NO Hylla calls"). All evi
 
 - **THEME_CE_PLAN row state flip already committed.** The C.1 row was flipped to `**State:** done` in commit `4909f29` (prior partial session bundled the row flip into a sibling-droplet commit, despite the production + test code being uncommitted). The resume-builder did NOT need to re-flip — file is already in the desired terminal state. Routing for orchestrator awareness because the typical pattern is "flip the row in the same commit as the code"; here the row flip and code were split across commits, with the code still uncommitted at resume time. The orchestrator's commit step will pick up only the production + test diffs, not a row-flip diff.
 - **Bonus 5th test (`*PersistentNonStewardOwnerSucceeds`) added beyond strict spec scope.** Spec acceptance #4 listed four named tests; a fifth (non-STEWARD-owner gate-bypass for Persistent) was added because the existing Owner / DropNumber test family carries a `*NonStewardOwnerSucceeds` mirror at line 71 of the existing test file. Pinning the parallel guarantee for Persistent prevents a subtle gate-broadening regression. Test cost is ~30 lines; if the orchestrator prefers strict-spec-only, the test can be dropped without affecting the four core acceptance criteria.
+
+## Droplet B.2 — Round 1
+
+**Date:** 2026-05-06.
+**Builder:** go-builder-agent (model: opus, resume-builder).
+**Source spec:** `workflow/drop_4c_5/THEME_BD_PLAN.md` § "Droplet B.2 — Failure Listing CLI".
+
+### Context: this is a resume, not a from-scratch build
+
+The first B.2 spawn made substantial progress in the working tree but hit the daily usage limit before writing the worklog or flipping the THEME_BD_PLAN row to `done`. Resume-builder (this round) verified the prior partial work via `Read` + `git diff` of every modified file, identified the one missing piece (CLI-side tests for `runActionItemList`), filled it in, and ran `mage ci` to convergence.
+
+### Files touched (cumulative across both spawns)
+
+- `internal/app/service.go` — NEW method `Service.ListActionItemsByState(ctx, projectID, state, includeArchived) ([]ActionItem, error)`. Filters in memory by `LifecycleState`; sorts UpdatedAt DESC with ID tie-breaker. Empty / unknown state rejects naming the valid set; empty projectID rejects with `ErrInvalidID`. `state == StateArchived` forces `includeArchived=true`. Doc-comment names B.2 as caller, documents the in-memory-filter scale ceiling, and pins the failed+archived single-emit invariant.
+- `internal/app/service_test.go` — NEW `TestService_ListActionItemsByState` table-driven test (10 sub-cases) covering: failed filter + sort order, empty result, unknown state, empty state, empty projectID/`ErrInvalidID`, `state=archived` forces includeArchived, failed+archived single-emit when includeArchived=true, failed+archived omitted when includeArchived=false, todo filter, in_progress filter, case-folded state input (FAILED → failed), tie-broken sort. Plus a fresh `listByStateFixture` + `seedListByStateItem` helper that drops items into per-state columns directly.
+- `cmd/till/action_item_cli.go` — NEW `runActionItemList(ctx, svc, opts, stdout)`, `resolveActionItemListProject`, `computeDottedAddressesForItems`, `computeDottedAddressFor`, `formatActionItemListUpdatedAt`, `joinLifecycleStates` helpers + `validActionItemListStates` package-level closed-set var. Renders via `writeCLITable` with columns DOTTED / UUID / TITLE / KIND / ROLE / UPDATED. Empty-state message names both state and project slug. Project resolution: `--project` explicit OR single-project-on-system fallback OR multi-project hint error.
+- `cmd/till/action_item_cli_test.go` — NEW `TestRunActionItemList` table-driven test (11 sub-cases) covering all 9 spec scenarios + nil-service rejection + single-project-fallback. Plus a fresh `listCLIFixtureSpec` / `listCLISeed` / `newListCLIServiceForTest` helper using a real `app.Service` backed by in-memory SQLite. Items seed directly into target columns (lifecycleState resolved at create-time via `lifecycleStateForColumnID`); archived flag stamped post-create via `repo.UpdateActionItem`.
+- `cmd/till/main.go` — `actionItemCommandOptions` struct extended with `state string` + `includeArchived bool` fields; `actionItemListCmd` cobra subcommand registered under `actionItemCmd` with `--state` (default `"failed"`), `--project`, `--include-archived` flags; `executeCommandFlow` switch case wired for `action_item.list` → `runActionItemList`.
+- `workflow/drop_4c_5/THEME_BD_PLAN.md` — droplet B.2 row state flipped from `in_progress` → `done`.
+
+### Targets run
+
+- `mage build` — clean; production binary builds.
+- `mage ci` — **2847/2847 PASS** across 24 packages. `cmd/till` coverage 75.7% (was 72.4%); `internal/app` coverage 71.4% (was 71.4% — flat). All packages at or above the 70% project minimum. Format check, sources check, build, and coverage gate all green.
+
+### Design notes
+
+- **In-memory filter, not an indexed query.** Pre-MVP scale is hundreds of action items per project; an in-memory filter over `Service.ListActionItems` is the simplest concrete design. `Service.ListActionItemsByState` doc-comment explicitly documents the choice + names the indexed-query refactor as deferred until measurement justifies it. No new repository method added.
+- **Default `--state` is `"failed"`.** Per acceptance criterion #4, the canonical pre-TUI use case is "what's stuck so I can supersede it." Cobra default supplies `"failed"` even when `--state` is omitted; `runActionItemList` ALSO defensively defaults to `"failed"` when callers (tests) pass an empty struct. Both paths converge.
+- **`state == archived` forces `includeArchived=true`.** Asking for archived items implies including them. Forced both at the service layer (so direct callers get coherent semantics) and at the CLI layer (so the user-visible filter matches the column they asked about). Acceptance criterion #5.
+- **Slug-prefix shorthand explicitly rejected on list.** `runActionItemGet` accepts `tillsyn:1.5.2` slug-prefix shorthand because it is item-scoped; `runActionItemList` does NOT because it is project-scoped — accepting `tillsyn:failed` would conflate "list filter" with "dotted address." Cobra `Long:` text + the implementation (no call to `app.SplitDottedSlugPrefix`) enforce this together.
+- **Dotted-address column computed via project-wide tree walk.** Pre-MVP scale tolerates one extra `ListActionItems(includeArchived=true)` repo call per `runActionItemList` invocation to derive dotted addresses. Walks parents in sorted-children order matching `app.ResolveDottedAddress`. Items whose ancestor chain cannot be resolved (e.g. dangling parent) render as `"-"` rather than panicking.
+- **Sort UpdatedAt DESC with ID tie-breaker.** Most-recently-failed surfaces first (the canonical "what is stuck right now" framing); ID tie-breaker keeps test assertions stable when two items share `UpdatedAt`.
+- **9-row spec table coverage.** All 9 spec scenarios are covered by sub-tests, plus 2 bonus tests (nil-service rejection + single-project-fallback resolution) that pin behavior the spec leaves implicit. Total: 11 CLI sub-tests + 10 service sub-tests = 21 new tests for B.2.
+
+### Cross-droplet coordination notes
+
+- **B.1 (Chain B predecessor; shipped at `3110a82`).** B.1 added `SupersedeActionItem` to `service.go` and the supersede CLI command + tests. B.2 inserts `ListActionItemsByState` immediately after `ListActionItems` (line 1715) and `runActionItemList` after `writeActionItemJSON` in `action_item_cli.go`. The `actionItemCommandOptions` struct (`main.go:262-282`) extended additively (no field renames or removals); B.1's `reason` field untouched. `actionItemListCmd` registered alongside the existing supersede / mutation commands in the `actionItemCmd.AddCommand(...)` aggregate (line 893) and the `executeCommandFlow` switch (line 2607). No file or package collision with B.1.
+- **D.1 (already shipped).** No interaction — D.1 only edits `go.mod` / `go.sum`. B.2 does not import any newly added/removed module.
+- **Other in-flight droplets.** Working-tree shows concurrent edits in `internal/templates/load.go` + tests, `internal/adapters/server/common/app_service_adapter_mcp.go` + tests, `internal/adapters/server/mcpapi/handler.go` + tests. None overlap B.2's `paths` (`internal/app/service.go`, `internal/app/service_test.go`, `cmd/till/action_item_cli.go`, `cmd/till/action_item_cli_test.go`, `cmd/till/main.go`). `mage ci` green confirms zero cross-package compile breakage.
+
+### Hylla feedback
+
+None — filesystem-MD coordination mode forbids Hylla calls (per spawn prompt). All evidence resolved via `Read` / `Bash rg` / `git diff` / `git status` / `Edit`. The action item touched only Go production + test files plus three MDs (THEME_BD_PLAN.md row flip, BUILDER_WORKLOG.md append, no other MD edits); Hylla today is Go-only and stale post-Drop-4c-merge until next reingest, but per spec we do not consult it.
+
+### Unknowns routed back to orchestrator
+
+- **None.** All 7 acceptance criteria pass; mage ci green; coverage above the 70% threshold on every package; row flipped on THEME_BD_PLAN.md.

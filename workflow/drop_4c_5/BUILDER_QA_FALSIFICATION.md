@@ -1145,3 +1145,95 @@ T1. Six attack vectors (generic helper correctness, collision edges, single call
 T2. None — no CONFIRMED counterexamples.
 T3. Verdict **PASS**. E.6 ships clean. Generic helper has correct (nil,nil)/(rebuilt,nil)/(nil,err) shape. Collision detection covers BUILD/build/Build. Single production call site at load.go:125. Default-go regression covered by TestValidateMapKeysDefaultTemplateRegression. BULID typo trapped by IsValidKind firing before canonicalization. Doc-comment locks fix-path with named swappable alternative.
 T4. N/A — Hylla not consulted per spawn directive.
+
+## Droplet C.1 — Round 1
+
+**Files in scope:**
+- `internal/adapters/server/common/app_service_adapter_mcp.go` (sig + caller + doc-comment).
+- `internal/adapters/server/common/app_service_adapter_steward_gate_test.go` (5 new tests).
+
+**Evidence trail:** `git diff` working-tree on both files; `Read` `app_service_adapter_mcp.go` lines 818-875 (UpdateActionItem) + 1155-1240 (gate const + helper); `Read` `app_service_adapter_steward_gate_test.go` lines 248-411 (5 new tests) + 483-575 (`stewardGatedActor`, `newStewardGatedActionItem`); `rg` for fixture helpers; `mage test-pkg ./internal/adapters/server/common` → 165/165 PASS.
+
+### Section 1 — Findings
+
+- 1.1 **Pre-fetch trigger gate (mcp.go:867)** correctly guards on pointer-presence: `if in.Owner != nil || in.DropNumber != nil || in.Persistent != nil || in.DevGated != nil`. Description-only updates with `in.Persistent == nil && in.DevGated == nil` skip the fetch. Caller-side dominant case is unchanged.
+- 1.2 **Idempotent same-value writes ALLOWED.** Helper at lines 1233-1238 compares dereferenced values: `wantPersistent != nil && *wantPersistent != existing.Persistent`. A non-nil pointer whose value already equals existing is a no-op — no rejection. `TestAssertOwnerStateGateUpdateActionItemPersistentSameValueAgentSucceeds` confirms this; PASS.
+- 1.3 **Steward-principal allow path** at line 1223-1226 short-circuits before any field check. `TestAssertOwnerStateGateUpdateActionItemPersistentMutationStewardSucceeds` exercises the steward flip + post-fetch verification (Persistent true→false persisted); PASS.
+- 1.4 **Non-STEWARD-owned bypass** at line 1219-1221 returns nil before the principal lookup. `TestAssertOwnerStateGateUpdateActionItemPersistentNonStewardOwnerSucceeds` clears Owner via direct repo write and confirms the agent flip is ALLOWED.
+- 1.5 **Pointer-sentinel preservation** for `nil` is implicitly covered: every existing description-only test (e.g. owner-state-lock state-neutral path) succeeds without supplying Persistent / DevGated, so the trigger gate at line 867 already proves nil-pointer correctness across the full test population. No regression in pre-existing 165 tests.
+- 1.6 **Bonus 5th test** (`TestAssertOwnerStateGateUpdateActionItemPersistentNonStewardOwnerSucceeds`) is **load-bearing**, not scope-creep. The plan acceptance #4 names four required tests; the test-scenarios table at THEME_CE_PLAN.md:34 explicitly lists "agent flips Persistent on non-STEWARD-owned: allow". The 5th test maps 1:1 to that scenario and locks the gate's bypass-on-non-STEWARD-owner branch (line 1219-1221), which is otherwise only proven indirectly through pre-existing non-STEWARD coverage.
+
+### Section 2 — Counterexamples
+
+#### Attack 1 — Pre-fetch trigger expansion side-effect
+
+**Hypothesis:** TUI form pre-populates `Persistent: ptr(existing.Persistent)` on every update; description-only edits trigger a wasted GetActionItem fetch.
+
+**Evidence:** spec acceptance #3 explicitly mandates the trigger expansion (`in.Persistent != nil || in.DevGated != nil`). Plan falsification mitigation (THEME_CE_PLAN.md:41) accepts this tradeoff: "trigger condition stays pointer-nil-aware … so nil-pointer (the dominant case) does not force the fetch." Caller intent that ALWAYS sets the pointer is a caller-side ergonomics choice, not a gate bug. Idempotent same-value path adds one fetch + one comparison; no rejection, no extra round-trip beyond the fetch itself.
+
+**Status: REFUTED** — by-spec behavior. If wasted fetches become a real concern, the fix lives caller-side (TUI sends nil when value is unchanged).
+
+#### Attack 2 — Idempotent same-value write should ALLOW
+
+**Hypothesis:** impl rejects when `wantPersistent != nil` regardless of equality (forgetting the `!= existing.Persistent` guard).
+
+**Evidence:** mcp.go:1233 `if wantPersistent != nil && *wantPersistent != existing.Persistent`. Equality short-circuits the rejection. Same shape on line 1236 for DevGated. `TestAssertOwnerStateGateUpdateActionItemPersistentSameValueAgentSucceeds` (test file lines 332-359) seeds Persistent=true and writes `sameValue := stewardGated.Persistent` from agent actor; expects nil error. PASS in `mage test-pkg`.
+
+**Status: REFUTED**.
+
+#### Attack 3 — Steward-principal allow path
+
+**Hypothesis:** steward principal-type matching uses `==` not `EqualFold`, missing case variants like "Steward".
+
+**Evidence:** mcp.go:1223 `strings.EqualFold(strings.TrimSpace(caller.AuthRequestPrincipalType), stewardPrincipalType)`. Case-insensitive + whitespace-trimmed; mirrors the state-neutral path at line 1189. Steward early-return at 1224-1226 short-circuits ALL field checks. `TestAssertOwnerStateGateUpdateActionItemPersistentMutationStewardSucceeds` confirms steward can flip Persistent + the change persists.
+
+**Status: REFUTED**.
+
+#### Attack 4 — Non-STEWARD-owned bypass
+
+**Hypothesis:** gate fires on Owner="STEWARD" only via direct equality but missed a TrimSpace-induced false-bypass (e.g. `" STEWARD "` reaching the check).
+
+**Evidence:** mcp.go:1219 `strings.TrimSpace(existing.Owner) != stewardOwner` — TrimSpace applied before constant comparison. Same shape as the state-neutral gate at line 1179. `TestAssertOwnerStateGateUpdateActionItemPersistentNonStewardOwnerSucceeds` clears Owner via repo direct-write (`plain.Owner = ""`) and re-fetches; agent flip ALLOWED (no error). Confirms bypass branch.
+
+**Status: REFUTED**.
+
+#### Attack 5 — Pointer-sentinel preservation (`nil` skips gate)
+
+**Hypothesis:** caller-side trigger at line 867 fetches even when Persistent/DevGated pointers are nil, leaking a fetch on every description-only update.
+
+**Evidence:** mcp.go:867 condition is OR-of-pointer-non-nilness. `nil || nil || nil || nil → false`. No fetch for description-only updates. The 160+ pre-existing tests on this fixture all pass without setting Persistent/DevGated; if the trigger were over-broad they would have hit fetch-side errors or noise. `mage test-pkg` clean.
+
+**Status: REFUTED**.
+
+#### Attack 6 — Bonus 5th test scope-creep
+
+**Hypothesis:** `TestAssertOwnerStateGateUpdateActionItemPersistentNonStewardOwnerSucceeds` exceeds the strict acceptance #4 (which names 4 tests) and is removable scope-creep.
+
+**Evidence:** THEME_CE_PLAN.md:34 enumerates SIX test scenarios under "Test scenarios"; the plan's acceptance #4 names a representative subset, but the scenarios block lists "agent flips Persistent on non-STEWARD-owned: allow (gate bypasses non-STEWARD)" — exactly what the 5th test covers. The test exercises the `existing.Owner != stewardOwner` bypass branch (line 1219-1221) which would otherwise have NO direct unit-test coverage in the new C.1 file (other tests all run on STEWARD-owned fixtures). Removing the test would leave a tested-by-side-effect-only branch, weakening the gate's regression net.
+
+**Status: REFUTED — load-bearing, not scope-creep**.
+
+### Section 3 — Summary
+
+Verdict **PASS**. Six attack categories independently REFUTED. Gate impl correctly implements:
+- pre-fetch trigger expansion gated on pointer-non-nilness (no fetch on nil-only updates);
+- idempotent same-value writes via `*want != existing` equality short-circuit;
+- steward-principal early return short-circuiting field checks;
+- non-STEWARD-owned bypass via `TrimSpace(Owner) != stewardOwner` early return;
+- pointer-sentinel `nil = preserve` semantics inherited from existing Owner/DropNumber path.
+
+Bonus 5th test maps to the plan's test-scenarios table and locks the non-STEWARD bypass branch. Not scope-creep.
+
+`mage test-pkg ./internal/adapters/server/common` → 165/165 PASS.
+
+### Section 4 — Hylla Feedback
+
+N/A — spawn-prompt directive ("NO Hylla calls") routed all evidence through `Read` + `git diff` + `rg` + `mage test-pkg`. No miss to log.
+
+### TL;DR
+
+T1. Six findings: pre-fetch trigger correctly pointer-gated; idempotent same-value path uses dereferenced equality; steward early-return short-circuits; non-STEWARD bypass via TrimSpace+const compare; pointer-sentinel nil-preserve inherited and proven by 160+ pre-existing tests; bonus 5th test is load-bearing.
+T2. None — six attack categories REFUTED with file/line evidence + green `mage test-pkg`.
+T3. Verdict **PASS**. C.1 ships clean. 165/165 tests pass.
+T4. N/A — Hylla not consulted per spawn directive.
+

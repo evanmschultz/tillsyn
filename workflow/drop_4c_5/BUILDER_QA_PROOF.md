@@ -974,3 +974,40 @@ None blocking. Two NIT-class observations:
 ### Hylla Feedback
 
 N/A — review touched only Go source + tests under filesystem-MD coordination mode. Per spawn prompt directive ("NO Hylla calls"), no Hylla queries attempted. Evidence resolved via `Read` + `git diff` + `rg` on the uncommitted working tree.
+
+---
+
+## Droplet C.1 — Round 1
+
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, no Tillsyn / no Hylla).
+**Spec:** `THEME_CE_PLAN.md` § "C.1 — Extend `assertOwnerStateGateUpdateFields` to Persistent / DevGated".
+**Builder return:** `mage test-pkg ./internal/adapters/server/common` 165/165 PASS (160 prior + 5 new).
+**Verdict:** **PASS.**
+
+### 1. Findings
+
+- **1.1 Acceptance #1 (signature extension) — PASS.** `app_service_adapter_mcp.go:1218` declares `func assertOwnerStateGateUpdateFields(ctx context.Context, existing domain.ActionItem, wantOwner *string, wantDropNumber *int, wantPersistent *bool, wantDevGated *bool) error` — exactly the spec's positional form (spec falsification mitigation #3 satisfied: existing Owner / DropNumber call shape preserved, new pointer parameters appended). `rg` confirms exactly one call site (line 872), one declaration (line 1218), and one doc-comment header (line 1195).
+- **1.2 Acceptance #2 (gate semantics) — PASS.** Body adds two new dereferenced-value comparison branches at lines 1233-1238: `if wantPersistent != nil && *wantPersistent != existing.Persistent` and the parallel DevGated branch. Each returns a sharp error message naming the field (`"… can change Persistent: %w"` / `"… can change DevGated: %w"`) wrapping `ErrAuthorizationDenied`. STEWARD-owner short-circuit at line 1219 preserved unchanged. Steward-principal bypass at line 1224 preserved unchanged. Idempotent same-value writes ALLOWED via dereferenced comparison.
+- **1.3 Acceptance #3 (caller pre-fetch trigger) — PASS.** Line 867: `if in.Owner != nil || in.DropNumber != nil || in.Persistent != nil || in.DevGated != nil`. Pointer-sentinel discipline preserved — nil-pointer (description-only updates) does NOT force the fetch. The pre-fetch is in `UpdateActionItem` (line 854), and the call site at line 872 forwards all four pointers in lockstep.
+- **1.4 Acceptance #4 (5 new tests) — PASS.** All five tests present in `app_service_adapter_steward_gate_test.go` at the diff's +248 line region: `*PersistentMutationAgentRejected` (with re-fetch assertion that no partial write leaked), `*DevGatedMutationAgentRejected` (parallel), `*PersistentSameValueAgentSucceeds` (idempotency pin — guards against any future "non-nil = forbidden" tightening), `*PersistentMutationStewardSucceeds` (steward happy path with re-fetch confirming actual persistence through the service-layer plumbing), `*PersistentNonStewardOwnerSucceeds` (defense-in-depth bonus mirroring the existing `MoveActionItemStateNonStewardOwnerSucceeds` shape at line 71). Spec listed four; the fifth is a strict superset of spec scope.
+- **1.5 Acceptance #5 (mage test-pkg green) — PASS.** Re-ran `mage test-pkg ./internal/adapters/server/common`: 165/165 PASS, 0 fail, 0 skip, 0.00s wall under cached binary. Matches builder's reported count exactly.
+- **1.6 Doc-comment integrity — PASS.** `UpdateActionItem` doc-comment (lines 819-836) names the four gated fields explicitly and carries the C.1 attribution paragraph explaining the auto-generation re-seed risk on Persistent and the rollup-parent dev-gating risk on DevGated. `assertOwnerStateGateUpdateFields` doc-comment (lines 1195-1217) carries the C.1 attribution paragraph plus the "All four `want*` parameters are pointer-sentinels … idempotent writes allowed" contract — this is the load-bearing spec for the dereferenced-value comparison and is now explicit.
+- **1.7 Worklog completeness — PASS.** `BUILDER_WORKLOG.md` Round 1 entry covers: files touched (with line ranges), targets run (mage test-pkg, NOT mage ci, NOT commit, NOT push — correct per HARD RULES), all 5 acceptance criteria with status, all 3 spec falsification mitigations with status, cross-droplet coordination notes (B.1 line-range non-overlap verified, A.1 pointer-sentinel transport surface dependency named), Hylla feedback (N/A — filesystem-MD mode), unknowns routed (THEME_CE_PLAN row already flipped at `4909f29` upstream + bonus 5th test rationale).
+
+### 2. Missing Evidence
+
+- **2.1 None.** All five acceptance criteria, all three spec falsification mitigations, the doc-comment extensions, and the worklog Round 1 entry are present and verified against the uncommitted working tree. The `mage test-pkg` re-run reproduces the builder's reported 165/165. No evidence gaps.
+
+### 3. Summary
+
+**PASS.** All five acceptance criteria pin cleanly to the diff. Signature extension is positional (preserves existing direct-call shape per spec mitigation #3). Single call site updated in lockstep (single-call-site invariant verified via `rg`). Pre-fetch trigger preserves pointer-sentinel discipline (description-only path remains fetch-free, guarded by the existing `*DescriptionOnlyAgentSucceeds` test). All 5 new tests present and exercise the spec scenarios (4 strict spec + 1 defense-in-depth bonus). Test re-run reproduces 165/165 green. Worklog is complete; doc-comments carry the C.1 attribution and the idempotency contract. Bonus 5th test (`*PersistentNonStewardOwnerSucceeds`) is non-blocking surplus mirroring the existing test family's parallel-guarantee pattern. No round-2 needed.
+
+### TL;DR
+
+- T1 — All five acceptance criteria PASS; signature positional form preserved, single call site updated, 5 new tests cover reject / DevGated reject / idempotent allow / steward allow / non-STEWARD-owner allow.
+- T2 — `mage test-pkg ./internal/adapters/server/common` re-run reproduces 165/165 green; +5 tests align exactly with spec scenarios + 1 defense-in-depth bonus.
+- T3 — Doc-comments on `UpdateActionItem` and `assertOwnerStateGateUpdateFields` carry the C.1 attribution paragraph and the load-bearing "idempotent writes allowed via dereferenced-value comparison" contract.
+
+### Hylla Feedback
+
+N/A — review touched only Go source + tests under filesystem-MD coordination mode. Per spawn prompt directive ("NO Hylla calls"), no Hylla queries attempted. Evidence resolved via `Read` + `git diff` + `rg` on the uncommitted working tree + `mage test-pkg` re-run.

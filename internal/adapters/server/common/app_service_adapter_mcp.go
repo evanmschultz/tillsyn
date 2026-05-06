@@ -819,14 +819,18 @@ func (a *AppServiceAdapter) CreateActionItem(ctx context.Context, in CreateActio
 //
 // Drop 3 droplet 3.19 (L1 field-level write guard): when the target item is
 // STEWARD-owned and the calling session is not steward-principal, the
-// adapter REJECTS any update that mutates Owner or DropNumber away from
-// existing values. Description/title/priority/due_at/labels/role/
-// structural_type/metadata updates are explicitly permitted on
-// STEWARD-owned items by drop-orchs (PLAN.md § 19.3 bullet 7) — only the
-// Owner/DropNumber columns are gated. The pointer-sentinel shape on
-// UpdateActionItemRequest.Owner / DropNumber distinguishes "absent" from
-// "set to empty" so a description-only update by an agent doesn't trigger a
-// false rejection.
+// adapter REJECTS any update that mutates Owner, DropNumber, Persistent,
+// or DevGated away from existing values. Description/title/priority/
+// due_at/labels/role/structural_type/metadata updates are explicitly
+// permitted on STEWARD-owned items by drop-orchs (PLAN.md § 19.3 bullet
+// 7) — only the Owner/DropNumber/Persistent/DevGated columns are gated.
+// The pointer-sentinel shape on UpdateActionItemRequest distinguishes
+// "absent" from "set to existing/zero" so a description-only update by an
+// agent doesn't trigger a false rejection. Drop 4c.5 droplet C.1
+// extended the gate to Persistent / DevGated because both flags are
+// load-bearing markers on STEWARD anchor nodes — a silent flip by an
+// agent would let auto-generation re-seed (Persistent=false) or perturb
+// dev-gating semantics on rollup parents.
 func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActionItemRequest) (domain.ActionItem, error) {
 	if a == nil || a.service == nil {
 		return domain.ActionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
@@ -860,12 +864,12 @@ func (a *AppServiceAdapter) UpdateActionItem(ctx context.Context, in UpdateActio
 	if err := validateMetadataOutcome(in.Metadata); err != nil {
 		return domain.ActionItem{}, err
 	}
-	if in.Owner != nil || in.DropNumber != nil {
+	if in.Owner != nil || in.DropNumber != nil || in.Persistent != nil || in.DevGated != nil {
 		existing, fetchErr := a.service.GetActionItem(ctx, strings.TrimSpace(in.ActionItemID))
 		if fetchErr != nil {
 			return domain.ActionItem{}, mapAppError("update actionItem", fetchErr)
 		}
-		if err := assertOwnerStateGateUpdateFields(ctx, existing, in.Owner, in.DropNumber); err != nil {
+		if err := assertOwnerStateGateUpdateFields(ctx, existing, in.Owner, in.DropNumber, in.Persistent, in.DevGated); err != nil {
 			return domain.ActionItem{}, err
 		}
 	}
@@ -1190,18 +1194,28 @@ func assertOwnerStateGate(ctx context.Context, item domain.ActionItem) error {
 
 // assertOwnerStateGateUpdateFields enforces the Drop 3 droplet 3.19 L1
 // field-level write guard: when the existing item is STEWARD-owned and the
-// caller is non-steward, REJECT any update that mutates the Owner or
-// DropNumber field away from existing values. The field-level path is
-// distinct from the state-neutral path (assertOwnerStateGate) because
-// description/title/metadata-only updates by drop-orchs on STEWARD-owned
-// items are explicitly permitted by PLAN.md § 19.3 bullet 7 ("Drop-orchs
-// keep create + update(description/details/metadata) perms but cannot move
-// STEWARD items through state").
+// caller is non-steward, REJECT any update that mutates the Owner,
+// DropNumber, Persistent, or DevGated field away from existing values. The
+// field-level path is distinct from the state-neutral path
+// (assertOwnerStateGate) because description/title/metadata-only updates
+// by drop-orchs on STEWARD-owned items are explicitly permitted by PLAN.md
+// § 19.3 bullet 7 ("Drop-orchs keep create + update(description/details/
+// metadata) perms but cannot move STEWARD items through state").
 //
-// `wantOwner` and `wantDropNumber` are pointer-sentinels: nil = "no field
-// supplied, preserve existing" (allowed); non-nil = "caller intends to set
-// this value" — checked against existing.
-func assertOwnerStateGateUpdateFields(ctx context.Context, existing domain.ActionItem, wantOwner *string, wantDropNumber *int) error {
+// Drop 4c.5 droplet C.1 extension: Persistent and DevGated joined the
+// gated-field set. Persistent=true is a load-bearing marker on STEWARD
+// anchor nodes; an agent silently flipping it to false would let the
+// auto-generator re-seed the node OR allow archive flows that the
+// persistent-anchor invariant exists to prevent. DevGated parallels the
+// same trust surface — drop-orchs MUST NOT toggle dev-gating on STEWARD
+// rollup parents. Same-value writes (idempotent no-ops) remain ALLOWED so
+// adapter-side idempotency replays don't false-reject.
+//
+// All four `want*` parameters are pointer-sentinels: nil = "no field
+// supplied, preserve existing" (allowed); non-nil = "caller intends to
+// set this value" — checked against existing. Idempotent writes (non-nil
+// pointer whose dereferenced value already equals existing) are allowed.
+func assertOwnerStateGateUpdateFields(ctx context.Context, existing domain.ActionItem, wantOwner *string, wantDropNumber *int, wantPersistent *bool, wantDevGated *bool) error {
 	if strings.TrimSpace(existing.Owner) != stewardOwner {
 		return nil
 	}
@@ -1215,6 +1229,12 @@ func assertOwnerStateGateUpdateFields(ctx context.Context, existing domain.Actio
 	}
 	if wantDropNumber != nil && *wantDropNumber != existing.DropNumber {
 		return fmt.Errorf("action item %q is owned by STEWARD; only steward-principal sessions can change DropNumber: %w", existing.ID, ErrAuthorizationDenied)
+	}
+	if wantPersistent != nil && *wantPersistent != existing.Persistent {
+		return fmt.Errorf("action item %q is owned by STEWARD; only steward-principal sessions can change Persistent: %w", existing.ID, ErrAuthorizationDenied)
+	}
+	if wantDevGated != nil && *wantDevGated != existing.DevGated {
+		return fmt.Errorf("action item %q is owned by STEWARD; only steward-principal sessions can change DevGated: %w", existing.ID, ErrAuthorizationDenied)
 	}
 	return nil
 }
