@@ -1440,3 +1440,46 @@ PASS. All six declared acceptance criteria, the two ancillary checks (path const
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All evidence resolved via `Read`, `git diff`, and a single `mage testPkg ./internal/app` run on the five declared files.
+
+## Droplet F.2.4 — Round 1
+
+**Date:** 2026-05-06.
+**Reviewer:** go-qa-proof-agent (model: opus).
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.2.4 — Caller audit + tests for language-aware template loading".
+**Worklog under review:** `workflow/drop_4c_5/BUILDER_WORKLOG.md` § "Droplet F.2.4 — Round 1".
+**Verdict:** PASS.
+
+### Findings
+
+- **F1 — Acceptance #1 (caller audit) verified.** `rg "templates\.LoadDefaultTemplate\(\)" --type go` returned exactly two matches, both inside doc-comments at `internal/app/auto_generate_steward.go:42` and `:48` describing the historical pre-F.2.4 caller and the preserved thin wrapper. ZERO production call expressions remain. The retained doc-comment references are explicit prose and do not constitute live calls; the worklog audit table at lines 1764-1772 enumerates the audit results faithfully.
+- **F2 — Acceptance #2 (`seedStewardAnchors` is language-aware) verified.** `internal/app/auto_generate_steward.go:115` reads `tpl, err := loadStewardSeedTemplate(project.Language)`. The seam closure at line 60 dispatches to `templates.LoadDefaultTemplateForLanguage(lang)`. The path from `seedStewardAnchors → loadStewardSeedTemplate(project.Language) → LoadDefaultTemplateForLanguage` is closed and language-routed.
+- **F3 — Acceptance #3 (`TestSeedStewardAnchors_LanguageAware` exists with 2 sub-cases) verified.** Test landed at `internal/app/service_test.go:6879`. Two sub-cases observed at lines 6886-6894: `name="empty language → generic axis"`/`language=""`/`anchorTitle="GENERIC_AXIS_ANCHOR"` and `name="go language → go axis"`/`language="go"`/`anchorTitle="GO_AXIS_ANCHOR"`. Both sub-cases run inside a `t.Run` loop and assert (a) the seam was invoked exactly once with the project's exact `Language` string (lines 6940-6946) and (b) the materialized STEWARD anchor titles match the language-tagged fixture set (lines 6954-6969). The language-tagged fixture pattern (unique anchor titles per axis) is the falsification-strict wedge — a bypass of the `lang` argument would route to the wrong fixture branch and surface the wrong title.
+- **F4 — Acceptance #4 (`mage ci` green) trusted at 2888/2888 per spawn-prompt directive.** Worklog also reports `mage testPkg ./internal/app` 474/474 PASS standalone.
+- **F5 — Seam signature change verified.** `internal/app/auto_generate_steward.go:60` shows `var loadStewardSeedTemplate = func(lang string) (templates.Template, error) {` and the call site at line 115 passes `project.Language`. `internal/app/auto_generate_steward_test.go:26` mirrors the change in `withSeedTemplateFixture(t *testing.T, fixture func(string) (templates.Template, error))`.
+- **F6 — All test fixture call sites updated.** `rg "withSeedTemplateFixture"` listed six pre-existing fixtures in `auto_generate_steward_test.go` (lines 76, 140, 177, 331, 401, 516) — every one uses the new `func(_ string) (templates.Template, error)` shape. Plus the new axis-asserting fixture at `service_test.go:6899` uses `func(lang string) ...` to consume the argument. `mage testPkg ./internal/app` 474/474 PASS confirms all closures compile and behave correctly.
+- **F7 — Service.go change is doc-comment-only.** `git diff HEAD -- internal/app/service.go` shows a single doc-comment paragraph rewrite inside `loadProjectTemplate`'s comment block (lines 511-521 in the new version), naming the F.2.4 redirect outcome. No code body change.
+- **F8 — `embed_test.go` cross-reference verified.** Doc-comment of `TestLoadDefaultTemplate_WrapsLanguageEmpty` at lines 999-1016 carries the F.2.4 cross-reference paragraph naming both F.1.3 (origin) and F.2.4 (re-affirmation as contract gate post-caller-audit). The wrapper-equivalence cross-test (acceptance #3 scenario `LoadDefaultTemplate() == LoadDefaultTemplateForLanguage("")`) is satisfied by the existing `reflect.DeepEqual` assertion at line 1028 — the YAGNI/DRY reuse is sound.
+- **F9 — Worklog completeness gate met.** Lines 1753-1821 cover date / builder / source spec / state / caller audit table / files-touched / targets-run / design notes / Hylla feedback / unknowns. The "concurrent-droplet collision" subsection (lines 1803-1811) routes a real cross-droplet observation back to the orchestrator without affecting F.2.4's own verdict — appropriate handling.
+
+### Missing Evidence
+
+None blocking. Two non-blocking observations:
+
+- **2.1** — F.2.4's worklog notes a transient `mage ci` red caused by sibling F.3.1 WIP (uncommitted-modified files outside F.2.4's `paths`). The builder explicitly did NOT silently revert sibling work; the final 2888/2888 green state INCLUDES F.3.1's WIP. Acceptance #4 is satisfied for F.2.4 in isolation (per `mage testPkg ./internal/app` 474/474 PASS) and in aggregate (per `mage ci` 2888/2888 green). This is not a finding against F.2.4; it is a process observation routed via the worklog "Routed back to orchestrator" subsection.
+- **2.2** — `TestSeedStewardAnchors_LanguageAware` does not test the `Language="fe"` rejection path, but the acceptance criteria explicitly enumerate two sub-cases (`""` and `"go"`); FE rejection is an F.1.3 concern covered by `TestLoadDefaultTemplateForLanguage_FERejected`. No coverage gap against F.2.4's stated scope.
+
+### Summary
+
+PASS. All four declared acceptance criteria met, the seam signature change and every fixture call site update verified, the new test asserts both the seam-invocation contract (single call with exact `lang`) and the language-axis materialization wedge (language-tagged anchor titles distinguish right-axis from wrong-axis routing). Service.go diff is doc-only as the worklog claims. The thin wrapper `templates.LoadDefaultTemplate()` is preserved per spec; production callers are exhaustively redirected. Worklog is comprehensive.
+
+### Proof Certificate
+
+- **Premises:** every production call to `templates.LoadDefaultTemplate()` is removed; `seedStewardAnchors` reads `project.Language` via the seam; `TestSeedStewardAnchors_LanguageAware` exists with two sub-cases asserting language pass-through and per-axis seed materialization; seam signature is `func(lang string) (templates.Template, error)`; all six pre-existing fixture call sites updated to `func(_ string) ...`; `mage ci` green at 2888/2888; service.go change is doc-only; `embed_test.go` cross-reference paragraph present; worklog records caller audit + design notes + Hylla feedback + unknowns.
+- **Evidence:** `rg "templates\.LoadDefaultTemplate\(\)" --type go` (zero production calls); `auto_generate_steward.go:60`, `:115` (seam definition + call site); `service_test.go:6879-6972` (new test); `auto_generate_steward_test.go:26` (fixture helper signature); `rg "withSeedTemplateFixture"` (six fixture sites all updated); `git diff HEAD -- internal/app/service.go` (doc-only diff); `embed_test.go:999-1016` (F.2.4 cross-reference paragraph); `BUILDER_WORKLOG.md:1753-1821` (full worklog entry).
+- **Trace or cases:** (a) `Language=""` project → `seedStewardAnchors` calls `loadStewardSeedTemplate("")` → fixture routes to generic-axis branch → `GENERIC_AXIS_ANCHOR` materializes → assertion passes. (b) `Language="go"` project → `loadStewardSeedTemplate("go")` → go-axis branch → `GO_AXIS_ANCHOR` materializes → assertion passes. (c) Pre-existing `TestAutoGenSeeds6StewardPersistentParents` and the other five fixture-using tests use `func(_ string) ...` and continue to materialize the canonical 6 STEWARD seeds — `mage testPkg ./internal/app` 474/474 PASS confirms zero regression.
+- **Conclusion:** PASS.
+- **Unknowns:** None blocking. The transient `mage ci` red caused by sibling F.3.1 WIP is documented and routed; the final 2888/2888 green state covers both droplets' contributions.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All evidence resolved via `Read`, `Bash` (`rg` + `git diff` + `wc`), and the builder's `mage ci` 2888/2888 verdict trusted per directive.

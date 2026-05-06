@@ -511,11 +511,14 @@ const projectTemplateDir = ".tillsyn"
 // match the prior "skip" behavior.
 //
 // Note: droplet 3.20's STEWARD-seed auto-generator does NOT depend on
-// this helper — it loads the embedded default template independently via
-// templates.LoadDefaultTemplate so seed materialization is decoupled
-// from the KindCatalog-bake fallback semantics. See seedStewardAnchors
-// below. Drop 4c.5 droplet F.2.4 audits that caller and redirects to
-// the language-explicit form.
+// this helper — it loads the embedded default template independently
+// via the package-level `loadStewardSeedTemplate` seam (see
+// auto_generate_steward.go) so seed materialization is decoupled from
+// the KindCatalog-bake fallback semantics. Post-Drop-4c.5-droplet-F.2.4
+// that seam takes a `lang` argument and routes through
+// `templates.LoadDefaultTemplateForLanguage(project.Language)` so the
+// STEWARD-seed path is language-aware in lockstep with this helper's
+// embedded fallback (line ~552 below).
 //
 // Per Drop 3 finding 5.B.14: edits to the on-disk template AFTER project
 // creation are ignored — the catalog is the create-time snapshot.

@@ -257,6 +257,7 @@
 
 ### Droplet F.2.4 — Caller audit + tests for language-aware template loading
 
+**State:** done (round 1)
 **Title:** `4c.5.F.2.4 — audit LoadDefaultTemplate callers + add cross-package tests`.
 
 **Files / paths:**
@@ -407,6 +408,7 @@
 
 ### Droplet F.3.1 — `till.template` MCP tool: `get` + `list_builtin` operations
 
+**State:** done (round 1)
 **Title:** `4c.5.F.3.1 — till.template MCP get + list_builtin operations`.
 
 **Files / paths:**

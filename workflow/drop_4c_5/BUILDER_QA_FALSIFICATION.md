@@ -1627,4 +1627,42 @@ T1. All six attacks REFUTED — bare→primary→embedded walk order correct, os
 T2. No counterexamples constructed.
 T3. **PASS** — F.1.2 ready to commit.
 
+## Droplet F.2.4 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, opus)
+**Date:** 2026-05-06
+**Verdict:** PASS
+**Scope:** F.2.4-declared paths only — `internal/app/auto_generate_steward.go`, `internal/app/auto_generate_steward_test.go`, `internal/app/service.go`, `internal/app/service_test.go`, `internal/templates/embed_test.go`, `workflow/drop_4c_5/THEME_F_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`. F.3.1 sibling builder edits (`internal/app/template_service.go`, etc.) deliberately excluded.
+
+### 1. Findings
+
+- **1.1 Caller audit completeness (Attack 1).** REFUTED. Independent `rg "LoadDefaultTemplate\b" --glob '!*_test.go' --glob '!workflow/**' --glob '!*.md'` returns ZERO production callers of the parameterless wrapper outside `internal/templates/embed.go` itself (the function definition at line 94, plus doc-comments at 26/28/58/79). The seam in `auto_generate_steward.go:60-62` now invokes `templates.LoadDefaultTemplateForLanguage(lang)`. The other production callers (`service.go:555` in `loadProjectTemplate` and `template_service.go:161`) already used `LoadDefaultTemplateForLanguage` pre-F.2.4. Builder's "exactly one production caller" claim is correct.
+- **1.2 Test wedge correctness (Attack 2).** REFUTED with caveat. The new `TestSeedStewardAnchors_LanguageAware` (`service_test.go:6841-6972`) uses uniquely-tagged anchor titles (`GENERIC_AXIS_ANCHOR` / `GO_AXIS_ANCHOR`) per language axis. Concern: this asserts only the **seam contract** (right `lang` argument received → right fixture's anchor title materialized), NOT that the embedded TOML's actual 6 STEWARD seeds materialize. Mitigation: F.1.3's `TestLoadDefaultTemplate_WrapsLanguageEmpty`, `TestLoadDefaultTemplateForLanguage_Generic`, `TestLoadDefaultTemplateForLanguage_Go` already pin embedded-content routing at the templates-package boundary. F.2.4's responsibility is the seam-redirect contract; embedded-content correctness is upstream. Reasonable separation of concerns. Accepted, not a counterexample.
+- **1.3 Spec scenario #3 reuse (Attack 3).** REFUTED. The spec-named scenario "LoadDefaultTemplate() returns same as LoadDefaultTemplateForLanguage(\"\")" is implemented by reusing F.1.3's pre-existing `TestLoadDefaultTemplate_WrapsLanguageEmpty` (`embed_test.go:1017-1030`). Builder updated the doc-comment (`embed_test.go:999-1015`) to explicitly cite F.2.4 acceptance criterion #3 and the table-driven scenario name. The test executes, asserts deep-equal between `LoadDefaultTemplate()` and `LoadDefaultTemplateForLanguage("")`. Functionally equivalent to authoring a duplicate test; cross-ref in doc-comment makes the F.2.4 lineage discoverable.
+- **1.4 Seam signature back-compat (Attack 4).** REFUTED. Independent search `rg "func\(\) \(templates\.Template"` returns ZERO matches across all `.go` files. All six pre-existing fixtures (`auto_generate_steward_test.go:76, 133, 170, 331, 401, 516`) updated to `func(_ string) (templates.Template, error)` — the underscore-blank signals "fixture intentionally ignores the axis." The `withSeedTemplateFixture` helper signature (`auto_generate_steward_test.go:26`) updated to `func(string) (templates.Template, error)`. No fixture stuck on the old signature.
+- **1.5 service.go doc-comment-only (Attack 5).** REFUTED. `git diff --stat`: 13 lines changed, 8 inserted, 5 deleted. Direct `Read` of lines 505-535 confirms all changed lines fall inside the doc-comment block (`//` prefixed) bounded by lines 511-521 — describing the post-F.2.4 seam contract. `loadProjectTemplate` function body (lines 526+) is byte-identical to pre-edit. No behavior change.
+- **1.6 mage check verification.** `mage check` runs cleanly: 2891 tests pass across 24 packages; `internal/app` coverage 71.8% (above 70% threshold). Build clean.
+
+### 2. Counterexamples
+
+None — all five attack categories REFUTED. No counterexample constructed.
+
+### 3. Summary
+
+**PASS** — F.2.4 ready to commit. Builder's claims hold against independent verification:
+- Production caller audit complete (one redirected, others already on language-aware variant).
+- Test fixtures all migrated to new seam signature.
+- Scenario coverage is functionally equivalent (cross-ref reuse over duplication).
+- service.go is genuinely doc-comment-only.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode (no Hylla calls). All evidence collected via `Read`, `Grep` (`rg`), `Bash` (`git diff`, `mage check`).
+
+### TL;DR
+
+T1. All five F.2.4 attack categories REFUTED — caller audit complete (one production caller redirected), test fixtures all on new seam signature (`func(_ string) ...`), scenario #3 reuse via cross-ref doc-comment is functionally equivalent, service.go is purely doc-comment changes (8+/5−, all inside `//` block), and `mage check` green (2891 tests / 24 pkgs).
+T2. No counterexamples constructed.
+T3. **PASS** — F.2.4 ready to commit.
+
 

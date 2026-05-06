@@ -15,8 +15,15 @@ import (
 // seam with the supplied closure for the duration of the test, restoring
 // the previous seam on cleanup. Tests use a hand-built Template so the
 // auto-generator's behavior is exercised without depending on the embedded
-// default.toml content drift.
-func withSeedTemplateFixture(t *testing.T, fixture func() (templates.Template, error)) {
+// default-go.toml / default-generic.toml content drift.
+//
+// Drop 4c.5 droplet F.2.4 signature shift: the seam now takes a single
+// `lang string` argument (the project's `Language` axis) so the production
+// STEWARD seed path can route through `templates.LoadDefaultTemplateForLanguage`.
+// Fixtures that don't care about the axis use `_ string` in the closure
+// signature; fixtures that DO care (see TestSeedStewardAnchors_LanguageAware
+// in service_test.go) inspect the argument and dispatch accordingly.
+func withSeedTemplateFixture(t *testing.T, fixture func(string) (templates.Template, error)) {
 	t.Helper()
 	prev := loadStewardSeedTemplate
 	loadStewardSeedTemplate = fixture
@@ -66,7 +73,7 @@ func newSeederService(t *testing.T) (*Service, *fakeRepo) {
 // Persistent=true, DevGated=false, Kind=discussion,
 // StructuralType=droplet, ParentID="" (level_1 under the project root).
 func TestAutoGenSeeds6StewardPersistentParents(t *testing.T) {
-	withSeedTemplateFixture(t, func() (templates.Template, error) {
+	withSeedTemplateFixture(t, func(_ string) (templates.Template, error) {
 		return templates.Template{
 			SchemaVersion: templates.SchemaVersionV1,
 			StewardSeeds:  canonicalSixSeeds(),
@@ -130,7 +137,7 @@ func TestAutoGenSeeds6StewardPersistentParents(t *testing.T) {
 // keys idempotency on (project_id, owner=STEWARD, title) — a known seed
 // title resolves to the existing row and the seeder skips it.
 func TestAutoGenSeedsIdempotentOnReseed(t *testing.T) {
-	withSeedTemplateFixture(t, func() (templates.Template, error) {
+	withSeedTemplateFixture(t, func(_ string) (templates.Template, error) {
 		return templates.Template{
 			SchemaVersion: templates.SchemaVersionV1,
 			StewardSeeds:  canonicalSixSeeds(),
@@ -167,7 +174,7 @@ func TestAutoGenSeedsIdempotentOnReseed(t *testing.T) {
 // matching anchor parents AND a refinements-gate confluence inside the
 // drop's tree with the expected blocked_by wiring.
 func TestAutoGenSeedsLevel2FindingsOnNumberedDropCreation(t *testing.T) {
-	withSeedTemplateFixture(t, func() (templates.Template, error) {
+	withSeedTemplateFixture(t, func(_ string) (templates.Template, error) {
 		return templates.Template{
 			SchemaVersion: templates.SchemaVersionV1,
 			StewardSeeds:  canonicalSixSeeds(),
@@ -321,7 +328,7 @@ func TestAutoGenSeedsLevel2FindingsOnNumberedDropCreation(t *testing.T) {
 // (drop_number=0). Level_1 items without a drop_number are normal cascade
 // nodes, not numbered drops.
 func TestAutoGenSeedsSkipsNonNumberedDrop(t *testing.T) {
-	withSeedTemplateFixture(t, func() (templates.Template, error) {
+	withSeedTemplateFixture(t, func(_ string) (templates.Template, error) {
 		return templates.Template{
 			SchemaVersion: templates.SchemaVersionV1,
 			StewardSeeds:  canonicalSixSeeds(),
@@ -391,7 +398,7 @@ func TestAutoGenSeedsSkipsNonNumberedDrop(t *testing.T) {
 // instead of calling the fake's CreateAttentionItem (which overwrites the
 // map entry on every call).
 func TestRaiseRefinementsGateForgottenAttentionIsIdempotent(t *testing.T) {
-	withSeedTemplateFixture(t, func() (templates.Template, error) {
+	withSeedTemplateFixture(t, func(_ string) (templates.Template, error) {
 		return templates.Template{
 			SchemaVersion: templates.SchemaVersionV1,
 			StewardSeeds:  canonicalSixSeeds(),
@@ -506,7 +513,7 @@ func attentionKeys(m map[string]domain.AttentionItem) []string {
 // anchors were never seeded — the safety net the code documents.
 func TestAutoGenSeedsRejectsMissingAnchor(t *testing.T) {
 	// Project creation seeds zero anchors.
-	withSeedTemplateFixture(t, func() (templates.Template, error) {
+	withSeedTemplateFixture(t, func(_ string) (templates.Template, error) {
 		return templates.Template{SchemaVersion: templates.SchemaVersionV1}, nil
 	})
 

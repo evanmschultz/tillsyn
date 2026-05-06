@@ -1000,7 +1000,14 @@ func TestLoadDefaultTemplateForLanguage_UnknownRejected(t *testing.T) {
 // contract: `LoadDefaultTemplate()` returns the SAME Template (deep-equal)
 // as `LoadDefaultTemplateForLanguage("")`. Drop 4c.5 droplet F.1.3
 // acceptance criterion #6 — the cross-test that pins the wrapper
-// semantic.
+// semantic. Re-affirmed by Drop 4c.5 droplet F.2.4 acceptance criterion #3
+// + table-driven scenario "LoadDefaultTemplate() returns same as
+// LoadDefaultTemplateForLanguage(\"\")": F.2.4's caller-audit redirected
+// every PRODUCTION call to `LoadDefaultTemplateForLanguage(project.Language)`,
+// but the thin wrapper is preserved for callers that intentionally want
+// the language-AGNOSTIC generic template (none in production today; tests
+// may still reach for it). This deep-equal assertion is the contract gate
+// that lets future drops trust the equivalence.
 //
 // SEMANTIC SHIFT regression net: pre-F.1.3 `LoadDefaultTemplate()` read
 // default-go.toml directly. Post-F.1.3 it routes to default-generic.toml

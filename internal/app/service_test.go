@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -6833,5 +6834,139 @@ func TestBakeProjectKindCatalog_NonEmptyPathFallsThroughToEmbedded(t *testing.T)
 	}
 	if len(catalog.Kinds) == 0 {
 		t.Fatalf("decoded catalog.Kinds is empty; embedded fallback must populate the closed kind catalog")
+	}
+}
+
+// TestSeedStewardAnchors_LanguageAware covers Drop 4c.5 droplet F.2.4
+// acceptance criterion #3 + the table-driven test scenarios:
+//
+//   - `Language="" → generic STEWARD seeds`
+//   - `Language="go" → go STEWARD seeds`
+//
+// Pre-F.2.4 the STEWARD-seed seam ignored project.Language entirely —
+// every project, regardless of axis, materialized seeds from the
+// language-AGNOSTIC `LoadDefaultTemplate()` (which post-F.1.3 routes
+// to `default-generic.toml`). Post-F.2.4 the seam takes a `lang`
+// argument so the seed path picks the correct embedded TOML per the
+// project's `Language` field. This test substitutes the seam with a
+// closure that records the received language AND returns a
+// language-uniquely-tagged seed set, then asserts:
+//
+//  1. The seam was invoked with the project's exact Language string
+//     (proves the redirect through `seedStewardAnchors → loadStewardSeedTemplate(project.Language)`
+//     is wired correctly).
+//  2. The materialized 6 STEWARD anchors carry the language-tagged
+//     titles from the corresponding fixture (proves the per-axis
+//     Template was actually used to drive seed materialization, not a
+//     hard-coded default).
+//
+// Falsification mitigations covered:
+//
+//   - F.2.4 F2 ("Test fixtures hardcode `LoadDefaultTemplate()` and
+//     start failing silently") — by funneling through the seam with a
+//     `_ string` parameter audit, this test wedges the language into
+//     the contract.
+//   - F.2.4 F3 ("Caller audit misses a non-Go consumer") — the seam is
+//     the ONLY production caller of the templates package's default
+//     loaders post-F.2.4 (the other caller `loadProjectTemplate` in
+//     this same file already passes `project.Language`).
+//
+// The two cases share a closure shape via `makeFixture`; the
+// language-specific tag distinguishes which axis the seam was invoked
+// against without having to load the live embedded TOMLs (which would
+// re-introduce content drift the existing test fixture pattern
+// deliberately avoids).
+func TestSeedStewardAnchors_LanguageAware(t *testing.T) {
+	cases := []struct {
+		name        string
+		language    string
+		anchorTitle string
+	}{
+		{
+			name:        "empty language → generic axis",
+			language:    "",
+			anchorTitle: "GENERIC_AXIS_ANCHOR",
+		},
+		{
+			name:        "go language → go axis",
+			language:    "go",
+			anchorTitle: "GO_AXIS_ANCHOR",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seamLangsObserved []string
+			withSeedTemplateFixture(t, func(lang string) (templates.Template, error) {
+				seamLangsObserved = append(seamLangsObserved, lang)
+				// Per-axis seed set — a single anchor whose title encodes
+				// the axis the seam saw. If the production code ignored
+				// project.Language and called the seam with a different
+				// argument, the wrong fixture would fire and we'd see
+				// the OTHER axis's anchor title materialized.
+				switch lang {
+				case "":
+					return templates.Template{
+						SchemaVersion: templates.SchemaVersionV1,
+						StewardSeeds: []templates.StewardSeed{
+							{Title: "GENERIC_AXIS_ANCHOR", Description: "generic-axis seeded anchor"},
+						},
+					}, nil
+				case "go":
+					return templates.Template{
+						SchemaVersion: templates.SchemaVersionV1,
+						StewardSeeds: []templates.StewardSeed{
+							{Title: "GO_AXIS_ANCHOR", Description: "go-axis seeded anchor"},
+						},
+					}, nil
+				default:
+					t.Fatalf("seam invoked with unexpected language %q; F.2.4 closed-enum routing broken", lang)
+					return templates.Template{}, nil
+				}
+			})
+
+			svc, repo := newSeederService(t)
+			project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+				Name:     "Language-Aware Demo (" + tc.name + ")",
+				Language: tc.language,
+			})
+			if err != nil {
+				t.Fatalf("CreateProjectWithMetadata(Language=%q) error = %v", tc.language, err)
+			}
+
+			// Acceptance #1 (seam wiring): exactly one invocation, with
+			// the project's exact Language string. Multiple invocations
+			// would mean the seed path ran twice, which is a regression
+			// not in F.2.4's scope.
+			if got := len(seamLangsObserved); got != 1 {
+				t.Fatalf("seam invocations = %d; want 1 (seedStewardAnchors fires once at project create)", got)
+			}
+			if seamLangsObserved[0] != tc.language {
+				t.Fatalf("seam invoked with lang = %q; want %q (seedStewardAnchors must pass project.Language through unchanged)",
+					seamLangsObserved[0], tc.language)
+			}
+
+			// Acceptance #2 (language-tagged seed materialization): the
+			// project has exactly one STEWARD anchor whose title matches
+			// the language axis. If the production code passed a wrong
+			// `lang` (or ignored it) the wrong fixture's anchor would
+			// have materialized; reflect.DeepEqual on the title set is
+			// the strict invariant.
+			stewardTitles := make([]string, 0, 1)
+			for _, item := range repo.tasks {
+				if item.ProjectID != project.ID {
+					continue
+				}
+				if item.Owner != stewardOwner {
+					continue
+				}
+				stewardTitles = append(stewardTitles, item.Title)
+			}
+			sort.Strings(stewardTitles)
+			wantTitles := []string{tc.anchorTitle}
+			if !reflect.DeepEqual(stewardTitles, wantTitles) {
+				t.Fatalf("STEWARD anchor titles = %v; want %v (language-axis fixture mis-routed via seam)",
+					stewardTitles, wantTitles)
+			}
+		})
 	}
 }
