@@ -371,6 +371,135 @@ func TestAutoGenSeedsSkipsNonNumberedDrop(t *testing.T) {
 	}
 }
 
+// TestRaiseRefinementsGateForgottenAttentionIsIdempotent verifies the
+// Drop 4c.5 droplet C.2 idempotency contract on
+// raiseRefinementsGateForgottenAttention: re-running gate-close against an
+// already-warned drop must NOT create a second attention item AND must NOT
+// re-build the warning body. The helper looks up the deterministic
+// attention id `refinements-gate-forgotten::<gate.ID>` BEFORE constructing
+// the new attention; a non-ErrNotFound hit short-circuits to a no-op
+// success.
+//
+// The test arranges a numbered drop whose auto-generated 5 STEWARD-owned
+// findings supply the "stragglers" the safety-net warns about (all
+// findings start in the todo state — non-terminal — and parent under the
+// HYLLA_FINDINGS / LEDGER / WIKI_CHANGELOG / REFINEMENTS / HYLLA_REFINEMENTS
+// anchors, so they are NOT excluded by the level_1-drop filter at line 391).
+// The first helper call creates the warning; the test then mutates the
+// stored attention's Summary in-place. A second helper call MUST leave that
+// mutation intact, proving the second call took the early-return path
+// instead of calling the fake's CreateAttentionItem (which overwrites the
+// map entry on every call).
+func TestRaiseRefinementsGateForgottenAttentionIsIdempotent(t *testing.T) {
+	withSeedTemplateFixture(t, func() (templates.Template, error) {
+		return templates.Template{
+			SchemaVersion: templates.SchemaVersionV1,
+			StewardSeeds:  canonicalSixSeeds(),
+		}, nil
+	})
+
+	svc, repo := newSeederService(t)
+	project, err := svc.CreateProject(context.Background(), "Idempotent Safety-Net Demo", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	columns, err := svc.ListColumns(context.Background(), project.ID, false)
+	if err != nil {
+		t.Fatalf("ListColumns() error = %v", err)
+	}
+	if len(columns) == 0 {
+		t.Fatal("expected auto-created project columns")
+	}
+
+	const dropN = 7
+	if _, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+		ProjectID:      project.ID,
+		ColumnID:       columns[0].ID,
+		Kind:           domain.KindPlan,
+		StructuralType: domain.StructuralTypeDrop,
+		DropNumber:     dropN,
+		Title:          "DROP_7",
+		Description:    "Numbered drop 7 for idempotency check.",
+		Priority:       domain.PriorityMedium,
+	}); err != nil {
+		t.Fatalf("CreateActionItem(numbered drop) error = %v", err)
+	}
+
+	gateTitle := "DROP_7_REFINEMENTS_GATE_BEFORE_DROP_8"
+	var gate domain.ActionItem
+	for _, item := range repo.tasks {
+		if item.ProjectID == project.ID && item.Title == gateTitle {
+			gate = item
+			break
+		}
+	}
+	if gate.ID == "" {
+		t.Fatalf("expected refinements-gate %q to exist after numbered-drop creation", gateTitle)
+	}
+
+	// First call: stragglers exist (the 5 STEWARD findings are todo), so
+	// the helper builds + persists exactly one attention.
+	if err := svc.raiseRefinementsGateForgottenAttention(context.Background(), gate); err != nil {
+		t.Fatalf("first raiseRefinementsGateForgottenAttention() error = %v", err)
+	}
+	wantAttentionID := "refinements-gate-forgotten::" + gate.ID
+	stored, ok := repo.attentionItems[wantAttentionID]
+	if !ok {
+		t.Fatalf("expected attention id %q after first call (got map keys %v)", wantAttentionID, attentionKeys(repo.attentionItems))
+	}
+	if stored.Summary == "" {
+		t.Fatalf("expected non-empty Summary on first-call attention")
+	}
+
+	// Mutate the stored attention's Summary in-place. If the second call
+	// re-enters CreateAttentionItem the fake will overwrite this with the
+	// freshly-built body and our sentinel disappears — proving the helper
+	// re-ran the create branch instead of taking the idempotent early
+	// return.
+	const sentinelMarker = "C.2 IDEMPOTENT-CHECK SENTINEL"
+	mutated := stored
+	mutated.Summary = sentinelMarker
+	repo.attentionItems[wantAttentionID] = mutated
+
+	// Second call on the SAME gate — must observe the existing attention
+	// via GetAttentionItem and short-circuit. CreateAttentionItem must NOT
+	// be called a second time.
+	if err := svc.raiseRefinementsGateForgottenAttention(context.Background(), gate); err != nil {
+		t.Fatalf("second raiseRefinementsGateForgottenAttention() error = %v", err)
+	}
+
+	// Total attention count for this deterministic id must remain 1.
+	count := 0
+	for id := range repo.attentionItems {
+		if id == wantAttentionID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 attention at id %q after two calls, got %d", wantAttentionID, count)
+	}
+
+	// Sentinel must survive — proves the second call did NOT invoke
+	// CreateAttentionItem (which would overwrite Summary back to the
+	// freshly-built value).
+	after := repo.attentionItems[wantAttentionID]
+	if after.Summary != sentinelMarker {
+		t.Fatalf("second call overwrote sentinel: Summary = %q, want %q (helper re-entered create path instead of taking idempotent early return)", after.Summary, sentinelMarker)
+	}
+}
+
+// attentionKeys returns a sorted slice of attention-item ids in the supplied
+// map, used by TestRaiseRefinementsGateForgottenAttentionIsIdempotent to
+// produce stable diagnostics when the expected key is missing.
+func attentionKeys(m map[string]domain.AttentionItem) []string {
+	out := make([]string, 0, len(m))
+	for id := range m {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // TestAutoGenSeedsRejectsMissingAnchor verifies the level_2 finding
 // auto-generator returns errStewardParentNotSeeded when a level_1
 // numbered drop creation runs against a project whose STEWARD persistent

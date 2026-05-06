@@ -1368,3 +1368,36 @@ T1. All seven F.5.1 attack surfaces validated against `load.go` lines 122-1209, 
 T2. No counterexamples. One pre-existing `mage testPkg internal/templates` quirk noted, unrelated to F.5.1; `mage ci` gate is green.
 T3. **PASS** — F.5.1 ships clean.
 
+## Droplet C.2 — Round 1
+
+### Findings
+
+- 1.1 **Idempotency claim — second-call side-effect audit (PASS).** `auto_generate_steward.go:372-382` shows the second call exits at line 379 after exactly two reads: `isRefinementsGate(gate)` (pure struct-field inspection, no IO) at line 373 and `s.repo.GetAttentionItem(ctx, attentionID)` at line 377. No log line, no metric, no mutation, no list query, no embedding enqueue, no publisher call. Caller `MoveActionItem` (`service.go:1180-1184`) only invokes the helper when `toState==complete && isRefinementsGate`; the helper's own no-op return propagates as nil. Idempotency is observably clean.
+- 1.2 **`ErrNotFound` sentinel chain (PASS).** Builder uses `errors.Is(lookupErr, ErrNotFound)` at `auto_generate_steward.go:380`. Verified the chain end-to-end:
+  - `app/errors.go:7` — `ErrNotFound = errors.New("not found")` (canonical sentinel).
+  - `app/ports.go:38,55` — interface contract states `GetAttentionItem` returns `ErrNotFound` when no row matches.
+  - `sqlite/repo.go:2164-2166` — production `Repository.GetAttentionItem` delegates to `getAttentionItemByID`.
+  - `sqlite/repo.go:2603-2613` — `getAttentionItemByID` runs the row scan; `scanAttentionItem` (lines 3201-3242) maps `sql.ErrNoRows → app.ErrNotFound` directly. The wrap is direct (`return ..., app.ErrNotFound`), so `errors.Is` matches without any intermediate `%w` chain. Sentinel-equality holds in production.
+  - `service_test.go:787-794` — fakeRepo's `GetAttentionItem` returns `ErrNotFound` (same package) on map miss. Both prod and fake share the same sentinel.
+- 1.3 **Race-collapse cite — STALE LINE NUMBER.** Builder's doc-comment at `auto_generate_steward.go:361` reads "the storage-layer terminal-state guard at service.go:832 (the gate cannot transition to complete twice)." Verified the cite at `service.go:822-836` — that line range is the `SearchActionItemsFilter` struct definition (`LabelsAll`, `Mode`, `Sort`, `Limit`, `Offset` fields), NOT a terminal-state guard. The actual terminal-state guard lives at `service.go:1116`: `if domain.IsTerminalState(fromState) && fromState != toState { return ..., ErrTransitionBlocked ... cannot transition from terminal state ... }`. The semantic claim (race collapses because the gate cannot transition to complete twice) is correct — but the line cite is wrong. This is a doc-comment maintenance miss, not a logic bug; `service.go` line numbers drifted between when the comment was authored and the final shape after droplet A.4's metadata.outcome guard insertion (lines 1119-1141). Recommend builder update the cite to `service.go:1116` (or to a symbol-name reference like "see `MoveActionItem`'s terminal-state guard" to avoid future drift).
+- 1.4 **Sentinel-mutation test technique — strong evidence (PASS).** `auto_generate_steward_test.go:454-488` mutates `repo.attentionItems[wantAttentionID].Summary` to `"C.2 IDEMPOTENT-CHECK SENTINEL"` BEFORE the second helper call, then asserts the sentinel survives. Cross-referenced fakeRepo behavior at `service_test.go:776-779`: `CreateAttentionItem` does `f.attentionItems[item.ID] = item` (direct map overwrite, full struct replacement). If the second helper call had taken the create branch, `domain.NewAttentionItem` would have rebuilt `Summary` from the freshly-computed body, the fake would have overwritten the entire stored struct, and the sentinel marker would have been lost. The test explicitly attacks this. The only alternate path that could mutate `Summary` is `UpsertAttentionItem` (`service_test.go:782-785`) — but `raiseRefinementsGateForgottenAttention` only calls `CreateAttentionItem` (line 441), never `Upsert`. No other helper path writes to `attentionItems[id]`. Technique is strong: a passing test PROVES the second call took the early-return path.
+- 1.5 **Spec acceptance #4 deferred path — impl correct (PASS).** Builder noted the non-`ErrNotFound` infra-error test was deferred to round-2. Verified the impl at `auto_generate_steward.go:380-382`: `else if !errors.Is(lookupErr, ErrNotFound) { return fmt.Errorf("safety-net lookup attention %q: %w", attentionID, lookupErr) }`. The wrap uses `%w` (preserves `errors.Is/As` chain), names the attentionID for diagnostic clarity, and returns immediately without falling through to the `ListActionItemsByDropNumber` call — so a transient infra error cannot accidentally trigger downstream side effects. The contract matches spec acceptance #4 ("non-`ErrNotFound` infra error → bubble up wrapped"). Deferral to round-2 is acceptable; the impl path is sound and the missing test only delays *evidence of regression coverage*, not behavior.
+
+### Counterexamples
+
+- 2.1 **None CONFIRMED.** Finding 1.3 is a doc-comment cite drift (line `832` no longer points at the terminal-state guard; correct line is `1116`). The semantic claim it makes ("the gate cannot transition to complete twice") is true and load-bearing for the race-collapse argument; only the citation is stale. Classifying as a `nit` rather than a counterexample because: (a) no behavior bug, (b) no test gap, (c) doc-comment-only, (d) trivially fixable by either renumbering or symbol-name reference. Reporting for builder follow-up rather than blocking the droplet.
+
+### Summary
+
+PASS — droplet C.2 ships clean. Idempotency is observably correct (audited line-by-line: only two pure reads on second call), the `ErrNotFound` sentinel chain is intact end-to-end (production + fake), the test technique is rigorous (sentinel mutation forces the verify path through `CreateAttentionItem`-equality), and the deferred non-`ErrNotFound` infra-error test does not gate the impl path's correctness. One nit (1.3) is doc-comment line-cite drift; recommend builder fix `service.go:832 → service.go:1116` (or symbol-name reference) in a follow-up edit but not blocking.
+
+### Hylla Feedback
+
+N/A — per spawn directive ("NO Hylla calls"), no Hylla queries attempted. Evidence used `Read` + `Grep` only.
+
+### TL;DR
+
+T1. All five attack categories investigated; four PASS, one nit (doc-comment line cite `service.go:832` is stale; correct guard lives at line 1116). No CONFIRMED counterexample.
+T2. No CONFIRMED counterexample. Nit 1.3 is a doc-comment cite drift, not a behavior bug; recommend builder update to `service.go:1116` or symbol-name reference.
+T3. **PASS** — droplet C.2 ships; nit 1.3 is doc-only follow-up.
+

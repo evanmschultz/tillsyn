@@ -352,9 +352,17 @@ func isRefinementsGate(item domain.ActionItem) bool {
 // drop's own close attempt still rejects independently when its direct
 // children are non-terminal.
 //
-// The helper is idempotent on attention_item id: re-running gate-close
-// against an already-warned drop yields the same id and the storage layer
-// rejects the duplicate insert. Callers ignore that case.
+// Idempotency contract (Drop 4c.5 droplet C.2): the helper looks up the
+// deterministic attention id `refinements-gate-forgotten::<gate.ID>` BEFORE
+// constructing or persisting the warning. A pre-existing attention item at
+// that id is treated as a no-op success — re-running gate-close against an
+// already-warned drop neither rebuilds the attention nor calls
+// CreateAttentionItem a second time. Lookup-then-create races collapse via
+// the storage-layer terminal-state guard at service.go:832 (the gate cannot
+// transition to complete twice); the lookup here is a best-effort fast-path,
+// not a critical-section. Only errors that are NOT errors.Is(err,
+// ErrNotFound) bubble up wrapped — ErrNotFound is the expected first-call
+// case and continues to the create path.
 //
 // Failure to enqueue the attention_item is non-fatal — we log nothing here
 // (caller chooses) and return the error so the move path can decide. Today
@@ -364,6 +372,13 @@ func isRefinementsGate(item domain.ActionItem) bool {
 func (s *Service) raiseRefinementsGateForgottenAttention(ctx context.Context, gate domain.ActionItem) error {
 	if !isRefinementsGate(gate) {
 		return nil
+	}
+	attentionID := fmt.Sprintf("refinements-gate-forgotten::%s", gate.ID)
+	if _, lookupErr := s.repo.GetAttentionItem(ctx, attentionID); lookupErr == nil {
+		// Already warned for this gate — idempotent no-op.
+		return nil
+	} else if !errors.Is(lookupErr, ErrNotFound) {
+		return fmt.Errorf("safety-net lookup attention %q: %w", attentionID, lookupErr)
 	}
 	dropItems, err := s.repo.ListActionItemsByDropNumber(ctx, gate.ProjectID, gate.DropNumber)
 	if err != nil {
@@ -409,7 +424,7 @@ func (s *Service) raiseRefinementsGateForgottenAttention(ctx context.Context, ga
 	}, titles...), "\n") + "\n\n" +
 		"Likely cause: a mid-drop refinement plan-item was created AFTER the gate's blocked_by list was assembled, and the gate was closed without manually adding it to the gate's blocked_by edges. The level_1 drop close path will independently reject completion while these items are non-terminal (per Drop 1's parent-blocks-on-incomplete-child rule); this attention item exists to surface the cause directly to the dev."
 	item, err := domain.NewAttentionItem(domain.AttentionItemInput{
-		ID:                 fmt.Sprintf("refinements-gate-forgotten::%s", gate.ID),
+		ID:                 attentionID,
 		ProjectID:          gate.ProjectID,
 		ScopeType:          domain.ScopeLevelProject,
 		ScopeID:            gate.ProjectID,

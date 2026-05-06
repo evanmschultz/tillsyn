@@ -45,7 +45,7 @@
 
 ### C.2 — Idempotency: `raiseRefinementsGateForgottenAttention` doc vs impl
 
-**State:** in_progress (impl + test landed; verification blocked by unrelated `internal/templates/load.go` compile error in a concurrent lane — orchestrator-routed)
+**State:** done (round 1 — F.5.1 unblocked verification; both QA passes)
 
 **Source:** memory R2 (Drop 3 NIT 3.22 1.2.1).
 

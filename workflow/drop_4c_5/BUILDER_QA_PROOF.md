@@ -1129,3 +1129,44 @@ N/A — filesystem-MD coordination mode forbids Hylla calls (per spawn prompt). 
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode forbids Hylla calls (per spawn prompt). All evidence resolved via `Read` on the uncommitted working tree files (load.go + load_test.go + spec + worklog) plus `Bash` for `git status` / `git diff` / `rg` cross-checks.
+
+## Droplet C.2 — Round 1
+
+**Date:** 2026-05-06.
+**Reviewer:** go-qa-proof-agent (filesystem-MD mode, no Tillsyn / no Hylla).
+**Verdict:** PASS.
+
+### Scope
+
+Verified C.2's claim that `raiseRefinementsGateForgottenAttention` now performs lookup-first idempotency via `GetAttentionItem`, with new test `TestRaiseRefinementsGateForgottenAttentionIsIdempotent` pinning the contract. Files in scope: `internal/app/auto_generate_steward.go`, `internal/app/auto_generate_steward_test.go`, `workflow/drop_4c_5/THEME_CE_PLAN.md` (C.2 row), `workflow/drop_4c_5/BUILDER_WORKLOG.md` (C.2 entry).
+
+### Acceptance walkthrough
+
+1. **Lookup-first prepended.** `auto_generate_steward.go:376` builds `attentionID := fmt.Sprintf("refinements-gate-forgotten::%s", gate.ID)`. Line 377 immediately calls `s.repo.GetAttentionItem(ctx, attentionID)`. Hit (lookupErr == nil) → `return nil` at line 379 (idempotent no-op). Line 380 negates `errors.Is(lookupErr, ErrNotFound)` → wrapped error `fmt.Errorf("safety-net lookup attention %q: %w", attentionID, lookupErr)` at 381. ErrNotFound falls through to existing `ListActionItemsByDropNumber` + create path at 383+. ✓
+
+2. **Doc-comment 354-365 accurate.** Builder rewrote the doc-comment block (now lines 354-371 post-edit) to explicitly describe the lookup-first contract: "the helper looks up the deterministic attention id `refinements-gate-forgotten::<gate.ID>` BEFORE constructing or persisting the warning." Race-collapsing rationale via storage-layer terminal-state guard at `service.go:832` is named. ErrNotFound semantics named explicitly. Matches impl 1:1. ✓
+
+3. **`errors.Is` against `ErrNotFound`.** Line 380 uses `!errors.Is(lookupErr, ErrNotFound)` — proper sentinel comparison through any wrapping chain, not `==`. The spec text named `domain.ErrNotFound`; builder used the package-local `ErrNotFound` (`app.ErrNotFound`, defined at `internal/app/errors.go`) consistent with the rest of the file (`auto_generate_steward.go:110`, `220`, `229`, `259`) AND with what the in-memory fake returns (`service_test.go:791`). The substitution is correct — the sentinel that the consumer-side fake produces is the one the helper checks against. ✓
+
+4. **New test exists + calls helper twice + asserts single attention.** `TestRaiseRefinementsGateForgottenAttentionIsIdempotent` at `auto_generate_steward_test.go:393-489`. First call at 442 (creates attention from todo-state stragglers — the auto-generated 5 STEWARD findings). Sentinel mutation at 459-462 (`Summary = sentinelMarker`). Second call at 467 (must take idempotent early-return). Two complementary assertions: count==1 at 472-480 (deterministic id), AND sentinel-survival at 485-488 (proves second call did NOT re-enter `CreateAttentionItem`, since the fake overwrites on every create). The sentinel-survival check is stronger than length-only because it pins which code branch the second call traversed. `attentionKeys` helper at 494-501. ✓
+
+5. **`mage testPkg ./internal/app` green.** Re-ran post-F.5.1: 444/444 PASS (1.49s for the isolated test, 0.00s cached for the full package). Build no longer blocked by F.5.1's prior unused-imports state. ✓
+
+6. **Worklog completeness.** `BUILDER_WORKLOG.md:1363-1413` captures Date / Builder / Status / Files / Mage verdict (with blocker note now superseded by F.5.1 round-1 verdict at line 1430) / Design notes (sentinel choice, attention-id local, doc-comment scope, test idempotency assertion shape) / Hylla Feedback / Unknowns routed back. ✓
+
+### Falsification probes attempted, all mitigated
+
+- **Sentinel-package divergence.** Spec said `domain.ErrNotFound`; impl uses `app.ErrNotFound`. Verified the in-memory fake returns `app.ErrNotFound` (`service_test.go:791`); test PASS confirms the sentinel matches the real return. Substitution is consistent with file's existing pattern. Accepted.
+- **Doc-comment drift.** New comment names lookup-first, ErrNotFound semantics, race-collapse via storage guard. No half-truths surviving from the prior text.
+- **`errors.Is` chain depth.** `errors.Is` walks `Unwrap()` — any future wrap (e.g., adapter layer wrapping ErrNotFound in a contextual `%w`) still resolves correctly. Not raw `==`.
+- **Test pinning the create branch, not the early-return.** Sentinel-mutation assertion explicitly disambiguates: if the second call hit create, the fake overwrites Summary; if it took early-return, Summary survives. PASS proves early-return.
+- **Idempotency-id-collision risk.** ID is keyed on `gate.ID` (uuid). Two distinct gates produce two distinct attention ids; correct.
+- **First-call-no-stragglers preservation.** Line 411-413 early-return at `len(stragglers) == 0` unchanged. Behavior preserved structurally; no dedicated unit test added but spec language was "preserve," not "add new test." Accepted.
+
+### Soft gap (informational, not blocking)
+
+- **No dedicated test for non-`ErrNotFound` infra-error bubble path** (line 380-382). Test scenarios bullet 4 in spec listed it; acceptance bullets did not require it. Builder explicitly noted in worklog `Unknowns` (BUILDER_WORKLOG.md:1412) — adding requires a `fakeRepo` override hook for `GetAttentionItem`. Code path itself is correct (`fmt.Errorf("safety-net lookup attention %q: %w", attentionID, lookupErr)`). PASS verdict not contingent; flagging for the parallel falsification reviewer to surface if QA wants round-2 coverage.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode forbids Hylla calls per spawn prompt. All evidence resolved via `Read` on `auto_generate_steward.go`, `auto_generate_steward_test.go`, `THEME_CE_PLAN.md`, `BUILDER_WORKLOG.md`, plus `Bash mage` for the live test run + `Bash /usr/bin/grep` for line-number cross-checks.
