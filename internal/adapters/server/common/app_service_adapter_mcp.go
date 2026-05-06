@@ -11,6 +11,7 @@ import (
 
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
 // GetBootstrapGuide returns summary-first onboarding guidance for empty-instance,
@@ -1861,6 +1862,50 @@ func (a *AppServiceAdapter) ListProjectAllowedKinds(ctx context.Context, project
 		out = append(out, string(kindID))
 	}
 	return out, nil
+}
+
+// GetProjectTemplate resolves the active per-project Template plus the
+// bake-source provenance string for the `till.template get` MCP operation.
+//
+// Drop 4c.5 droplet F.3.1: TOML-OUT wire format. The adapter re-marshals
+// the live Template via templates.MarshalTOML so the MCP envelope carries
+// the canonical TOML body bytes (not the post-bake KindCatalog snapshot).
+func (a *AppServiceAdapter) GetProjectTemplate(ctx context.Context, in GetProjectTemplateRequest) (GetProjectTemplateResult, error) {
+	if a == nil || a.service == nil {
+		return GetProjectTemplateResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	out, err := a.service.GetProjectTemplate(ctx, app.GetProjectTemplateInput{
+		ProjectID: strings.TrimSpace(in.ProjectID),
+	})
+	if err != nil {
+		return GetProjectTemplateResult{}, mapAppError("get project template", err)
+	}
+	encoded, err := templates.MarshalTOML(out.Template)
+	if err != nil {
+		return GetProjectTemplateResult{}, mapAppError("marshal project template", err)
+	}
+	return GetProjectTemplateResult{
+		ProjectID:    out.ProjectID,
+		BakeSource:   out.BakeSource,
+		TemplateTOML: string(encoded),
+	}, nil
+}
+
+// ListBuiltinTemplates returns the closed list of embedded builtin
+// template names for the `till.template list_builtin` MCP operation.
+//
+// Drop 4c.5 droplet F.3.1.
+func (a *AppServiceAdapter) ListBuiltinTemplates(ctx context.Context) (ListBuiltinTemplatesResult, error) {
+	if a == nil || a.service == nil {
+		return ListBuiltinTemplatesResult{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	out, err := a.service.ListBuiltinTemplates(ctx)
+	if err != nil {
+		return ListBuiltinTemplatesResult{}, mapAppError("list builtin templates", err)
+	}
+	return ListBuiltinTemplatesResult{
+		Templates: append([]string(nil), out.Templates...),
+	}, nil
 }
 
 // ListCapabilityLeases lists scoped capability leases.

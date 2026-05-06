@@ -1857,6 +1857,86 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 	}
 }
 
+// registerTemplateTools registers the read-only `till.template` MCP tool.
+//
+// Drop 4c.5 droplet F.3.1: ships `get` (TOML-OUT, requires project_id) and
+// `list_builtin` (JSON-OUT, project-context-free). Subsequent droplets
+// extend this registration: F.3.2 adds `validate`; F.3.3 adds `set`
+// (auth-gated atomic install).
+//
+// Wire-format choices:
+//   - `get` returns the active per-project Template re-marshalled via
+//     templates.MarshalTOML, plumbed back as a text result through
+//     mcp.NewToolResultText. The structured-result path is intentionally
+//     skipped because TOML is not JSON-friendly inside the MCP envelope's
+//     structuredContent slot.
+//   - `list_builtin` returns a JSON object via mcp.NewToolResultJSON; the
+//     payload is a closed-shape map matching common.ListBuiltinTemplatesResult.
+//
+// Strict-decode parity: the operation argument struct is decoded via
+// bindArgumentsStrict (post-A.2) so unknown JSON keys reject with the
+// canonical `invalid_request: unknown field "<name>" on tool "till.template"`
+// error.
+func registerTemplateTools(srv *mcpserver.MCPServer, templatesSvc common.TemplateService) {
+	if templatesSvc == nil {
+		return
+	}
+	srv.AddTool(
+		mcp.NewTool(
+			"till.template",
+			mcp.WithDescription("Inspect template state. Use operation=get|list_builtin. operation=get requires project_id and returns the active per-project Template as TOML plus a bake-source provenance string (<bare-root>|<primary-worktree>|embedded-default-go|embedded-default-generic). operation=list_builtin returns the closed list of embedded builtin template names. The get result reflects the LIVE on-disk walk; per Drop 3 finding 5.B.14 the project's KindCatalog snapshot is frozen at create time, so live edits to .tillsyn/template.toml require F.3.3's set operation to land in the catalog."),
+			mcp.WithString("operation", mcp.Required(), mcp.Description("Template operation"), mcp.Enum("get", "list_builtin")),
+			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=get; ignored for operation=list_builtin")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var args struct {
+				Operation string `json:"operation"`
+				ProjectID string `json:"project_id"`
+			}
+			if err := bindArgumentsStrict(req, &args); err != nil {
+				return invalidRequestToolResult(err), nil
+			}
+			switch strings.TrimSpace(args.Operation) {
+			case "get":
+				projectID := strings.TrimSpace(args.ProjectID)
+				if projectID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
+				}
+				out, err := templatesSvc.GetProjectTemplate(ctx, common.GetProjectTemplateRequest{
+					ProjectID: projectID,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				// TOML-OUT: return the canonical TOML body bytes as a
+				// text result. NewToolResultText carries the string
+				// payload verbatim; clients that expect TOML parse the
+				// text content directly. The bake-source provenance is
+				// intentionally NOT smuggled into a JSON envelope here
+				// — F.3.1 acceptance criterion #4 splits get (TOML-OUT)
+				// from list_builtin (JSON-OUT). The provenance string
+				// is exposed via a leading `# bake_source = "..."`
+				// comment line so adopters can route on it without
+				// parsing the full TOML body.
+				body := fmt.Sprintf("# bake_source = %q\n# project_id = %q\n%s", out.BakeSource, out.ProjectID, out.TemplateTOML)
+				return mcp.NewToolResultText(body), nil
+			case "list_builtin":
+				out, err := templatesSvc.ListBuiltinTemplates(ctx)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(out)
+				if err != nil {
+					return nil, fmt.Errorf("encode template list_builtin result: %w", err)
+				}
+				return result, nil
+			default:
+				return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
+			}
+		},
+	)
+}
+
 // registerCapabilityLeaseTools registers lease visibility and lifecycle tools.
 func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService, authContexts *mcpAuthContextStore, exposeLegacyLeaseTools bool) {
 	if leases == nil {

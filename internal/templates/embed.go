@@ -4,6 +4,8 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 // DefaultTemplateFS embeds the builtin default cascade template TOML files
@@ -154,4 +156,49 @@ func LoadDefaultTemplateForLanguage(lang string) (Template, error) {
 	}
 	defer f.Close()
 	return Load(f)
+}
+
+// BuiltinTemplateNames returns the closed list of language-axis names that
+// LoadDefaultTemplateForLanguage can resolve to an embedded TOML file. The
+// list is kept in stable lexical order so MCP / CLI surfaces enumerate the
+// builtins deterministically across processes.
+//
+// Drop 4c.5 droplet F.3.1: `till.template list_builtin` consumes this list to
+// answer the wire surface without walking DefaultTemplateFS. Per F.3.1
+// falsification mitigation #3 the values are hard-coded at package scope (NOT
+// derived from a runtime fs.WalkDir on DefaultTemplateFS) so future fixture
+// files dropped into builtin/ cannot accidentally appear in the wire result.
+//
+// The function returns a fresh slice on every call so callers cannot mutate
+// the package-level source of truth. Pre-MVP the list contains
+// "default-generic" + "default-go" only; the FE template ships post-MVP via
+// the F.4 marketplace CLI per the Q1 resolution in
+// workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5.
+func BuiltinTemplateNames() []string {
+	return []string{"default-generic", "default-go"}
+}
+
+// MarshalTOML serializes a Template back to canonical TOML bytes via
+// pelletier/go-toml/v2's Marshal entry point. The function is the inverse
+// of Load — feeding the output bytes back through Load returns an
+// equivalent Template (modulo TOML key-order, which the marshaller does
+// not promise to preserve across versions).
+//
+// Drop 4c.5 droplet F.3.1: `till.template get` consumes this helper to
+// wire the active per-project Template back to the MCP client as TOML-OUT
+// (rather than a JSON envelope of the decoded struct). The Pelletier
+// marshaller honors the existing `toml:"…"` struct tags on Template and
+// every nested type, so re-marshalling does not require new tags. Pure
+// function: no I/O, no globals.
+//
+// Returns the canonical underlying error from toml.Marshal (e.g. when a
+// future Template field grows a non-marshalable type) wrapped with a
+// stable prefix so callers can route on `errors.Is` against the
+// pelletier sentinel without losing context.
+func MarshalTOML(tpl Template) ([]byte, error) {
+	encoded, err := toml.Marshal(tpl)
+	if err != nil {
+		return nil, fmt.Errorf("templates: marshal toml: %w", err)
+	}
+	return encoded, nil
 }

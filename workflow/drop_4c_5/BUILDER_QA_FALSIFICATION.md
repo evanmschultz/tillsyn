@@ -1666,3 +1666,36 @@ T2. No counterexamples constructed.
 T3. **PASS** — F.2.4 ready to commit.
 
 
+
+## Droplet F.3.1 — Round 1
+
+**Verdict:** PASS — no unmitigated counterexample.
+
+### Findings
+
+1. **TOML-OUT provenance smuggling (Attack 1)** — REFUTED. Builder prepends `# bake_source = %q\n# project_id = %q\n` before the marshaled body (extended_tools.go:1921). Per TOML spec + pelletier/go-toml/v2 behavior, `#` line comments are stripped on parse; the version pre-pass and strict decode in `Load` (load.go:154-186) skip comments transparently. A round-trip via `Load(...)` parses cleanly; only the provenance comments are lost (semantic Template equality preserved). The wire envelope choice is shape-acceptable; downstream `set` (F.3.3) will need to either re-derive provenance or accept the loss, but that's an F.3.3 concern, not an F.3.1 invariant.
+2. **`list_builtin` hardcoded slice (Attack 2)** — REFUTED. `templates.BuiltinTemplateNames` (embed.go:177-179) returns a Go slice literal, freshly allocated each call. The adapter (`app_service_adapter_mcp.go` GetProjectTemplate ~line 1903) further `append([]string(nil), out.Templates...)`'s a defensive copy. No FS walk on `DefaultTemplateFS`. Mutation by external callers cannot leak back.
+3. **Closed provenance enum drift / empty-string slip (Attack 3)** — REFUTED as reachable counterexample. `embeddedSourceForLanguage`'s default branch (`return ""`) is unreachable in the success path: `LoadDefaultTemplateForLanguage` (embed.go:132-159) accepts only `""` and `"go"`; any other value returns `ErrLanguageNotSupported`, which short-circuits `resolveProjectTemplateWithSource` BEFORE the source-token map is consulted (template_service.go:161-165). The empty-string branch is documented as a deliberate drift guard and is dead code today. Not a wire-visible defect.
+4. **Snapshot policy preservation (Attack 4)** — REFUTED. `Service.GetProjectTemplate` (template_service.go:80-101) calls `resolveProjectTemplateWithSource` which performs a LIVE walk of `<bare-root>/.tillsyn/template.toml` → `<primary-worktree>/.tillsyn/template.toml` → embedded; it never reads `project.KindCatalogJSON`. Doc-comment (template_service.go:74-79) explicitly names the divergence semantics per Drop 3 5.B.14. F.3.1 spec is honored.
+5. **Walk duplication / semantic equivalence (Attack 5)** — REFUTED. Both `loadProjectTemplate` (service.go:526-560) and `resolveProjectTemplateWithSource` (template_service.go:129-166) build the same trim+empty-skip candidate list, route through the SAME `loadProjectTemplateCandidate` helper (service.go:578-595) for fs-not-exist fallthrough vs error propagation, and fall through to `LoadDefaultTemplateForLanguage(project.Language)` on no on-disk match. Behavior identical modulo the source-token side channel. Duplication is an ergonomics nit, not a correctness defect.
+6. **Strict-decode adoption (Attack 6)** — REFUTED. `registerTemplateTools` (extended_tools.go:1896) uses `bindArgumentsStrict` and routes failures through `invalidRequestToolResult`. Matches the post-A.2 pattern.
+7. **`pickTemplateService` correctness (Attack 7)** — REFUTED. handler.go:1086-1094 mirrors `pickKindCatalogService` exactly. Type assertions on a nil interface in Go return `(zero, false)` rather than panicking, and the function returns `nil` on miss — `registerTemplateTools` then nil-guards via `if templatesSvc == nil { return }` (extended_tools.go:1881). No nil-deref reachable.
+
+### Counterexamples
+
+None constructed.
+
+### Verification
+
+- `mage test-pkg ./internal/adapters/server/mcpapi` → 215/215 passed.
+- `mage test-pkg ./internal/app` → 474/474 passed.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode; reviewed Go surfaces via Read + git diff + targeted Grep. No Hylla calls attempted.
+
+### TL;DR
+
+T1. All seven attack categories REFUTED. Provenance-comment round-trip is benign (TOML strips `#`); `embeddedSourceForLanguage`'s empty-string default branch is unreachable today; live-walk respects 5.B.14 snapshot policy; both walks use the same candidate helper; strict decode + nil-guard wired correctly.
+T2. No counterexamples.
+T3. **PASS** — F.3.1 ready to commit.

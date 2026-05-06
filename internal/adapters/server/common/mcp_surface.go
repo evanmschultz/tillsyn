@@ -881,6 +881,60 @@ type KindCatalogService interface {
 	ListProjectAllowedKinds(context.Context, string) ([]string, error)
 }
 
+// GetProjectTemplateRequest carries inputs for the read-only `till.template
+// get` operation. The MCP boundary trims and validates ProjectID before
+// invoking the service — the adapter requires a non-empty value.
+//
+// Drop 4c.5 droplet F.3.1.
+type GetProjectTemplateRequest struct {
+	ProjectID string `json:"project_id"`
+}
+
+// GetProjectTemplateResult is the wire envelope returned by `till.template
+// get`. The TOML body is the active per-project Template re-marshalled via
+// templates.MarshalTOML; the BakeSource string names the on-disk or
+// embedded provenance the project's create-time bake resolved to.
+//
+// Closed BakeSource vocabulary (string, not enum-typed so the wire surface
+// stays JSON-friendly):
+//
+//   - "<bare-root>"             — Template loaded from
+//     <project.RepoBareRoot>/.tillsyn/template.toml.
+//   - "<primary-worktree>"      — Template loaded from
+//     <project.RepoPrimaryWorktree>/.tillsyn/template.toml.
+//   - "embedded-default-go"     — Template loaded from the embedded
+//     `internal/templates/builtin/default-go.toml` builtin.
+//   - "embedded-default-generic" — Template loaded from the embedded
+//     `internal/templates/builtin/default-generic.toml` builtin.
+//
+// Drop 4c.5 droplet F.3.1.
+type GetProjectTemplateResult struct {
+	ProjectID    string `json:"project_id"`
+	BakeSource   string `json:"bake_source"`
+	TemplateTOML string `json:"template_toml"`
+}
+
+// ListBuiltinTemplatesResult is the wire envelope returned by `till.template
+// list_builtin`. The Templates list is the closed enum of language-axis
+// names embedded in the binary (today: ["default-generic", "default-go"]).
+//
+// Drop 4c.5 droplet F.3.1.
+type ListBuiltinTemplatesResult struct {
+	Templates []string `json:"templates"`
+}
+
+// TemplateService exposes read-only inspection of per-project bake state
+// and the closed list of embedded builtin templates.
+//
+// Drop 4c.5 droplet F.3.1: F.3.2 (`validate`) and F.3.3 (`set`) extend this
+// interface with mutating operations in subsequent droplets. The read-only
+// surface lands first so the wire shape stabilizes before the auth-gated
+// write paths come online.
+type TemplateService interface {
+	GetProjectTemplate(context.Context, GetProjectTemplateRequest) (GetProjectTemplateResult, error)
+	ListBuiltinTemplates(context.Context) (ListBuiltinTemplatesResult, error)
+}
+
 // CapabilityLeaseService exposes lease issuance and lifecycle operations.
 type CapabilityLeaseService interface {
 	ListCapabilityLeases(context.Context, ListCapabilityLeasesRequest) ([]domain.CapabilityLease, error)

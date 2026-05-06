@@ -82,6 +82,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 		cfg.ExposeLegacyActionItemTools,
 	)
 	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention), authContexts, cfg.ExposeLegacyProjectTools)
+	registerTemplateTools(mcpSrv, pickTemplateService(captureState, attention))
 	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention), authContexts, cfg.ExposeLegacyLeaseTools)
 	registerCommentTools(mcpSrv, pickCommentService(captureState, attention), authContexts)
 	registerHandoffTools(mcpSrv, pickHandoffService(captureState, attention), authContexts, cfg.ExposeLegacyCoordinationTools)
@@ -1070,6 +1071,23 @@ func pickKindCatalogService(captureState common.CaptureStateReader, attention co
 		return svc
 	}
 	if svc, ok := attention.(common.KindCatalogService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickTemplateService resolves one template-service provider from available services.
+//
+// Drop 4c.5 droplet F.3.1: the read-only `till.template` tool registration
+// reaches the same concrete adapter (AppServiceAdapter) that already
+// satisfies CaptureStateReader / AttentionService. Returning nil here
+// silently skips registration — the dispatcher handles the absent-service
+// case the same way it does for KindCatalogService.
+func pickTemplateService(captureState common.CaptureStateReader, attention common.AttentionService) common.TemplateService {
+	if svc, ok := captureState.(common.TemplateService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.TemplateService); ok {
 		return svc
 	}
 	return nil

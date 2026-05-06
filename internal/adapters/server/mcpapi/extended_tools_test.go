@@ -75,6 +75,10 @@ type stubExpandedService struct {
 	lastGetProjectBySlug         string
 	getProjectBySlugMap          map[string]domain.Project
 	getProjectBySlugErr          error
+	lastGetProjectTemplateReq    common.GetProjectTemplateRequest
+	getProjectTemplateErr        error
+	listBuiltinTemplatesCalls    int
+	listBuiltinTemplatesErr      error
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -811,6 +815,65 @@ func (s *stubExpandedService) ListProjectAllowedKinds(_ context.Context, _ strin
 	return []string{"build-actionItem", "go-project", "qa-check", "actionItem"}, nil
 }
 
+// GetProjectTemplate is the test stub backing the till.template `get`
+// MCP operation (Drop 4c.5 droplet F.3.1). The stub captures the inbound
+// request via lastGetProjectTemplateReq so tests can assert wire-shape
+// translation, and returns one of two deterministic responses keyed by
+// project_id:
+//
+//   - "p1"            → simulates an embedded-default-go bake.
+//   - "p-bareroot"    → simulates a bare-root-sourced bake.
+//   - any other value → returns getProjectTemplateErr (defaults to nil →
+//     a minimal embedded-default-generic response with empty TOML body).
+//
+// The stubbed TOML body is intentionally short and recognizably synthetic
+// ("schema_version = \"v1\"\n# stub\n") so tests assert on stable substrings
+// rather than verifying full canonical TOML round-trips through the
+// stub-bypassing path. Real TOML round-trip coverage lives in
+// internal/templates and internal/app where the production code paths exercise
+// the marshaller end-to-end.
+func (s *stubExpandedService) GetProjectTemplate(_ context.Context, in common.GetProjectTemplateRequest) (common.GetProjectTemplateResult, error) {
+	s.lastGetProjectTemplateReq = in
+	if s.getProjectTemplateErr != nil {
+		return common.GetProjectTemplateResult{}, s.getProjectTemplateErr
+	}
+	switch strings.TrimSpace(in.ProjectID) {
+	case "p-bareroot":
+		return common.GetProjectTemplateResult{
+			ProjectID:    "p-bareroot",
+			BakeSource:   "<bare-root>",
+			TemplateTOML: "schema_version = \"v1\"\n# stub bare-root template\n",
+		}, nil
+	case "p1":
+		return common.GetProjectTemplateResult{
+			ProjectID:    "p1",
+			BakeSource:   "embedded-default-go",
+			TemplateTOML: "schema_version = \"v1\"\n# stub embedded-go template\n",
+		}, nil
+	default:
+		return common.GetProjectTemplateResult{
+			ProjectID:    strings.TrimSpace(in.ProjectID),
+			BakeSource:   "embedded-default-generic",
+			TemplateTOML: "schema_version = \"v1\"\n# stub embedded-generic template\n",
+		}, nil
+	}
+}
+
+// ListBuiltinTemplates is the test stub backing the till.template
+// `list_builtin` MCP operation (Drop 4c.5 droplet F.3.1). Returns the
+// closed list `["default-generic", "default-go"]` in stable lexical
+// order, mirroring templates.BuiltinTemplateNames so tests assert against
+// the same wire vocabulary the production resolver exposes.
+func (s *stubExpandedService) ListBuiltinTemplates(_ context.Context) (common.ListBuiltinTemplatesResult, error) {
+	s.listBuiltinTemplatesCalls++
+	if s.listBuiltinTemplatesErr != nil {
+		return common.ListBuiltinTemplatesResult{}, s.listBuiltinTemplatesErr
+	}
+	return common.ListBuiltinTemplatesResult{
+		Templates: []string{"default-generic", "default-go"},
+	}, nil
+}
+
 // newStubCapabilityLease returns one deterministic lease row without mutating request capture state.
 func newStubCapabilityLease(in common.IssueCapabilityLeaseRequest) domain.CapabilityLease {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
@@ -1156,6 +1219,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		"till.project",
 		"till.embeddings",
 		"till.kind",
+		"till.template",
 		"till.capability_lease",
 		"till.comment",
 		"till.handoff",
@@ -1264,6 +1328,8 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.project", args: map[string]any{"operation": "list_change_events", "project_id": "p1", "limit": 25}},
 		{name: "till.project", args: map[string]any{"operation": "get_dependency_rollup", "project_id": "p1"}},
 		{name: "till.kind", args: map[string]any{"operation": "list"}},
+		{name: "till.template", args: map[string]any{"operation": "get", "project_id": "p1"}},
+		{name: "till.template", args: map[string]any{"operation": "list_builtin"}},
 		{name: "till.project", args: mergeArgs(validSessionArgs(), map[string]any{"operation": "set_allowed_kinds", "project_id": "p1", "kind_ids": []any{"phase", "actionItem"}})},
 		{name: "till.project", args: map[string]any{"operation": "list_allowed_kinds", "project_id": "p1"}},
 		{name: "till.embeddings", args: map[string]any{"operation": "status", "project_id": "p1", "limit": 10}},
@@ -3543,6 +3609,158 @@ func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	}
 	if got := toolResultText(t, callResp.Result); !strings.HasPrefix(got, "invalid_request:") {
 		t.Fatalf("error text = %q, want prefix invalid_request:", got)
+	}
+}
+
+// TestTillTemplate_Get_EmbeddedDefault verifies the Drop 4c.5 droplet F.3.1
+// `till.template get` operation against a project whose bake source is the
+// embedded Go default. Asserts: (a) project_id flows through to the service
+// stub verbatim, (b) the result text payload carries the bake-source
+// provenance comment line ("# bake_source = \"embedded-default-go\""), and
+// (c) the TOML body the stub returned (`schema_version = "v1"`) is preserved
+// in the result text. End-to-end verifies wire-shape, strict-decode, and
+// TOML-OUT plumbing.
+func TestTillTemplate_Get_EmbeddedDefault(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(800, "till.template", map[string]any{
+		"operation":  "get",
+		"project_id": "p1",
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template get returned isError=true: %#v", callResp.Result)
+	}
+	if got := strings.TrimSpace(service.lastGetProjectTemplateReq.ProjectID); got != "p1" {
+		t.Fatalf("service.lastGetProjectTemplateReq.ProjectID = %q, want p1", got)
+	}
+	text := toolResultText(t, callResp.Result)
+	if !strings.Contains(text, `# bake_source = "embedded-default-go"`) {
+		t.Fatalf("result text = %q, want it to contain bake_source comment for embedded-default-go", text)
+	}
+	if !strings.Contains(text, `# project_id = "p1"`) {
+		t.Fatalf("result text = %q, want it to contain project_id comment", text)
+	}
+	if !strings.Contains(text, `schema_version = "v1"`) {
+		t.Fatalf("result text = %q, want TOML body with schema_version v1", text)
+	}
+}
+
+// TestTillTemplate_Get_BareRootSourced verifies the Drop 4c.5 droplet F.3.1
+// `till.template get` operation against a project whose bake source resolves
+// to the bare-root `<bare-root>/.tillsyn/template.toml` candidate. Asserts the
+// envelope's bake_source comment line names the bare-root sentinel
+// "<bare-root>" verbatim — the closed wire vocabulary defined in
+// common.GetProjectTemplateResult's doc-comment.
+func TestTillTemplate_Get_BareRootSourced(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(801, "till.template", map[string]any{
+		"operation":  "get",
+		"project_id": "p-bareroot",
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template get returned isError=true: %#v", callResp.Result)
+	}
+	if got := strings.TrimSpace(service.lastGetProjectTemplateReq.ProjectID); got != "p-bareroot" {
+		t.Fatalf("service.lastGetProjectTemplateReq.ProjectID = %q, want p-bareroot", got)
+	}
+	text := toolResultText(t, callResp.Result)
+	if !strings.Contains(text, `# bake_source = "<bare-root>"`) {
+		t.Fatalf("result text = %q, want it to contain bake_source = <bare-root>", text)
+	}
+	if !strings.Contains(text, "stub bare-root template") {
+		t.Fatalf("result text = %q, want it to contain the stubbed bare-root template body", text)
+	}
+
+	// Empty project_id rejects with the canonical invalid_request error.
+	_, missingResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(802, "till.template", map[string]any{
+		"operation": "get",
+	}))
+	if isError, _ := missingResp.Result["isError"].(bool); !isError {
+		t.Fatalf("till.template get with no project_id should reject; result = %#v", missingResp.Result)
+	}
+	missingText := toolResultText(t, missingResp.Result)
+	if !strings.HasPrefix(missingText, "invalid_request:") {
+		t.Fatalf("error text = %q, want prefix invalid_request:", missingText)
+	}
+	if !strings.Contains(missingText, `"project_id"`) {
+		t.Fatalf("error text = %q, want it to name the missing project_id field", missingText)
+	}
+}
+
+// TestTillTemplate_ListBuiltin verifies the Drop 4c.5 droplet F.3.1
+// `till.template list_builtin` operation. Asserts: (a) the JSON-OUT envelope
+// contains the closed list ["default-generic", "default-go"] in that lexical
+// order, (b) the call routes through the service stub (incrementing the call
+// counter), and (c) the operation does NOT require project_id (read-only,
+// project-context-free).
+func TestTillTemplate_ListBuiltin(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(803, "till.template", map[string]any{
+		"operation": "list_builtin",
+	}))
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("till.template list_builtin returned isError=true: %#v", callResp.Result)
+	}
+	if service.listBuiltinTemplatesCalls != 1 {
+		t.Fatalf("listBuiltinTemplatesCalls = %d, want 1", service.listBuiltinTemplatesCalls)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	templatesRaw, ok := structured["templates"].([]any)
+	if !ok {
+		t.Fatalf("structured.templates missing or wrong type: %#v", structured)
+	}
+	if len(templatesRaw) != 2 {
+		t.Fatalf("templates len = %d, want 2 (closed list per F.3.1)", len(templatesRaw))
+	}
+	names := make([]string, 0, len(templatesRaw))
+	for _, raw := range templatesRaw {
+		name, _ := raw.(string)
+		names = append(names, name)
+	}
+	want := []string{"default-generic", "default-go"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("templates = %v, want %v (closed lexical order)", names, want)
 	}
 }
 
