@@ -1715,6 +1715,92 @@ func (s *Service) ListActionItems(ctx context.Context, projectID string, include
 	return tasks, nil
 }
 
+// ListActionItemsByState returns the project's action items whose
+// LifecycleState equals state, sorted by UpdatedAt descending. Drop 4c.5
+// droplet B.2's failure-listing CLI is the canonical caller — the dev needs a
+// pre-TUI view of `failed` items so they can clear stuck nodes via the
+// supersede CLI. The contract is intentionally narrow: filter by ONE
+// lifecycle state, no kind / role / priority cross-filters, no pagination
+// (pre-MVP scale is hundreds of items per project).
+//
+// Filter semantics:
+//
+//  1. The filter is applied IN MEMORY after `Service.ListActionItems` returns
+//     the project's full action-item set. At pre-MVP scale (<1k items per
+//     project) this is fine; an indexed-query refactor is deferred until
+//     measurement justifies it. The decision is documented inline so a
+//     future planner sees the intent rather than guessing the scale ceiling.
+//  2. `includeArchived` extends the underlying `ListActionItems` to also
+//     surface archived rows. When `state == StateArchived` the flag is
+//     forced to true (asking for archived items implies including them);
+//     for every other state the caller's flag is honored as-is. This
+//     resolves the "archived ≠ failed" axis-orthogonality cleanly: a row
+//     that is BOTH `state=failed` AND `archived_at != nil` shows up exactly
+//     once when the caller passes `state=failed, includeArchived=true`,
+//     because `ListActionItems` returns each row once regardless of the
+//     two flags.
+//  3. Sort order is `UpdatedAt` DESC so the most-recently-failed items
+//     surface first — the pre-TUI use case is "what is stuck right now,"
+//     not historical archaeology.
+//
+// Validation:
+//
+//   - Empty `projectID` returns `ErrInvalidID`.
+//   - Empty `state` returns a clear error naming the valid set; the CLI
+//     defaults the flag to `"failed"` so this branch only fires on bad
+//     direct callers (the CLI itself never passes an empty state).
+//   - Invalid `state` returns a clear error naming the valid set.
+//
+// The MCP adapter does NOT yet expose this method; it is CLI-only today.
+func (s *Service) ListActionItemsByState(ctx context.Context, projectID string, state domain.LifecycleState, includeArchived bool) ([]domain.ActionItem, error) {
+	if s == nil || s.repo == nil {
+		return nil, fmt.Errorf("service is not configured")
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, domain.ErrInvalidID
+	}
+	normalized := domain.LifecycleState(strings.TrimSpace(strings.ToLower(string(state))))
+	if normalized == "" {
+		return nil, fmt.Errorf("list action items by state: state is required (valid: todo, in_progress, complete, failed, archived)")
+	}
+	switch normalized {
+	case domain.StateTodo, domain.StateInProgress, domain.StateComplete, domain.StateFailed, domain.StateArchived:
+		// known lifecycle state; fall through to filter
+	default:
+		return nil, fmt.Errorf("list action items by state: unknown state %q (valid: todo, in_progress, complete, failed, archived)", string(state))
+	}
+	// Asking for archived items implies including them. For every other
+	// state the caller's flag is honored as-is so failed+archived rows
+	// surface only when explicitly requested via `includeArchived=true`.
+	effectiveIncludeArchived := includeArchived
+	if normalized == domain.StateArchived {
+		effectiveIncludeArchived = true
+	}
+	all, err := s.ListActionItems(ctx, projectID, effectiveIncludeArchived)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]domain.ActionItem, 0, len(all))
+	for _, item := range all {
+		if item.LifecycleState == normalized {
+			filtered = append(filtered, item)
+		}
+	}
+	slices.SortFunc(filtered, func(a, b domain.ActionItem) int {
+		// Most recent first. Tie-break on ID for total ordering so test
+		// assertions are stable across runs.
+		if a.UpdatedAt.Equal(b.UpdatedAt) {
+			return strings.Compare(a.ID, b.ID)
+		}
+		if a.UpdatedAt.After(b.UpdatedAt) {
+			return -1
+		}
+		return 1
+	})
+	return filtered, nil
+}
+
 // CreateComment creates a comment for a concrete project target.
 func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (domain.Comment, error) {
 	target, err := normalizeCommentTargetInput(in.ProjectID, in.TargetType, in.TargetID)

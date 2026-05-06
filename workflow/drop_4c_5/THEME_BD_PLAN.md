@@ -81,6 +81,8 @@ Four droplets total. Theme B is sequenced — `B.2` reads `failed` items, which 
 
 **Title:** `B.2 — TILL ACTION_ITEM LIST --STATE FAILED CLI`
 
+**State:** done
+
 **Goal:** Pre-TUI dev visibility into failed action items. `till action_item list --state failed [--project <slug>]` renders a table of failed items so dev can see what needs supersede / re-dispatch. Table format mirrors existing `auth request list --state pending` output via `writeCLITable` (`cmd/till/cli_render.go:157`).
 
 **Files / paths to modify:**

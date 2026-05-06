@@ -255,7 +255,7 @@ type projectListCommandOptions struct {
 }
 
 // actionItemCommandOptions stores action-item subcommand flag values shared
-// across `till action_item get|update|move|move_state|delete|restore|reparent|supersede`.
+// across `till action_item get|list|update|move|move_state|delete|restore|reparent|supersede`.
 // Per Droplet 2.11: read commands (get) accept dotted addresses with project
 // resolved by --project flag or slug-prefix shorthand; mutation commands reject
 // dotted form with a mutations-require-UUID error.
@@ -263,10 +263,20 @@ type projectListCommandOptions struct {
 // `reason` is the dev-intent free-text string supplied via `--reason` on the
 // supersede subcommand only (Drop 4c.5 droplet B.1). Empty / whitespace-only
 // values reject in `runActionItemSupersede` before any service call.
+//
+// `state` and `includeArchived` are the Drop 4c.5 droplet B.2 list-flow flags.
+// `state` defaults to `"failed"` (the canonical pre-TUI use case) — the
+// list command never passes an empty value because the cobra flag default
+// kicks in, and `runActionItemList` falls back to `"failed"` defensively
+// when callers (tests) pass an empty struct. `includeArchived` extends the
+// filter to also surface archived rows; off by default since archived ≠
+// failed.
 type actionItemCommandOptions struct {
-	projectSlug  string
-	actionItemID string
-	reason       string
+	projectSlug     string
+	actionItemID    string
+	reason          string
+	state           string
+	includeArchived bool
 }
 
 // projectCreateCommandOptions stores project create flag values.
@@ -843,8 +853,51 @@ empty reason defeats the point.
 		RunE: actionItemMutationRunE("supersede"),
 	}
 	actionItemSupersedeCmd.Flags().StringVar(&actionItemOpts.reason, "reason", "", "Dev-intent reason recorded on metadata.transition_notes (required, non-empty after trim)")
+	// actionItemListCmd is the Drop 4c.5 droplet B.2 pre-TUI failure-listing
+	// CLI. The dev runs `till action_item list --state failed --project tillsyn`
+	// to see what is stuck; the natural follow-up is `till action_item
+	// supersede <UUID> --reason "..."` (Drop 4c.5 droplet B.1) to clear each
+	// stuck item. Slug-prefix shorthand (`till action_item get tillsyn:1.5.2`)
+	// explicitly does NOT apply here — list is project-scoped not item-scoped,
+	// so the only project-resolution path is `--project <slug>` (or the
+	// single-project-on-system fallback when only one project exists).
+	actionItemListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List action items in one project filtered by lifecycle state",
+		Long: strings.TrimSpace(`
+List action items in one project filtered by lifecycle state. The default
+--state is "failed" — the canonical pre-TUI use case is "what is stuck so I
+can supersede it." Other lifecycle states (todo / in_progress / complete /
+archived) are also accepted.
+
+Project resolution requires the --project flag explicitly. Slug-prefix
+shorthand (e.g. tillsyn:1.5.2) is NOT accepted on the list command — that
+form is item-scoped, while list is project-scoped. When the system has
+exactly one project, --project is optional and the list command auto-resolves
+to it; with two or more projects an explicit --project is required.
+
+When --state archived is selected, archived items are surfaced regardless of
+--include-archived (asking for archived implies including them). For every
+other state, --include-archived is off by default; pass the flag explicitly
+to also see rows with archived_at != nil.
+`),
+		Example: strings.Join([]string{
+			"  till action_item list --state failed --project tillsyn",
+			"  till action_item list --project tillsyn",
+			"  till action_item list --state in_progress --project tillsyn",
+			"  till action_item list --state failed --include-archived --project tillsyn",
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "action_item.list")
+		},
+	}
+	actionItemListCmd.Flags().StringVar(&actionItemOpts.state, "state", "failed", "Lifecycle state to filter by (todo|in_progress|complete|failed|archived)")
+	actionItemListCmd.Flags().StringVar(&actionItemOpts.projectSlug, "project", "", "Project slug (required when more than one project exists on the system)")
+	actionItemListCmd.Flags().BoolVar(&actionItemOpts.includeArchived, "include-archived", false, "Include archived items in the result (forced true when --state archived)")
 	actionItemCmd.AddCommand(
 		actionItemGetCmd,
+		actionItemListCmd,
 		actionItemUpdateCmd,
 		actionItemMoveCmd,
 		actionItemMoveStateCmd,
@@ -2553,6 +2606,10 @@ func executeCommandFlow(
 	case "action_item.get":
 		return runOneShotCommand("action_item.get", "action_item get", func() error {
 			return runActionItemGet(ctx, svc, actionItemOpts, stdout)
+		})
+	case "action_item.list":
+		return runOneShotCommand("action_item.list", "action_item list", func() error {
+			return runActionItemList(ctx, svc, actionItemOpts, stdout)
 		})
 	case "action_item.update", "action_item.move", "action_item.move_state",
 		"action_item.delete", "action_item.restore", "action_item.reparent":

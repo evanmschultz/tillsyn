@@ -6115,3 +6115,293 @@ func TestReparentActionItemPublishesActionItemChanged(t *testing.T) {
 	}
 	waitForActionItemChangedSinceCursor(t, broker, project.ID, cursor)
 }
+
+// listByStateFixture seeds a project with one column per lifecycle state and
+// a small set of items per state so the Drop 4c.5 droplet B.2 listing tests
+// can drop items at known starting columns / lifecycle values.
+type listByStateFixture struct {
+	repo    *fakeRepo
+	svc     *Service
+	project domain.Project
+	cols    map[domain.LifecycleState]domain.Column
+	now     time.Time
+}
+
+func newListByStateFixture(t *testing.T) listByStateFixture {
+	t.Helper()
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-listbystate", Name: "List By State Fixture"}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput() error = %v", err)
+	}
+	repo.projects[project.ID] = project
+	cols := map[domain.LifecycleState]domain.Column{}
+	colSpecs := []struct {
+		id    string
+		name  string
+		pos   int
+		state domain.LifecycleState
+	}{
+		{id: "lbs-todo", name: "To Do", pos: 0, state: domain.StateTodo},
+		{id: "lbs-progress", name: "In Progress", pos: 1, state: domain.StateInProgress},
+		{id: "lbs-complete", name: "Complete", pos: 2, state: domain.StateComplete},
+		{id: "lbs-failed", name: "Failed", pos: 3, state: domain.StateFailed},
+		{id: "lbs-archived", name: "Archived", pos: 4, state: domain.StateArchived},
+	}
+	for _, spec := range colSpecs {
+		col, err := domain.NewColumn(spec.id, project.ID, spec.name, spec.pos, 0, now)
+		if err != nil {
+			t.Fatalf("NewColumn(%q) error = %v", spec.name, err)
+		}
+		repo.columns[col.ID] = col
+		cols[spec.state] = col
+	}
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	return listByStateFixture{repo: repo, svc: svc, project: project, cols: cols, now: now}
+}
+
+// seedListByStateItem drops one action item into the requested starting
+// state. `archivedAt` non-nil flips the row's ArchivedAt pointer so the
+// fixture can exercise the failed+archived cross-axis case.
+func (f *listByStateFixture) seedListByStateItem(t *testing.T, id string, state domain.LifecycleState, updatedAt time.Time, archivedAt *time.Time) domain.ActionItem {
+	t.Helper()
+	col, ok := f.cols[state]
+	if !ok {
+		t.Fatalf("listByStateFixture: no column for state %q", state)
+	}
+	item, err := domain.NewActionItemForTest(domain.ActionItemInput{
+		Kind:           domain.KindBuild,
+		ID:             id,
+		ProjectID:      f.project.ID,
+		ColumnID:       col.ID,
+		Position:       0,
+		Title:          "B.2 list by state " + id,
+		Priority:       domain.PriorityMedium,
+		LifecycleState: state,
+		Role:           domain.RoleBuilder,
+	}, f.now)
+	if err != nil {
+		t.Fatalf("NewActionItemForTest(%q) error = %v", id, err)
+	}
+	item.UpdatedAt = updatedAt
+	if archivedAt != nil {
+		stamped := *archivedAt
+		item.ArchivedAt = &stamped
+	}
+	f.repo.tasks[item.ID] = item
+	return item
+}
+
+// TestService_ListActionItemsByState pins the Drop 4c.5 droplet B.2 contract:
+// filter the project's action items by lifecycle state, with an
+// includeArchived flag that is forced true when state==archived. Sort order
+// is UpdatedAt DESC, tie-broken on ID. Empty / unknown state rejects with a
+// clear error naming the valid set. Empty projectID rejects with
+// ErrInvalidID.
+func TestService_ListActionItemsByState(t *testing.T) {
+	t.Parallel()
+
+	t.Run("filter by failed returns only failed items, sorted by updated_at desc", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		// Two failed items, three non-failed items. Failed items get
+		// distinct UpdatedAt values so ordering is observable.
+		later := f.now.Add(2 * time.Hour)
+		earlier := f.now.Add(time.Hour)
+		f.seedListByStateItem(t, "f-1-later", domain.StateFailed, later, nil)
+		f.seedListByStateItem(t, "f-2-earlier", domain.StateFailed, earlier, nil)
+		f.seedListByStateItem(t, "todo-1", domain.StateTodo, later, nil)
+		f.seedListByStateItem(t, "progress-1", domain.StateInProgress, later, nil)
+		f.seedListByStateItem(t, "complete-1", domain.StateComplete, later, nil)
+		got, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.StateFailed, false)
+		if err != nil {
+			t.Fatalf("ListActionItemsByState() error = %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("len(got) = %d, want 2; got items = %+v", len(got), got)
+		}
+		if got[0].ID != "f-1-later" {
+			t.Fatalf("got[0].ID = %q, want f-1-later (more recent updated_at sorts first)", got[0].ID)
+		}
+		if got[1].ID != "f-2-earlier" {
+			t.Fatalf("got[1].ID = %q, want f-2-earlier", got[1].ID)
+		}
+	})
+
+	t.Run("zero failed items yields empty slice (not nil)", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		f.seedListByStateItem(t, "todo-only", domain.StateTodo, f.now, nil)
+		got, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.StateFailed, false)
+		if err != nil {
+			t.Fatalf("ListActionItemsByState() error = %v", err)
+		}
+		if got == nil {
+			t.Fatal("expected non-nil empty slice, got nil")
+		}
+		if len(got) != 0 {
+			t.Fatalf("len(got) = %d, want 0", len(got))
+		}
+	})
+
+	t.Run("unknown state rejects naming the valid set", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		_, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.LifecycleState("weird"), false)
+		if err == nil {
+			t.Fatal("expected error for unknown state, got nil")
+		}
+		if !strings.Contains(err.Error(), "unknown state") {
+			t.Fatalf("error %q missing 'unknown state' phrase", err)
+		}
+		if !strings.Contains(err.Error(), "todo") || !strings.Contains(err.Error(), "failed") {
+			t.Fatalf("error %q does not name the valid set", err)
+		}
+	})
+
+	t.Run("empty state rejects with required-state hint", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		_, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.LifecycleState(""), false)
+		if err == nil {
+			t.Fatal("expected error for empty state, got nil")
+		}
+		if !strings.Contains(err.Error(), "state is required") {
+			t.Fatalf("error %q missing 'state is required'", err)
+		}
+	})
+
+	t.Run("empty projectID returns ErrInvalidID", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		_, err := f.svc.ListActionItemsByState(context.Background(), "", domain.StateFailed, false)
+		if err == nil {
+			t.Fatal("expected error for empty projectID, got nil")
+		}
+		if !errors.Is(err, domain.ErrInvalidID) {
+			t.Fatalf("expected ErrInvalidID, got %v", err)
+		}
+	})
+
+	t.Run("state=archived forces includeArchived true", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		archivedAt := f.now.Add(time.Hour)
+		f.seedListByStateItem(t, "arch-1", domain.StateArchived, f.now.Add(time.Hour), &archivedAt)
+		// Caller passes includeArchived=false; helper must override.
+		got, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.StateArchived, false)
+		if err != nil {
+			t.Fatalf("ListActionItemsByState() error = %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("len(got) = %d, want 1 (state=archived must force includeArchived=true)", len(got))
+		}
+		if got[0].ID != "arch-1" {
+			t.Fatalf("got[0].ID = %q, want arch-1", got[0].ID)
+		}
+	})
+
+	t.Run("failed AND archived item appears once when includeArchived=true (B.2 §F.1)", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		archivedAt := f.now.Add(time.Hour)
+		// One row: state=failed AND archived_at != nil. Spec falsification
+		// mitigation #1: filter must not double-count across the two
+		// orthogonal axes (state vs archived flag).
+		f.seedListByStateItem(t, "failed-and-archived", domain.StateFailed, f.now.Add(2*time.Hour), &archivedAt)
+		got, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.StateFailed, true)
+		if err != nil {
+			t.Fatalf("ListActionItemsByState() error = %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("len(got) = %d, want exactly 1 (no double-count of failed+archived)", len(got))
+		}
+		if got[0].ID != "failed-and-archived" {
+			t.Fatalf("got[0].ID = %q, want failed-and-archived", got[0].ID)
+		}
+	})
+
+	t.Run("failed AND archived item omitted when includeArchived=false", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		archivedAt := f.now.Add(time.Hour)
+		f.seedListByStateItem(t, "failed-and-archived", domain.StateFailed, f.now.Add(2*time.Hour), &archivedAt)
+		f.seedListByStateItem(t, "failed-only", domain.StateFailed, f.now.Add(time.Hour), nil)
+		got, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.StateFailed, false)
+		if err != nil {
+			t.Fatalf("ListActionItemsByState() error = %v", err)
+		}
+		// fakeRepo.ListActionItems honors includeArchived; failed-and-archived
+		// is filtered at the repo layer.
+		ids := make([]string, 0, len(got))
+		for _, item := range got {
+			ids = append(ids, item.ID)
+		}
+		if len(got) != 1 || got[0].ID != "failed-only" {
+			t.Fatalf("got ids = %v, want [failed-only] (failed-and-archived must be excluded when includeArchived=false)", ids)
+		}
+	})
+
+	t.Run("filter by todo returns only todo items", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		f.seedListByStateItem(t, "todo-1", domain.StateTodo, f.now, nil)
+		f.seedListByStateItem(t, "failed-1", domain.StateFailed, f.now, nil)
+		got, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.StateTodo, false)
+		if err != nil {
+			t.Fatalf("ListActionItemsByState() error = %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "todo-1" {
+			t.Fatalf("got = %+v, want [todo-1]", got)
+		}
+	})
+
+	t.Run("filter by in_progress returns only in_progress items", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		f.seedListByStateItem(t, "progress-1", domain.StateInProgress, f.now, nil)
+		f.seedListByStateItem(t, "failed-1", domain.StateFailed, f.now, nil)
+		got, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.StateInProgress, false)
+		if err != nil {
+			t.Fatalf("ListActionItemsByState() error = %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "progress-1" {
+			t.Fatalf("got = %+v, want [progress-1]", got)
+		}
+	})
+
+	t.Run("state value is case-folded (FAILED → failed)", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		f.seedListByStateItem(t, "f-1", domain.StateFailed, f.now, nil)
+		got, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.LifecycleState("FAILED"), false)
+		if err != nil {
+			t.Fatalf("ListActionItemsByState(FAILED) error = %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "f-1" {
+			t.Fatalf("got = %+v, want [f-1]", got)
+		}
+	})
+
+	t.Run("equal updated_at ties broken on ID for stable order", func(t *testing.T) {
+		t.Parallel()
+		f := newListByStateFixture(t)
+		// Same updated_at so the sort comparator falls through to the
+		// ID tie-breaker; b sorts before c by ID compare.
+		updated := f.now.Add(time.Hour)
+		f.seedListByStateItem(t, "f-c", domain.StateFailed, updated, nil)
+		f.seedListByStateItem(t, "f-b", domain.StateFailed, updated, nil)
+		got, err := f.svc.ListActionItemsByState(context.Background(), f.project.ID, domain.StateFailed, false)
+		if err != nil {
+			t.Fatalf("ListActionItemsByState() error = %v", err)
+		}
+		if len(got) != 2 || got[0].ID != "f-b" || got[1].ID != "f-c" {
+			ids := []string{}
+			for _, i := range got {
+				ids = append(ids, i.ID)
+			}
+			t.Fatalf("got order = %v, want [f-b f-c] (id-asc tie-breaker)", ids)
+		}
+	})
+}

@@ -467,3 +467,402 @@ func newSupersedeCLIServiceForTest(t *testing.T) (*app.Service, string, string) 
 	}
 	return svc, todoItem.ID, moved.ID
 }
+
+// TestRunActionItemList pins the Drop 4c.5 droplet B.2 CLI list contract.
+// The flow is:
+//  1. `--state` is normalized (trim + lower) and validated against the closed
+//     lifecycle set; unknown states reject naming the valid set.
+//  2. Project resolution requires --project explicitly OR exactly one project
+//     on the system; multi-project + no --project rejects with a hint.
+//  3. On success the table renders with columns DOTTED / UUID / TITLE /
+//     KIND / ROLE / UPDATED. Empty result renders the empty-state message.
+//
+// The fixture seeds a multi-project + multi-state setup so all spec table
+// rows are exercisable with one shared service.
+func TestRunActionItemList(t *testing.T) {
+	t.Parallel()
+
+	t.Run("list failed items in project with two failed + three non-failed", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "tillsyn",
+			seeds: []listCLISeed{
+				{title: "fail-1", state: domain.StateFailed},
+				{title: "fail-2", state: domain.StateFailed},
+				{title: "todo-1", state: domain.StateTodo},
+				{title: "progress-1", state: domain.StateInProgress},
+				{title: "complete-1", state: domain.StateComplete},
+			},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			projectSlug: "tillsyn",
+			state:       "failed",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemList() error = %v", err)
+		}
+		text := out.String()
+		if !strings.Contains(text, "fail-1") || !strings.Contains(text, "fail-2") {
+			t.Fatalf("expected both failed titles in table, got: %s", text)
+		}
+		if strings.Contains(text, "todo-1") || strings.Contains(text, "progress-1") || strings.Contains(text, "complete-1") {
+			t.Fatalf("non-failed items leaked into table: %s", text)
+		}
+		// Header columns surface in the rendered table.
+		for _, col := range []string{"DOTTED", "UUID", "TITLE", "KIND", "ROLE", "UPDATED"} {
+			if !strings.Contains(text, col) {
+				t.Fatalf("missing header column %q in table: %s", col, text)
+			}
+		}
+	})
+
+	t.Run("list failed items in project with zero failed", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "tillsyn",
+			seeds: []listCLISeed{
+				{title: "todo-only", state: domain.StateTodo},
+			},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			projectSlug: "tillsyn",
+			state:       "failed",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemList() error = %v", err)
+		}
+		text := out.String()
+		if !strings.Contains(text, "No failed action items in project tillsyn") {
+			t.Fatalf("expected empty-state message, got: %s", text)
+		}
+	})
+
+	t.Run("invalid state rejects naming the valid set", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "tillsyn",
+			seeds:       []listCLISeed{{title: "fail-1", state: domain.StateFailed}},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			projectSlug: "tillsyn",
+			state:       "weird",
+		}, &out)
+		if err == nil {
+			t.Fatal("expected error for unknown --state, got nil")
+		}
+		if !strings.Contains(err.Error(), "unknown --state") {
+			t.Fatalf("error %q missing 'unknown --state'", err)
+		}
+		// Valid set surfaces.
+		for _, want := range []string{"todo", "in_progress", "complete", "failed", "archived"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q missing valid state %q", err, want)
+			}
+		}
+	})
+
+	t.Run("no --project hint when multiple projects exist", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "tillsyn",
+			seeds:       []listCLISeed{{title: "fail-1", state: domain.StateFailed}},
+			extraProjects: []string{
+				"tillsyn-other",
+				"tillsyn-third",
+			},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			state: "failed",
+		}, &out)
+		if err == nil {
+			t.Fatal("expected error for missing --project + multiple projects, got nil")
+		}
+		if !strings.Contains(err.Error(), "--project") {
+			t.Fatalf("error %q does not point at --project", err)
+		}
+		if !strings.Contains(err.Error(), "tillsyn") {
+			t.Fatalf("error %q does not list available slugs", err)
+		}
+	})
+
+	t.Run("state=todo returns todo items", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "tillsyn",
+			seeds: []listCLISeed{
+				{title: "todo-1", state: domain.StateTodo},
+				{title: "fail-1", state: domain.StateFailed},
+			},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			projectSlug: "tillsyn",
+			state:       "todo",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemList() error = %v", err)
+		}
+		text := out.String()
+		if !strings.Contains(text, "todo-1") {
+			t.Fatalf("expected todo-1 in table: %s", text)
+		}
+		if strings.Contains(text, "fail-1") {
+			t.Fatalf("failed leaked into todo filter: %s", text)
+		}
+	})
+
+	t.Run("state=in_progress returns in_progress items", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "tillsyn",
+			seeds: []listCLISeed{
+				{title: "progress-1", state: domain.StateInProgress},
+				{title: "fail-1", state: domain.StateFailed},
+			},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			projectSlug: "tillsyn",
+			state:       "in_progress",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemList() error = %v", err)
+		}
+		text := out.String()
+		if !strings.Contains(text, "progress-1") {
+			t.Fatalf("expected progress-1 in table: %s", text)
+		}
+	})
+
+	t.Run("state=archived implies includeArchived without --include-archived", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "tillsyn",
+			seeds: []listCLISeed{
+				{title: "arch-1", state: domain.StateArchived, archived: true},
+			},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			projectSlug:     "tillsyn",
+			state:           "archived",
+			includeArchived: false,
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemList() error = %v", err)
+		}
+		if !strings.Contains(out.String(), "arch-1") {
+			t.Fatalf("expected archived item to surface even with --include-archived=false: %s", out.String())
+		}
+	})
+
+	t.Run("--include-archived + state=failed surfaces failed-and-archived", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "tillsyn",
+			seeds: []listCLISeed{
+				{title: "failed-archived", state: domain.StateFailed, archived: true},
+				{title: "failed-only", state: domain.StateFailed},
+			},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			projectSlug:     "tillsyn",
+			state:           "failed",
+			includeArchived: true,
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemList() error = %v", err)
+		}
+		text := out.String()
+		if !strings.Contains(text, "failed-archived") {
+			t.Fatalf("expected failed-archived in table with --include-archived: %s", text)
+		}
+		if !strings.Contains(text, "failed-only") {
+			t.Fatalf("expected failed-only in table: %s", text)
+		}
+	})
+
+	t.Run("project slug typo surfaces GetProjectBySlug error", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "tillsyn",
+			seeds:       []listCLISeed{{title: "fail-1", state: domain.StateFailed}},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			projectSlug: "tillsynx",
+			state:       "failed",
+		}, &out)
+		if err == nil {
+			t.Fatal("expected error for unknown project slug, got nil")
+		}
+		if !strings.Contains(err.Error(), "tillsynx") {
+			t.Fatalf("error %q does not name the offending slug", err)
+		}
+	})
+
+	t.Run("nil service rejects with not-configured", func(t *testing.T) {
+		t.Parallel()
+		var out strings.Builder
+		err := runActionItemList(context.Background(), nil, actionItemCommandOptions{
+			projectSlug: "tillsyn",
+			state:       "failed",
+		}, &out)
+		if err == nil {
+			t.Fatal("expected error for nil service, got nil")
+		}
+		if !strings.Contains(err.Error(), "not configured") {
+			t.Fatalf("error %q missing 'not configured' hint", err)
+		}
+	})
+
+	t.Run("single-project fallback resolves --project automatically", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newListCLIServiceForTest(t, listCLIFixtureSpec{
+			projectSlug: "only-one",
+			seeds:       []listCLISeed{{title: "fail-1", state: domain.StateFailed}},
+		})
+		var out strings.Builder
+		err := runActionItemList(context.Background(), svc, actionItemCommandOptions{
+			state: "failed",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemList() error = %v", err)
+		}
+		if !strings.Contains(out.String(), "fail-1") {
+			t.Fatalf("expected fail-1 in single-project fallback: %s", out.String())
+		}
+	})
+}
+
+// listCLISeed describes one action-item seed entry for the B.2 list CLI
+// fixture. `archived` flips the row's ArchivedAt pointer post-create so the
+// fixture exercises the failed+archived cross-axis case.
+type listCLISeed struct {
+	title    string
+	state    domain.LifecycleState
+	archived bool
+}
+
+// listCLIFixtureSpec describes the seed configuration for one B.2 list CLI
+// service fixture: a primary project (created with the supplied slug) plus
+// optional extra projects (used to exercise the multi-project --project
+// hint path) plus the per-state action-item seeds.
+type listCLIFixtureSpec struct {
+	projectSlug   string
+	seeds         []listCLISeed
+	extraProjects []string
+}
+
+// newListCLIServiceForTest seeds a real app.Service backed by an in-memory
+// SQLite repo, with one column per lifecycle state plus seed action items
+// per `spec`. Returns (svc, primaryProjectID). Used by the B.2 list CLI
+// table-driven tests.
+func newListCLIServiceForTest(t *testing.T, spec listCLIFixtureSpec) (*app.Service, string) {
+	t.Helper()
+	repo, err := sqlite.OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	ctx := context.Background()
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+
+	primaryProject, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p-list-cli-primary", Name: "List CLI"}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput(primary) error = %v", err)
+	}
+	primaryProject.Slug = spec.projectSlug
+	if err := repo.CreateProject(ctx, primaryProject); err != nil {
+		t.Fatalf("CreateProject(primary) error = %v", err)
+	}
+	for i, slug := range spec.extraProjects {
+		extra, err := domain.NewProjectFromInput(domain.ProjectInput{
+			ID:   "p-list-cli-extra-" + itoa(i+1),
+			Name: "List CLI Extra " + slug,
+		}, now)
+		if err != nil {
+			t.Fatalf("NewProjectFromInput(extra %d) error = %v", i, err)
+		}
+		extra.Slug = slug
+		if err := repo.CreateProject(ctx, extra); err != nil {
+			t.Fatalf("CreateProject(extra %d) error = %v", i, err)
+		}
+	}
+
+	colSpecs := []struct {
+		id    string
+		name  string
+		pos   int
+		state domain.LifecycleState
+	}{
+		{id: "lst-todo", name: "To Do", pos: 0, state: domain.StateTodo},
+		{id: "lst-progress", name: "In Progress", pos: 1, state: domain.StateInProgress},
+		{id: "lst-complete", name: "Complete", pos: 2, state: domain.StateComplete},
+		{id: "lst-failed", name: "Failed", pos: 3, state: domain.StateFailed},
+		{id: "lst-archived", name: "Archived", pos: 4, state: domain.StateArchived},
+	}
+	colsByState := map[domain.LifecycleState]domain.Column{}
+	for _, cs := range colSpecs {
+		col, err := domain.NewColumn(cs.id, primaryProject.ID, cs.name, cs.pos, 0, now)
+		if err != nil {
+			t.Fatalf("NewColumn(%q) error = %v", cs.name, err)
+		}
+		if err := repo.CreateColumn(ctx, col); err != nil {
+			t.Fatalf("CreateColumn(%q) error = %v", cs.name, err)
+		}
+		colsByState[cs.state] = col
+	}
+
+	idCounter := 0
+	idGen := func() string {
+		idCounter++
+		return strings.Repeat("0", 32-len(itoa(idCounter))) + itoa(idCounter)
+	}
+	clk := func() time.Time { return now.Add(time.Second) }
+	svc := app.NewService(repo, idGen, clk, app.ServiceConfig{})
+
+	for _, seed := range spec.seeds {
+		col, ok := colsByState[seed.state]
+		if !ok {
+			t.Fatalf("listCLIFixture: no column for state %q", seed.state)
+		}
+		// Seed action items directly into their target column so the
+		// lifecycle state is set at create-time (via
+		// `lifecycleStateForColumnID`) without forcing every seed through
+		// MoveActionItem + the A.4 outcome-required guard.
+		input := app.CreateActionItemInput{
+			ProjectID:      primaryProject.ID,
+			ColumnID:       col.ID,
+			Title:          seed.title,
+			Kind:           domain.KindBuild,
+			Scope:          domain.KindAppliesToBuild,
+			StructuralType: domain.StructuralTypeDroplet,
+		}
+		created, err := svc.CreateActionItem(ctx, input)
+		if err != nil {
+			t.Fatalf("CreateActionItem(%q) error = %v", seed.title, err)
+		}
+		if seed.archived {
+			// Archive flag is orthogonal to lifecycle state. We stamp
+			// ArchivedAt directly on the stored row to exercise the
+			// archived axis without forcing the seed through the
+			// archive transition path (which is its own test surface).
+			stored, err := repo.GetActionItem(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("GetActionItem(%q) err=%v", created.ID, err)
+			}
+			archivedAt := now.Add(time.Hour)
+			stored.ArchivedAt = &archivedAt
+			if err := repo.UpdateActionItem(ctx, stored); err != nil {
+				t.Fatalf("UpdateActionItem(archived) error = %v", err)
+			}
+		}
+	}
+	return svc, primaryProject.ID
+}

@@ -1011,3 +1011,45 @@ N/A — review touched only Go source + tests under filesystem-MD coordination m
 ### Hylla Feedback
 
 N/A — review touched only Go source + tests under filesystem-MD coordination mode. Per spawn prompt directive ("NO Hylla calls"), no Hylla queries attempted. Evidence resolved via `Read` + `git diff` + `rg` on the uncommitted working tree + `mage test-pkg` re-run.
+
+## Droplet B.2 — Round 1
+
+**Date:** 2026-05-06.
+**Reviewer:** go-qa-proof-agent (filesystem-MD coordination mode).
+**Source spec:** `workflow/drop_4c_5/THEME_BD_PLAN.md` § "Droplet B.2 — Failure Listing CLI" (acceptance criteria #1-#7).
+**Verdict:** PASS.
+
+### Acceptance Coverage
+
+| # | Criterion | Status | Evidence |
+|---|-----------|--------|----------|
+| 1 | Columns DOTTED / UUID / TITLE / KIND / ROLE / UPDATED + empty-state message | PASS | `cmd/till/action_item_cli.go:261` (`[]string{"DOTTED", "UUID", "TITLE", "KIND", "ROLE", "UPDATED"}`); `:257` empty msg `"No %s action items in project %s."` |
+| 2 | Invalid `--state` rejects naming valid set | PASS | `cmd/till/action_item_cli.go:219-220` (CLI error) and `internal/app/service.go:1765,1771` (service error) both name `todo, in_progress, complete, failed, archived` |
+| 3 | No `--project` + multiple projects rejects with hint | PASS | `cmd/till/action_item_cli.go:285-296` — `case 0/1/default`; default branch lists sorted slugs + names `--project` |
+| 4 | Default `--state` is `"failed"` | PASS | `cmd/till/main.go:895` `StringVar(&actionItemOpts.state, "state", "failed", ...)`; `cmd/till/action_item_cli.go:215-217` defensive fallback to `domain.StateFailed` |
+| 5 | `--include-archived` flag honored; `state=archived` forces true | PASS | `cmd/till/main.go:897` `BoolVar(&actionItemOpts.includeArchived, "include-archived", false, ...)`; CLI forces true at `action_item_cli.go:226-232`; service mirrors at `service.go:1776-1779` |
+| 6 | `writeCLITable` rendering used | PASS | `cmd/till/action_item_cli.go:258-264` calls `writeCLITable`; helper definition `cmd/till/cli_render.go:157` |
+| 7 | `mage ci` green; coverage ≥ 70% | PASS | Worklog reports 2847/2847 PASS across 24 packages; `cmd/till` 75.7%, `internal/app` 71.4% — both above project minimum |
+
+### Wiring Spot Checks
+
+- Cobra dispatch: `cmd/till/main.go:2610-2613` `case "action_item.list"` routes through `runOneShotCommand` to `runActionItemList`. Subcommand registered at `:898-908` via `actionItemCmd.AddCommand(actionItemListCmd, ...)`.
+- `validActionItemListStates` closed-set var (`cmd/till/action_item_cli.go:23-29`) is the single source of truth for both flag validation and the error-message valid-set hint.
+- `Service.ListActionItemsByState` (`internal/app/service.go:1755-1802`) — empty projectID → `domain.ErrInvalidID`; sort uses `slices.SortFunc` UpdatedAt DESC with ID tie-break; filter is in-memory over `Service.ListActionItems` per spec.
+- `THEME_BD_PLAN.md:84` — droplet B.2 row state flipped to `done`.
+- Test coverage breadth: `TestRunActionItemList` 11 sub-tests (`cmd/till/action_item_cli_test.go:482-741`); `TestService_ListActionItemsByState` 10+ sub-tests (`internal/app/service_test.go:6202+`). Both exceed the 9-row spec scenario table.
+
+### Falsification Probes Resolved (No Counterexample)
+
+1. **Failed+archived double-emit?** Service applies effective `includeArchived` to `ListActionItems` once, then filters by lifecycle state — single emission per row. Test `--include-archived + state=failed` confirms.
+2. **`make([]…, 0, …)` non-nil empty slice contract?** `service.go:1784` allocates with cap-only; test "zero failed items yields empty slice (not nil)" pins this.
+3. **Slug-prefix shorthand leakage?** `runActionItemList` does NOT call `app.SplitDottedSlugPrefix`; cobra `Long:` text documents the divergence (`main.go:867-883`).
+4. **Dotted-address walk on cyclic graph?** `computeDottedAddressFor` bounds the loop by `len(byID)` (`action_item_cli.go:361`); cycles return empty string, render as `-`.
+
+### Findings
+
+None. PASS.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode forbids Hylla calls (per spawn prompt). All evidence resolved via `Read` + `Bash rg` + `git status` on the uncommitted working tree.

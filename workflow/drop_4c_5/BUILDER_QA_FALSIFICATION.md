@@ -1237,3 +1237,52 @@ T2. None — six attack categories REFUTED with file/line evidence + green `mage
 T3. Verdict **PASS**. C.1 ships clean. 165/165 tests pass.
 T4. N/A — Hylla not consulted per spawn directive.
 
+## Droplet B.2 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, opus)
+**Date:** 2026-05-06
+**Verdict:** PASS
+**Scope:** B.2-declared files only — `internal/app/service.go`, `internal/app/service_test.go`, `cmd/till/action_item_cli.go`, `cmd/till/action_item_cli_test.go`, `cmd/till/main.go`, `workflow/drop_4c_5/THEME_BD_PLAN.md`, `workflow/drop_4c_5/BUILDER_WORKLOG.md`. No write outside scope.
+
+### 1. Findings
+
+- **1.1 Output stability under archived items (Attack 1).** REFUTED. `internal/app/service.go` `ListActionItemsByState` line 1755-1763: forces `effectiveIncludeArchived = true` when `state == StateArchived`, otherwise honors the caller flag, then calls `s.ListActionItems(ctx, projectID, effectiveIncludeArchived)` ONCE and applies a single `LifecycleState == normalized` predicate. No double-pass, no union, no de-dup pass needed because the underlying repo returns each row once. Pinned by service test `failed AND archived item appears once when includeArchived=true (B.2 §F.1)` asserting `len(got) != 1` → fail.
+- **1.2 Project-resolution drift vs `action_item get` (Attack 2).** REFUTED. `cmd/till/main.go` cobra `Long:` text on `actionItemListCmd` says verbatim: "Slug-prefix shorthand (e.g. tillsyn:1.5.2) is NOT accepted on the list command — that form is item-scoped, while list is project-scoped." `runActionItemList` does NOT call `resolveActionItemProjectContext` (the slug-prefix-aware helper used by `runActionItemGet`). It calls a separate helper `resolveActionItemListProject` (action_item_cli.go:272-298) that only consumes `--project` slug + the single-project fallback. Divergence is BOTH documented and structurally enforced.
+- **1.3 Performance regression doc (Attack 3).** REFUTED. `service.go` doc-comment on `ListActionItemsByState` calls out: "The filter is applied IN MEMORY after `Service.ListActionItems` returns the project's full action-item set. At pre-MVP scale (<1k items per project) this is fine; an indexed-query refactor is deferred until measurement justifies it." Trade-off named, deferral named, scale ceiling named. Spec falsification mitigation #3 satisfied.
+- **1.4 Slug-prefix shorthand inadvertently applied (Attack 4).** REFUTED. `runActionItemList` flow has no entry into `app.SplitDottedSlugPrefix` or `resolveActionItemProjectContext`. The state flag goes through `strings.TrimSpace + strings.ToLower + slices.Contains(validActionItemListStates, …)`. A flag value `tillsyn:failed` would fail the closed-set check ("unknown --state") rather than being treated as a slug-prefix shorthand. Project resolution is exclusively via `--project` slug or single-project fallback.
+- **1.5 `--state archived` semantic (Attack 5).** REFUTED. Forced at TWO layers (defense-in-depth): CLI at `action_item_cli.go:227-232` (`if state == domain.StateArchived { includeArchived = true }`) AND service at `service.go:1758-1761` (`if normalized == domain.StateArchived { effectiveIncludeArchived = true }`). Service test `state=archived forces includeArchived true` exercises the service-side override directly with `includeArchived=false` → asserts archived item still surfaces. CLI test `state=archived implies includeArchived without --include-archived` exercises the CLI-side override.
+- **1.6 `writeCLITable` JSON-friendly when piped (Attack 6).** REFUTED on spec match. Spec wording: "match the existing `writeCLITable` behavior; do NOT add a JSON flag pre-MVP (YAGNI)." Implementation calls `writeCLITable(stdout, "Action Items", []string{"DOTTED","UUID","TITLE","KIND","ROLE","UPDATED"}, rows, emptyMsg)` — same surface as `auth request list` and other existing list commands. `cli_render.go:157` is the canonical helper used everywhere; no JSON flag added; piped output inherits the laslig `StyleAuto` policy (`cli_render.go:149-154`) which renders plain text under `NO_COLOR` or non-tty. Convention preserved exactly.
+- **1.7 Default-state fallback (Attack 7).** REFUTED. `cmd/till/main.go:889` registers cobra default: `actionItemListCmd.Flags().StringVar(&actionItemOpts.state, "state", "failed", …)`. `action_item_cli.go:214-217` defensively falls back to `"failed"` for direct callers that pass `state=""`. Service-side at `service.go:1745-1747` rejects empty with a typed error naming the valid set — covers the case where a non-CLI caller bypasses both the cobra default and the CLI fallback. Three layers; consistent default `"failed"`. Pinned by service test `empty state rejects with required-state hint`.
+- **1.8 Test fixture correctness (Attack 8).** REFUTED. Spec table-rows enumerated: 9 scenarios. Builder added 11 sub-cases under `TestRunActionItemList`. Coverage table:
+  - "list failed items in project with two failed + three non-failed" → matches spec row 1.
+  - "list failed items in project with zero failed" → matches spec row 2.
+  - "invalid state rejects naming the valid set" → matches spec row 3.
+  - "no --project hint when multiple projects exist" → matches spec row 4.
+  - "state=todo returns todo items" → matches spec row 5.
+  - "state=in_progress returns in_progress items" → matches spec row 6.
+  - "state=archived implies includeArchived without --include-archived" → matches spec row 7.
+  - "--include-archived + state=failed surfaces failed-and-archived" → matches spec row 8.
+  - "project slug typo surfaces GetProjectBySlug error" → matches spec row 9.
+  - **Bonus 1**: "nil service rejects with not-configured" — wiring sanity guard.
+  - **Bonus 2**: "single-project fallback resolves --project automatically" — exercises the single-project resolution branch (spec acceptance #3 inverted).
+  - 9 spec + 2 bonus = 11. Builder claim accurate. Plus 11 service-level tests under `TestService_ListActionItemsByState` covering filter correctness, sort order, archived-axis, ID tie-breaker, case-fold, and projectID validation.
+
+### 2. Counterexamples
+
+None.
+
+### 3. Summary
+
+Verdict: **PASS**. Eight attack categories REFUTED with file/line evidence. `mage testPkg ./internal/app` 443/443 PASS; `mage testPkg ./cmd/till` 253/253 PASS. Defense-in-depth on the archived-axis forcing is a notable strength — the `state=archived → includeArchived=true` rule is enforced at both CLI and service layers, so a future MCP adapter that calls the service directly inherits the same semantics for free. Spec falsification mitigations #1, #2, #3 all satisfied with explicit doc-comment + test evidence.
+
+### 4. Hylla Feedback
+
+N/A — per spawn directive ("NO Hylla calls"), no Hylla queries attempted. Evidence-gathering used `Read` + `git diff` + `mage testPkg` only.
+
+### TL;DR
+
+T1. Eight findings: archived dedup via single repo pass + single predicate; project-resolution divergence documented + structurally separated from `runActionItemGet`; perf trade-off named with deferral; slug-prefix shorthand structurally inaccessible (separate helper); state=archived forced at CLI AND service (defense-in-depth); writeCLITable convention preserved exactly; default-state fallback at three layers; 9 spec + 2 bonus tests = 11 sub-cases as claimed.
+T2. None — eight attack categories REFUTED with file/line evidence + green `mage testPkg` on both touched packages.
+T3. Verdict **PASS**. B.2 ships clean. 696 tests across both packages pass.
+T4. N/A — Hylla not consulted per spawn directive.
+
