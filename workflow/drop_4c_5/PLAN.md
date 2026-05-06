@@ -2,8 +2,8 @@
 
 **State:** planning
 **Blocked by:** DROP_4c (shipped at `49da561`)
-**Paths (expected):** `internal/app/`, `internal/templates/`, `internal/adapters/server/mcpapi/`, `internal/domain/`, `cmd/till/`, `go.mod`, `~/.claude/agents/*.md` cross-refs only.
-**Packages (expected):** `internal/app`, `internal/templates`, `internal/adapters/server/mcpapi`, `internal/adapters/storage/sqlite`, `internal/domain`, `cmd/till`.
+**Paths (expected):** `internal/app/`, `internal/templates/`, `internal/adapters/server/mcpapi/`, `internal/adapters/server/common/`, `internal/domain/`, `cmd/till/`, `internal/app/dispatcher/`, `internal/platform/gitenv/` (NEW), `WIKI.md`, `go.mod`, `go.sum`, `.tillsyn/template.toml` (NEW), `~/.claude/agents/*.md` cross-refs only.
+**Packages (expected):** `internal/app`, `internal/templates`, `internal/adapters/server/mcpapi`, `internal/adapters/server/common`, `internal/adapters/storage/sqlite`, `internal/domain`, `internal/app/dispatcher`, `internal/tui/gitdiff`, `internal/platform/gitenv` (NEW), `cmd/till`.
 **PLAN.md ref:** project-root `PLAN.md` (Drop 4c.5 row to be added when this drop closes; pre-Drop-2 PLAN.md isn't currently authoritative).
 **Workflow:** `workflow/example/drops/WORKFLOW.md`.
 **Cascade concept:** `AGENT_CASCADE_DESIGN.md`.
@@ -12,29 +12,165 @@
 
 ## Scope
 
-Template ergonomics + audit-debt sweep so the cascade-on-itself dogfood loop (Drop 5) doesn't fight silent-data-loss bugs, missing escape hatches, or broken template ergonomics. Bundles deferred work from the original Drop 4c SKETCH (Themes A/B/C/D + F.1/F.2/F.3/F.5/F.6) plus accumulated 4a/4b refinement residue (Theme E). F.4 marketplace CLI deferred to Drop 4d-prime; F.7 spawn pipeline already shipped in Drop 4c. Full scope + open questions in `REVISION_BRIEF.md`.
+Template ergonomics + audit-debt sweep so the cascade-on-itself dogfood loop (Drop 5) doesn't fight silent-data-loss bugs, missing escape hatches, or broken template ergonomics. Bundles deferred work from the original Drop 4c SKETCH (Themes A/B/C/D + F.1/F.2/F.3/F.5/F.6) plus accumulated 4a/4b refinement residue (Theme E). F.4 marketplace CLI deferred to Drop 4d-prime; F.7 spawn pipeline already shipped in Drop 4c. Full scope + open questions in `REVISION_BRIEF.md`. **Total droplets: 34.**
+
+## Per-Theme Source-of-Truth PLANs
+
+The master plan below indexes per-droplet specs in the per-theme PLAN MDs. Builders read the per-theme MD for full paths/packages/acceptance/test-scenarios/falsification mitigations:
+
+- **Theme A** (silent-data-loss + agent-surface hardening, 4 droplets): `workflow/drop_4c_5/THEME_A_PLAN.md`.
+- **Theme B+D** (escape hatches + go.mod/vet hygiene, 4 droplets): `workflow/drop_4c_5/THEME_BD_PLAN.md`.
+- **Theme C+E** (STEWARD refinements + 4a/4b residue, 13 droplets): `workflow/drop_4c_5/THEME_CE_PLAN.md`.
+- **Theme F** (template ergonomics F.1/F.2/F.3/F.5/F.6, 13 droplets): `workflow/drop_4c_5/THEME_F_PLAN.md`.
 
 ## Planner
 
-Per-theme planner outputs land in `THEME_<X>_PLAN.md` files (e.g. `THEME_A_PLAN.md`, `THEME_BD_PLAN.md`, `THEME_CE_PLAN.md`, `THEME_F_PLAN.md`). Master orchestration synthesizes the per-theme outputs into the droplet table below. Planning sub-streams kick off as parallel planner subagent spawns; their outputs feed plan-QA twins on the synthesized master plan.
+### Open Question Resolutions (from REVISION_BRIEF §9)
 
-### Planner Sub-Streams
+- **Q1 — Theme F.2 default-fe.toml defer.** **RESOLVED: DEFER.** Ship `default-generic.toml` + `default-go.toml` only; `LoadDefaultTemplateForLanguage("fe")` returns `ErrLanguageNotSupported`. Rationale: pre-MVP, no FE adopters; FE templates land via F.4 marketplace CLI post-Drop-4d-prime.
+- **Q2 — F.5 `validateAgentBindingFiles` warn vs error.** **RESOLVED: WARN-ONLY.** Dev-machine state ≠ template-correctness. Adopters who want strict-fail can wrap the warn-logger to escalate.
+- **Q3 — Theme E doc-only NIT scope.** **RESOLVED: CORRECTNESS MANDATORY; DOC-ONLY OPPORTUNISTIC.** Pure-doc NITs fold into correctness droplets when they ride along (E.1, E.4, E.5, E.8). Pure-doc-only items dropped: `goleak.VerifyTestMain` (out-of-scope test-infra hygiene), S2 `mage testPkg` PLAN-doc (process MD, route to refinements memory), A13 conflict-detector single-flight (Drop 4b daemon-mode follow-up). C.4 (WIKI Cross-Subtree Exception clarification) retained because §3.3 explicitly carves it out.
+- **Q4 — Theme A `client_type` server-infer dispatcher coverage.** **RESOLVED: ADAPTER-STAMP IS SUFFICIENT.** Dispatcher today provisions auth via the CLI path (which now stamps `"cli"`), so cascade subagents inherit `"cli"`. If dispatcher gains a direct `Service.CreateAuthRequest` call, that path stamps `"cli-cascade"` — out of scope for 4c.5; tracked as a Drop 4d / Drop 5 follow-up.
+- **Q5 — Drop 5 readiness gate.** **RESOLVED: A + B MANDATORY; C/D/E/F MAY LAND IN PARALLEL OR DEFER.** Drop 5 dogfood requires Theme A (silent-data-loss closed) + Theme B (escape hatches landed). The remaining themes can land in this drop or in parallel with Drop 5. Drop 4c.5 still aims to land all 7 themes; the Q5 ruling is a contingency for if the drop runs long.
 
-- **`THEME_A_PLAN.md`** — Theme A silent-data-loss + agent-surface hardening (~4 droplets).
-- **`THEME_BD_PLAN.md`** — Theme B dev escape hatches + Theme D pre-cascade hygiene (~3-4 droplets).
-- **`THEME_CE_PLAN.md`** — Theme C STEWARD/cascade-precision refinements + Theme E 4a/4b residue carry-forward (~8-10 droplets).
-- **`THEME_F_PLAN.md`** — Theme F template ergonomics F.1/F.2/F.3/F.5/F.6 (~13-16 droplets).
+### Cross-Theme Cross-Cutting Decisions
 
-Per-theme PLAN MDs declare droplet IDs (`A.1`, `A.2`, …, `B.1`, `D.1`, `C.1`, `E.1`, …, `F.1.1`, `F.2.1`, …) with paths/packages/acceptance/blocked_by. Master plan-QA twins (`PLAN_QA_PROOF.md` + `PLAN_QA_FALSIFICATION.md`) attack the synthesized table.
+- **No new domain types added by reusing existing fields.** B.1's supersede uses existing `metadata.outcome = "superseded"` (already recognized by `app_service_adapter_mcp.go:1163`) and `metadata.transition_notes` (existing free-form field) — no new `Metadata.SupersedeReason` field.
+- **A.4's strict-failure-outcome-enum check (rejecting `"success"` on `→failed`) — INCLUDE.** Builder should add the switch on `metadata.outcome ∈ {"failure", "blocked", "superseded"}` for `→failed`. Cost is one switch + one test row; semantic value is high (`"success"` on `→failed` is nonsense).
+- **E.6 fix-path: post-decode canonicalization (NOT exact-match).** Per Theme C+E planner's Note 2 reasoning: `domain.IsValidKind` already case-folds, validation contract is "case-tolerant," forcing exact-match diverges value-validation from key-validation surfaces, and post-canonicalization the collision case (`[gates.BUILD]` AND `[gates.build]`) becomes detectable. Plan-QA may flip if reasoning is rejected.
+- **E.9 placement: `internal/platform/gitenv` (NOT `internal/utils/`).** CLAUDE.md "Project Structure" lists `internal/platform — OS-specific paths`; gitenv fits the platform-isolation theme. No `internal/utils/` exists in current project layout.
+- **F.6.1 + Theme A `service.go` collision: F.6.1 lands in the chain.** F.6.1's 5-line inline refactor (replace `mergeActionItemMetadataWithKindTemplate(base, _)` call with `mergedMetadata := in.Metadata`) sits in the `internal/app` chain at a slot that doesn't conflict with concurrent A.x edits. Per `internal/app` package-lock chain below.
 
-### Droplet Table
+### Master Droplet Table
 
-<filled in after parallel theme planners + orchestrator synthesis returns>
+Droplets are grouped by package-lock chain. Within each chain droplets serialize via `blocked_by`. Across chains droplets parallelize except where cross-theme blockers apply.
+
+#### Chain 1 — `internal/app` package-lock chain (12 droplets)
+
+| ID    | Title (short)                                       | Files (primary)                                                                  | Source PLAN MD             | Blocked by              |
+| ----- | --------------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------- | ----------------------- |
+| A.1   | Pointer-sentinel PATCH on `UpdateActionItem`        | `service.go` (664-763, 1201-1388), tests + adapter mappings                      | `THEME_A_PLAN.md`          | —                       |
+| A.4   | Require `metadata.outcome` on `→failed`             | `service.go` (1043-1127), `domain/errors.go`, tests                              | `THEME_A_PLAN.md`          | A.1                     |
+| B.1   | `till action_item supersede` CLI + service method   | `service.go` (new method), `app_service_adapter_mcp.go`, `cmd/till/*`            | `THEME_BD_PLAN.md`         | A.4                     |
+| B.2   | `till action_item list --state failed` CLI          | `service.go` (new `ListActionItemsByState`), `cmd/till/*`                         | `THEME_BD_PLAN.md`         | B.1                     |
+| C.2   | Idempotency: `raiseRefinementsGateForgottenAttention` doc vs impl | `auto_generate_steward.go`, `auto_generate_steward_test.go`             | `THEME_CE_PLAN.md`         | B.2                     |
+| C.3   | Tighten `isRefinementsGate` predicate (title-shape) | `auto_generate_steward.go`, `auto_generate_steward_test.go`                      | `THEME_CE_PLAN.md`         | C.2                     |
+| E.8   | Auth auto-revoke ScopeType guard + reason-string    | `auth_requests.go` (938), `auth_requests_test.go`                                | `THEME_CE_PLAN.md`         | C.3                     |
+| F.6.1 | Inline `mergeActionItemMetadataWithKindTemplate`    | `service.go:897`, `kind_capability.go:1002`                                      | `THEME_F_PLAN.md`          | E.8                     |
+| F.1.1 | Wire `loadProjectTemplate` embedded fallback        | `service.go` (427), `service_test.go`                                            | `THEME_F_PLAN.md`          | F.6.1, F.2.1            |
+| F.1.2 | `loadProjectTemplate` filesystem walk               | `service.go` (extend F.1.1), tests                                               | `THEME_F_PLAN.md`          | F.1.1, F.1.3            |
+| F.2.4 | Caller audit + cross-package tests for language-aware loading | `service.go` callers, tests                                            | `THEME_F_PLAN.md`          | F.1.2, F.2.1, F.2.2     |
+| E.9   | Git-status pre-check NITs + `internal/platform/gitenv` | `git_status.go`, `service.go` (1015-1019), new `internal/platform/gitenv/` | `THEME_CE_PLAN.md`         | F.2.4                   |
+
+#### Chain 2 — `internal/adapters/server/mcpapi` package-lock chain (6 droplets)
+
+| ID    | Title (short)                                                  | Files (primary)                                            | Source PLAN MD     | Blocked by              |
+| ----- | -------------------------------------------------------------- | ---------------------------------------------------------- | ------------------ | ----------------------- |
+| A.2   | Reject unknown JSON keys at MCP boundary (`bindArgumentsStrict`) | `handler.go`, `extended_tools.go`, `handoff_tools.go`, new `strict_decode.go` | `THEME_A_PLAN.md` | A.1 (cross-chain — wire shape coordination) |
+| A.3   | Server-infer / require non-empty `client_type`                 | `handler.go` (113, 199), CLI (cmd/till/main.go)            | `THEME_A_PLAN.md`  | A.2                     |
+| E.5   | `mapToolError` adds `ErrOrchSelfApprovalDisabled` sharp prefix | `handler.go` (891-948), `handler_test.go`                  | `THEME_CE_PLAN.md` | A.3                     |
+| F.3.1 | `till.template` MCP tool: `get` + `list_builtin` operations    | `extended_tools.go` (new `registerTemplateTools`), `handler.go`, `template_service.go` (NEW) | `THEME_F_PLAN.md` | E.5, F.2.1, F.2.2, F.1.2 |
+| F.3.2 | `till.template` MCP tool: `validate` operation                 | `extended_tools.go`, `template_service.go`                 | `THEME_F_PLAN.md`  | F.3.1, F.5.1            |
+| F.3.3 | `till.template` MCP tool: `set` operation (atomic install)     | `extended_tools.go`, `template_service.go`                 | `THEME_F_PLAN.md`  | F.3.2, F.1.2            |
+
+#### Chain 3 — `internal/app/dispatcher` package-lock chain (5 droplets)
+
+| ID    | Title (short)                                                                 | Files (primary)                                              | Source PLAN MD     | Blocked by  |
+| ----- | ----------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------ | ----------- |
+| E.1   | Lock manager doc + test contract: input-order + duplicate-input               | `locks_file.go`, `locks_package.go` + tests                  | `THEME_CE_PLAN.md` | —           |
+| E.2   | Tree walker test rigor: archived-parent + ListColumns error path              | `walker.go`, `walker_test.go`                                | `THEME_CE_PLAN.md` | E.1         |
+| E.3   | Conflict detector: assert both file+package overlap entries                   | `conflict.go`, `conflict_test.go`                            | `THEME_CE_PLAN.md` | E.2         |
+| E.4   | Process monitor: `Track` doc + atomicity edge case + `for-range int`          | `monitor.go`, `monitor_test.go`                              | `THEME_CE_PLAN.md` | E.3         |
+| E.7   | `gate_mage_test_pkg` test rigor: no-dedup + halt-call + empty-string element  | `gate_mage_test_pkg_test.go`                                 | `THEME_CE_PLAN.md` | E.4         |
+
+#### Chain 4 — `internal/templates` package-lock chain (6 droplets)
+
+| ID    | Title (short)                                                                 | Files (primary)                                          | Source PLAN MD     | Blocked by  |
+| ----- | ----------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------ | ----------- |
+| F.2.1 | Rebadge `default.toml` → `default-go.toml`                                    | `embed.go`, `builtin/default-go.toml` (RENAME), `embed_test.go` | `THEME_F_PLAN.md` | —           |
+| F.2.2 | Add `default-generic.toml` (language-agnostic showcase)                       | `builtin/default-generic.toml` (NEW), `embed.go`, tests  | `THEME_F_PLAN.md`  | F.2.1       |
+| F.1.3 | Language-aware embedded resolver                                              | `embed.go`, `embed_test.go`                              | `THEME_F_PLAN.md`  | F.2.1, F.2.2 |
+| E.6   | `validateMapKeys` post-decode canonicalization                                | `load.go` (284-301), `load_test.go`                      | `THEME_CE_PLAN.md` | F.1.3       |
+| F.5.1 | `validateAgentBindingFiles` (warn-only) + `validateRequiredChildRules`        | `load.go`, `load_test.go`                                | `THEME_F_PLAN.md`  | E.6         |
+| F.5.2 | `validateChildRuleReachability` + `validateKindStructuralCoherence`           | `load.go`, `load_test.go`                                | `THEME_F_PLAN.md`  | F.5.1       |
+
+#### Independent (no package-lock collision)
+
+| ID    | Title (short)                                                            | Files (primary)                                                | Source PLAN MD     | Blocked by |
+| ----- | ------------------------------------------------------------------------ | -------------------------------------------------------------- | ------------------ | ---------- |
+| C.1   | Extend `assertOwnerStateGateUpdateFields` to Persistent / DevGated       | `app_service_adapter_mcp.go`, `app_service_adapter_steward_gate_test.go` (`internal/adapters/server/common`) | `THEME_CE_PLAN.md` | —          |
+| C.4   | WIKI Cross-Subtree Exception kind-choice clarification                   | `WIKI.md` (markdown only)                                      | `THEME_CE_PLAN.md` | —          |
+| D.1   | Strip non-fantasy-fork `go.mod` `replace` directives                     | `go.mod`, `go.sum`, possibly `third_party/teatest_v2/`         | `THEME_BD_PLAN.md` | —          |
+| D.2   | Sweep accumulated vet / gopls / `mage ci` hints                          | `D2_HINT_SWEEP.md` (NEW per-droplet) + TBD per sweep          | `THEME_BD_PLAN.md` | D.1        |
+| F.2.3 | Self-host `<repo_root>/.tillsyn/template.toml` for tillsyn dogfood       | `.tillsyn/template.toml` (NEW), `.gitignore` verification     | `THEME_F_PLAN.md`  | F.2.1      |
+
+### Cross-Theme Blocked-By Justifications
+
+- **A.2 → A.1.** Both touch the wire-format for action-item update (A.1 makes `description` distinguishable absent-vs-empty via `*string`; A.2 strict-decoder must NOT reject null-pointer fields from A.1's struct shape change). Cross-chain blocker because A.1 is in the `internal/app` chain and A.2 is in the `mcpapi` chain.
+- **E.6 → F.1.3 (cross-chain Theme F → Theme E).** F.1.3 lands the language-aware resolver that loads embedded TOML files; E.6's canonicalization changes the validator chain that runs during `Load`. E.6 lands AFTER F.1.3 to avoid the canonicalization touching F.1.3's walk semantics. Could potentially flip; plan-QA assesses.
+- **F.5.1 → E.6.** Both edit `internal/templates/load.go` validator chain; sequential edits to avoid merge conflict.
+- **F.1.1 → F.6.1 (intra-Chain-1).** Inserted in the `internal/app` chain after F.6.1 lands; F.6.1's small refactor lands first since it has no pre-Chain-1 dependencies.
+- **F.1.1 → F.2.1 (cross-chain Templates → App).** F.1.1's `LoadDefaultTemplate()` thin-wrapper depends on F.2.1's rename (`default.toml` → `default-go.toml`) so the embedded fallback resolves correctly.
+- **F.3.1 → F.2.1 + F.2.2 + F.1.2 (cross-chain).** `till.template list_builtin` enumerates the renamed files; `get` op's bake-source provenance string depends on F.1.2's walk landing.
+- **F.3.2 → F.5.1 (cross-chain).** `validate` op surfaces F.5.1's warn-logger output in its envelope.
+- **F.3.3 → F.1.2 (cross-chain).** `set` op's atomic-install path writes to the same destination F.1.2's walk reads from.
+
+### Wave Structure (Plan-QA Refines)
+
+- **Wave A — Foundation parallel-launches** (no cross-chain blockers; all `blocked_by: —`):
+  - A.1 (Chain 1 head)
+  - C.1 (independent)
+  - C.4 (markdown only)
+  - D.1 (go.mod, no Go package)
+  - E.1 (Chain 3 head)
+  - F.2.1 (Chain 4 head)
+  - F.2.3 (independent — but blocked_by F.2.1 since it copies the rebadged content; lands in Wave B)
+
+- **Wave B — Sequential builds where Chain heads have moved to second nodes:**
+  - A.4 (Chain 1 progresses)
+  - A.2 (Chain 2 head, blocked_by: A.1)
+  - C.4 + D.1 + C.1 likely complete in Wave A; D.2 launches in this wave (blocked_by: D.1)
+  - E.2 (Chain 3 progresses)
+  - F.2.2 (Chain 4 progresses)
+  - F.2.3 (independent, can land any time after F.2.1)
+
+- **Wave C — Mid-drop sequential:**
+  - B.1, B.2 progressing in Chain 1
+  - A.3, E.5 progressing in Chain 2
+  - E.3, E.4 progressing in Chain 3
+  - F.1.3, E.6 progressing in Chain 4
+  - F.5.1, F.5.2 starting in Chain 4
+
+- **Wave D — Tail droplets:**
+  - F.6.1, F.1.1, F.1.2, F.2.4, E.9 in Chain 1 (last few)
+  - F.3.1, F.3.2, F.3.3 in Chain 2 (template MCP tool)
+  - E.7 (Chain 3 tail)
+
+- **Wave E — Final:**
+  - C.2, C.3, E.8 in Chain 1 (remaining mid-chain droplets — see chain ordering above)
+
+(Wave structure is approximate; cross-chain blockers create natural barriers. Plan-QA may re-sequence.)
 
 ## Notes
 
-Open questions surfaced by REVISION_BRIEF §9 — Q1 default-fe.toml defer (lean: defer), Q2 validateAgentBindingFiles warn vs error (lean: warn), Q3 doc-only NIT scope (lean: correctness mandatory + doc opportunistic), Q4 client_type server-infer dispatcher coverage (lean: yes), Q5 Drop 5 readiness gate (lean: A+B mandatory) — resolved during plan-QA discussion if planners surface concrete tradeoffs.
+### Chain Length Trade-offs
 
-Pre-MVP rules in force per REVISION_BRIEF §6: Opus builders, filesystem-MD mode, no Tillsyn per-droplet plan items, no closeout MD rollups, single-line conventional commits, never raw `go test` / `go build` / `go vet` / `mage install`, builder spawn prompts MUST include "do NOT commit" directive, REVISIONS-first reading where applicable, Section 0 SEMI-FORMAL REASONING in every subagent response.
+Chain 1 (`internal/app`) is the bottleneck at 12 droplets serial. Chains 2-4 run parallel where blockers permit. Independent droplets (C.1, C.4, D.1, D.2, F.2.3) consume no chain capacity. Estimated wall-clock: ~1.5-2 hours per chain at ~10-15min per droplet. With 4 parallel chains, full drop is ~2-3 hours plus QA + commit overhead.
 
-Locked architectural decisions inherited from Drop 4c (REVISION_BRIEF §5): no `command` override, POSIX-only, closed env baseline, `os.Environ()` not inherited, dispatcher monitor stays CLI-agnostic, F.7.18 context aggregator OPTIONAL, commit + push gates default OFF.
+### Out-of-Scope Items Routed Away
+
+- A13 conflict-detector single-flight (Drop 4b daemon-mode).
+- R10 / R11 / R6 / R3 (already addressed in earlier drops; memory-marked).
+- `goleak.VerifyTestMain` + S2 mage doc (test-infra hygiene; route to Drop 5+).
+- F.4 marketplace CLI (Drop 4d-prime).
+- Codex adapter (Drop 4d).
+- Drop 5 dogfood validation (this drop is the prerequisite).
+- Drop 4.5 TUI overhaul (separate FE/TUI track).
+
+### Pre-MVP Rules (per REVISION_BRIEF §6)
+
+Builders run `model: opus`. Filesystem-MD mode, no Tillsyn-runtime per-droplet plan items, no closeout MD rollups, single-line conventional commits ≤72 chars, never raw `go test` / `go build` / `go vet` / `mage install`. Builder spawn prompts MUST include "do NOT commit" directive (per F.7-CORE REV-13). Each builder reads REVISIONS POST-AUTHORING section first if the sub-plan adds one. Section 0 SEMI-FORMAL REASONING in every subagent response.
+
+### Locked Architectural Decisions (inherited from Drop 4c, REVISION_BRIEF §5)
+
+L1 (no secrets), L2 (no command override), L3 (POSIX-only), L4 (closed env baseline), L11 (CLI-agnostic monitor), L13 (context aggregator OPTIONAL), L20 (commit + push gates default OFF). All non-negotiable.
