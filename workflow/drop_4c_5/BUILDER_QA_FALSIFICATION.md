@@ -1526,3 +1526,36 @@ T1. All six attack categories REFUTED; no counterexamples found. Spec deviation 
 T2. Forward-compat holds for a future Drop 2 migration to true `ScopeLevelActionItem` paths; rule is "anything but project."
 T3. **PASS** — `mage test-pkg ./internal/app` 458/458 green; doc-comment + tests + guard all match spec intent.
 
+## Droplet F.6.1 — Round 1
+
+**Verdict: PASS — no counterexamples found.**
+
+Reviewed builder claim that F.6.1 is a pure-refactor inlining of `mergeActionItemMetadataWithKindTemplate` (a `return base, nil` no-op stub) with a ~5-line release-note comment + extended test block-comment. Six attack categories applied; all REFUTED.
+
+### 1. Findings
+
+- 1.1 **Pure-refactor accuracy [REFUTED].** `git diff` of `internal/app/kind_capability.go` shows the deleted function body was exactly `return base, nil` — a tautological pass-through with the second parameter named `_`. Caller change in `service.go` swaps the four-line `mergedMetadata, err := merge…(in.Metadata, kindDef); if err != nil {…}` block for `mergedMetadata := in.Metadata`. Behavior is provably identical: the old call could never produce a non-nil error (no branches in the body), so the `if err != nil` arm was dead code, and `mergedMetadata` always equaled `in.Metadata` regardless.
+- 1.2 **`kindDef` downstream use preserved [REFUTED].** `rg "validateKindPayload"` confirms `service.go:940` (the next executable line after the inline) still consumes `kindDef` via `s.validateKindPayload(kindDef, mergedMetadata.KindPayload)`. The `kindDef` local from `resolveActionItemKindDefinition` is not orphaned.
+- 1.3 **Error-handling branch elimination safety [REFUTED].** Deleted stub was unconditional `return base, nil`. No callers anywhere had ever observed a non-nil error from this path (impossible by construction). Removing the dead `if err != nil { return ..., err }` block changes no observable behavior. Coverage delta is the only effect, and that branch was unreachable so its loss is correct.
+- 1.4 **Other call sites [REFUTED].** `rg "mergeActionItemMetadataWithKindTemplate"` across the repo returns ZERO live Go references — only doc-comment mentions in `service.go:935` (the new release note), `kind_capability_test.go:648` (the extended block-comment lineage record), plus historical mentions in `workflow/drop_3/` and `workflow/drop_4c/` artifacts. No production caller, no test caller, no fixture, no template encoder.
+- 1.5 **Comment accuracy [REFUTED].** New `service.go` comment at lines 934–938 correctly names: (a) Drop 4c.5 droplet F.6.1 as the inlining drop, (b) Drop 3 droplet 3.15 as the upstream KindTemplate-surface deletion, (c) the no-op pass-through nature of the deleted stub, (d) the future-mechanism placeholder ("reintroduced through a different mechanism if the need arises"). Lineage matches `workflow/drop_3/3.15_BUILDER_QA_FALSIFICATION.md` A10 + `workflow/drop_3/PLAN.md:364`.
+- 1.6 **Test doc-comment correctness [REFUTED].** `kind_capability_test.go:645–655` extension correctly: (a) keeps the original 3.15-era retirement note for `TestCreateActionItemKindMergesCompletionChecklist`, (b) adds the F.6.1 inlining record stating "CreateActionItem now assigns mergedMetadata directly from in.Metadata" — which matches the actual `service.go:939` line `mergedMetadata := in.Metadata` exactly, (c) preserves the future-mechanism placeholder. Droplet 3.15 lineage is named correctly; no drift.
+
+### 2. Counterexamples
+
+None.
+
+### 3. Summary
+
+**PASS.** `mage test-pkg ./internal/app` reports 458/458 tests green. Diff is mechanical, behavior-preserving, evidence-grounded. Comment text matches spec from `THEME_F_PLAN.md` Droplet F.6.1 § "Future-mechanism comment" and accurately records the lineage.
+
+### Hylla Feedback
+
+N/A — per spawn directive ("NO Hylla calls"), no Hylla queries attempted. Evidence used `Read` + `Bash` (mage test, git diff, ripgrep) only.
+
+### TL;DR
+
+T1. All six attack categories REFUTED — pure refactor, behavior-identical, no production references remain, comments accurate.
+T2. No counterexamples constructed.
+T3. **PASS** — `mage test-pkg ./internal/app` 458/458 green; F.6.1 ready to commit.
+

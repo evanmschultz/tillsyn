@@ -371,6 +371,7 @@
 
 ### Droplet F.6.1 — Inline `mergeActionItemMetadataWithKindTemplate` stub
 
+**State:** done (round 1)
 **Title:** `4c.5.F.6.1 — fold mergeActionItemMetadataWithKindTemplate into CreateActionItem`.
 
 **Files / paths:**

@@ -931,10 +931,12 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 	if err != nil {
 		return domain.ActionItem{}, err
 	}
-	mergedMetadata, err := mergeActionItemMetadataWithKindTemplate(in.Metadata, kindDef)
-	if err != nil {
-		return domain.ActionItem{}, err
-	}
+	// Per Drop 4c.5 droplet F.6.1: the legacy
+	// mergeActionItemMetadataWithKindTemplate stub (a no-op pass-through left
+	// over from the Drop 3 droplet 3.15 KindTemplate-surface deletion) was
+	// inlined here. Future template-driven action-item metadata defaults will
+	// be reintroduced through a different mechanism if the need arises.
+	mergedMetadata := in.Metadata
 	if err := s.validateKindPayload(kindDef, mergedMetadata.KindPayload); err != nil {
 		return domain.ActionItem{}, err
 	}

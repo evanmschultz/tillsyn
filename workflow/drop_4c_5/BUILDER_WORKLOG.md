@@ -1624,4 +1624,40 @@ N/A — task touched non-Go files (worklog/MD plan) plus Go files in a package w
 ### Unknowns routed back to dev
 
 - **Spec form preference.** I implemented the exclusion-form (`ScopeType == ScopeLevelProject`) per the deviation rationale above. If the dev / plan-QA prefers strict-allow-list form (`ScopeType == ScopeLevelActionItem || ScopeType == ScopeLevelBranch`) once Drop 2 lands the auth-path migration, the test surface flips with no production-shape change. Routing this back so the Drop 2 planner sees the contract.
+
+---
+
+## Droplet F.6.1 — Round 1
+
+**Date:** 2026-05-06.
+**Source spec:** `workflow/drop_4c_5/THEME_F_PLAN.md` § "Droplet F.6.1 — Inline `mergeActionItemMetadataWithKindTemplate` stub".
+**Outcome:** done.
+
+### Files touched
+
+- `internal/app/service.go` — replaced the four-line `mergeActionItemMetadataWithKindTemplate(in.Metadata, kindDef)` call (with its dead `if err != nil` branch) at the post-`resolveActionItemKindDefinition` site in `CreateActionItem` with `mergedMetadata := in.Metadata`. Added a five-line release-note comment naming Drop 4c.5 droplet F.6.1, the lineage (Drop 3 droplet 3.15 deletion → no-op stub → fold-in here), and the future-mechanism placeholder that the original stub doc-comment had promised.
+- `internal/app/kind_capability.go` — deleted the `mergeActionItemMetadataWithKindTemplate` stub (function body `return base, nil`) along with its multi-line doc-comment. The next declaration `nextActionItemPosition` is now contiguous with the preceding `sort.Slice` helper closer.
+- `internal/app/kind_capability_test.go` — updated the standing block-comment note that documented the Drop 3 droplet 3.15 deletion to also name Drop 4c.5 droplet F.6.1's fold-in. Test names + bodies unchanged. Doc-comment now reads as a chronological lineage rather than a snapshot.
+
+### Targets run
+
+- `mage test-pkg ./internal/app` → 458/458 tests green (1.73s). No new tests added; existing call-site coverage continues to exercise the inlined assignment via `TestCreateActionItem_*` and the kind-payload-validation chain.
+- `mage ci` → 2872/2872 tests green across 24 packages, coverage gate met (minimum 70.0%; `internal/app` at 72.1% — unchanged), build successful.
+
+### Design notes
+
+- **Why fold and not rename / re-purpose the function.** The stub's body was `return base, nil`. Keeping a named function whose entire job is one assignment + a guaranteed-nil error indirection costs (a) one stack frame, (b) one dead error-handling branch in every caller, (c) a misleading doc-comment that promised future kind-template-driven defaults. The stub was retained at Drop 3 droplet 3.15 strictly so call sites kept compiling during the KindTemplate-surface deletion; F.6.1 is the documented fold-in.
+- **`kindDef` argument disposition.** The pre-fold call passed `kindDef` as the second parameter. Post-fold the `kindDef` value is still consumed at the very next line (`s.validateKindPayload(kindDef, mergedMetadata.KindPayload)`), so the `resolveActionItemKindDefinition` lookup at line 930 stays. Acceptance-criterion #3 audit confirmed: nothing else upstream of `s.validateKindPayload` needed the second argument; nothing downstream regressed.
+- **Error-path elision is correct, not a missed surface.** The stub's signature returned `(domain.ActionItemMetadata, error)` purely as residue from when the merge logic could fail (KindTemplate validation, metadata defaults conflict). With the body permanently `return base, nil`, the only callable error path was unreachable. Falsification mitigation F1 in the spec ("kindDef was the second arg, and the new code drops it — but other code in CreateActionItem may rely on side effects") is mitigated by the empty-body observation: there are no side effects to lose.
+- **Comment scope.** The new in-source comment names droplet F.6.1 explicitly, mentions the Drop 3 droplet 3.15 lineage, and flags "future template-driven action-item metadata defaults will be reintroduced through a different mechanism if the need arises." This preserves the discoverability that the deleted doc-comment provided — a future planner searching git-blame or grep for the string will land on the same context the named function used to host. Falsification mitigation F2 (re-introduction discoverability) is satisfied by the comment.
+- **Test doc-comment update vs removal.** The block comment at `kind_capability_test.go:645-653` (post-droplet 3.15 chronicle) was kept and extended rather than deleted. Two reasons: (1) the comment serves as the project-local audit trail for "why did `TestCreateActionItemKindMergesCompletionChecklist` disappear" — removing it would re-orphan that breadcrumb; (2) acceptance-criterion #4 said "updated or removed" and update-with-fold-in note wins on signal preservation.
+- **No new tests.** Spec acceptance #5 / #6 explicitly waived new tests because the call-site behavior is unchanged: the inlined assignment is observationally identical to the stub's `return base, nil`. The 458-test green run is the test that no caller noticed.
+
+### Hylla feedback
+
+N/A — task touched non-Go files (worklog/MD plan) plus Go files in a package whose post-Drop-4c state is still pre-reingest (Hylla unused per CLAUDE.md "Hylla Indexes Only Go Files Today" + filesystem-MD mode).
+
+### Unknowns routed back to dev
+
+None. Pure refactor matching the spec verbatim; no spec drift, no behavior change, no scope expansion. F.1.1 (next in Chain 1, blocked_by F.6.1) is now unblocked.
 - **`auth_requests_test.go` vs `auth_revoke_for_action_item_test.go` spec drift.** Pure documentation — the right behavior is to fix the spec wording. Logged here.

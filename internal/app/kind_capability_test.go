@@ -644,13 +644,15 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 
 // Note: Drop 3 droplet 3.15 deleted the legacy KindTemplate surface
 // (AutoCreateChildren, ProjectMetadataDefaults, ActionItemMetadataDefaults,
-// CompletionChecklist) along with mergeActionItemMetadataWithKindTemplate's
-// merge behavior — the function is now a pass-through. The previously
-// surviving "merges CompletionChecklist" test
-// (TestCreateActionItemKindMergesCompletionChecklist) was retired in this
-// droplet because the merge it covered no longer exists; templates v1's
-// KindRule does not encode action-item metadata defaults. Future template-
-// driven defaults will be reintroduced through a different mechanism.
+// CompletionChecklist) along with the merge behavior the
+// mergeActionItemMetadataWithKindTemplate stub used to host. Drop 4c.5
+// droplet F.6.1 then inlined the no-op stub itself — CreateActionItem now
+// assigns mergedMetadata directly from in.Metadata. The previously surviving
+// "merges CompletionChecklist" test (TestCreateActionItemKindMergesCompletionChecklist)
+// was retired in droplet 3.15 because the merge it covered no longer
+// exists; templates v1's KindRule does not encode action-item metadata
+// defaults. Future template-driven defaults will be reintroduced through a
+// different mechanism.
 
 // TestCreateActionItemRejectsExternalSystemBypass verifies public callers cannot fake the internal template path.
 func TestCreateActionItemRejectsExternalSystemBypass(t *testing.T) {

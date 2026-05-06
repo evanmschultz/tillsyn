@@ -1306,3 +1306,58 @@ N/A — filesystem-MD coordination mode forbids Hylla calls per spawn prompt. Al
 ### Hylla Feedback
 
 N/A — filesystem-MD coordination mode forbids Hylla calls per spawn prompt. All evidence resolved via `Read` on `internal/app/auth_requests.go` (constant doc + RevokeSessionForActionItem body), `internal/app/auth_revoke_for_action_item_test.go` (full file including 2 new tests + existing fixtures), `internal/domain/auth_request.go:320-338` (Normalize switch confirming pre-Drop-2 branch quirk), `workflow/drop_4c_5/THEME_CE_PLAN.md` (E.8 spec), `workflow/drop_4c_5/BUILDER_WORKLOG.md` (E.8 entry).
+
+## Droplet F.6.1 — Round 1
+
+**Reviewer:** go-qa-proof-agent
+**Date:** 2026-05-06
+**Verdict:** PASS
+
+### Scope
+
+F.6.1 declared files (per spawn prompt):
+
+- `internal/app/service.go` — CreateActionItem call-site replacement.
+- `internal/app/kind_capability.go` — stub function deletion.
+- `internal/app/kind_capability_test.go` — doc-comment update.
+- `workflow/drop_4c_5/THEME_F_PLAN.md` — F.6.1 row state marker.
+- `workflow/drop_4c_5/BUILDER_WORKLOG.md` — F.6.1 entry.
+
+### Acceptance Verification
+
+| # | Acceptance criterion | Evidence | Status |
+|---|----------------------|----------|--------|
+| 1 | `mergeActionItemMetadataWithKindTemplate` removed from `kind_capability.go`. | `git diff` shows full deletion of doc-comment + body (lines 992-1002, 11 lines removed); `rg "func mergeActionItemMetadataWithKindTemplate"` against the package returns zero hits; neighbour `nextActionItemPosition` now contiguous at line 996. | PASS |
+| 2 | Caller in `service.go` replaced with `mergedMetadata := in.Metadata`. | `service.go:939` reads `mergedMetadata := in.Metadata` exactly as the spec demands; preceding 5-line release-note comment (lines 934-938) names Drop 4c.5 droplet F.6.1 + Drop 3 droplet 3.15 lineage + future-mechanism placeholder. | PASS |
+| 3 | `kindDef` retained for downstream use. | `service.go:930` resolves `kindDef` via `s.resolveActionItemKindDefinition`; consumed at `service.go:940` `s.validateKindPayload(kindDef, mergedMetadata.KindPayload)`. The `kindDef` lookup is preserved for the immediately-following payload validation. | PASS |
+| 4 | `kind_capability_test.go` doc-comment updated. | Block-comment at lines 645-655 extended to name both Drop 3 droplet 3.15 deletion AND Drop 4c.5 F.6.1 fold-in; reads as chronological lineage; preserves the audit-trail breadcrumb for the retired `TestCreateActionItemKindMergesCompletionChecklist`. Test names + bodies unchanged. | PASS |
+| 5 | No new tests added; existing tests cover. | `git diff --stat` for `kind_capability_test.go` shows 16 lines changed but only doc-comment formatting; no `func Test` additions or deletions. Existing `TestCreateActionItem_*` and kind-payload-validation tests cover the inlined assignment via the call-site path. | PASS |
+| 6 | `mage ci` passes. | Worklog reports `mage ci` 2872/2872 tests green across 24 packages, coverage gate met (minimum 70.0%; `internal/app` at 72.1% — unchanged), build successful. | PASS |
+
+### Worklog Completeness
+
+- Source spec link present (line 1633).
+- Files-touched section enumerates all three Go files with precise change descriptions (lines 1638-1640).
+- Targets-run section reports both `mage test-pkg ./internal/app` (458/458) and `mage ci` (2872/2872) (lines 1644-1645).
+- Design notes section (5 sub-points): why-fold-not-rename, kindDef disposition, error-path elision rationale, comment-scope rationale, test doc-comment update vs removal rationale, no-new-tests rationale.
+- Hylla feedback declared N/A with explicit rationale (filesystem-MD mode + Hylla-Go-only restriction).
+- Unknowns section explicit: "None. Pure refactor matching the spec verbatim; no spec drift, no behavior change, no scope expansion. F.1.1 (next in Chain 1, blocked_by F.6.1) is now unblocked."
+- Plan row marked `**State:** done (round 1)` at `THEME_F_PLAN.md:374`.
+
+### Falsification Cross-Check
+
+- **Other callers of the deleted stub?** `rg "mergeActionItemMetadataWithKindTemplate\("` returns only documentation references in `workflow/drop_3/`, `workflow/drop_4c/`, `workflow/drop_4c_5/PLAN.md`, `THEME_F_PLAN.md`, `BUILDER_WORKLOG.md` — all MD audit trail, zero production-code callsites. Single-caller assumption from spec verified.
+- **Behavior equivalence.** Pre-fold body was `return base, nil`; the inline `mergedMetadata := in.Metadata` has identical observable behavior (no error path was reachable because `nil` was unconditional). 458/458 + 2872/2872 green confirms no regression.
+- **Future re-introduction discoverability.** The 5-line in-source comment (`service.go:934-938`) preserves grep-discoverability of "mergeActionItemMetadataWithKindTemplate" + names the future-mechanism placeholder; the `kind_capability_test.go` block-comment preserves the same breadcrumb on the test side. F2 spec mitigation satisfied.
+
+### Closing Certificate
+
+- **Premises:** stub removed, caller inlined, kindDef retained, doc-comment updated, no new tests, mage ci green, worklog complete, plan row stamped.
+- **Evidence:** `kind_capability.go` diff (-11 lines stub block), `service.go:930-940` (kindDef resolved + mergedMetadata inlined + validateKindPayload still consumes kindDef), `kind_capability_test.go:645-655` (extended block-comment), worklog `BUILDER_WORKLOG.md:1630-1662`, plan row `THEME_F_PLAN.md:374`, builder-reported `mage ci` 2872/2872.
+- **Trace:** Pre-fold call site `mergedMetadata, err := mergeActionItemMetadataWithKindTemplate(in.Metadata, kindDef); if err != nil { return ..., err }` → post-fold `mergedMetadata := in.Metadata` → `s.validateKindPayload(kindDef, mergedMetadata.KindPayload)` consumes the still-resolved kindDef. Behavior identical because stub body was unconditionally `return base, nil`.
+- **Conclusion:** PASS. All 6 acceptance criteria satisfied; pure refactor with no spec drift; F.1.1 unblock confirmed in worklog.
+- **Unknowns:** None.
+
+### Hylla Feedback
+
+N/A — filesystem-MD coordination mode per spawn prompt; Hylla calls forbidden. All evidence resolved via `Read`, `rg`, and `git diff` on the five declared files plus a single repo-wide `rg "mergeActionItemMetadataWithKindTemplate\("` to confirm no surviving callers.

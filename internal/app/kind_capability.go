@@ -992,17 +992,6 @@ func normalizeKindIDList(in []domain.KindID) []domain.KindID {
 	return out
 }
 
-// mergeActionItemMetadataWithKindTemplate previously applied
-// kind-template-driven action-item metadata defaults (CompletionChecklist +
-// ActionItemMetadataDefaults). Per Drop 3 droplet 3.15 the legacy
-// KindTemplate surface was deleted; the new templates v1 schema does not
-// encode action-item metadata defaults on a KindRule, and the merge is now a
-// pass-through. Kept as a named function so call sites continue to compile
-// during the transition; a future drop will fold it into the caller.
-func mergeActionItemMetadataWithKindTemplate(base domain.ActionItemMetadata, _ domain.KindDefinition) (domain.ActionItemMetadata, error) {
-	return base, nil
-}
-
 // nextActionItemPosition calculates the next append position for a project column.
 func (s *Service) nextActionItemPosition(ctx context.Context, projectID, columnID string) (int, error) {
 	tasks, err := s.repo.ListActionItems(ctx, projectID, true)
