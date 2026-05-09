@@ -1,0 +1,55 @@
+# _BLOCKERS.toml — workflow/drop_4c_6/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+#
+# Scope per workflow/example/drops/WORKFLOW.md § "_BLOCKERS.toml — Sibling
+# Blocker Ledger": immediate children of this dir only. Cross-level blockers
+# ride on the parent-close-waits-for-child rule, not on this file.
+#
+# Drop 4c.6 has 13 immediate children at L1: 4 sub-plan containers (W0, W0.5,
+# W2, W3) and 9 direct droplets (W1.D1, W5.D1, W5.D2, W5.D3, W6.D1, W6.D2,
+# W6.D3, W6.D4, W6.D5). Sub-plan containers carry their own L2 PLAN.md +
+# nested _BLOCKERS.toml inside DROP_4c.6.W<X>_<NAME>/ once spawned.
+
+# Wave A heads (no blockers — parallel-launchable on drop start)
+# 4c.6.W0       (no [[blockers]] entry — empty blocked_by)
+# 4c.6.W0.5     (no [[blockers]] entry)
+# 4c.6.W1.D1    (no [[blockers]] entry)
+# 4c.6.W5.D1    (no [[blockers]] entry)
+# 4c.6.W6.D2    (no [[blockers]] entry)
+# 4c.6.W6.D3    (no [[blockers]] entry)
+
+[[blockers]]
+node = "4c.6.W2"
+blocked_by = ["4c.6.W1.D1"]
+reason = "W2's till init copies the embedded agent .md files + agents.example.toml shipped by W1.D1 — without W1.D1 there's nothing to copy"
+
+[[blockers]]
+node = "4c.6.W3"
+blocked_by = ["4c.6.W1.D1", "4c.6.W0"]
+reason = "W3's 3-tier resolver consumes W1's embedded till-<group>/<name>.md files; W3's frontmatter strip wiring calls into W0's render-time strip helper"
+
+[[blockers]]
+node = "4c.6.W5.D2"
+blocked_by = ["4c.6.W5.D1"]
+reason = "both edit internal/templates/embed.go and embed_test.go — package + file-lock chain"
+
+[[blockers]]
+node = "4c.6.W5.D3"
+blocked_by = ["4c.6.W5.D1", "4c.6.W5.D2", "4c.6.W1.D1"]
+reason = "edits the renamed till-go.toml (W5.D1) + till-gen.toml (W5.D2) AND the placeholder agent .md frontmatter shipped by W1.D1"
+
+[[blockers]]
+node = "4c.6.W6.D1"
+blocked_by = ["4c.6.W0"]
+reason = "AGENTS_CONFIG.md describes W0's schema + override semantics + frontmatter strip — must accurately reflect shipped reality"
+
+[[blockers]]
+node = "4c.6.W6.D4"
+blocked_by = ["4c.6.W3"]
+reason = "doc-comment corrections at SPAWN_PIPELINE.md:24-31 + CLI_ADAPTER_AUTHORING.md must reflect what W3 actually shipped"
+
+[[blockers]]
+node = "4c.6.W6.D5"
+blocked_by = ["4c.6.W6.D1", "4c.6.W6.D2", "4c.6.W6.D3"]
+reason = "README.md pointer additions cite the three new top-level docs which must exist first"
