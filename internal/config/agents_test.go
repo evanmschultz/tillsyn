@@ -170,6 +170,266 @@ func TestLoadRegistry_AbsentBlocksNilSafe(t *testing.T) {
 	}
 }
 
+// TestResolve_FullInherit loads a fixture with only an [agents] defaults block
+// and asserts Resolve(reg, KindBuild) returns the Preset values verbatim — no
+// per-kind block means pure inheritance.
+func TestResolve_FullInherit(t *testing.T) {
+	t.Parallel()
+
+	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "inheritance_full_inherit.toml"))
+	if err != nil {
+		t.Fatalf("LoadRegistry returned error: %v", err)
+	}
+
+	got, err := Resolve(registry, domain.KindBuild)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	if got.Client != "claude" {
+		t.Errorf("Client = %q, want %q", got.Client, "claude")
+	}
+	if got.Model != "sonnet" {
+		t.Errorf("Model = %q, want %q", got.Model, "sonnet")
+	}
+	if got.Effort != "medium" {
+		t.Errorf("Effort = %q, want %q", got.Effort, "medium")
+	}
+	if got.MaxTries != 3 {
+		t.Errorf("MaxTries = %d, want 3", got.MaxTries)
+	}
+	if got.MaxBudgetUSD != 5.0 {
+		t.Errorf("MaxBudgetUSD = %v, want 5.0", got.MaxBudgetUSD)
+	}
+	if got.MaxTurns != 40 {
+		t.Errorf("MaxTurns = %d, want 40", got.MaxTurns)
+	}
+	if got.BlockedRetries != 2 {
+		t.Errorf("BlockedRetries = %d, want 2", got.BlockedRetries)
+	}
+	if got.BlockedRetryCooldown != "30s" {
+		t.Errorf("BlockedRetryCooldown = %q, want %q", got.BlockedRetryCooldown, "30s")
+	}
+	if got.AutoPush {
+		t.Errorf("AutoPush = %v, want false", got.AutoPush)
+	}
+	if got.EnvSet["TILLSYN_DEV"] != "1" {
+		t.Errorf("EnvSet[TILLSYN_DEV] = %q, want %q", got.EnvSet["TILLSYN_DEV"], "1")
+	}
+	if got.EnvFromShell["GH_TOKEN"] != "GH_TOKEN" {
+		t.Errorf("EnvFromShell[GH_TOKEN] = %q, want %q", got.EnvFromShell["GH_TOKEN"], "GH_TOKEN")
+	}
+	if !equalStrings(got.CliArgs, []string{"--strict-mcp-config"}) {
+		t.Errorf("CliArgs = %v, want [--strict-mcp-config]", got.CliArgs)
+	}
+	if !equalStrings(got.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
+		t.Errorf("ToolsAllow = %v, want [Read Edit Bash]", got.ToolsAllow)
+	}
+	if !equalStrings(got.ToolsDeny, []string{"WebFetch"}) {
+		t.Errorf("ToolsDeny = %v, want [WebFetch]", got.ToolsDeny)
+	}
+	if !equalStrings(got.ClaudeMDAddons, []string{"~/.claude/output-styles/tillsyn-flow.md"}) {
+		t.Errorf("ClaudeMDAddons = %v, want [tillsyn-flow.md]", got.ClaudeMDAddons)
+	}
+}
+
+// TestResolve_PartialOverride asserts that a per-kind block overriding only
+// MaxBudgetUSD reflects that one override while every other field falls
+// through to the Preset.
+func TestResolve_PartialOverride(t *testing.T) {
+	t.Parallel()
+
+	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "inheritance_partial_override.toml"))
+	if err != nil {
+		t.Fatalf("LoadRegistry returned error: %v", err)
+	}
+
+	got, err := Resolve(registry, domain.KindBuild)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	if got.MaxBudgetUSD != 9.5 {
+		t.Errorf("MaxBudgetUSD = %v, want 9.5 (override)", got.MaxBudgetUSD)
+	}
+	// Every other field falls through to Preset.
+	if got.Client != "claude" {
+		t.Errorf("Client = %q, want %q (inherited)", got.Client, "claude")
+	}
+	if got.Model != "sonnet" {
+		t.Errorf("Model = %q, want %q (inherited)", got.Model, "sonnet")
+	}
+	if got.MaxTries != 3 {
+		t.Errorf("MaxTries = %d, want 3 (inherited)", got.MaxTries)
+	}
+	if got.MaxTurns != 40 {
+		t.Errorf("MaxTurns = %d, want 40 (inherited)", got.MaxTurns)
+	}
+	if !equalStrings(got.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
+		t.Errorf("ToolsAllow = %v, want [Read Edit Bash] (inherited)", got.ToolsAllow)
+	}
+	if !equalStrings(got.ToolsDeny, []string{"WebFetch"}) {
+		t.Errorf("ToolsDeny = %v, want [WebFetch] (inherited)", got.ToolsDeny)
+	}
+}
+
+// TestResolve_MapMerge asserts EnvSet and EnvFromShell merge per-key — the
+// per-kind block's keys add to the Preset's keys; neither side's keys are
+// dropped. SKETCH.md § 4.2.2.
+func TestResolve_MapMerge(t *testing.T) {
+	t.Parallel()
+
+	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "inheritance_map_merge.toml"))
+	if err != nil {
+		t.Fatalf("LoadRegistry returned error: %v", err)
+	}
+
+	got, err := Resolve(registry, domain.KindBuild)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	if v, ok := got.EnvSet["A"]; !ok || v != "1" {
+		t.Errorf("EnvSet[A] = %q (present=%v), want %q present", v, ok, "1")
+	}
+	if v, ok := got.EnvSet["B"]; !ok || v != "2" {
+		t.Errorf("EnvSet[B] = %q (present=%v), want %q present", v, ok, "2")
+	}
+	if len(got.EnvSet) != 2 {
+		t.Errorf("len(EnvSet) = %d, want 2", len(got.EnvSet))
+	}
+
+	if v, ok := got.EnvFromShell["SHELL_A"]; !ok || v != "SHELL_A" {
+		t.Errorf("EnvFromShell[SHELL_A] = %q (present=%v), want %q present", v, ok, "SHELL_A")
+	}
+	if v, ok := got.EnvFromShell["SHELL_B"]; !ok || v != "SHELL_B" {
+		t.Errorf("EnvFromShell[SHELL_B] = %q (present=%v), want %q present", v, ok, "SHELL_B")
+	}
+	if len(got.EnvFromShell) != 2 {
+		t.Errorf("len(EnvFromShell) = %d, want 2", len(got.EnvFromShell))
+	}
+}
+
+// TestResolve_MapMergeOverrideWins asserts that when the per-kind block sets
+// a key already present in the Preset map, the override value wins. Documents
+// the precedence half of the per-key merge semantics.
+func TestResolve_MapMergeOverrideWins(t *testing.T) {
+	t.Parallel()
+
+	registry := &AgentsRegistry{
+		Preset: Preset{
+			EnvSet: map[string]string{"K": "preset"},
+		},
+		Overrides: map[domain.Kind]Override{
+			domain.KindBuild: {
+				EnvSet: ptrMap(map[string]string{"K": "override"}),
+			},
+		},
+	}
+
+	got, err := Resolve(registry, domain.KindBuild)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	if got.EnvSet["K"] != "override" {
+		t.Errorf("EnvSet[K] = %q, want %q (override wins on collision)", got.EnvSet["K"], "override")
+	}
+}
+
+// TestResolve_ListReplace asserts list fields full-replace when the per-kind
+// block sets them — Preset's list is dropped wholesale, the override list
+// replaces it. SKETCH.md § 4.2.3.
+func TestResolve_ListReplace(t *testing.T) {
+	t.Parallel()
+
+	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "inheritance_list_replace.toml"))
+	if err != nil {
+		t.Fatalf("LoadRegistry returned error: %v", err)
+	}
+
+	got, err := Resolve(registry, domain.KindBuild)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	if !equalStrings(got.ToolsAllow, []string{"Read"}) {
+		t.Errorf("ToolsAllow = %v, want [Read] (full replace)", got.ToolsAllow)
+	}
+	if !equalStrings(got.CliArgs, []string{"--quiet"}) {
+		t.Errorf("CliArgs = %v, want [--quiet] (full replace)", got.CliArgs)
+	}
+}
+
+// TestResolve_ExplicitEmptyList asserts that an Override with a non-nil but
+// empty list (`&[]string{}`) explicitly replaces a non-empty Preset list with
+// an empty slice. The pointer-to-slice idiom carries the absent-vs-zero
+// discrimination chosen at D1 and honored here.
+func TestResolve_ExplicitEmptyList(t *testing.T) {
+	t.Parallel()
+
+	registry := &AgentsRegistry{
+		Preset: Preset{
+			ToolsDeny: []string{"rm", "WebFetch"},
+		},
+		Overrides: map[domain.Kind]Override{
+			domain.KindBuild: {
+				ToolsDeny: ptrSlice([]string{}),
+			},
+		},
+	}
+
+	got, err := Resolve(registry, domain.KindBuild)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	if got.ToolsDeny == nil {
+		t.Error("ToolsDeny = nil; want non-nil empty slice (explicit empty replaces non-empty)")
+	}
+	if len(got.ToolsDeny) != 0 {
+		t.Errorf("ToolsDeny = %v, want [] (explicit empty replaces non-empty)", got.ToolsDeny)
+	}
+}
+
+// TestResolve_AbsentKindReturnsPreset asserts that calling Resolve with a kind
+// for which the registry has no override block returns the Preset values
+// verbatim — no per-kind override means pure inheritance, same shape as the
+// "no per-kind blocks anywhere" case but probed via the per-kind absent-key
+// path rather than the empty-Overrides-map path.
+func TestResolve_AbsentKindReturnsPreset(t *testing.T) {
+	t.Parallel()
+
+	registry := &AgentsRegistry{
+		Preset: Preset{
+			Model:        "sonnet",
+			MaxBudgetUSD: 5.0,
+			ToolsAllow:   []string{"Read", "Bash"},
+		},
+		Overrides: map[domain.Kind]Override{
+			// KindPlan has an override, but the test queries KindBuild.
+			domain.KindPlan: {
+				Model: ptrStr("opus"),
+			},
+		},
+	}
+
+	got, err := Resolve(registry, domain.KindBuild)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	if got.Model != "sonnet" {
+		t.Errorf("Model = %q, want %q (inherit when kind absent)", got.Model, "sonnet")
+	}
+	if got.MaxBudgetUSD != 5.0 {
+		t.Errorf("MaxBudgetUSD = %v, want 5.0 (inherit when kind absent)", got.MaxBudgetUSD)
+	}
+	if !equalStrings(got.ToolsAllow, []string{"Read", "Bash"}) {
+		t.Errorf("ToolsAllow = %v, want [Read Bash] (inherit when kind absent)", got.ToolsAllow)
+	}
+}
+
 // equalStrings compares two string slices element-by-element.
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
@@ -182,3 +442,17 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// ptrStr returns a pointer to s. Test helper for constructing Override
+// scalars in code rather than via TOML decode.
+func ptrStr(s string) *string { return &s }
+
+// ptrSlice returns a pointer to s. Test helper for constructing Override
+// list fields in code rather than via TOML decode — load-bearing for the
+// empty-list-vs-nil edge case where TOML cannot express "explicit empty
+// list" disjoint from "absent."
+func ptrSlice(s []string) *[]string { return &s }
+
+// ptrMap returns a pointer to m. Test helper for constructing Override map
+// fields in code rather than via TOML decode.
+func ptrMap(m map[string]string) *map[string]string { return &m }

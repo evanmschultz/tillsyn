@@ -65,7 +65,7 @@ Tests are co-located with each droplet's production file. D1 ships `agents_test.
 
 ### Droplet 4c.6.W0.D2 — `Resolve(registry, kind)` inheritance merge engine
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/config/agents.go` (MODIFY — append `Resolve` function + helpers), `internal/config/agents_test.go` (MODIFY — append merge-table tests), `internal/config/testdata/agents/inheritance_*.toml` (NEW — one golden fixture per merge edge case: `inheritance_full_inherit.toml`, `inheritance_partial_override.toml`, `inheritance_map_merge.toml`, `inheritance_list_replace.toml`).
 - **Packages:** `internal/config`.

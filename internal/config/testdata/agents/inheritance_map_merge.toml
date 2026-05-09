@@ -1,0 +1,16 @@
+# inheritance_map_merge.toml — golden fixture for TestResolve_MapMerge.
+#
+# Preset env_set has key A; [agents.build] env_set has key B. Resolve(reg,
+# KindBuild) must produce { A = "1", B = "2" } — per-key merge, not full
+# replace. Same shape exercised on env_from_shell to prove both maps follow
+# the same rule.
+
+[agents]
+client = "claude"
+model = "sonnet"
+env_set = { A = "1" }
+env_from_shell = { SHELL_A = "SHELL_A" }
+
+[agents.build]
+env_set = { B = "2" }
+env_from_shell = { SHELL_B = "SHELL_B" }

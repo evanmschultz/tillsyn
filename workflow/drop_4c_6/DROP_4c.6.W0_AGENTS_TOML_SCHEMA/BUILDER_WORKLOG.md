@@ -57,3 +57,49 @@ Append `## Droplet N.M — Round K` per build attempt. Per `workflow/example/dro
 - **Missed because**: enrichment still running for `github.com/evanmschultz/tillsyn@main` (post-recent-commits state). Hylla returned `enrichment still running` for both attempts.
 - **Worked via**: `Read /Users/evanschultz/Documents/Code/hylla/tillsyn/main/internal/domain/kind.go` directly. Located the closed 12-value enum + constants in 1 read.
 - **Suggestion**: when enrichment is running, Hylla could return the previous-snapshot results with a freshness warning rather than refusing the query entirely. Falling back to `Read` works but loses the surrounding-context discovery Hylla normally provides.
+
+## Droplet 4c.6.W0.D2 — Round 1
+
+### Files touched
+
+- `internal/config/agents.go` (MODIFY; +137 LOC: `Resolve` function + `copyMap` helper + extensive doc-comments).
+- `internal/config/agents_test.go` (MODIFY; +250 LOC: 7 new tests + 3 in-test pointer helpers).
+- `internal/config/testdata/agents/inheritance_full_inherit.toml` (NEW; Preset only, no per-kind blocks).
+- `internal/config/testdata/agents/inheritance_partial_override.toml` (NEW; `[agents.build]` overrides only `max_budget_usd`).
+- `internal/config/testdata/agents/inheritance_map_merge.toml` (NEW; disjoint-key map merge across `env_set` + `env_from_shell`).
+- `internal/config/testdata/agents/inheritance_list_replace.toml` (NEW; full-replace across `tools_allow` + `cli_args`).
+- `workflow/drop_4c_6/DROP_4c.6.W0_AGENTS_TOML_SCHEMA/PLAN.md` (state-flip W0.D2 `todo → in_progress → done`).
+
+### Build-tool targets run
+
+- `mage test-func ./internal/config TestResolve_FullInherit` — RED first (build error: undefined `Resolve`), then GREEN after `Resolve` landed.
+- `mage test-func ./internal/config "TestResolve_.*"` — 7/7 GREEN (`TestResolve_FullInherit`, `TestResolve_PartialOverride`, `TestResolve_MapMerge`, `TestResolve_MapMergeOverrideWins`, `TestResolve_ListReplace`, `TestResolve_ExplicitEmptyList`, `TestResolve_AbsentKindReturnsPreset`).
+- `mage test-func ./internal/config "TestLoadRegistry_.*"` — 5/5 GREEN (W0.D1 regression check).
+- `mage format` — clean.
+
+### Design notes
+
+1. **Per-field merge dispatch via field-by-field nil-checks, not reflection.** The `Override` shape is closed (15 fields known at compile time); a hand-rolled if-tree is faster, simpler, and easier to debug than walking `reflect.Value`. Cost: adding a 16th field requires touching `Resolve` in addition to `Preset` / `Override` / `AgentRuntime`. That's the same surface change cost incurred everywhere else (TOML decode struct field + addOverride dispatch), so no net loss in maintenance overhead.
+
+2. **Map-merge gives the caller a fresh map.** `Resolve` calls `copyMap(registry.Preset.EnvSet)` before layering the override keys, so AgentRuntime's `EnvSet` is never an alias into Preset's storage. Callers who mutate the returned `EnvSet` cannot accidentally rewrite the Preset for subsequent `Resolve` calls. Same treatment for `EnvFromShell`. List fields are NOT defensively copied — full-replace semantics typically swap in a fresh slice from the override pointer; the rare alias-to-Preset case (override absent → out.X = registry.Preset.X) is acceptable today and will be revisited if/when a downstream consumer mutates the returned lists.
+
+3. **Empty-list-vs-nil edge handled cleanly.** The pointer-to-slice idiom from D1 (`Override.ToolsDeny *[]string`) makes "explicit empty `&[]string{}`" distinguishable from "absent (nil)". `Resolve` does `if ov.X != nil { out.X = *ov.X }` — a non-nil empty slice satisfies the predicate and overwrites the Preset. The `TestResolve_ExplicitEmptyList` test exercises exactly this case via in-code construction (TOML cannot express a non-nil empty slice disjoint from the absent-key case, hence the ptr-helper-driven test).
+
+4. **`Resolve` returns `(AgentRuntime, error)` even though D2 has no error path.** PLAN.md acceptance specifies this signature. The `error` return is reserved for D5's `*ConfigError` envelope and future per-field validators (e.g. unknown `model` name). Today the only non-nil error is the `registry == nil` defensive check; every other path returns nil error. Forward-compat: callers should already wire `errors.Is` checks rather than ignoring the error, even though it always returns nil today.
+
+5. **Absent-kind returns Preset verbatim.** `Overrides[kind]` lookup with `, ok` form distinguishes "no per-kind block" from "per-kind block with all-nil fields." Both reduce to "Preset values," so the early return after the lookup is purely an optimization; correctness holds either way. Documented in `TestResolve_AbsentKindReturnsPreset`.
+
+6. **Map-merge override-wins precedence.** When the per-kind block sets a key already present in the Preset, the override value wins. SKETCH § 4.2.2: "per-kind keys win; defaults keys absent in per-kind survive." Tested in `TestResolve_MapMergeOverrideWins` via in-code construction (the disjoint-key TOML fixture cannot express collision without two separate `env_set` blocks).
+
+### Decisions deferred to later droplets
+
+- **D3 `MergeLocal`** — calls into D2 internally? Per PLAN.md D3 Specify: "MergeLocal operates BEFORE Resolve" — D3 merges registries; D2 then resolves the merged registry. So D3 builds `*AgentsRegistry`, then the consumer calls `Resolve(merged, kind)`. D2's signature is already correct for that flow.
+- **D5 `*ConfigError` envelope** — the `error` return on `Resolve` is currently always nil; D5 will revisit if per-field validators need to surface errors with TOML-line context. Today the path emits an internal-only `"Resolve: registry is nil"` for the defensive check.
+
+### State flip
+
+- `PLAN.md` → Droplet 4c.6.W0.D2 `**State:**` `todo` → `in_progress` (at start of round) → `done` (at end of round).
+
+### Hylla Feedback
+
+N/A — task touched only `internal/config` Go code already in scope from W0.D1 + four TOML fixtures + two MD files (PLAN.md state flip, this worklog). All evidence sourced from `Read` against the working tree (W0.D1 output is uncommitted; Hylla would be stale anyway). No fallback miss to log.

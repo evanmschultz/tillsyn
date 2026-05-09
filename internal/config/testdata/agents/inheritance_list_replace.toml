@@ -1,0 +1,15 @@
+# inheritance_list_replace.toml — golden fixture for TestResolve_ListReplace.
+#
+# Preset tools_allow has three entries; [agents.build] tools_allow has one.
+# Resolve(reg, KindBuild) must produce ["Read"] — full replace, NOT a merge.
+# Same shape on cli_args to prove the rule applies to every list field.
+
+[agents]
+client = "claude"
+model = "sonnet"
+cli_args = ["--strict-mcp-config", "--verbose"]
+tools_allow = ["Read", "Edit", "Bash"]
+
+[agents.build]
+cli_args = ["--quiet"]
+tools_allow = ["Read"]

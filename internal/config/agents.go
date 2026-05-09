@@ -193,3 +193,142 @@ func addOverride(out map[domain.Kind]Override, kind domain.Kind, ov *Override) {
 	}
 	out[kind] = *ov
 }
+
+// Resolve produces the effective per-kind AgentRuntime by merging
+// registry.Overrides[kind] over registry.Preset per the inheritance contract
+// in SKETCH.md § 4.2.1-4.2.3:
+//
+//   - Scalar fields (string / int / float / bool): if the Override pointer
+//     is nil the Preset value is used; otherwise the dereferenced override
+//     value wins (even if it is the zero value of the type — pointer-vs-
+//     dereference carries the absent-vs-zero discrimination).
+//   - Map fields (EnvSet, EnvFromShell): per-key merge. The Preset map is
+//     copied first; then each key in the override map is written into the
+//     copy, overwriting Preset entries on collision. Override-nil leaves
+//     the Preset map intact; override-empty contributes zero keys (so the
+//     resulting map equals the Preset map). Output is always a fresh map
+//     so callers cannot mutate Preset's storage through the AgentRuntime.
+//   - List fields (CliArgs, ToolsAllow, ToolsDeny, ClaudeMDAddons): full
+//     replace if the override pointer is non-nil; inherit Preset otherwise.
+//     A non-nil empty slice (e.g. &[]string{}) replaces a non-empty Preset
+//     list with an empty slice — load-bearing for users who need to
+//     explicitly drop a default. Returned slice is the override's slice
+//     directly (no defensive copy); mutation by the caller is out of
+//     scope today, but D5's envelope or a future hardening pass may copy.
+//
+// A registry whose Overrides map has no entry for kind (or has the zero
+// Override) returns the Preset values verbatim — pure inheritance.
+//
+// Resolve currently never returns a non-nil error; the (AgentRuntime, error)
+// signature is reserved for D5's ConfigError envelope and future per-field
+// validators (e.g. unknown model name on a per-kind block). Callers that
+// strictly need an error-free resolution can use the result and ignore err
+// today, but should still wire errors.Is checks for forward-compat.
+func Resolve(registry *AgentsRegistry, kind domain.Kind) (AgentRuntime, error) {
+	if registry == nil {
+		return AgentRuntime{}, fmt.Errorf("Resolve: registry is nil")
+	}
+
+	// Start from Preset values — every field is the floor.
+	out := AgentRuntime{
+		Client:               registry.Preset.Client,
+		Model:                registry.Preset.Model,
+		Effort:               registry.Preset.Effort,
+		MaxTries:             registry.Preset.MaxTries,
+		MaxBudgetUSD:         registry.Preset.MaxBudgetUSD,
+		MaxTurns:             registry.Preset.MaxTurns,
+		BlockedRetries:       registry.Preset.BlockedRetries,
+		BlockedRetryCooldown: registry.Preset.BlockedRetryCooldown,
+		AutoPush:             registry.Preset.AutoPush,
+		EnvSet:               copyMap(registry.Preset.EnvSet),
+		EnvFromShell:         copyMap(registry.Preset.EnvFromShell),
+		CliArgs:              registry.Preset.CliArgs,
+		ToolsAllow:           registry.Preset.ToolsAllow,
+		ToolsDeny:            registry.Preset.ToolsDeny,
+		ClaudeMDAddons:       registry.Preset.ClaudeMDAddons,
+	}
+
+	ov, ok := registry.Overrides[kind]
+	if !ok {
+		// No per-kind block: pure inheritance.
+		return out, nil
+	}
+
+	// Scalars: nil pointer = inherit, non-nil = override.
+	if ov.Client != nil {
+		out.Client = *ov.Client
+	}
+	if ov.Model != nil {
+		out.Model = *ov.Model
+	}
+	if ov.Effort != nil {
+		out.Effort = *ov.Effort
+	}
+	if ov.MaxTries != nil {
+		out.MaxTries = *ov.MaxTries
+	}
+	if ov.MaxBudgetUSD != nil {
+		out.MaxBudgetUSD = *ov.MaxBudgetUSD
+	}
+	if ov.MaxTurns != nil {
+		out.MaxTurns = *ov.MaxTurns
+	}
+	if ov.BlockedRetries != nil {
+		out.BlockedRetries = *ov.BlockedRetries
+	}
+	if ov.BlockedRetryCooldown != nil {
+		out.BlockedRetryCooldown = *ov.BlockedRetryCooldown
+	}
+	if ov.AutoPush != nil {
+		out.AutoPush = *ov.AutoPush
+	}
+
+	// Maps: per-key merge. Preset already copied above; layer override keys.
+	if ov.EnvSet != nil {
+		if out.EnvSet == nil {
+			out.EnvSet = make(map[string]string, len(*ov.EnvSet))
+		}
+		for k, v := range *ov.EnvSet {
+			out.EnvSet[k] = v
+		}
+	}
+	if ov.EnvFromShell != nil {
+		if out.EnvFromShell == nil {
+			out.EnvFromShell = make(map[string]string, len(*ov.EnvFromShell))
+		}
+		for k, v := range *ov.EnvFromShell {
+			out.EnvFromShell[k] = v
+		}
+	}
+
+	// Lists: full replace if non-nil (including non-nil empty).
+	if ov.CliArgs != nil {
+		out.CliArgs = *ov.CliArgs
+	}
+	if ov.ToolsAllow != nil {
+		out.ToolsAllow = *ov.ToolsAllow
+	}
+	if ov.ToolsDeny != nil {
+		out.ToolsDeny = *ov.ToolsDeny
+	}
+	if ov.ClaudeMDAddons != nil {
+		out.ClaudeMDAddons = *ov.ClaudeMDAddons
+	}
+
+	return out, nil
+}
+
+// copyMap returns a shallow copy of m. Used by Resolve to give the caller a
+// fresh map they can mutate without aliasing into Preset's storage. Returns
+// nil for nil input — preserves the absent-vs-empty distinction at the
+// AgentRuntime boundary.
+func copyMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
