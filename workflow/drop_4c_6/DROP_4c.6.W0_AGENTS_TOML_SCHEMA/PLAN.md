@@ -32,7 +32,7 @@ Tests are co-located with each droplet's production file. D1 ships `agents_test.
 
 ### Droplet 4c.6.W0.D1 — `Preset` + per-kind `Override` structs + `AgentRuntime` + `AgentsRegistry` + TOML decode
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/config/agents.go` (NEW), `internal/config/agents_test.go` (NEW), `internal/config/testdata/agents/baseline.toml` (NEW — golden fixture exercising `[agents]` defaults + one per-kind block).
 - **Packages:** `internal/config`.

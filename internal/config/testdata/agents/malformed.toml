@@ -1,0 +1,9 @@
+# malformed.toml — golden fixture for TestLoadRegistry_MalformedTOML.
+#
+# Line 6 has an unterminated string literal which makes pelletier/go-toml/v2
+# emit a *toml.DecodeError with the offending row. The exact error message
+# is library-versioned; the assertions only check structure + position.
+
+[agents]
+client = "claude
+model = "sonnet"

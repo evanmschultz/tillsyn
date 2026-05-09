@@ -1,0 +1,9 @@
+# preset_only.toml — golden fixture for TestLoadRegistry_AbsentBlocksNilSafe.
+#
+# Only [agents] defaults; no per-kind override blocks. LoadRegistry must
+# return a registry whose Overrides map is non-nil (initialized empty) so
+# downstream lookups never panic on map[absent].
+
+[agents]
+client = "claude"
+model = "sonnet"

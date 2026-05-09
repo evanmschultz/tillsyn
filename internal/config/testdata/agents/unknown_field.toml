@@ -1,0 +1,9 @@
+# unknown_field.toml — golden fixture for TestLoadRegistry_UnknownTopLevelField.
+#
+# `not_a_real_field` is intentionally not part of the Preset struct;
+# DisallowUnknownFields() must reject the file rather than silently drop the
+# key.
+
+[agents]
+client = "claude"
+not_a_real_field = "should fail"
