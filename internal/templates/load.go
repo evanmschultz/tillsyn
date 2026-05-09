@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -97,8 +98,14 @@ type LoadOptions struct {
 //     W0.5.D1 hook; mirrors validateMapKeys' canonicalization shape.
 //     b. validateChildRuleKinds — assert every Kind referenced in
 //     [child_rules] is a member of the closed enum.
-//     c. validateChildRuleCycles — DFS the parent → child kind graph for
-//     directed cycles.
+//     c. validateChildRuleCycles — DFS the unified [child_rules] kind
+//     graph for directed cycles. Walks BOTH the parent → child auto-create
+//     graph AND the blocked_by-induced graph (every BlockedByParent=true
+//     rule contributes a child → parent edge). The wrapped cycle-path
+//     message names the offending edge type ("[parent->child]" or
+//     "[blocked_by]"). Drop 4c.6 W0.5.D3 extended the pre-existing
+//     parent→child detector to cover the unified graph; root iteration is
+//     sorted-key for reproducible cycle-path renderings.
 //     d. validateRequiredChildRules — assert that every present
 //     `kind=plan` row has both QA twin child_rules
 //     (`plan-qa-proof` + `plan-qa-falsification`) and every present
@@ -610,20 +617,84 @@ func validateChildRuleKinds(rules []ChildRule) error {
 	return nil
 }
 
-// validateChildRuleCycles runs DFS over the parent → child kind graph
-// derived from [child_rules] to detect directed cycles. The choice of
-// visited-set vs colored-DFS is left to the implementer per Drop 3 finding
-// 5.B.4 — this implementation uses a single recursion-stack set so a node
-// is reported as part of a cycle precisely when a successor's traversal
-// re-enters it.
+// validateChildRuleCycles runs DFS over the kind graph derived from
+// [child_rules] to detect directed cycles. The validator walks BOTH edge
+// sets in a unified-graph DFS pass:
+//
+//  1. The parent→child auto-create graph (every rule contributes an edge
+//     from rule.WhenParentKind to rule.CreateChildKind).
+//  2. The blocked_by-induced graph (every rule whose BlockedByParent is
+//     true contributes an edge from rule.CreateChildKind back to
+//     rule.WhenParentKind, encoding "child cannot start until parent
+//     terminal-completes" at the kind level).
+//
+// The two graphs are checked for cycles independently — a cycle in either
+// edge set surfaces as ErrTemplateCycle wrapping a cycle-path string with
+// the edge-type label appended ("[parent->child]" or "[blocked_by]") so
+// adopters know which rule wiring is at fault. Drop 4c.6 W0.5.D3 introduced
+// the unified-graph extension; the parent→child detection mirrors the
+// pre-W0.5.D3 behaviour for back-compat with existing tests.
+//
+// The DFS root iteration uses sorted-key order via dfsDetectCycle so the
+// wrapped cycle-path message is reproducible across runs / OSes / Go's
+// map-iteration randomness. The previous implementation used `for node :=
+// range graph` (non-deterministic); W0.5.D3 round-2 FF3 fixed that as part
+// of the helper extraction.
+//
+// Today's schema couples the two edge sets — every rule with
+// BlockedByParent=true contributes one edge to each graph, so today every
+// blocked_by cycle is also a parent→child cycle. The unified DFS still
+// reports the first cycle it finds (parent→child first by validator chain
+// order); the second-edge-set pass is forward-looking for future schema
+// additions (e.g. a hypothetical BlockedByKinds []domain.Kind field whose
+// edges are decoupled from the parent→child auto-create graph).
 func validateChildRuleCycles(rules []ChildRule) error {
 	if len(rules) == 0 {
 		return nil
 	}
 
-	graph := make(map[domain.Kind][]domain.Kind, len(rules))
+	parentChildGraph := make(map[domain.Kind][]domain.Kind, len(rules))
+	blockedByGraph := make(map[domain.Kind][]domain.Kind)
 	for _, rule := range rules {
-		graph[rule.WhenParentKind] = append(graph[rule.WhenParentKind], rule.CreateChildKind)
+		parentChildGraph[rule.WhenParentKind] = append(parentChildGraph[rule.WhenParentKind], rule.CreateChildKind)
+		if rule.BlockedByParent {
+			blockedByGraph[rule.CreateChildKind] = append(blockedByGraph[rule.CreateChildKind], rule.WhenParentKind)
+		}
+	}
+
+	if cycle, found := dfsDetectCycle(parentChildGraph); found {
+		return fmt.Errorf("%w: %s [parent->child]", ErrTemplateCycle, formatCyclePath(cycle))
+	}
+	if cycle, found := dfsDetectCycle(blockedByGraph); found {
+		return fmt.Errorf("%w: %s [blocked_by]", ErrTemplateCycle, formatCyclePath(cycle))
+	}
+	return nil
+}
+
+// dfsDetectCycle runs a colored-DFS cycle detector over the supplied
+// directed graph and returns the cycle path (closure node included as the
+// final element) plus a found flag. Roots are iterated in sorted order over
+// the graph's keys so the returned cycle path is reproducible across runs,
+// OSes, and Go's map-iteration randomness. The colored-DFS pattern (white /
+// gray / black) is preserved from the pre-extraction validateChildRuleCycles
+// implementation per Drop 3 finding 5.B.4.
+//
+// The generic constraint is `~string` rather than the broader `comparable`
+// because every caller in this package keys its graphs by domain.Kind (a
+// string-typed enum), and ~string lets the helper sort roots without
+// requiring callers to project keys to []string + back. Drop 4c.6 W0.5.D4
+// and W0.5.D5 reuse this helper for the recursion-depth bound and the
+// blocked_by-acyclicity check respectively, so the constraint must cover
+// every cascade kind-keyed graph.
+//
+// The returned cyclePath starts with the closure-recursion-stack-entry
+// kind, walks the stack to the back-edge target, and ends with the closure
+// kind appended one more time so the rendered string makes the cycle's
+// closure visually obvious (e.g. "kindA -> kindB -> kindA"). On a cycle-
+// free graph the helper returns (nil, false).
+func dfsDetectCycle[K ~string](graph map[K][]K) (cyclePath []K, found bool) {
+	if len(graph) == 0 {
+		return nil, false
 	}
 
 	const (
@@ -631,53 +702,73 @@ func validateChildRuleCycles(rules []ChildRule) error {
 		colorGray  = 1 // on current DFS path
 		colorBlack = 2 // fully explored
 	)
-	color := make(map[domain.Kind]int, len(graph))
+	color := make(map[K]int, len(graph))
 
-	var dfs func(node domain.Kind, stack []domain.Kind) error
-	dfs = func(node domain.Kind, stack []domain.Kind) error {
+	var resultPath []K
+	var dfs func(node K, stack []K) bool
+	dfs = func(node K, stack []K) bool {
 		color[node] = colorGray
 		stack = append(stack, node)
 		for _, next := range graph[node] {
 			switch color[next] {
 			case colorGray:
-				cycle := append(append([]domain.Kind{}, stack...), next)
-				return fmt.Errorf("%w: %s", ErrTemplateCycle, formatCyclePath(cycle, next))
+				resultPath = append(append([]K{}, stack...), next)
+				return true
 			case colorWhite:
-				if err := dfs(next, stack); err != nil {
-					return err
+				if dfs(next, stack) {
+					return true
 				}
 			}
 		}
 		color[node] = colorBlack
-		return nil
+		return false
 	}
 
-	for node := range graph {
+	roots := make([]string, 0, len(graph))
+	for k := range graph {
+		roots = append(roots, string(k))
+	}
+	sort.Strings(roots)
+
+	for _, root := range roots {
+		node := K(root)
 		if color[node] == colorWhite {
-			if err := dfs(node, nil); err != nil {
-				return err
+			if dfs(node, nil) {
+				return resultPath, true
 			}
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // formatCyclePath renders a cycle's traversal as a "kindA -> kindB -> kindA"
-// string for the wrapped error message. The closure point is the kind where
-// the back edge re-entered the recursion stack.
-func formatCyclePath(stack []domain.Kind, closure domain.Kind) string {
+// string for the wrapped error message. The cyclePath input is what
+// dfsDetectCycle returns: the recursion stack from the closure node to the
+// back-edge target with the closure node appended one more time. The first
+// occurrence of the closure-recursion-stack-entry kind is treated as the
+// cycle's start so prefix nodes that led TO the cycle but are not part of
+// the cycle itself are stripped from the rendering.
+//
+// Drop 4c.6 W0.5.D3 generalised the helper from `domain.Kind`-only to a
+// type-parameterised over `~string` constraint so D4 (recursion-depth path
+// rendering) and D5 (blocked_by-acyclicity path rendering) can reuse the
+// same renderer.
+func formatCyclePath[K ~string](cyclePath []K) string {
+	if len(cyclePath) == 0 {
+		return ""
+	}
+	closure := cyclePath[len(cyclePath)-1]
 	startIdx := 0
-	for idx, k := range stack {
+	for idx, k := range cyclePath {
 		if k == closure {
 			startIdx = idx
 			break
 		}
 	}
-	parts := make([]string, 0, len(stack)-startIdx+1)
-	for _, k := range stack[startIdx:] {
+	parts := make([]string, 0, len(cyclePath)-startIdx)
+	for _, k := range cyclePath[startIdx:] {
 		parts = append(parts, string(k))
 	}
-	parts = append(parts, string(closure))
 	return strings.Join(parts, " -> ")
 }
 

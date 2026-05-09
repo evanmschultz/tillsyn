@@ -102,3 +102,52 @@ N/A — task touched non-Go files only at the per-call grain (the durable artifa
 ## Hylla Feedback (Round 2 — Droplet W0.5.D2)
 
 N/A — task touched only Go files inside `internal/templates/` plus testdata fixtures (TOML, not Go) plus the workflow MDs. All Go reads were against `load.go`, `load_test.go`, `schema.go`, `embed.go` in the same uncommitted modified working set per `git status`. Hylla's index is stale for those files anyway (W0.5.D1 was committed to the working tree very recently and the validator I touched is in-flight); direct `Read` was the correct evidence path. One Hylla query attempted (`hylla_search_keyword` for `validateAgentBindingFiles`) returned zero results — which is the expected "stale ingest" miss for a recently-modified file in an uncommitted working tree, not a Hylla schema gap. No suggestion to log; the post-drop reingest will re-cover this surface.
+
+## Droplet 4c.6.W0.5.D3 — Round 1
+
+**State transition:** todo → in_progress → done
+**Date:** 2026-05-09
+
+### Files touched
+
+- **`internal/templates/load.go`** (~110 LOC net delta — refactor + extension)
+  - Added `"sort"` to the import block (single line).
+  - Updated the `Load` godoc chain comment for step 4(c) to describe the unified-graph + edge-type-label behaviour.
+  - Replaced `validateChildRuleCycles`'s body with a unified-graph DFS that walks both the parent→child auto-create graph AND the blocked_by-induced graph (`child→parent` edge contributed by every rule with `BlockedByParent=true`). Wrapped error names the offending edge type as `[parent->child]` or `[blocked_by]`.
+  - Extracted a new private generic helper `dfsDetectCycle[K ~string](graph map[K][]K) (cyclePath []K, found bool)` per W0.5 round-2 FF3. Roots are iterated in `sort.Strings`-order over the `[]string` projection of the graph's keys, fixing the pre-existing non-deterministic `for node := range graph` iteration. Colored-DFS pattern (white / gray / black) is preserved from the pre-extraction implementation per Drop 3 finding 5.B.4.
+  - Generalised `formatCyclePath` from `func(stack []domain.Kind, closure domain.Kind) string` to `func[K ~string](cyclePath []K) string` so D4 and D5 reuse the same renderer. Closure handling is preserved (existing `TestLoadSelfCycleSingleRule` substring assertion `"build -> build"` still matches the renderer's `"build -> build -> build"` output, so back-compat holds).
+- **`internal/templates/load_test.go`** (~190 LOC added)
+  - `TestLoadValidatesChildRuleCyclesUnifiedGraph` — table-driven: parent→child cycle (fixture-backed), blocked_by-coupled cycle (fixture-backed), self-cycle with BlockedByParent (inline, asserts edge-label bracket present without pinning to a specific edge type), happy-path `valid_minimal.toml` passes, multi-rule acyclic blocked_by graph passes.
+  - `TestLoadValidatesChildRuleCyclesDeterministicRootOrder` — runs Load 20× over a fixture with two disjoint components (one cyclic, one acyclic) to exercise Go's randomised map iteration; pins identical cycle-path output across every run AND asserts the lex-min root `"build"` wins so the rendered cycle is `"build -> plan -> build"` regardless of map ordering.
+- **`internal/templates/testdata/invalid_child_rules_cycle.toml`** (NEW, 19 LOC) — parent→child cycle fixture (`build → plan → build`).
+- **`internal/templates/testdata/invalid_child_rules_blocked_by_cycle.toml`** (NEW, 33 LOC) — blocked_by-induced cycle fixture; both rules carry `blocked_by_parent = true`. Doc-comment notes today's coupled-graph behaviour and the forward-looking value of the unified DFS.
+- **`workflow/drop_4c_6/DROP_4c.6.W0.5_TEMPLATE_VALIDATORS/PLAN.md`** — single-line state flip on Droplet W0.5.D3 (`todo → in_progress → done`).
+- **`workflow/drop_4c_6/DROP_4c.6.W0.5_TEMPLATE_VALIDATORS/BUILDER_WORKLOG.md`** — this entry.
+
+### TDD red→green trace
+
+1. Authored `TestLoadValidatesChildRuleCyclesUnifiedGraph` + `TestLoadValidatesChildRuleCyclesDeterministicRootOrder` BEFORE production changes.
+2. `mage test-func ./internal/templates TestLoadValidatesChildRuleCyclesUnifiedGraph` → RED, 4/6 rows failing on the missing `[parent->child]` edge label (correct failure mode — the existing renderer produced `"build -> plan -> build -> build"` without any edge-type bracket).
+3. Imported `"sort"`. Rewrote `validateChildRuleCycles` to build two graphs and call the new `dfsDetectCycle` helper for each. Generalised `formatCyclePath`.
+4. `mage test-func ./internal/templates TestLoadValidatesChildRuleCyclesUnifiedGraph` → GREEN (6/6).
+5. `mage test-func ./internal/templates TestLoadValidatesChildRuleCyclesDeterministicRootOrder` → GREEN (1/1).
+6. Regression checks: `mage test-func ./internal/templates TestLoadSelfCycleSingleRule` → GREEN; `mage test-func ./internal/templates TestLoadRejectionTable` → GREEN (9/9, including the existing `"cycle build->plan->build rejected"` row).
+
+### Design decisions
+
+- **Two graphs, not one merged graph.** A merged-edge approach would falsely flag every well-formed `BlockedByParent=true` rule as a 2-cycle (because each such rule contributes A→B in parent→child AND B→A in blocked_by, which combined are a degree-2 cycle). The validator builds the two edge sets separately and runs `dfsDetectCycle` on each, reporting the first cycle found with its edge-type label. This honors the PLAN's "unified graph" wording (one DFS pass per edge set, unified caller) without producing the false-positive that a literal-edge-merge would.
+- **Today's coupled-graph reality acknowledged in the new fixture's doc-comment.** Per the L2 PLAN risk note + W0.5 round-2 FF3 acceptance: every `BlockedByParent=true` rule in today's schema couples the two edge sets, so any blocked_by cycle today is also a parent→child cycle. The new fixture's doc-comment names this coupling explicitly and points at the forward-looking value (richer kind-level blocked_by schema additions). The `[blocked_by]` label is still wired and reachable — the multi-rule acyclic-blocked_by test row exercises the success path of that traversal.
+- **Edge-label bracket appended outside `formatCyclePath`.** The label is added in `validateChildRuleCycles` via `fmt.Errorf("%w: %s [parent->child]", ...)` rather than inside `formatCyclePath` so D4 (recursion-depth path rendering) and D5 (blocked_by-acyclicity standalone validator) reuse the renderer cleanly. D4's wrapped message will render as `"k0 -> k1 -> ... -> k6"` with no bracket; D5's wrapped message will use its own sentinel and may pick its own label scheme.
+- **`K ~string` constraint, not `K comparable`.** The PLAN's literal helper signature was `[K comparable]`. Sorting requires either projection-from-string + back, or a constraint that supports string conversion. The `~string` underlying-type constraint is the smallest constraint that lets the helper self-sort without forcing every caller to project. Every cascade kind-keyed graph in this package keys by `domain.Kind` (a `~string` enum), so the constraint is sufficient for D3/D4/D5. Drift to a different key type (e.g., a future custom struct key) would surface as a compile error — the helper would need re-parameterisation.
+- **Closure-rendering quirk preserved for back-compat.** The pre-existing `formatCyclePath` rendered a self-cycle `build → build` as `"build -> build -> build"` (closure appended after stack[startIdx:] which already starts with closure). The existing `TestLoadSelfCycleSingleRule` asserted substring `"build -> build"` which matches both the old and new output, so I preserved the rendering. A future cleanup could trim the duplicate-closure tail; out of W0.5.D3 scope.
+- **TOML-line pointer mitigation honoured.** Per the W0.5 plan's `warning` (high) ContextBlock, `pelletier/go-toml/v2` post-decode validators do NOT carry source-line numbers. The wrapped cycle-path message names the participating kinds + edge type so adopters grep their TOML for the offending `[[child_rules]]` rule pair. The validator's godoc explicitly documents this gap.
+- **Determinism test is a 20-iteration loop, not just a fixture pin.** Go's map iteration is randomised per range; a single Load call could accidentally produce the right sorted-order output by chance. The 20-iteration loop catches any non-determinism that would manifest only some-of-the-time. The test pins both invariants: (a) every iteration produces the same string, (b) that string starts with the lex-min root.
+
+### PLAN.md state-flip
+
+- `todo → in_progress` flipped at start of round (single-line edit on the `**State:**` line of the Droplet 4c.6.W0.5.D3 section).
+- `in_progress → done` flipped at end of round after GREEN confirmation on `TestLoadValidatesChildRuleCyclesUnifiedGraph` + `TestLoadValidatesChildRuleCyclesDeterministicRootOrder` + non-regression on `TestLoadSelfCycleSingleRule` + `TestLoadRejectionTable`.
+
+## Hylla Feedback (Round 1 — Droplet W0.5.D3)
+
+N/A — task touched only Go files inside `internal/templates/` plus testdata fixtures (TOML) plus the workflow MDs. All Go reads were against `load.go`, `load_test.go`, `schema.go` in the uncommitted modified working set per `git status` (load.go was modified by W0.5.D1 + D2 earlier in the day). Hylla's index is stale for those files; direct `Read` + `rg` were the correct evidence paths. No Hylla queries attempted on the in-flight file. No suggestion to log; the post-drop reingest will re-cover this surface.

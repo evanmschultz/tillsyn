@@ -116,7 +116,7 @@ The chain order matches the L1 spawn directive: kind-enum + agent_name first →
 
 ### Droplet 4c.6.W0.5.D3 — `[[child_rules]]` Cycle Detector (Including `BlockedByParent` Edges)
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/templates/load.go`, `internal/templates/load_test.go`, `internal/templates/testdata/invalid_child_rules_cycle.toml` (NEW), `internal/templates/testdata/invalid_child_rules_blocked_by_cycle.toml` (NEW)
 - **Packages:** `github.com/evanmschultz/tillsyn/internal/templates`
 - **Acceptance:**

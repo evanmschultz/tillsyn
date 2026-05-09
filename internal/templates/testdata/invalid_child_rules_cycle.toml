@@ -1,0 +1,20 @@
+# invalid_child_rules_cycle — exercises validateChildRuleCycles' parent→child
+# cycle detection (W0.5.D3). Two child_rules form a directed cycle in the
+# parent→child auto-create kind graph: build → plan → build. Loader MUST
+# reject with ErrTemplateCycle wrapping a cycle-path string that names the
+# parent->child edge type.
+#
+# Companion fixture: invalid_child_rules_blocked_by_cycle.toml exercises the
+# blocked_by-induced graph cycle path of the same validator.
+
+schema_version = "v1"
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "plan"
+title = "BOGUS-1"
+
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "build"
+title = "BOGUS-2"

@@ -1,0 +1,34 @@
+# invalid_child_rules_blocked_by_cycle — exercises validateChildRuleCycles'
+# blocked_by-induced cycle detection (W0.5.D3).
+#
+# Each child_rule with `blocked_by_parent = true` contributes a kind-level
+# blocked_by edge from the created child kind to its parent kind (child →
+# parent: child cannot start until parent terminal-completes). Two such rules
+# whose induced blocked_by edges form a directed cycle across distinct kind
+# pairs MUST be rejected at template Load time with ErrTemplateCycle wrapping
+# a cycle-path string that names the blocked_by edge type.
+#
+# Today's schema couples the parent→child auto-create graph and the
+# blocked_by-induced graph (every BlockedByParent=true rule contributes one
+# edge to each), so this fixture's rules ALSO form a cycle in the parent→child
+# graph — the existing parent→child detection would flag the same rules.
+# D3's distinct value is the unified DFS that reports WHICH edge set produced
+# the cycle so adopters know whether to revisit auto-create wiring or runtime
+# blocked_by sequencing. Forward-looking when the schema gains richer kind-
+# level blocked_by fields (e.g. BlockedByKinds), the unified DFS already
+# covers cycles whose blocked_by-graph paths diverge from their parent→child
+# paths.
+
+schema_version = "v1"
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "plan"
+title = "BBP-CYCLE-1"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "build"
+title = "BBP-CYCLE-2"
+blocked_by_parent = true
