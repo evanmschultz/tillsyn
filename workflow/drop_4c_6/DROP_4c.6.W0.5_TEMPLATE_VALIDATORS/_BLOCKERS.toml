@@ -1,0 +1,46 @@
+# _BLOCKERS.toml — workflow/drop_4c_6/DROP_4c.6.W0.5_TEMPLATE_VALIDATORS/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+#
+# Scope per workflow/example/drops/WORKFLOW.md § "_BLOCKERS.toml — Sibling
+# Blocker Ledger": immediate children of this dir only. Cross-level blockers
+# ride on the parent-close-waits-for-child rule, not on this file.
+#
+# W0.5 has 6 droplet children (D1-D6). All six edit the SAME files
+# (internal/templates/load.go + internal/templates/load_test.go) AND share
+# the SAME Go package (internal/templates), so per project CLAUDE.md
+# § "Blocker Semantics" they form a strict serial chain:
+#
+#   D1 -> D2 -> D3 -> D4 -> D5 -> D6
+#
+# Order rationale follows the L1 spawn directive (workflow/drop_4c_6/PLAN.md:85):
+# kind-enum + agent_name first (load-time atomic), then cycles, then
+# recursion-depth, then blocked_by acyclicity (load-time mirror of Drop 4a
+# Wave 1.7), then claim-vs-impl last (depends on a known-wired set type).
+#
+# D1 is the chain head; no [[blockers]] entry needed (empty blocked_by).
+
+[[blockers]]
+node = "4c.6.W0.5.D2"
+blocked_by = ["4c.6.W0.5.D1"]
+reason = "file-lock + package-lock chain — both edit internal/templates/load.go + load_test.go AND share the internal/templates Go package compile/test unit. Per project CLAUDE.md § Blocker Semantics, sibling droplets sharing a file in `paths` OR a package in `packages` MUST have explicit blocked_by."
+
+[[blockers]]
+node = "4c.6.W0.5.D3"
+blocked_by = ["4c.6.W0.5.D2"]
+reason = "file-lock + package-lock chain — both edit internal/templates/load.go + load_test.go AND share the internal/templates package. D3 extends the existing validateChildRuleCycles to walk BlockedByParent-induced edges; D2's agent_name validator must land first for the chain ordering to mirror the L1 spawn directive."
+
+[[blockers]]
+node = "4c.6.W0.5.D4"
+blocked_by = ["4c.6.W0.5.D3"]
+reason = "file-lock + package-lock chain — both edit internal/templates/load.go + load_test.go AND share the internal/templates package. D4 reuses the parent->child kind graph helper D3 produces (or refactors out of D3) to compute max recursion depth; chain ordering keeps the helper introduction in D3 and the depth-bound consumer in D4."
+
+[[blockers]]
+node = "4c.6.W0.5.D5"
+blocked_by = ["4c.6.W0.5.D4"]
+reason = "file-lock + package-lock chain — both edit internal/templates/load.go + load_test.go AND share the internal/templates package. D5 reuses the colored-DFS pattern D3 produces (extracted into a shared private helper); chain ordering keeps the helper extraction sequenced after D3 + D4 land."
+
+[[blockers]]
+node = "4c.6.W0.5.D6"
+blocked_by = ["4c.6.W0.5.D5"]
+reason = "file-lock + package-lock chain — both edit internal/templates/load.go + load_test.go AND share the internal/templates package. D6 ships the claim-vs-impl coherence validator scaffolding + empty known-wired-consumer set + sentinel test; lands last per the L1 spawn directive (`claim-vs-impl last (depends on a known-wired set type)`)."
