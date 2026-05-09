@@ -2766,3 +2766,179 @@ title = "CYC-2"
 		t.Fatalf("Load: cycle was misdiagnosed as recursion-too-deep; err = %v", err)
 	}
 }
+
+// TestLoadValidatesBlockedByAcyclicity exercises validateBlockedByAcyclicity
+// (Drop 4c.6 W0.5.D5). The validator walks a kind-level blocked_by graph and
+// rejects directed cycles with ErrTemplateBlockedByCycle. The validator is
+// the load-time mirror of Drop 4a Wave 1.7's runtime BlockedBy acyclicity
+// check on action-item UUIDs — same DFS shape, same back-edge rejection,
+// but operating on KINDS at template Load rather than on action-item UUIDs
+// at create time.
+//
+// Today's induced graph is degenerate: ChildRule has only BlockedByParent
+// bool, so every blocked_by edge runs from CreateChildKind to WhenParentKind
+// (child→parent forest, trivially acyclic). The validator's value is
+// forward-looking: when a future schema addition gives ChildRule a richer
+// kind-level blocked_by axis (e.g. a BlockedByKinds []domain.Kind field),
+// the DFS already covers cycles in that graph. Today's coupled cycles
+// (e.g. invalid_child_rules_blocked_by_cycle.toml) are caught by D3's
+// unified-graph cycle detector BEFORE D5 ever runs — see the chain-order
+// regression test below.
+//
+// Test rows:
+//
+//   - "acyclic production graph passes": valid_minimal.toml fixture; default
+//     LoadOptions (BlockedByGraphFn nil → production walker over real
+//     ChildRule slice). The fixture's blocked_by graph is two disjoint
+//     edges (build-qa-proof → build, build-qa-falsification → build), a
+//     forest, trivially acyclic. Loader passes.
+//
+//   - "synthetic cycle via injection rejected": valid_minimal.toml fixture
+//     loaded with BlockedByGraphFn returning a hypothetical cyclic kind
+//     graph that today's schema cannot express. Loader rejects with
+//     ErrTemplateBlockedByCycle and a wrapped message rendering the cycle
+//     path with the [blocked_by] edge label.
+//
+//   - "empty child_rules passes": inline TOML with zero rules; default
+//     production walker yields an empty graph; validator returns nil.
+//
+//   - "fixture-driven cycle via injection rejected":
+//     invalid_blocked_by_acyclicity.toml fixture (structurally valid TOML;
+//     rejection driven by injected synthetic graph fn per L2 PLAN
+//     KindPayload). Provides parity with the D3/D4 fixture-shaped rows
+//     so adopters who grep testdata/ for the new sentinel see a real
+//     fixture file.
+//
+// Per L2 PLAN ContextBlock (warning, high) on TOML-line pointers:
+// pelletier/go-toml/v2 post-decode validators do NOT carry source-line
+// numbers, so the wrapped sentinel message names the participating kinds
+// in path order (mirroring D3's formatCyclePath shape) rather than
+// `line=N`. Adopters grep their TOML for the participating kind names.
+func TestLoadValidatesBlockedByAcyclicity(t *testing.T) {
+	validMinimal := mustReadTestdata(t, "valid_minimal.toml")
+	invalidBlockedByCycle := mustReadTestdata(t, "invalid_blocked_by_acyclicity.toml")
+
+	// syntheticCycleFn returns a kind-level graph with a directed cycle
+	// build → plan → build (using the [blocked_by] edge interpretation).
+	// The function ignores its rules input — the cycle is hypothetical
+	// against today's schema — and exists purely to exercise the
+	// validator's DFS path for any future schema that gives ChildRule a
+	// richer blocked_by axis. Sorted-root iteration in dfsDetectCycle
+	// places "build" before "plan" lexicographically, so the rendered
+	// cycle path is deterministic.
+	syntheticCycleFn := func([]ChildRule) map[domain.Kind][]domain.Kind {
+		return map[domain.Kind][]domain.Kind{
+			domain.KindBuild: {domain.KindPlan},
+			domain.KindPlan:  {domain.KindBuild},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		src          string
+		graphFn      func([]ChildRule) map[domain.Kind][]domain.Kind
+		wantErr      bool
+		wantSubstr   []string
+		wantNoSubstr []string
+	}{
+		{
+			name:    "acyclic production graph passes",
+			src:     validMinimal,
+			graphFn: nil, // default production walker over ChildRule slice
+			wantErr: false,
+		},
+		{
+			name:    "synthetic cycle via injection rejected",
+			src:     validMinimal,
+			graphFn: syntheticCycleFn,
+			wantErr: true,
+			wantSubstr: []string{
+				"build -> plan -> build",
+				"[blocked_by]",
+			},
+		},
+		{
+			name: "empty child_rules passes",
+			src: `
+schema_version = "v1"
+`,
+			graphFn: nil,
+			wantErr: false,
+		},
+		{
+			name:    "fixture-driven cycle via injection rejected",
+			src:     invalidBlockedByCycle,
+			graphFn: syntheticCycleFn,
+			wantErr: true,
+			wantSubstr: []string{
+				"build -> plan -> build",
+				"[blocked_by]",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadWithOptions(strings.NewReader(tc.src), LoadOptions{
+				BlockedByGraphFn: tc.graphFn,
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Load: expected error; got nil")
+				}
+				if !errors.Is(err, ErrTemplateBlockedByCycle) {
+					t.Fatalf("Load: errors.Is(_, ErrTemplateBlockedByCycle) = false; err = %v", err)
+				}
+				for _, sub := range tc.wantSubstr {
+					if !strings.Contains(err.Error(), sub) {
+						t.Fatalf("Load: err = %q; want substring %q", err.Error(), sub)
+					}
+				}
+				for _, nosub := range tc.wantNoSubstr {
+					if strings.Contains(err.Error(), nosub) {
+						t.Fatalf("Load: err = %q; must NOT contain substring %q", err.Error(), nosub)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestLoadValidatesBlockedByAcyclicityRunsAfterChildRuleCycles pins the
+// chain-order contract for D5: the existing D3 unified-graph cycle detector
+// (validateChildRuleCycles) runs BEFORE D5's blocked_by-acyclicity check,
+// so today's coupled cycles (every BlockedByParent=true rule contributes one
+// edge to BOTH the parent→child and the blocked_by graphs) are caught by
+// D3 with ErrTemplateCycle rather than by D5 with ErrTemplateBlockedByCycle.
+//
+// The test loads invalid_child_rules_blocked_by_cycle.toml — a fixture
+// whose two BlockedByParent=true rules form a coupled cycle in the
+// parent→child graph AND in the blocked_by graph — and asserts:
+//
+//   - Load returns an error.
+//   - The error wraps ErrTemplateCycle (D3's sentinel).
+//   - The error does NOT wrap ErrTemplateBlockedByCycle (D5's sentinel) —
+//     D3 rejected the template before D5 had a chance to run.
+//
+// The contract is load-bearing: a future refactor that swaps the chain
+// order would surface every coupled cycle as the wrong sentinel — adopters
+// would route on ErrTemplateBlockedByCycle when they should route on
+// ErrTemplateCycle, or vice versa. This regression test catches the swap
+// loudly.
+func TestLoadValidatesBlockedByAcyclicityRunsAfterChildRuleCycles(t *testing.T) {
+	src := mustReadTestdata(t, "invalid_child_rules_blocked_by_cycle.toml")
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected error; got nil")
+	}
+	if !errors.Is(err, ErrTemplateCycle) {
+		t.Fatalf("Load: errors.Is(_, ErrTemplateCycle) = false; err = %v", err)
+	}
+	if errors.Is(err, ErrTemplateBlockedByCycle) {
+		t.Fatalf("Load: D3 cycle was misdiagnosed as D5 blocked_by-cycle; err = %v", err)
+	}
+}

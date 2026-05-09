@@ -61,6 +61,28 @@ type LoadOptions struct {
 	// (LoadDefaultTemplate*) inherit the post-W1.D1 reality where the
 	// real placeholder files satisfy the floor.
 	AgentLookupFn func(name string) bool
+
+	// BlockedByGraphFn is the test-only injection point used by
+	// validateBlockedByAcyclicity (Drop 4c.6 W0.5.D5) to substitute a
+	// synthetic kind-level blocked_by graph for the production walker's
+	// output. Nil resolves to the production walker that today builds the
+	// graph from every ChildRule whose BlockedByParent is true (one edge
+	// per such rule, from CreateChildKind to WhenParentKind).
+	//
+	// Today's production graph is degenerate (forest of child→parent
+	// edges, trivially acyclic). The injection point exists so the
+	// validator can be exercised by a real RED→GREEN test against a
+	// hypothetical kind-level cycle that today's `BlockedByParent bool`
+	// schema cannot otherwise construct. Per W0.5 plan FF1 disclosure:
+	// the validator's value is forward-looking — when a future schema
+	// addition gives ChildRule a richer blocked_by axis (e.g. a
+	// `BlockedByKinds []domain.Kind` field), the DFS already covers
+	// cycles in that graph and the injection point becomes vestigial.
+	//
+	// Production callers (LoadDefaultTemplate*) leave this nil and
+	// inherit the production walker. Test callers MAY inject a synthetic
+	// graph fn that returns whatever shape exercises the validator.
+	BlockedByGraphFn func(rules []ChildRule) map[domain.Kind][]domain.Kind
 }
 
 // Load parses a Tillsyn template TOML stream and validates it.
@@ -112,6 +134,17 @@ type LoadOptions struct {
 //     Runs immediately after the cycle detector so cyclic graphs are
 //     rejected with the better diagnostic (cycle path) before the depth
 //     DFS could be invoked. Drop 4c.6 W0.5.D4 hook.
+//     c''. validateBlockedByAcyclicity — colored-DFS over the kind-level
+//     blocked_by graph (the [blocked_by] edge subgraph independent of
+//     the parent→child auto-create graph); reject directed cycles with
+//     ErrTemplateBlockedByCycle. Today's production graph is degenerate
+//     (child→parent forest, trivially acyclic) — the validator's value
+//     is forward-looking against future schema additions like a
+//     `BlockedByKinds []domain.Kind` field. Coupled cycles (today's
+//     BlockedByParent=true rules contributing one edge to BOTH the
+//     parent→child and the blocked_by graphs) are caught by D3 with
+//     ErrTemplateCycle FIRST so the diagnostic stays consistent with
+//     pre-D5 behaviour. Drop 4c.6 W0.5.D5 hook.
 //     d. validateRequiredChildRules — assert that every present
 //     `kind=plan` row has both QA twin child_rules
 //     (`plan-qa-proof` + `plan-qa-falsification`) and every present
@@ -246,6 +279,9 @@ func LoadWithOptions(r io.Reader, opts LoadOptions) (Template, error) {
 		return Template{}, err
 	}
 	if err := validateChildRuleRecursionDepth(tpl.ChildRules); err != nil {
+		return Template{}, err
+	}
+	if err := validateBlockedByAcyclicity(tpl.ChildRules, opts.BlockedByGraphFn); err != nil {
 		return Template{}, err
 	}
 	if err := validateRequiredChildRules(tpl); err != nil {
@@ -511,6 +547,40 @@ var (
 	//
 	// Drop 4c.6 W0.5.D4 hook.
 	ErrChildRuleRecursionTooDeep = errors.New("template child_rules exceed recursion depth bound")
+
+	// ErrTemplateBlockedByCycle is returned by validateBlockedByAcyclicity
+	// when the kind-level blocked_by graph contains a directed cycle. The
+	// validator is the load-time mirror of Drop 4a Wave 1.7's runtime
+	// BlockedBy acyclicity check on action-item UUIDs (see
+	// internal/domain/action_item.go) — same DFS shape, same back-edge
+	// rejection, but operating on KINDS at template Load rather than on
+	// action-item UUIDs at create time.
+	//
+	// Distinct from ErrTemplateCycle — D3's unified-graph cycle detector
+	// (validateChildRuleCycles) walks the parent→child auto-create graph
+	// AND the BlockedByParent-induced graph in one pass and reports
+	// whichever edge set produces the cycle first. ErrTemplateCycle is the
+	// sentinel for cycles found by that detector. ErrTemplateBlockedByCycle
+	// is the sentinel for cycles in the standalone blocked_by graph that
+	// validateBlockedByAcyclicity walks independently — useful when the
+	// schema gains richer kind-level blocked_by edges (e.g. a
+	// `BlockedByKinds []domain.Kind` field on ChildRule) whose graph
+	// diverges from the parent→child auto-create graph.
+	//
+	// Today's coupled cycles (every BlockedByParent=true rule contributing
+	// one edge to BOTH graphs) are caught by D3 with ErrTemplateCycle
+	// BEFORE D5 runs — the chain order is pinned by
+	// TestLoadValidatesBlockedByAcyclicityRunsAfterChildRuleCycles. D5's
+	// production effect on today's schema is therefore vacuously satisfied;
+	// the sentinel + validator + tests ship now so future schema
+	// expansions inherit acyclicity for free.
+	//
+	// The wrapped message names the participating kinds in path order with
+	// the [blocked_by] edge label appended (mirroring D3's formatCyclePath
+	// shape with the [parent->child] vs [blocked_by] edge-type label).
+	//
+	// Drop 4c.6 W0.5.D5 hook.
+	ErrTemplateBlockedByCycle = errors.New("template blocked_by edges form a cycle")
 )
 
 // childRuleRecursionDepthMax bounds the maximum reachable depth (counted in
@@ -979,6 +1049,96 @@ func formatChainPath[K ~string](chain []K) string {
 		parts = append(parts, string(k))
 	}
 	return strings.Join(parts, " -> ")
+}
+
+// validateBlockedByAcyclicity walks the kind-level blocked_by graph induced
+// by [[child_rules]] and rejects directed cycles with
+// ErrTemplateBlockedByCycle. The validator is the load-time mirror of Drop
+// 4a Wave 1.7's runtime BlockedBy acyclicity check on action-item UUIDs (see
+// internal/domain/action_item.go's blocked_by-acyclicity validator) — same
+// colored-DFS shape, same back-edge rejection, but operating on KINDS at
+// template Load rather than on action-item UUIDs at create time.
+//
+// graphFn parameter — test-only injection point:
+//
+//   - When graphFn is non-nil, the validator walks the supplied graph
+//     verbatim. Tests use this to exercise a synthetic kind-level cycle
+//     against a schema (today's `BlockedByParent bool`) whose production
+//     graph cannot otherwise express one. The injection is the floor of
+//     forward-looking coverage: when a future schema expansion gives
+//     ChildRule a richer blocked_by axis (e.g. a `BlockedByKinds
+//     []domain.Kind` field), production code will produce real cyclic
+//     graphs and the injection point becomes vestigial.
+//
+//   - When graphFn is nil, the production walker builds the graph from
+//     every rule whose BlockedByParent is true. Each such rule contributes
+//     one edge from rule.CreateChildKind to rule.WhenParentKind (child→
+//     parent: child cannot start until parent terminal-completes). Today
+//     the resulting graph is a forest — every edge is a child→parent edge
+//     and parents have no incoming blocked_by edges, so no cycle can
+//     exist. The validator returns nil for every embedded default
+//     template.
+//
+// D3 vs D5 — chain-order contract:
+//
+//   - D3's validateChildRuleCycles walks a UNIFIED graph (parent→child
+//     auto-create AND BlockedByParent-induced edges in one pass) and
+//     reports whichever edge set fires first. Today every
+//     BlockedByParent=true rule contributes one edge to BOTH the
+//     parent→child graph AND the blocked_by graph, so coupled cycles
+//     surface as ErrTemplateCycle in D3 BEFORE D5 ever runs.
+//
+//   - D5's validateBlockedByAcyclicity walks ONLY the blocked_by subgraph
+//     and reports its cycles as ErrTemplateBlockedByCycle. The validator
+//     exists so future schema additions (kind-level blocked_by axes that
+//     diverge from the parent→child auto-create graph) inherit acyclicity
+//     for free without requiring D3's body to be re-thought.
+//
+// Per W0.5 plan FF1 disclosure: pelletier/go-toml/v2's post-decode
+// validators do not carry source-line numbers, so the wrapped sentinel
+// message names the participating kinds in path order (mirroring D3's
+// formatCyclePath shape with the [blocked_by] edge label) rather than
+// `line=N`. Adopters grep their TOML for the participating kind names.
+//
+// Drop 4c.6 W0.5.D5 hook.
+func validateBlockedByAcyclicity(rules []ChildRule, graphFn func(rules []ChildRule) map[domain.Kind][]domain.Kind) error {
+	var graph map[domain.Kind][]domain.Kind
+	if graphFn != nil {
+		graph = graphFn(rules)
+	} else {
+		graph = buildBlockedByGraph(rules)
+	}
+	if len(graph) == 0 {
+		return nil
+	}
+	if cycle, found := dfsDetectCycle(graph); found {
+		return fmt.Errorf("%w: %s [blocked_by]", ErrTemplateBlockedByCycle, formatCyclePath(cycle))
+	}
+	return nil
+}
+
+// buildBlockedByGraph produces the production kind-level blocked_by graph
+// from a [[child_rules]] slice. Each rule whose BlockedByParent is true
+// contributes one edge from rule.CreateChildKind to rule.WhenParentKind
+// (child→parent: child cannot start until parent terminal-completes).
+//
+// Today's schema produces a forest — every edge is a child→parent edge and
+// parents have no incoming blocked_by edges, so no cycle can exist. The
+// helper is its own function rather than inlined into
+// validateBlockedByAcyclicity so future schema expansions (e.g. a
+// `BlockedByKinds []domain.Kind` field on ChildRule) extend the helper in
+// one place rather than threading new edge-construction logic through the
+// validator body.
+//
+// Drop 4c.6 W0.5.D5 hook.
+func buildBlockedByGraph(rules []ChildRule) map[domain.Kind][]domain.Kind {
+	graph := make(map[domain.Kind][]domain.Kind)
+	for _, rule := range rules {
+		if rule.BlockedByParent {
+			graph[rule.CreateChildKind] = append(graph[rule.CreateChildKind], rule.WhenParentKind)
+		}
+	}
+	return graph
 }
 
 // reachabilityStandaloneKinds is the closed set of kinds that are exempt from

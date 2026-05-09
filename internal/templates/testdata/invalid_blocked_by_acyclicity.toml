@@ -1,0 +1,53 @@
+# invalid_blocked_by_acyclicity — exercises validateBlockedByAcyclicity's
+# kind-level blocked_by-graph cycle detection (Drop 4c.6 W0.5.D5).
+#
+# Per L2 PLAN W0.5.D5 KindPayload + RiskNote:
+#   "If today's `BlockedByParent: true` schema cannot construct a real
+#    cycle (because all edges go child→parent and parents have no
+#    incoming edges), the fixture instead tests D5 against an injected
+#    mock graph via a new `LoadOptions.BlockedByGraphFn` option."
+#
+# Today's induced graph is degenerate: ChildRule has only `BlockedByParent
+# bool`, so every blocked_by edge runs from CreateChildKind to
+# WhenParentKind (child→parent forest, trivially acyclic). The fixture
+# itself is therefore STRUCTURALLY VALID TOML — every other validator
+# (schema_version pre-pass, strict decode, validateMapKeys,
+# validateChildRuleKinds, validateChildRuleCycles, ...) accepts it. The
+# rejection is driven entirely by an injected `LoadOptions.BlockedByGraphFn`
+# in the test row, which returns a synthetic kind-level cyclic graph that
+# today's schema cannot otherwise construct.
+#
+# Forward-looking: when a future schema addition gives ChildRule a richer
+# kind-level blocked_by axis (e.g. `BlockedByKinds []domain.Kind`), the
+# fixture flips from "injection-only" to "real cyclic blocked_by edges"
+# without changing the test contract — the test row simply removes the
+# graphFn override and asserts the same sentinel against the real graph.
+#
+# Companion fixture: invalid_child_rules_blocked_by_cycle.toml exercises
+# D3's unified-graph cycle detector (the coupled cycle is caught BEFORE
+# D5 runs); see TestLoadValidatesBlockedByAcyclicityRunsAfterChildRuleCycles
+# for the chain-order regression guard.
+
+schema_version = "v1"
+
+[kinds.build]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = ["build-qa-proof", "build-qa-falsification"]
+structural_type = "droplet"
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
