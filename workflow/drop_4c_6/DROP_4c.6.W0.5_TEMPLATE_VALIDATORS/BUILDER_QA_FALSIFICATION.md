@@ -242,3 +242,114 @@ Build round 1 lands the `agent_name` embedded-tier validator at the correct chai
 ### Hylla Feedback
 
 N/A — droplet touched a single Go package (`internal/templates`) where every relevant file (`load.go`, `load_test.go`, `embed.go`, `schema.go`) was very recently modified through commit `e999a0b`; Hylla's index is stale for those files until the drop-end reingest. Direct `Read` + `git grep` against the working tree was the correct evidence path. No Hylla queries attempted; nothing to log.
+
+## Droplet 4c.6.W0.5.D3 — Round 1
+
+Build-QA-falsification of W0.5.D3 (cycle detector with unified-graph + shared `dfsDetectCycle` helper). Round 1 attack focus: the two builder design refinements — `[K ~string]` instead of literal `[K comparable]`, and two-graph walk instead of merged-edge graph — plus the standard 7-family attack pass.
+
+### Counterexamples
+
+- 1.1 [Family: B5 spec-compliance / NIT] [severity: low] **Sentinel godoc drift on `ErrTemplateCycle`.** `internal/templates/load.go:289-292` doc-comment on `ErrTemplateCycle` still says "the [child_rules] parent → child kind graph contains a directed cycle" — but the validator was extended in this droplet to also walk the blocked_by-induced graph and the wrapped error message now appends edge labels `[parent->child]` or `[blocked_by]`. Repro: `git -C main grep -n "parent → child kind graph" -- internal/templates/load.go` returns the stale single-line description. Fix hint: extend the godoc to "...the unified [child_rules] kind graph (parent→child auto-create edges and blocked_by-induced edges) contains a directed cycle." Not gating — runtime behavior is correct; only the sentinel's pithy one-line summary is stale. Same NIT pattern as the W0.5.D2 round-1 finding 1.1 (godoc drift behind FF reconciliation).
+
+### Family-by-family attack walk
+
+#### B1 — Test-coverage attacks
+
+- **Single-rule self-cycle.** Covered by pre-existing `TestLoadSelfCycleSingleRule` (load_test.go:714-733; GREEN). Also exercised inline by `TestLoadValidatesChildRuleCyclesUnifiedGraph` row 3 ("blocked_by-only cycle rejected (parent->child acyclic)") which uses a `BlockedByParent=true` self-loop and asserts the cycle path renders as `build -> build` plus the edge-label bracket. REFUTED.
+- **2-cycle (parent→child).** Covered by fixture `invalid_child_rules_cycle.toml` + row 1 of the unified-graph test. REFUTED.
+- **2-cycle (blocked_by-only).** Covered by `invalid_child_rules_blocked_by_cycle.toml` + row 2. The fixture's coupled-graph reality is documented in the fixture comment (lines 11-20) and in the test's row-2 `wantNoSubstr` rationale (lines 2410-2418): today's schema couples the two edge sets, so the parent→child detection wins the race; the blocked_by-only path is exercised by row 3's self-loop. REFUTED.
+- **3-cycle.** Not directly tested as a fixture; the DFS algorithm is standard colored-DFS whose N-cycle correctness is invariant to N once the 2-cycle base case + recursion handle. The `TestLoadValidatesChildRuleCyclesDeterministicRootOrder` test runs on a 2-cycle plus an isolated acyclic root, so the `for _, root := range roots` outer loop's lex-ordering is exercised, and the inner adjacency walk that closes the cycle is exercised on the 2-cycle. Adding a 3-cycle row would not catch a class of bugs the 2-cycle row misses given the algorithmic structure (standard back-edge detection on directed graphs). Low-value gap, not a counterexample. REFUTED.
+- **Mixed parent→child + blocked_by cycle in same template.** Today's coupled-graph schema means every blocked_by edge is mirrored in parent→child via the same rule, so no rule combination produces a parent→child-only path that closes via blocked_by. The unified DFS contract still demands BOTH edge sets be walked; the implementation walks both (load.go:665-670). Forward-looking when the schema decouples, the fixture infrastructure is in place. REFUTED.
+- **Deeply nested kind chain (>5 hops).** Out of D3's scope — D4 lands the recursion-depth bound. D3's cycle detector is correct on chains of any length up to a cycle's closure. The DFS uses recursion (not iteration) so a pathological 10000-deep chain could hit Go's goroutine stack limit. For load-time template validation with realistic kind counts (closed 12-enum), this is not a concern. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B2 — Contract-preservation attacks
+
+- **`formatCyclePath` rendering (closure preserved).** A self-cycle `build → build` renders as `"build -> build -> build"` (closure appended after `cyclePath` already starts with closure). Pre-existing `TestLoadSelfCycleSingleRule` asserts `strings.Contains(err.Error(), "build -> build")` which matches both the pre-D3 and post-D3 rendering — back-compat preserved per the worklog's "Closure-rendering quirk preserved for back-compat" note (line 142). Verified by running `mage testFunc ./internal/templates TestLoadSelfCycleSingleRule` GREEN. REFUTED.
+- **Determinism across Go versions / OSes.** The shared helper `dfsDetectCycle` builds `roots []string` from `for k := range graph` (non-deterministic), then `sort.Strings(roots)` (deterministic). Inner adjacency-list walk iterates `graph[node]` slice (deterministic, since the slice is built by iterating the input rules slice in deterministic order). The 20-iteration loop in `TestLoadValidatesChildRuleCyclesDeterministicRootOrder` (load_test.go:2562-2578) catches any non-determinism that would manifest only some-of-the-time. REFUTED.
+- **Cycle-path rendering for non-trivial cycles.** Three-node cycle `A → B → C → A`: the DFS visits A (gray), then B (gray on stack `[A, B]`), then C (gray on stack `[A, B, C]`), then `next = A` is colorGray → `resultPath = stack ++ [A] = [A, B, C, A]`. `formatCyclePath` finds first `A` at idx 0, renders `A -> B -> C -> A`. Correct. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B3 — Hidden-coupling attacks
+
+- **`dfsDetectCycle[K ~string]` helper state leak across calls.** Helper closes over `color map[K]int`, `resultPath []K`, and the recursive `dfs` closure, ALL declared inside the function body. No package-level state, no global maps. Two parallel calls (parent→child graph then blocked_by graph) instantiate fresh `color` and `resultPath` per call — verified at load.go:705-707. REFUTED.
+- **Recursion-stack depth.** Goroutine starts with 8 KB stack growing dynamically up to ~1 GB by default. Practical limit on the closed 12-enum: at most 12 distinct kinds → max recursion depth 12 → trivially safe. REFUTED.
+- **Path-clone safety on cycle detection.** load.go:715: `resultPath = append(append([]K{}, stack...), next)` — explicit `append([]K{}, stack...)` clones `stack` so the returned path does NOT alias the recursion-stack slice. Verified; later mutations to the recursion stack on retreat cannot mutate the captured cycle path. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B4 — YAGNI / scope-creep (PRIMARY FOCUS)
+
+**Was the helper extraction necessary, or could the existing DFS have been extended in place?** The existing `validateChildRuleCycles` ran a single DFS over a single graph. D3 needs to walk TWO graphs. Extending in place would require either (a) inlining the colored-DFS loop twice (~50 LOC duplicated), or (b) hoisting the inner DFS into a closure parameterized by graph reference. Option (a) duplicates the colored-DFS pattern that Drop 3 finding 5.B.4 already specified should be preserved as a single pattern. Option (b) is structurally equivalent to extracting `dfsDetectCycle` but without the type parameter — effectively a private helper without generic reuse. PLAN.md L207 explicitly mandates the helper extraction: "builder extracts a shared private helper rather than copy-pasting." D4 (recursion-depth) and D5 (blocked_by acyclicity) reuse the same helper, so the extraction is structurally required by the PLAN. REFUTED — extraction is justified, not scope creep.
+
+**Was `[K ~string]` strictly needed or is `[K comparable]` + manual sort projection cleaner?** PLAN.md acceptance bullet 6 (line 128) literally specifies `dfsDetectCycle[K comparable](graph map[K][]K) (cyclePath []K, found bool)`. Builder deviated to `[K ~string]`. Two questions: (i) does deviation lose generic flexibility for D4/D5 reuse? (ii) does deviation lose generic flexibility for any plausible future caller?
+
+(i) D4 walks the parent→child kind graph (`map[domain.Kind][]domain.Kind`, `domain.Kind = string`). D5 walks the blocked_by kind graph (same shape). Both reuse cases satisfy `~string` trivially; deviation does NOT lose D4/D5 reuse. (ii) The acceptance bullet's `[K comparable]` is mutually inconsistent with the same bullet's "iterates root-set in sorted-key order" demand: `comparable` does not support ordering, so a `[K comparable]` helper would either need a caller-supplied `less` function, a `[K cmp.Ordered]` constraint, or projection-from-string-and-back inside the helper. Builder picked the third option's cleanest dual: narrow to `~string` and let the helper sort internally. The acceptance text was an internally-inconsistent shape; the builder converged the spec rather than diverging. Future callers keying by non-string types (struct, int) would force re-parameterization — but the closed cascade kind enum is `string`-typed and no proximate non-string-keyed graph is in scope.
+
+REFUTED — `[K ~string]` is a justified design refinement, not scope creep. The acceptance text contradicted itself; builder picked the smaller-diff convergence.
+
+Family verdict: REFUTED. Both design refinements justified.
+
+#### B5 — Spec-compliance attacks (PRIMARY FOCUS)
+
+- **FF3: "Cycle-DFS shared helper iterates root-set in sorted-key order. D3 lands the helper; D4/D5 call into it."** Helper landed at load.go:695-742, `func dfsDetectCycle[K ~string]`. `git grep "dfsDetectCycle" -- '*.go'` confirms three call sites in `validateChildRuleCycles` (D3) — no D4/D5 sites yet because those droplets are state `todo`. Per FF3 chain language: "D3 lands the helper; D4/D5 call into it" — D3 ships the helper as a reusable private function with `~string` constraint covering both D4 (recursion-depth) and D5 (blocked_by acyclicity) reuse cases. REFUTED.
+- **D3 actually lands the helper (not just inlined code).** Verified — `dfsDetectCycle` is a separate function with its own godoc (load.go:674-694), not inlined. REFUTED.
+- **Determinism test catches non-determinism (20 iterations sufficient?).** Go's `for k := range map` iterates in randomized order per range; on a 2-element map with 2 distinct iteration orders, each iteration has p=0.5 of order A, p=0.5 of order B. Without sorted-root iteration, 20 iterations would have probability `(1/2)^19` of all-same-order ≈ 1.9e-6 — i.e. essentially every 20-iteration run would catch the non-determinism. With the sort.Strings fix in place, the test pins the lex-min cycle path and 20 iterations is overkill — even 2 would suffice. REFUTED — 20 iterations is sufficient (and conservatively so).
+- **Sentinel `ErrTemplateCycle` reused as planner mandated.** PLAN.md line 139 mandates "reuse `ErrTemplateCycle`; do NOT introduce a separate `ErrTemplateBlockedByCycle`." Verified at load.go:289 — single sentinel `ErrTemplateCycle`. No new sentinel introduced for blocked_by case. REFUTED.
+- **Sentinel godoc drift (FINDING 1.1).** As noted above: the sentinel's pithy one-liner (load.go:289-291) still says "parent → child kind graph" in the singular even though the validator now walks the unified graph. CONFIRMED but low-severity.
+
+Family verdict: REFUTED on substance, 1 low-severity NIT on sentinel godoc.
+
+#### B6 — Shipped-but-not-wired
+
+- **`dfsDetectCycle` helper called by D3's two-graph walk.** Verified — load.go:665 + 668 are live call sites in `validateChildRuleCycles`. Helper is reachable from production via `LoadWithOptions` → `validateChildRuleCycles` → `dfsDetectCycle`. REFUTED.
+- **D4/D5 wiring deferred to those droplets.** PLAN.md FF3 chain language explicitly defers; D4 and D5 are state `todo` and will land helper reuse in their own rounds. Acceptable — D3 ships a reusable helper; downstream droplets consume it. REFUTED.
+- **`formatCyclePath` generalization shipped & wired.** Generalized from `func(stack []domain.Kind, closure domain.Kind) string` to `func[K ~string](cyclePath []K) string` (load.go:756). Two live call sites at load.go:666 + 669. D4/D5 reuse parametrically — both will key by `domain.Kind` (a `~string`) so the renderer covers both. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B7 — Prompt-injection
+
+Pre-team-feature; per `feedback_prompt_injection_team.md` this family is dormant until team functionality lands. No action-item content is attacker-controllable in the W0.5.D3 scope. EXHAUSTED.
+
+Family verdict: EXHAUSTED.
+
+### Required gate runs (executed)
+
+- **`mage testPkg ./internal/templates`** — GREEN. 418/418 tests pass.
+- **`mage testFunc ./internal/templates "TestLoadValidatesChildRuleCycles.*"`** — GREEN. 7/7 sub-tests pass (5 rows of `TestLoadValidatesChildRuleCyclesUnifiedGraph` + 1 `TestLoadValidatesChildRuleCyclesDeterministicRootOrder` + the parent test funcs).
+- **`mage testFunc ./internal/templates TestLoadSelfCycleSingleRule`** — GREEN. 1/1 (regression — pre-existing self-cycle test still passes after the unified-graph extension).
+- **`mage testFunc ./internal/templates TestLoadRejectionTable`** — GREEN. 9/9 (regression — pre-existing rejection table including the cycle row still passes).
+- **`git grep "dfsDetectCycle" -- '*.go'`** — 5 hits inside `internal/templates/load.go` (3 call sites + 1 godoc reference + 1 definition) + 1 hit in `load_test.go` (godoc reference in the unified-graph test). Helper scope is package-private (lowercase first letter); no external consumer. Verified.
+
+### Summary
+
+**Verdict: pass.**
+
+**Counterexample count:** 1 (low severity — sentinel godoc drift on `ErrTemplateCycle`).
+
+| Family | Result |
+|---|---|
+| B1 test-coverage | REFUTED |
+| B2 contract-preservation | REFUTED |
+| B3 hidden-coupling | REFUTED |
+| B4 yagni / scope-creep (PRIMARY) | REFUTED |
+| B5 spec-compliance (PRIMARY) | REFUTED (1 sentinel-godoc drift NIT) |
+| B6 shipped-but-not-wired | REFUTED |
+| B7 prompt-injection | EXHAUSTED |
+
+**Explicit verdict on the two design refinements:**
+
+1. **`[K ~string]` instead of literal `[K comparable]`: JUSTIFIED.** PLAN.md acceptance bullet 6 simultaneously demanded `[K comparable]` AND "iterates root-set in sorted-key order" — these are mutually inconsistent because `comparable` does not support ordering. The builder converged the spec to the smallest constraint that lets the helper self-sort (`~string`); D4/D5's reuse cases (both keyed by `domain.Kind`, which is `string`-typed) are unaffected. Future callers keying by non-string types would force re-parameterization, but no proximate non-string-keyed graph is in scope. NOT scope creep — convergence of an internally inconsistent acceptance bullet.
+
+2. **Two-graph walk instead of unified merged-edge graph: JUSTIFIED.** A literal merged-edge graph would falsely flag every well-formed `BlockedByParent=true` rule as a 2-cycle (parent→child + child→parent edges of a single rule combine into a degree-2 cycle in the merged graph). This would over-detect — every QA-twin rule, every commit-cadence rule, every standard cascade rule trips the validator. The two-graph approach preserves the semantic distinction between auto-create cycles (infinite chain) and blocked_by cycles (runtime deadlock) while reporting WHICH edge set produced the cycle. The PLAN's "unified DFS" wording is internally consistent with the two-graph implementation IF "unified" is read at the caller-level (one validator, two passes) rather than at the graph-edge level. Builder's interpretation is the only one that doesn't over-flag. NOT scope creep — semantic correctness convergence.
+
+Build round 1 lands the cycle detector with the unified-graph extension, the shared `dfsDetectCycle[K ~string]` helper, the generalized `formatCyclePath[K ~string]` renderer, plus a 5-row table-driven test exercising the parent→child cycle, the blocked_by cycle, the self-loop edge-label flexibility, the happy-path baseline, and an acyclic blocked_by chain — paired with a 20-iteration determinism test pinning the sorted-root contract. Both gates green: `mage testPkg ./internal/templates` (418 tests pass) and per-target `mage testFunc` runs (8 sub-tests pass across the two new tests + 2 regression tests).
+
+**Optional follow-up (NIT, not gating):** apply the sentinel godoc fix from finding 1.1 in a follow-up commit (single-line edit to `internal/templates/load.go:289-291`). Not gating because the runtime behavior is correct, the validator's own godoc (load.go:620-650) accurately describes the unified-graph behavior, and the wrapped error message names both edge types — the drift is contained to the sentinel's pithy one-line summary only.
+
+### Hylla Feedback
+
+N/A — droplet touched only Go files inside `internal/templates/` plus testdata fixtures (TOML) plus the workflow MDs. All Go reads were against `load.go` + `load_test.go` in the uncommitted modified working set per `git status` (load.go was modified through W0.5.D1 / D2 / D3 across the session). Hylla's index is stale for those files until the drop-end reingest. Direct `Read` + `git grep` against the working tree was the correct evidence path. No Hylla queries attempted on the in-flight files; nothing to log.
