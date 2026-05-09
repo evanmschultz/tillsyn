@@ -1,0 +1,49 @@
+# invalid_child_rules_too_deep — exercises validateChildRuleRecursionDepth
+# (Drop 4c.6 W0.5.D4). Six [[child_rules]] form a parent→child chain
+# closeout → research → discussion → refinement → human-verify → commit →
+# plan with 6 edges and 7 nodes — depth 6 exceeds the package-internal
+# bound childRuleRecursionDepthMax = 5. Loader MUST reject with
+# ErrChildRuleRecursionTooDeep wrapping a path-from-root rendering of the
+# offending chain plus the observed depth and the bound for adopter grep.
+#
+# All kinds are members of the closed 12-value domain.Kind enum; none
+# require [kinds] declarations (the standalone-kinds set covers every node
+# in this chain so validateChildRuleReachability is vacuous, and [kinds] is
+# empty so validateRequiredChildRules does not over-fire on plan/build
+# QA-twin requirements). The fixture is therefore minimal — only the
+# schema_version key plus the offending chain.
+#
+# Per L2 PLAN W0.5.D4 acceptance bullet 5: chain renders as
+# "closeout -> research -> discussion -> refinement -> human-verify -> commit -> plan".
+
+schema_version = "v1"
+
+[[child_rules]]
+when_parent_kind = "closeout"
+create_child_kind = "research"
+title = "DEEP-1"
+
+[[child_rules]]
+when_parent_kind = "research"
+create_child_kind = "discussion"
+title = "DEEP-2"
+
+[[child_rules]]
+when_parent_kind = "discussion"
+create_child_kind = "refinement"
+title = "DEEP-3"
+
+[[child_rules]]
+when_parent_kind = "refinement"
+create_child_kind = "human-verify"
+title = "DEEP-4"
+
+[[child_rules]]
+when_parent_kind = "human-verify"
+create_child_kind = "commit"
+title = "DEEP-5"
+
+[[child_rules]]
+when_parent_kind = "commit"
+create_child_kind = "plan"
+title = "DEEP-6"

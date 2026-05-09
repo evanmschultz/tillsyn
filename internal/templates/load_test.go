@@ -2582,3 +2582,187 @@ title = "ISO"
 		t.Fatalf("Load: err = %q; want sorted-root cycle path %q", firstErr, "build -> plan -> build")
 	}
 }
+
+// TestLoadValidatesChildRuleRecursionDepth exercises validateChildRuleRecursionDepth
+// (Drop 4c.6 W0.5.D4). The validator walks the parent→child kind graph already
+// constructed by D3's cycle detector and rejects any reachable depth that
+// exceeds the package-internal constant childRuleRecursionDepthMax = 5
+// (per SKETCH.md § 26.W0.5: "default 5; configurable post-MVP via template").
+//
+// Depth semantics: edges from any root. Chain k0→k1→k2→k3→k4→k5 has depth 5
+// (5 edges, 6 nodes) and PASSES the bound. Chain k0→k1→k2→k3→k4→k5→k6 has
+// depth 6 (6 edges, 7 nodes) and FAILS. The wrapped error names the offending
+// kind, the observed depth, the bound, and the path-from-root that achieved
+// the depth (mirrors formatCyclePath's "kindA -> kindB -> ..." rendering).
+//
+// Per L2 PLAN ContextBlock (warning, high) on TOML-line pointers:
+// pelletier/go-toml/v2 post-decode validators do NOT carry source-line numbers,
+// so the wrapped sentinel message names the offending kind + observed depth +
+// path-from-root rather than `line=N`. Adopters grep their TOML for the
+// participating [[child_rules]] chain.
+//
+// Cyclic graphs are pre-rejected by validateChildRuleCycles (D3) before this
+// validator runs — the chain-order test below verifies that ordering. D4 never
+// has to handle cycles, so the depth DFS is unbounded-safe.
+func TestLoadValidatesChildRuleRecursionDepth(t *testing.T) {
+	tests := []struct {
+		name         string
+		fixture      string // testdata filename; empty → use src
+		src          string // inline source; only consulted when fixture is empty
+		wantErr      bool
+		wantSubstr   []string // every substring must appear in err.Error()
+		wantNoSubstr []string // none of these substrings may appear
+	}{
+		{
+			name: "depth 5 boundary passes",
+			// Chain closeout → research → discussion → refinement →
+			// human-verify → commit. 5 edges, 6 nodes, depth 5. Must pass.
+			// Standalone kinds only so validateChildRuleReachability does
+			// not over-fire; [kinds] is empty so validateRequiredChildRules
+			// is vacuous.
+			src: `
+schema_version = "v1"
+
+[[child_rules]]
+when_parent_kind = "closeout"
+create_child_kind = "research"
+title = "EDGE-1"
+
+[[child_rules]]
+when_parent_kind = "research"
+create_child_kind = "discussion"
+title = "EDGE-2"
+
+[[child_rules]]
+when_parent_kind = "discussion"
+create_child_kind = "refinement"
+title = "EDGE-3"
+
+[[child_rules]]
+when_parent_kind = "refinement"
+create_child_kind = "human-verify"
+title = "EDGE-4"
+
+[[child_rules]]
+when_parent_kind = "human-verify"
+create_child_kind = "commit"
+title = "EDGE-5"
+`,
+			wantErr: false,
+		},
+		{
+			name:    "depth 6 rejected with path-from-root",
+			fixture: "invalid_child_rules_too_deep.toml",
+			wantErr: true,
+			wantSubstr: []string{
+				// 6-edge chain rendered with " -> " separator.
+				"closeout -> research -> discussion -> refinement -> human-verify -> commit -> plan",
+				// Bound + observed-depth in the message for adopter grep.
+				"depth 6",
+				"max 5",
+			},
+		},
+		{
+			name:    "empty child_rules passes",
+			fixture: "valid_minimal.toml",
+			wantErr: false,
+		},
+		{
+			name: "single root-only kind passes (depth 0)",
+			// One rule that is its OWN root — no kind has incoming edges
+			// other than the chain head. Wait: a single rule A→B has depth
+			// 1 from root A. To exercise depth 0 we need a graph with zero
+			// edges, which means zero rules — i.e., the empty case above.
+			// Use a different shape: two disjoint root-leaves
+			// (closeout → research, refinement → human-verify) — each chain
+			// is depth 1, both well under bound. This exercises multi-root
+			// iteration without depth pressure.
+			src: `
+schema_version = "v1"
+
+[[child_rules]]
+when_parent_kind = "closeout"
+create_child_kind = "research"
+title = "EDGE-A"
+
+[[child_rules]]
+when_parent_kind = "refinement"
+create_child_kind = "human-verify"
+title = "EDGE-B"
+`,
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var src string
+			if tc.fixture != "" {
+				src = mustReadTestdata(t, tc.fixture)
+			} else {
+				src = tc.src
+			}
+			_, err := Load(strings.NewReader(src))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Load: expected error; got nil")
+				}
+				if !errors.Is(err, ErrChildRuleRecursionTooDeep) {
+					t.Fatalf("Load: errors.Is(_, ErrChildRuleRecursionTooDeep) = false; err = %v", err)
+				}
+				for _, sub := range tc.wantSubstr {
+					if !strings.Contains(err.Error(), sub) {
+						t.Fatalf("Load: err = %q; want substring %q", err.Error(), sub)
+					}
+				}
+				for _, nosub := range tc.wantNoSubstr {
+					if strings.Contains(err.Error(), nosub) {
+						t.Fatalf("Load: err = %q; must NOT contain substring %q", err.Error(), nosub)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestLoadValidatesChildRuleRecursionDepthRunsAfterCycleDetection pins the
+// chain-order contract from L2 PLAN W0.5.D4 acceptance bullet 7: D4 runs
+// AFTER D3 in the LoadWithOptions validator chain so cyclic graphs are
+// rejected with ErrTemplateCycle (the better diagnostic — cyclic graphs have
+// unbounded depth and the cycle path is the actionable shape) BEFORE D4's
+// depth DFS could be invoked. Without this ordering, a cyclic graph would
+// either infinite-loop the depth DFS or surface as ErrChildRuleRecursionTooDeep
+// when the real bug is the cycle.
+func TestLoadValidatesChildRuleRecursionDepthRunsAfterCycleDetection(t *testing.T) {
+	src := `
+schema_version = "v1"
+
+# Cycle build → plan → build. With a 7+ rule chain extending out of build,
+# a misordered chain (D4 before D3) would surface the depth diagnostic
+# rather than the cycle. The correct chain order ensures ErrTemplateCycle
+# fires first regardless of the chain length.
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "plan"
+title = "CYC-1"
+
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "build"
+title = "CYC-2"
+`
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatalf("Load: expected ErrTemplateCycle; got nil")
+	}
+	if !errors.Is(err, ErrTemplateCycle) {
+		t.Fatalf("Load: errors.Is(_, ErrTemplateCycle) = false; err = %v", err)
+	}
+	if errors.Is(err, ErrChildRuleRecursionTooDeep) {
+		t.Fatalf("Load: cycle was misdiagnosed as recursion-too-deep; err = %v", err)
+	}
+}

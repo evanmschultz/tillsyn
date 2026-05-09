@@ -106,6 +106,12 @@ type LoadOptions struct {
 //     "[blocked_by]"). Drop 4c.6 W0.5.D3 extended the pre-existing
 //     parent→child detector to cover the unified graph; root iteration is
 //     sorted-key for reproducible cycle-path renderings.
+//     c'. validateChildRuleRecursionDepth — DAG longest-path DFS over the
+//     parent → child graph; reject when any reachable depth exceeds
+//     childRuleRecursionDepthMax (5 by default per SKETCH.md § 26.W0.5).
+//     Runs immediately after the cycle detector so cyclic graphs are
+//     rejected with the better diagnostic (cycle path) before the depth
+//     DFS could be invoked. Drop 4c.6 W0.5.D4 hook.
 //     d. validateRequiredChildRules — assert that every present
 //     `kind=plan` row has both QA twin child_rules
 //     (`plan-qa-proof` + `plan-qa-falsification`) and every present
@@ -237,6 +243,9 @@ func LoadWithOptions(r io.Reader, opts LoadOptions) (Template, error) {
 		return Template{}, err
 	}
 	if err := validateChildRuleCycles(tpl.ChildRules); err != nil {
+		return Template{}, err
+	}
+	if err := validateChildRuleRecursionDepth(tpl.ChildRules); err != nil {
 		return Template{}, err
 	}
 	if err := validateRequiredChildRules(tpl); err != nil {
@@ -470,7 +479,52 @@ var (
 	//
 	// Drop 4c.6 W0.5.D2 hook.
 	ErrUnknownAgentName = errors.New("template references an unknown agent name")
+
+	// ErrChildRuleRecursionTooDeep is returned by validateChildRuleRecursionDepth
+	// when the parent→child kind graph induced by [[child_rules]] contains a
+	// reachable depth greater than childRuleRecursionDepthMax (5 by default
+	// per SKETCH.md § 26.W0.5: "default 5; configurable post-MVP via
+	// template").
+	//
+	// "Depth" is measured in EDGES from any root: a chain
+	// k0 → k1 → k2 → k3 → k4 → k5 has depth 5 (5 edges, 6 nodes) and PASSES
+	// the bound. Adding one more edge — k0 → ... → k6 — pushes the depth to
+	// 6 and trips this sentinel.
+	//
+	// The wrapped message names the offending kind, the observed depth, the
+	// bound, and the path from a root that achieved the depth (rendered with
+	// formatCyclePath's " -> " separator so the diagnostic UX is visually
+	// consistent with cycle errors). The graph is a DAG by the time this
+	// validator runs because validateChildRuleCycles (the chain step
+	// immediately preceding D4) rejects every cycle with ErrTemplateCycle —
+	// cyclic graphs have unbounded depth and the cycle is the better
+	// diagnostic, so D4 never has to handle them.
+	//
+	// Per W0.5 plan FF1 disclosure: pelletier/go-toml/v2's post-decode
+	// validators do not carry source-line numbers, so adopters grep their
+	// TOML for the participating [[child_rules]] chain rather than jumping
+	// to a `line=N` pointer.
+	//
+	// The bound is a Go-internal constant for Drop 4c.6 — adopter templates
+	// cannot raise or lower it. Post-MVP refinement: a `[tillsyn]
+	// recursion_depth_max = N` field gives adopters template-level control.
+	//
+	// Drop 4c.6 W0.5.D4 hook.
+	ErrChildRuleRecursionTooDeep = errors.New("template child_rules exceed recursion depth bound")
 )
+
+// childRuleRecursionDepthMax bounds the maximum reachable depth (counted in
+// edges from any root) of the parent→child kind graph induced by
+// [[child_rules]]. Default 5 per SKETCH.md § 26.W0.5; the constant is
+// package-internal because adopter-template control of the bound lands
+// post-MVP via a `[tillsyn] recursion_depth_max = N` schema field.
+//
+// LOUD WARNING TO FUTURE DROPS: lowering this constant is a soft-breaking
+// change against any adopter template whose chain depth is ≤ the old bound
+// but > the new bound. Raise it freely; lower it only via a deprecation
+// cycle that surfaces the new bound through a non-fatal warning before
+// flipping to hard-fail.
+const childRuleRecursionDepthMax = 5
 
 // validateMapKeys asserts every key in Template.Kinds,
 // Template.AgentBindings, and Template.Gates is a member of the closed
@@ -767,6 +821,161 @@ func formatCyclePath[K ~string](cyclePath []K) string {
 	}
 	parts := make([]string, 0, len(cyclePath)-startIdx)
 	for _, k := range cyclePath[startIdx:] {
+		parts = append(parts, string(k))
+	}
+	return strings.Join(parts, " -> ")
+}
+
+// validateChildRuleRecursionDepth walks the parent→child kind graph induced
+// by [[child_rules]] and rejects any reachable depth that exceeds
+// childRuleRecursionDepthMax. "Depth" is counted in edges from any root: a
+// chain k0 → k1 → k2 → k3 → k4 → k5 has depth 5 (5 edges, 6 nodes) and
+// PASSES the bound; one more edge trips ErrChildRuleRecursionTooDeep.
+//
+// Algorithm — DAG longest-path with memoised DFS:
+//
+//  1. Build the parent→child graph (one edge per [[child_rules]] entry,
+//     from rule.WhenParentKind to rule.CreateChildKind). The graph is a
+//     DAG by the time this validator runs because validateChildRuleCycles
+//     (the chain step immediately preceding D4 in LoadWithOptions)
+//     rejected every cycle. Cyclic input would either infinite-loop the
+//     recursive depth DFS or surface as ErrChildRuleRecursionTooDeep with
+//     a misleading path — neither is reachable here.
+//  2. For each kind in the graph, compute the longest path that begins at
+//     that kind via memoised recursion: depth[k] = 1 + max(depth[child])
+//     over k's out-edges; leaves have depth 0. Memoisation makes the walk
+//     linear in the number of edges; without it a diamond shape A→B,
+//     A→C, B→D, C→D would visit D twice.
+//  3. Iterate the graph's roots in sorted-key order (mirrors
+//     dfsDetectCycle's reproducibility contract). The first kind whose
+//     depth exceeds childRuleRecursionDepthMax wins the diagnostic — its
+//     longest-path rendering is appended to the wrapped error message via
+//     formatCyclePath's " -> " separator.
+//
+// Multi-root handling: when several kinds qualify as roots (no incoming
+// edges), the validator iterates them in sort.Strings order so the
+// diagnostic is reproducible across runs / OSes / Go map-iteration
+// randomness. Disjoint subgraphs are walked independently; the deepest
+// chain anywhere in the graph wins the diagnostic.
+//
+// Empty [[child_rules]] is the trivial pass case — len(graph) == 0 returns
+// nil immediately. Single-edge graphs (depth 1) and any chain up to depth
+// 5 also pass.
+//
+// Drop 4c.6 W0.5.D4 hook. The validator is wired into LoadWithOptions
+// immediately after validateChildRuleCycles per the L2 PLAN insertion-point
+// directive — that ordering is load-bearing because cyclic graphs would
+// either infinite-loop the depth DFS or surface as a misleading
+// recursion-too-deep error rather than the actionable cycle path. The
+// chain ordering is pinned by TestLoadValidatesChildRuleRecursionDepthRunsAfterCycleDetection.
+func validateChildRuleRecursionDepth(rules []ChildRule) error {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	graph := make(map[domain.Kind][]domain.Kind, len(rules))
+	for _, rule := range rules {
+		graph[rule.WhenParentKind] = append(graph[rule.WhenParentKind], rule.CreateChildKind)
+	}
+
+	// Memoised longest-path-from-here. depthFrom[k] = max edges in any
+	// path that begins at k. Built via DFS from every kind appearing as a
+	// graph key; leaf kinds (no out-edges in the graph) implicitly have
+	// depth 0 because depthFrom[leaf] is read as the zero value of int.
+	// successorOnLongest[k] picks the out-edge that achieved the longest
+	// path so the final rendering can walk the chain back from the
+	// offending root.
+	depthFrom := make(map[domain.Kind]int, len(graph))
+	successorOnLongest := make(map[domain.Kind]domain.Kind, len(graph))
+	visited := make(map[domain.Kind]bool, len(graph))
+
+	var compute func(node domain.Kind) int
+	compute = func(node domain.Kind) int {
+		if d, ok := depthFrom[node]; ok {
+			return d
+		}
+		if visited[node] {
+			// Defense-in-depth: validateChildRuleCycles already rejected
+			// every cycle, so this branch is unreachable in production.
+			// If it ever fires, treat the node as a leaf (depth 0)
+			// rather than infinite-looping. The depth-bound check still
+			// fires correctly for the longest acyclic prefix.
+			return 0
+		}
+		visited[node] = true
+
+		bestChild := domain.Kind("")
+		bestDepth := -1
+		for _, child := range graph[node] {
+			childDepth := compute(child)
+			if childDepth > bestDepth {
+				bestDepth = childDepth
+				bestChild = child
+			}
+		}
+		if bestDepth < 0 {
+			// Leaf in the graph (kind has no out-edges). Depth 0.
+			depthFrom[node] = 0
+			return 0
+		}
+		depthFrom[node] = bestDepth + 1
+		successorOnLongest[node] = bestChild
+		return depthFrom[node]
+	}
+
+	roots := make([]string, 0, len(graph))
+	for k := range graph {
+		roots = append(roots, string(k))
+	}
+	sort.Strings(roots)
+
+	for _, rootStr := range roots {
+		root := domain.Kind(rootStr)
+		depth := compute(root)
+		if depth <= childRuleRecursionDepthMax {
+			continue
+		}
+		// Walk the longest-path successor chain from root to render the
+		// diagnostic. The chain length is depth + 1 (nodes vs edges).
+		path := make([]domain.Kind, 0, depth+1)
+		node := root
+		for {
+			path = append(path, node)
+			next, ok := successorOnLongest[node]
+			if !ok {
+				break
+			}
+			node = next
+		}
+		return fmt.Errorf(
+			"%w: kind %q reaches depth %d (max %d): %s",
+			ErrChildRuleRecursionTooDeep,
+			root,
+			depth,
+			childRuleRecursionDepthMax,
+			formatChainPath(path),
+		)
+	}
+	return nil
+}
+
+// formatChainPath renders an acyclic kind chain as a "kindA -> kindB -> kindC"
+// string for the depth-bound diagnostic. Distinct from formatCyclePath
+// because depth paths have NO closure node — the chain ends at a leaf, and
+// every node in the slice is a distinct member of the rendered path. Reusing
+// formatCyclePath here would mis-handle the chain because that helper treats
+// the last element as the cycle's closure node and strips every prefix node
+// that led TO it.
+//
+// Drop 4c.6 W0.5.D4 hook. The renderer is type-parameterised over `~string`
+// to mirror formatCyclePath's signature so future depth-style validators can
+// reuse it without forcing a domain.Kind-specific projection.
+func formatChainPath[K ~string](chain []K) string {
+	if len(chain) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(chain))
+	for _, k := range chain {
 		parts = append(parts, string(k))
 	}
 	return strings.Join(parts, " -> ")

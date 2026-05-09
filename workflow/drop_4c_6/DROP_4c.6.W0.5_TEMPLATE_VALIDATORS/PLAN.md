@@ -149,7 +149,7 @@ The chain order matches the L1 spawn directive: kind-enum + agent_name first →
 
 ### Droplet 4c.6.W0.5.D4 — `[[child_rules]]` Recursion-Depth Bound (Default 5)
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/templates/load.go`, `internal/templates/load_test.go`, `internal/templates/testdata/invalid_child_rules_too_deep.toml` (NEW)
 - **Packages:** `github.com/evanmschultz/tillsyn/internal/templates`
 - **Acceptance:**
