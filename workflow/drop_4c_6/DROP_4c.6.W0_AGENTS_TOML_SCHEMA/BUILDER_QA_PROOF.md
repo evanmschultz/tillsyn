@@ -110,3 +110,81 @@ Build-QA-Proof axes evaluated:
 ### Hylla Feedback
 
 N/A — verification touched only Go files. All evidence-gathering used `Read` (production + test + fixture sources), `git show` / `git log` / `git diff` (commit-range scope), and `mage test-pkg` / `mage test-func` (gate runs). Hylla was not queried during this proof pass — D2's surface is post-commit pre-ingest territory where `git` + `mage` + `Read` are authoritative; the live LSP daemon would not have surfaced any committed-state signal that those tools didn't cover.
+
+## Droplet 4c.6.W0.D3 — Round 1
+
+### Findings
+
+(none rated medium-or-higher; one informational note documented under Summary axis 4 — coarse wrap-text deviation accepted per consensus reading of round-3 contract; D5 supersedes wrap text)
+
+### Missing Evidence
+
+(none — see Summary)
+
+### Summary
+
+**Verdict: pass** — 0 high/medium findings; 1 informational note on wrap-text deviation explicitly accepted per round-3 contract consensus reading.
+
+Build-QA-Proof axes evaluated:
+
+1. **Diff-vs-spec.** Commit `7dfd0f4` ("feat(config): w0.d3 mergelocal and tools_deny rejection") touches exactly the declared paths from PLAN.md droplet D3:
+   - `internal/config/agents.go` (MODIFY, +333 LOC: `MergeLocal` + `mergePreset` + `mergeOverride` + `cloneOverride` + `copySlice` + `ErrToolsDenyNotOverridable` + `errors` import).
+   - `internal/config/agents_test.go` (MODIFY, +301 LOC: 8 `TestMergeLocal_*` tests + `ptrFloat` + `ptrInt` helpers).
+   - 3 new fixtures `local_override_model.toml` / `local_tools_deny_rejected.toml` / `local_partial_block.toml` under `internal/config/testdata/agents/`.
+   - `BUILDER_WORKLOG.md` round entry, `PLAN.md` D3 state-flip (`todo` → `done`).
+   No drive-by edits.
+
+2. **AcceptanceCriteria coverage.** Each PLAN.md L2 acceptance bullet for D3 has a verifying test or in-code construct:
+   - "`MergeLocal(project, local) (*AgentsRegistry, error)` returns a new `AgentsRegistry` with local fields deep-merged OVER project" → exported function present at `agents.go:386-436`; signature matches exactly. Field-merge over per-kind blocks at `agents.go:425-433` via `mergeOverride`; top-level Preset merge at `agents.go:423` via `mergePreset`. `TestMergeLocal_OverrideModel` (`agents_test.go:438-478`) and `TestMergeLocal_PartialBlock` (`:593-634`) prove field-level merge.
+   - "`tools_deny` set in local … returns `ErrToolsDenyNotOverridable` — closed sentinel" → `agents.go:392-401` checks both `local.Preset.ToolsDeny` (defaults block) and every `local.Overrides[kind].ToolsDeny` (per-kind blocks). Two coverage tests: `TestMergeLocal_ToolsDenyRejected` (`agents_test.go:484-506`, fixture-driven, per-kind) and `TestMergeLocal_ToolsDenyDefaultsBlockRejected` (`agents_test.go:511-532`, in-code, defaults-block). Both assert `errors.Is(err, ErrToolsDenyNotOverridable)` only — D5's `TestMergeLocal_ToolsDenyPositionWrapped` will assert the envelope shape per PLAN.md:117.
+   - "Bare sentinel message reads `'tools_deny is not user-overridable; remove the field'`" → verbatim match at `agents.go:36`: `var ErrToolsDenyNotOverridable = errors.New("tools_deny is not user-overridable; remove the field")`.
+   - "`MergeLocal(project, nil)` returns `project` unchanged" → `agents.go:418-420` early-return after deep-clone path; `TestMergeLocal_NilLocal` (`agents_test.go:537-574`) asserts merged equals project field-for-field. Note: returns a deep-clone, not the project pointer itself (worklog Design Note 5 — symmetric contract). Spec says "unchanged"; deep-clone is value-equivalent so satisfies the contract.
+   - "`MergeLocal(nil, local)` returns an error" → `agents.go:387-389` returns `"MergeLocal: project registry is nil; agents.toml is required"`. `TestMergeLocal_NilProject` (`agents_test.go:579-588`) asserts non-nil error.
+   - "Deep-merge preserves project's per-kind overrides where local doesn't override" → `agents.go:426-433` uses `mergeOverride(existing, lov)` to layer local pointers over project pointers field-by-field. `TestMergeLocal_PartialBlock` proves this on a real fixture (local sets only `[agents.build].model`; project's `MaxBudgetUSD`, `MaxTurns`, `ToolsAllow` survive).
+   - All 4 named PLAN.md tests present (`OverrideModel`, `ToolsDenyRejected`, `NilLocal`, `PartialBlock`); 4 additional tests (`ToolsDenyDefaultsBlockRejected`, `NilProject`, `PresetFieldMerge`, `NewKindBlock`) cover paths called out by acceptance prose ("`tools_deny` in the `[agents]` defaults block" per RiskNote line 129, nil-project path per line 114, defaults-block field merge per AC line 110, new-kind-from-local per line 115). All harden coverage rather than drift from spec.
+
+3. **Constraint preservation.** D1+D2 regression check: `mage test-func ./internal/config "TestLoadRegistry_.*|TestResolve_.*"` → 12/12 GREEN (5 D1 + 7 D2). D1+D2 production code in `agents.go:1-345` is unchanged — D3 appends `MergeLocal` + helpers at lines 347-667 without disturbing existing `Preset` / `Override` / `AgentRuntime` / `AgentsRegistry` / `LoadRegistry` / `Resolve`. Imports added: `errors` only (single-line addition). No competing TOML libs introduced.
+
+4. **Spec-conformance — D3↔D5 separation contract (LOAD-BEARING AXIS).** This axis carries the round-3 finalized strict-bare-sentinel contract.
+
+   **Wrap-text shape verified at `agents.go:394` and `:398`:**
+   - Defaults-block path: `fmt.Errorf("agents.local.toml [agents]: %w", ErrToolsDenyNotOverridable)`.
+   - Per-kind path: `fmt.Errorf("agents.local.toml [agents.%s]: %w", kind, ErrToolsDenyNotOverridable)`.
+
+   **Three contract sub-clauses evaluated:**
+
+   - **Line numbers in the wrap?** NONE. Neither wrap call references `Position()`, `.Line()`, or any numeric-line value. The `[agents.%s]` formatter substitutes the kind string only (e.g. `"build"`), never a line number. ✓ Round-3 PLAN.md:112 + RiskNote line 128 + ContextBlock line 132 + KindPayload line 137 all forbid line-numbered position wrapping at D3 — fully honored.
+
+   - **Does the wrap defeat `errors.Is(err, ErrToolsDenyNotOverridable)`?** NO. `fmt.Errorf` with `%w` produces an error whose `Unwrap()` returns the sentinel; `errors.Is` walks the chain. Verified by 2 tests asserting against the wrapped error: `TestMergeLocal_ToolsDenyRejected:503-505` and `TestMergeLocal_ToolsDenyDefaultsBlockRejected:529-531`. Both GREEN. ✓
+
+   - **Does the wrap match the round-3 finalized acceptance bullets?** PARTIALLY. PLAN.md:112's parenthetical "(no file/line/block prefix at the D3 boundary)" is the strictest reading — the wrap DOES include both `agents.local.toml` (file prefix) and `[agents]` / `[agents.<kind>]` (block prefix). The consensus reading (PLAN.md:128 RiskNote, :132 ContextBlock, :137 KindPayload, :117 AC b8) is narrower — they only forbid LINE-NUMBERED position wrapping at D3, attributing the file/line/block envelope exclusively to D5. The wrap text has no line number, so the consensus reading is satisfied; line 112's literal parenthetical is technically violated.
+
+   **Verdict on wrap-text deviation: ACCEPTABLE — justified usability improvement, NOT scope creep, NOT a round-3 spec violation under consensus reading.** Reasoning:
+   - The block hint `[agents.<kind>]:` is a **structural/categorical** locator (which TOML section), not a **positional** locator (line number). The round-3 plan-QA loop spent 3 rounds locking the position-wrapping handoff (line numbers from `pelletier/go-toml/v2`'s `*toml.DecodeError`) — the work D5 must do, that D3 cannot do without source-position tracking. Block hints fall outside that scope; they are a coarse field-path naming analogous to W0.5 FF1's "field-path mitigation" — see PLAN.md:203 for the explicit observation that "MergeLocal doesn't currently parse TOML … the line number for tools_deny rejection comes from D3's load step, NOT from MergeLocal's own logic."
+   - Tests assert against `errors.Is` ONLY — no test depends on the wrap-text body, so D5 can supersede the wrap text entirely without breaking the test contract. The wrap text becomes dead-code-by-supersession the moment D5 lands.
+   - Builder honestly flagged this as an Unknown at BUILDER_WORKLOG.md:128 with explicit reversibility ("If reviewer prefers strict bare-sentinel-only, the `fmt.Errorf` call is one line to revert"). This is good-faith engineering.
+   - **Alternative reading — strict line-112 violation — would require flagging this as a finding.** Reviewer judgment: line 112's parenthetical was descriptive of the bare-message body the planner originally specified; the load-bearing contract surfaces (RiskNote 128, ContextBlock 132, KindPayload 137, AC b8 117) all forbid only line-numbered wrapping. The wrap shape stays inside that boundary. Verdict pass with explicit informational note.
+
+   **Forward-looking note for D5 builder (routed Unknown, NOT a D3 finding):** when D5's `*ConfigError{File, Block, Line, Cause}` envelope wraps the sentinel, ensure the final user-facing message does NOT duplicate `agents.local.toml` (D3 wrap already contains it). D5 should either wrap `ErrToolsDenyNotOverridable` directly (skipping D3's `fmt.Errorf` intermediate) OR the envelope's `Error()` should detect and elide redundant file/block prefixes.
+
+5. **Shipped-but-not-wired.** `MergeLocal` is the consumer entry point for the local-merge layer per PLAN.md:228 ("D3's `MergeLocal` consumed by W3"); exported (`func MergeLocal`) at `agents.go:386` so W3 frontmatter strip + W2 till init can reach it across package boundary. `ErrToolsDenyNotOverridable` is exported at `agents.go:36` so callers can `errors.Is` against it — load-bearing for the rejection contract. Helpers `mergePreset`, `mergeOverride`, `cloneOverride`, `copySlice` are unexported (lowercase) — internal helpers, correctly package-private. No fixture is shipped without a consuming test (3 fixtures map 1-1 to 3 fixture-driven tests; the other 5 tests use in-code construction).
+
+**Gate evidence (re-run by reviewer this round):**
+
+- `mage test-pkg ./internal/config` — 52/52 GREEN (44 pre-D3 baseline + 8 new `TestMergeLocal_*`). Builder report ("8/8 GREEN") matches.
+- `mage test-func ./internal/config "TestMergeLocal_.*"` — 8/8 GREEN: `OverrideModel`, `ToolsDenyRejected`, `ToolsDenyDefaultsBlockRejected`, `NilLocal`, `NilProject`, `PartialBlock`, `PresetFieldMerge`, `NewKindBlock`. Race detector + `count=1` enforced by mage target.
+- `mage test-func ./internal/config "TestLoadRegistry_.*|TestResolve_.*"` — 12/12 GREEN (D1+D2 regression check).
+- `git show --stat 7dfd0f4` — touched files match PLAN.md `Paths` declaration exactly (3 fixtures + agents.go + agents_test.go + worklog + PLAN.md state flip). No drive-by.
+- Wrap-text shape verified at `agents.go:394` (`agents.local.toml [agents]: %w`) and `:398` (`agents.local.toml [agents.%s]: %w`) — no line numbers, no `Position()` calls, no numeric-line interpolation.
+
+**Proof certificate:**
+
+- **Premises** — D3 ships `MergeLocal(project, local) (*AgentsRegistry, error)` with deep-merge over per-kind blocks (field-level, pointer-discriminated) + tools_deny rejection via bare sentinel `ErrToolsDenyNotOverridable` (per PLAN.md:111-112) wrapped via `%w` so `errors.Is` works through any future D5 envelope; 8 D3 tests GREEN; D1+D2 regression GREEN; declared paths only; sentinel message verbatim PLAN.md:112; defaults-block + per-kind both rejected; nil-local + nil-project both handled per spec.
+- **Evidence** — see per-axis citations above (file:line for every claim) plus the gate-evidence block.
+- **Trace or cases** — read PLAN.md round-3 D3 acceptance bullets + RiskNotes + ContextBlocks + KindPayload; cross-checked each against `agents.go:36-667` symbols + `agents_test.go:438-724` test bodies + assertions; cross-checked 3 fixtures' contents against test assertions; ran 8 D3 + 12 D1+D2 regression + full-package gate; verified diff scope via `git show --stat 7dfd0f4`; verified wrap-text shape directly at `agents.go:394` + `:398`; cross-checked `errors.Is` chain semantics through `%w` against test assertions at `agents_test.go:503-505` + `:529-531`.
+- **Conclusion** — PASS. All five Build-QA-Proof axes satisfied. The wrap-text deviation (block hint `[agents.<kind>]:` + file hint `agents.local.toml`, NO line number) is a justifiable usability improvement under the consensus reading of round-3 contract surfaces (RiskNote 128, ContextBlock 132, KindPayload 137, AC b8 117), all of which forbid only line-numbered wrapping at D3. The strictest reading of PLAN.md:112's parenthetical is technically violated but the load-bearing contract holds: `errors.Is` works, no line numbers leak, D5 can supersede wrap text entirely without breaking tests. Builder explicitly flagged the choice + offered one-line revert.
+- **Unknowns** — (1) D5 builder must ensure final user-facing message doesn't duplicate `agents.local.toml` prefix when wrapping over D3's `fmt.Errorf` output; route to D5 spec confirmation. (2) Per PLAN.md:128 RiskNote, source-line tracking still owed by D5 — `MergeLocal` operates on already-decoded structs and cannot produce line numbers from its own logic; D5 must either thread source-positions onto `AgentsRegistry` (e.g., `linePositions map[string]int` per PLAN.md:203 RiskNote) or re-decode at `MergeLocal`'s boundary. Both options are documented; D5 builder picks at implementation time.
+
+### Hylla Feedback
+
+N/A — verification touched only Go files. All evidence-gathering used `Read` (production + test + fixture + plan-QA-R3 verdict files), `git show` / `git log` / `git status` (commit-range scope), and `mage test-pkg` / `mage test-func` (gate runs). Hylla was not queried during this proof pass — D3's surface is post-commit pre-ingest territory where `git` + `mage` + `Read` are authoritative for the round-3 contract verification, and the live LSP daemon would not have surfaced any committed-state signal that those tools didn't cover.
