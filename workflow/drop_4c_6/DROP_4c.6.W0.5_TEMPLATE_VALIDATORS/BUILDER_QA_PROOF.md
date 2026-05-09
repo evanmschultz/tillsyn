@@ -249,3 +249,54 @@ Gates green: `mage testFunc TestLoadValidatesBlockedByAcyclicity` (5/5), `mage t
 ### Hylla Feedback
 
 N/A — verification touched only Go files in the same `git status` modified set as recent in-flight Drop 4c.6 work (load.go + load_test.go modified by W0.5.D1/D2/D3/D4/D5 sequentially, not yet reingested), plus pure-MD durable artifacts (PLAN.md, BUILDER_WORKLOG.md, testdata fixture). Hylla's index is stale for these files; direct `Read` + `git show` + `rg` + `mage` runs against the working tree was the correct evidence path. No Hylla queries attempted; nothing to log.
+
+## Droplet 4c.6.W0.5.D6 — Round 1
+
+**Verdict: PASS.** Builder shipped `validateClaimVsImplCoherence` + `ErrClaimVsImplUnknownConsumer` + empty `knownWiredConsumers` + `LoadOptions.ClaimedConsumersFn` test-seam + `defaultClaimedConsumersFn` production walker, wired into the LoadWithOptions chain at step (c''') between D5's `validateBlockedByAcyclicity` (c'') and Drop 4c.5 F.5.1's `validateRequiredChildRules` (d). Empty-set design is documented, pattern-consistent with D2 (`AgentLookupFn`) and D5 (`BlockedByGraphFn`), and gated by the new `TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard`. Both new tests GREEN; D1-D5 regression GREEN; full package 435/435.
+
+### Findings
+
+- 1.1 [Axis: diff-vs-spec] [severity: low] Commit `e2b353b` touches exactly the L2 PLAN-declared D6 paths (`internal/templates/load.go` + `internal/templates/load_test.go` + `internal/templates/testdata/invalid_claim_vs_impl_unknown_consumer.toml`) plus the workflow-MD churn the per-droplet contract permits (`PLAN.md` state-flip + `BUILDER_WORKLOG.md` Round-1 append). No collateral edits, no out-of-scope code touched. → `git show --stat e2b353b`. → no fix needed.
+
+- 1.2 [Axis: AcceptanceCriteria coverage] [severity: low] Every L2 PLAN W0.5.D6 acceptance bullet has a verifying artifact:
+  - A1 (validator function): `validateClaimVsImplCoherence` at `load.go:2304-2315`; wired at `load.go:327`.
+  - A2 (`knownWiredConsumers` empty + doc-comment + Drop 4c.7 W7+W8 forward-looking note): `load.go:2226-2255`.
+  - A3 (sentinel `ErrClaimVsImplUnknownConsumer`): `load.go:628-669`.
+  - A4 (vacuous pass on embedded default templates): row 1 of `TestLoadValidatesClaimVsImplCoherence` (`load_test.go:3028-3033`) verifies — default walker returns nil; no claims → no rejection.
+  - A5 (`LoadOptions.ClaimedConsumersFn` injection point): `load.go:87-113`.
+  - A6 (malformed fixture + sentinel rejection driven by injected synthetic claim, not TOML): `internal/templates/testdata/invalid_claim_vs_impl_unknown_consumer.toml` is structurally valid; row 2 (`load_test.go:3034-3042`) injects `syntheticUnknownClaimFn` returning `[]string{"unknown_consumer"}` and asserts `errors.Is(err, ErrClaimVsImplUnknownConsumer)` + substring `"unknown_consumer"`.
+  - A7 (reverse-direction sanity): row 1 (vacuous pass); A2 cross-asserted by guard test.
+  - A8 (table-driven 3 rows): `load_test.go:3020-3050` — empty-claims pass, synthetic-unknown reject, synthetic-known pass via `t.Cleanup`-restored mutation.
+  - A9 (mage test-func RED→GREEN): `BUILDER_WORKLOG.md` "TDD red→green trace" lines 313-319 documents (i) initial RED on undefined symbols, (ii) GREEN after wire-up, (iii) RED reconfirmation via temporarily-commented chain hook, (iv) GREEN restore.
+  - A10 (`mage test-pkg ./internal/templates` clean; `mage ci` deferred to drop-end per WORKFLOW.md Phase 6): test-pkg = 435/435; ci is drop-end gate.
+  → no fix needed.
+
+- 1.3 [Axis: constraint-preservation D1-D5] [severity: low] D1's `validateAgentMapKeys`, D2's `validateAgentBindingNames` + `defaultAgentLookupFn`, D3's unified-graph `validateChildRuleCycles` + `dfsDetectCycle` + `formatCyclePath`, D4's `validateChildRuleRecursionDepth` + `childRuleRecursionDepthMax`, D5's `validateBlockedByAcyclicity` + `BlockedByGraphFn` + `buildBlockedByGraph` all preserved. `mage test-pkg ./internal/templates` reports 435/435 (D5 baseline 430; +5 = D6 table-test 3 subtests + parent + guard test, matching the expected delta). → diff inspection of commit `e2b353b` shows zero `-/+` on D1-D5 helper signatures or bodies. → no fix needed.
+
+- 1.4 [Axis: spec-conformance — no CLAUDE.md runtime parse] [severity: low] `validateClaimVsImplCoherence` body (`load.go:2304-2315`) iterates `claimsFn(tpl)` and checks `knownWiredConsumers` map membership only. No `os.Open`, `os.ReadFile`, `embed.FS.ReadFile`, markdown parser, or any I/O against `CLAUDE.md`. The wrapped error message names `CLAUDE.md § Cascade Tree Structure` as an authoring-reference STRING for adopters' grep-paths — not a parse target. Both the godoc on the validator (`load.go:2272-2303`) and the sentinel doc-comment (`load.go:663-666`) explicitly state "the validator does NOT parse `CLAUDE.md` at runtime." Constraint preserved. → no fix needed.
+
+- 1.5 [Axis: spec-conformance — test-seam pattern matches D2/D5 verbatim] [severity: low] Field shape comparison:
+  - D2: `AgentLookupFn func(name string) bool` (`load.go:54`); production fallback `defaultAgentLookupFn`.
+  - D5: `BlockedByGraphFn func(rules []ChildRule) map[domain.Kind][]domain.Kind` (`load.go:85`); production fallback `buildBlockedByGraph`.
+  - D6: `ClaimedConsumersFn func(tpl Template) []string` (`load.go:113`); production fallback `defaultClaimedConsumersFn` (`load.go:2268`).
+  All three follow the same nil-resolves-to-production-walker discipline; all three are documented as test-only escape hatches; all three have production callers (`LoadDefaultTemplate*`) leaving the field nil. The validator bodies all do `if fn == nil { fn = production }` defense-in-depth (D6 at `load.go:2305-2307`, mirroring D5's `validateBlockedByAcyclicity`). → no fix needed.
+
+- 1.6 [Axis: shipped-but-not-wired prevention] [severity: low] The validator IS wired into the LoadWithOptions chain (`load.go:327`), not a stub or no-op. The empty `knownWiredConsumers` map is the load-bearing scaffold per L1 W0.5 Acceptance bullet 4 + OQ#1 round-2 resolution; Drop 4c.7 W7 adds `child_rules_for` and W8 adds `context_resolve` (worklog lines 322-323). The validator's PRODUCTION effect today is vacuous (no schema field claims a consumer), but the wiring itself fires unconditionally on every Load — confirmed by RED reconfirmation (worklog line 318: commenting out the wire-up flips row 2 to FAIL). The guard test `TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard` (`load_test.go:3095-3098`) pins `len == 0` so the inverse anti-pattern (registering a consumer without wiring it) fails CI loudly. → no fix needed.
+
+### Missing Evidence
+
+None. All five verification axes have direct file-pointer + gate-output evidence above. No Unknowns to route.
+
+### Summary
+
+**Verdict: PASS.** Round 1, 6 findings, all severity-low (positive verifications, not defects). 0 high, 0 medium, 0 low-with-fix. Acceptance coverage complete; constraint preservation complete; gates green.
+
+**Verdict on the empty-set design.** Acceptable. The empty `knownWiredConsumers` map is intentional per L1 W0.5 Acceptance bullet 4 + OQ#1 round-2 resolution. The "shipped-but-not-wired" critique that would normally apply to an empty-impl scaffold is pre-mitigated by (a) the wire-up being live in the chain at step (c''') — RED reconfirmation in the worklog verifies the wire fires, (b) the guard test pinning `len == 0` so the inverse drift (entry-without-consumer) fails loudly, (c) the LOUD WARNING doc-comments on the sentinel + the map + the validator + the test directing future-drop builders to the contract evolution path, and (d) Drop 4c.7 W7/W8 having explicit acceptance bullets to add `child_rules_for` and `context_resolve` (cross-referenced in the worklog and validator godoc). The validator's value today is the load-time floor for whatever schema axis lands first claiming a runtime consumer — it cannot lapse silently.
+
+**Verdict on the test-seam pattern.** Acceptable. `LoadOptions.ClaimedConsumersFn` is structurally identical to D2's `AgentLookupFn` and D5's `BlockedByGraphFn` — same nil-fallback discipline, same test-only contract documented in godoc, same defense-in-depth nil check inside the validator. Pattern-consistency makes future readers' navigation easy: every D-series validator with forward-looking schema dependence carries the same shape.
+
+Gates: `mage test-pkg ./internal/templates` (435/435, +5 vs D5's 430 baseline = 3 row subtests + parent + guard). `mage test-func ./internal/templates TestLoadValidatesClaimVsImplCoherence` (4/4 — parent + 3 rows). `mage test-func ./internal/templates TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard` (1/1). `mage ci` deferred to drop-end per WORKFLOW.md Phase 6. `git show --stat e2b353b` confirms diff scope = declared paths only.
+
+### Hylla Feedback
+
+N/A — verification touched only Go files in the same `git status` modified set as recent in-flight Drop 4c.6 work (load.go + load_test.go modified by W0.5.D1/D2/D3/D4/D5/D6 sequentially, not yet reingested) plus pure-MD durable artifacts (PLAN.md, BUILDER_WORKLOG.md, testdata fixture). Hylla's index is stale for these files; direct `Read` + `git show` + `rg` + `mage` runs against the working tree was the correct evidence path. No Hylla queries attempted; nothing to log.

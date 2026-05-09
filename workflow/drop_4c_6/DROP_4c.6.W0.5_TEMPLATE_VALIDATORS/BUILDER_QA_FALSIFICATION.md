@@ -680,3 +680,213 @@ One ergonomic NIT carried forward from D4's worklog (recurring; same shape):
 - **Missed because**: shell sandbox denied bare `grep` invocations.
 - **Worked via**: `rg -n "<patterns>" /Users/evanschultz/Documents/Code/hylla/tillsyn/main/internal/templates/<file>`.
 - **Suggestion**: not a Hylla item — recurring sandbox-policy NIT for the orchestrator. Documenting again because the loop cost ~2 retries during this round; D4 + D5 builder worklogs noted the same pattern.
+
+## Droplet 4c.6.W0.5.D6 — Round 1
+
+**Date:** 2026-05-09
+**Reviewer:** go-qa-falsification-agent (build-QA-falsification, parent.kind=build)
+**Scope:** `validateClaimVsImplCoherence` + `defaultClaimedConsumersFn` + new closed Go-internal map `knownWiredConsumers` (intentionally empty per OQ#1) + new sentinel `ErrClaimVsImplUnknownConsumer` + new `LoadOptions.ClaimedConsumersFn` test seam + new fixture `invalid_claim_vs_impl_unknown_consumer.toml` + two new tests (`TestLoadValidatesClaimVsImplCoherence` 3-row + `TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard` empty-set guard).
+
+### Counterexamples
+
+None CONFIRMED. Two attempted attacks elevated to medium-severity FINDINGS (test-isolation hazard + test-seam drift); five families REFUTED; one EXHAUSTED. Findings are forward-looking risk markers — they do not block droplet completion. Details below.
+
+#### B1 — test-coverage attacks
+
+Probed `TestLoadValidatesClaimVsImplCoherence` (`internal/templates/load_test.go:2999-3082`) and `TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard` (`load_test.go:3095-3099`):
+
+- **Vacuous-empty-claims production walker.** Row 1 ("empty claims passes", load_test.go:3028-3033) loads `valid_minimal.toml` with `claimsFn: nil`. The validator's nil-fallback at load.go:2305-2307 swaps in `defaultClaimedConsumersFn` which returns nil; the `for _, claimed := range claimsFn(tpl)` loop iterates zero times; the validator returns nil. This IS the production path on every embedded-default Load today. Real DFS path coverage: zero (nothing to walk); but the semantic invariant ("empty input → no rejection") is exercised. REFUTED.
+- **Synthetic unknown-consumer claim rejection path.** Row 2 ("synthetic unknown-consumer claim rejected", load_test.go:3034-3042) loads the new fixture with `syntheticUnknownClaimFn` returning `[]string{"unknown_consumer"}`; `knownWiredConsumers["unknown_consumer"]` lookup returns `ok=false`; validator returns the wrapped sentinel; test asserts `errors.Is(err, ErrClaimVsImplUnknownConsumer)` + substring `"unknown_consumer"`. Real rejection-path coverage. REFUTED.
+- **Synthetic known-consumer claim success path.** Row 3 ("synthetic known-consumer claim passes", load_test.go:3043-3049) loads `valid_minimal.toml` with `syntheticKnownClaimFn` returning `[]string{"temp_test_consumer"}` AND temporarily mutates `knownWiredConsumers["temp_test_consumer"] = struct{}{}` via the row's `registerTemp` field. The map lookup returns `ok=true`; the validator does not return; the success path is exercised. `t.Cleanup` deletes the entry after the row completes. The success-path is otherwise unreachable pre-Drop-4c.7 because the production set is empty. REFUTED.
+- **Multi-claim slice with mixed known + unknown.** Not exercised. The `for _, claimed := range claimsFn(tpl)` loop returns on the FIRST unknown claim; a slice like `["temp_test_consumer", "unknown_consumer"]` would short-circuit at the second element. Tested behavior: single-element slices only (one row per shape). The early-return contract is implicit in the loop structure, not explicit in tests. NIT — multi-claim coverage would be additive but is not load-bearing; the early-return is the standard `range`-with-early-`return` idiom. REFUTED.
+- **Empty-set guard pins length-zero invariant.** `TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard` at load_test.go:3095-3099 asserts `len(knownWiredConsumers) == 0`. This catches accidental drift WITHIN Drop 4c.6 (e.g., a developer adds `"foo": struct{}{}` to the map without simultaneously wiring a runtime consumer). The guard's `Fatalf` formatter dumps the entries map for diagnosis. The guard's expected-length advances deliberately when 4c.7 W7+W8 land. Coverage of the inverse anti-pattern (entry-without-consumer) is real and load-bearing. REFUTED.
+- **Guard test runs after table-driven test in alphabetical Go test order.** `TestLoadValidatesClaimVsImplCoherence` precedes `TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard` alphabetically; if any row of the table-driven test forgets `t.Cleanup` and leaves an entry in `knownWiredConsumers`, the guard test would fire on the next test run. This IS the intended belt-and-suspenders. REFUTED.
+
+Family verdict: REFUTED. Coverage is shape-complete for the validator's behavior surface; the early-return-on-first-unknown contract is implicit but standard Go idiom.
+
+#### B2 — contract-preservation attacks
+
+Validator-chain order at `load.go:309-339`:
+
+```
+312: validateAgentMapKeys              // D1
+315: validateChildRuleKinds            // pre-existing
+318: validateChildRuleCycles           // D3 (extended)
+321: validateChildRuleRecursionDepth   // D4
+324: validateBlockedByAcyclicity       // D5
+327: validateClaimVsImplCoherence      // D6  ← THIS DROPLET
+330: validateRequiredChildRules        // F.5.1
+```
+
+D6 sits at chain step `(c''')` per the godoc table at `load.go:176-187`, AFTER D5 (`validateBlockedByAcyclicity`) and BEFORE `validateRequiredChildRules` (Drop 4c.5 F.5.1). The position is justified: D6 walks the same `tpl` after kind-vocabulary + cycle + depth + blocked-by checks have all passed, so the input is structurally clean. D6 does NOT depend on D5's output; it consumes only `claimsFn(tpl)` and the package-level `knownWiredConsumers` map. The contract is **placement-stable**: a future refactor that swapped D5 ↔ D6 in chain order would not affect correctness because the two validators consume disjoint state.
+
+No regression-guard test pins D6's chain position (unlike D4 and D5, which each ship a runs-after-D3-style guard). Attack: a future refactor that moves D6 BEFORE the cycle/depth checks could mask cycle errors with claim errors on tangled fixtures. Mitigation: D6's contract is independent of cycles/depth — claims aren't graph-dependent. The placement-flexibility is intentional. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B3 — hidden-coupling attacks (parallel-test isolation hazard) — **FINDING (medium severity, forward-looking)**
+
+**Probe.** `knownWiredConsumers` (load.go:2255) is a **package-level mutable map**. Row 3 of `TestLoadValidatesClaimVsImplCoherence` mutates it in-place at load_test.go:3055 (`knownWiredConsumers[tc.registerTemp] = struct{}{}`), guarded by a `t.Cleanup` deletion at load_test.go:3056-3058. Today no test in `internal/templates/load_test.go` calls `t.Parallel()` (verified via `rg -n "t\.Parallel\(\)" load_test.go` → zero matches). With zero parallelism, the in-place mutation + cleanup pattern is data-race-free.
+
+**Attack scenario (forward-looking).** A future test author who:
+1. Adds `t.Parallel()` to any test that calls `LoadWithOptions` with `ClaimedConsumersFn != nil` (the validator's hot path), AND
+2. Runs concurrently with row 3 of `TestLoadValidatesClaimVsImplCoherence` (which mutates `knownWiredConsumers`)
+
+…would introduce a **data race on the unsynchronized map**. The `for _, claimed := range claimsFn(tpl)` loop's `if _, ok := knownWiredConsumers[claimed]; !ok` is an unprotected map read, and the test's `knownWiredConsumers[tc.registerTemp] = struct{}{}` is an unprotected map write. `go test -race` would flag this immediately, but only if a future test author wires both legs.
+
+**Repro path:** add `t.Parallel()` to row 3's subtest (`load_test.go:3053`) AND introduce any sibling `t.Parallel()` test that hits `validateClaimVsImplCoherence` with a non-nil `ClaimedConsumersFn`. Run `mage testPkg ./internal/templates` (which already includes `-race` per the testFunc/testPkg targets). The race detector would flag concurrent map access.
+
+**Why it's a finding, not a CONFIRMED counterexample:** today's test suite does not call `t.Parallel()` anywhere in `load_test.go`, so no race exists on current HEAD. The hazard is dormant — a future test author has to wire BOTH legs (parallel + claim-mutation) to surface the race. The current droplet's gates pass `-race` cleanly (verified: `mage testFunc ./internal/templates TestLoadValidatesClaimVsImplCoherence` → 4/4 GREEN with `-race`).
+
+**Fix hint (defer to refinement, NOT a blocker for this droplet):** either (a) add a doc-comment to row 3 forbidding `t.Parallel()` on any test that mutates `knownWiredConsumers` (lightweight), or (b) introduce a test-only injection point on the **map itself** — e.g. `LoadOptions.KnownWiredConsumersOverride map[string]struct{}` — so tests can pass a synthetic set without touching the package-level state (heavier; mirrors D2's `AgentLookupFn` and D5's `BlockedByGraphFn` shapes more cleanly). Option (b) is the better fix; option (a) is the cheaper guard. See also B-T finding below for the related test-seam-drift framing.
+
+**Status:** FINDING — medium severity, forward-looking, not a counterexample on current HEAD.
+
+Family verdict: REFUTED-as-counterexample-on-HEAD; FINDING-as-forward-looking-risk.
+
+#### B4 — YAGNI / scope-creep attacks (empty-set ship)
+
+Attack line: shipping the validator with an EMPTY `knownWiredConsumers` set in 4c.6 is YAGNI — no production claim can be authored today (today's schema has no `[[child_rules]] consumer = "..."` field), so the validator is dead-code-on-paper. Could D6 have been deferred to 4c.7 W7 when the first real consumer (`child_rules_for`) lands?
+
+Counter-evidence:
+
+1. **OQ#1 disposition (PLAN.md:251 + L1 PLAN's Notes section).** The dev's resolution of OQ#1 explicitly chose "ship validator + sentinel + sentinel-test against empty set in 4c.6; populate in 4c.7." This is a documented architectural decision, not a builder choice.
+2. **Catch-the-anti-pattern motivation.** D6 exists to prevent the shipped-but-not-wired anti-pattern (Drop 3 droplet 3.20). Deferring D6 to 4c.7 would mean Drop 4c.7 ships W7's `child_rules_for` consumer simultaneously with the validator that checks it — and a builder error in 4c.7 would not have an existing validator to catch the drift. Shipping the validator FIRST (in 4c.6) means 4c.7 W7+W8's incremental additions inherit the validator's contract.
+3. **Empty-set guard is its own value.** `TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard` exists explicitly to catch the inverse anti-pattern (entry-without-consumer). Without the validator + map shipping in 4c.6, the guard test has nothing to pin against.
+4. **Future-schema-axis preparation.** The next schema addition giving `ChildRule` a `consumer = "..."` axis (post-MVP) inherits the validator's wire — production walker flips from vacuous to active without touching the validator body.
+
+The ship-empty-set decision IS pre-mitigated in the L1 plan AND the L2 plan AND the validator's own doc-comment (load.go:2230-2255 — LOUD WARNING citing OQ#1 + 4c.7 W7+W8 + the inverse anti-pattern). Empty-set ship is NOT premature; it's exactly the "land scaffolding before the consumers" discipline the project's `feedback_tillsyn_enforces_templates.md` memory rule requires. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B5 — spec-compliance attacks (validator must NOT parse CLAUDE.md at runtime)
+
+L2 PLAN ContextBlock at PLAN.md:247: `constraint (critical): the validator does NOT parse CLAUDE.md at runtime; only checks against the Go-internal map.`
+
+Probe at load.go:2304-2315:
+
+```go
+func validateClaimVsImplCoherence(tpl Template, claimsFn func(tpl Template) []string) error {
+    if claimsFn == nil {
+        claimsFn = defaultClaimedConsumersFn
+    }
+    for _, claimed := range claimsFn(tpl) {
+        if _, ok := knownWiredConsumers[claimed]; !ok {
+            return fmt.Errorf("%w: claimed consumer %q has no wired runtime implementation (knownWiredConsumers is closed; see internal/templates/load.go and CLAUDE.md § Cascade Tree Structure)",
+                ErrClaimVsImplUnknownConsumer, claimed)
+        }
+    }
+    return nil
+}
+```
+
+**No `os.ReadFile`. No `embed.FS` access. No markdown parser. No string scanning of CLAUDE.md content.** The `CLAUDE.md` reference appears ONLY in the wrapped error message as a hint for adopters (telling them WHERE to read the authoring spec when they grep their TOML for the offending consumer). The map is the runtime source-of-truth.
+
+`grep` for `CLAUDE.md` in `load.go`:
+
+```
+load.go:2293: // `knownWiredConsumers` Go map is the source-of-truth; CLAUDE.md §
+load.go:2310: return fmt.Errorf("%w: ... see internal/templates/load.go and CLAUDE.md § Cascade Tree Structure)",
+```
+
+Both occurrences are documentation-only (comment + error-message hint string). The validator's runtime path consults only the Go-internal map. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B6 — META: empty-set ship as the very anti-pattern this validator exists to prevent — **CRITICAL ATTACK, REFUTED**
+
+**Attack frame.** D6 exists to prevent the "shipped-but-not-wired" anti-pattern (Drop 3 droplet 3.20: a schema feature that ships without any runtime consumer). D6 ships in 4c.6 with an EMPTY `knownWiredConsumers` set + a vacuous `defaultClaimedConsumersFn` that returns nil for every template. **Is this exactly the anti-pattern D6 claims to prevent — a feature shipped without a runtime consumer?**
+
+**Inversion analysis.** The "shipped-but-not-wired" anti-pattern has a precise shape:
+
+> A SCHEMA FEATURE is shipped (template authors can write it) WITHOUT any RUNTIME CONSUMER (no Go code reads it; no behavior changes).
+
+Apply this template to D6:
+- Schema feature D6 ships: `LoadOptions.ClaimedConsumersFn` field + `validateClaimVsImplCoherence` validator + `ErrClaimVsImplUnknownConsumer` sentinel + `knownWiredConsumers` map.
+- Runtime consumer: `LoadWithOptions` at load.go:327 — calls `validateClaimVsImplCoherence(tpl, opts.ClaimedConsumersFn)` on EVERY Load. The validator IS wired into the load chain. The map IS read on every invocation (vacuously, but read).
+
+**The runtime consumer of `validateClaimVsImplCoherence` is `LoadWithOptions` itself.** D6 is its own first wired consumer. The validator runs on every Load, walks `claimsFn(tpl)` (empty under default), checks each claim against `knownWiredConsumers` (empty). The work is real DFS-equivalent work — it's just zero-iteration loops on the empty production graph.
+
+**Symmetric framing:** the WIRE is wired (validator chain step `c'''` is real production code path); the MAP is empty pending 4c.7 W7+W8 adding the first consumer identifiers; the SCHEMA AXIS that would allow templates to authour real claims (`[[child_rules]] consumer = "..."`) does not exist yet. So the validator ships with: real wire, empty data, no schema author-side. This is the OPPOSITE of the anti-pattern (which is: real schema author-side, no wire). D6 inverts the anti-pattern's failure mode and ships the wire-side first.
+
+**Pre-mitigation in L2 PLAN at PLAN.md:239-243** explicitly anticipates this attack:
+
+> **Empty known-wired set is intentional for Drop 4c.6.** A reviewer might claim "validator does nothing in production." Mitigation: cite L1 W0.5 Acceptance bullet 4 + Open Question #1 resolution explicitly in the doc-comment. Drop 4c.7 W7 / W8 add the first real entries; the scaffolding is ready and the sentinel + tests already exist.
+
+The validator's godoc at load.go:2230-2255 carries the LOUD WARNING for future drops + the cross-reference to the empty-set guard test + the pointer to OQ#1 resolution.
+
+**The attack is pre-mitigated AND the inversion analysis is sound.** D6 is its own first runtime consumer; `LoadWithOptions` invokes the validator on every Load; the empty-set state is documented + guarded + anticipated. REFUTED.
+
+Family verdict: REFUTED. Critical attack — pre-mitigated thoroughly + inversion-analysis-correct.
+
+#### B7 — prompt-injection attacks
+
+DORMANT pre-team-feature. Validator inputs are template TOML content authored by the same actor who Loads the template; no attacker-controllable content reaches the error-message rendering. The validator's wrapped-error message DOES include the `claimed` identifier verbatim via `%q` (load.go:2310-2311) — `%q` Go-quotes the string, so escape sequences in a malicious claim identifier render as literal `\\"` rather than breaking out of the error envelope. Quoting discipline is correct. EXHAUSTED.
+
+Family verdict: EXHAUSTED.
+
+#### B-T — test-seam consistency drift (D2/D5 vs D6) — **FINDING (medium severity, refinement)**
+
+Cross-validator test-seam comparison:
+
+| Validator | Seam shape                                          | Mutates package-level state? |
+| --------- | --------------------------------------------------- | ---------------------------- |
+| D2        | `LoadOptions.AgentLookupFn func(string) bool`       | No                           |
+| D5        | `LoadOptions.BlockedByGraphFn func([]ChildRule) ...`| No                           |
+| **D6**    | `LoadOptions.ClaimedConsumersFn func(Template) []string` **+** `t.Cleanup`-restored mutation of package-level `knownWiredConsumers` map | **YES** (row 3 only)         |
+
+**Drift.** D2 and D5 each ship ONE injection point (a function pointer on `LoadOptions`). D6 ships ONE injection point AND introduces a SECOND seam — the package-level map mutation in test row 3. The second seam is asymmetric with the established pattern.
+
+**Why the second seam exists.** Today's `knownWiredConsumers` is empty by design (OQ#1). Testing the validator's success path (claim ∈ known-wired-set) with ONLY a function-pointer seam requires the function-pointer seam to ALSO inject a substitute set — but the validator at load.go:2309 reads the package-level `knownWiredConsumers` directly, not a slot threaded through `LoadOptions`. So the test author chose the path of least diff: mutate the package-level map with `t.Cleanup`-restored cleanup.
+
+**Cleaner alternative (refinement-grade).** Replace the package-level read with an `opts`-threaded read: introduce `LoadOptions.KnownWiredConsumersOverride map[string]struct{}` (or an analogous field), default-nil → use the package-level map, non-nil → use the override. Tests inject the override; production never sets it. This shape mirrors D2/D5 cleanly AND eliminates the parallel-test isolation hazard documented in finding B3.
+
+**Severity.** Medium — the current pattern is correct AND the test passes `-race` AND no test in the suite calls `t.Parallel()`. The drift is a refinement-grade NIT, not a correctness defect. The two findings (B3 + B-T) are entangled — fixing B-T (clean seam shape) automatically fixes B3 (eliminates the package-level mutation race surface).
+
+**Fix hint:** introduce `LoadOptions.KnownWiredConsumersOverride` (or rename to match D2/D5's shape — e.g., `KnownConsumersFn func() map[string]struct{}`); thread through `validateClaimVsImplCoherence` as a third parameter; default-nil resolves to reading `knownWiredConsumers` directly. Update row 3 to use the new seam; remove the package-level mutation. ~15 LOC change; preserves all test-row semantics.
+
+**Status:** FINDING — medium severity, refinement-grade. Forward to drop closeout for inclusion in the refinements running list.
+
+Family verdict: REFUTED-as-counterexample; FINDING-as-pattern-drift.
+
+### Summary
+
+**Verdict:** PASS.
+
+**Counterexample count:** 0 CONFIRMED, 8 attempted attacks.
+
+**Per-family table:**
+
+| Family                                | Verdict   | Notes                                                                         |
+| ------------------------------------- | --------- | ----------------------------------------------------------------------------- |
+| B1 test-coverage                      | REFUTED   | Vacuous + rejection + success paths all exercised; guard test pins length-zero |
+| B2 contract-preservation              | REFUTED   | Chain position post-D5 is placement-stable; D6 consumes disjoint state         |
+| B3 hidden-coupling (parallel-test)    | **FINDING** | medium-severity forward-looking hazard — no `t.Parallel()` in the package today; doc-comment guard or seam refactor needed before parallel adoption |
+| B4 YAGNI / empty-set ship             | REFUTED   | OQ#1 disposition explicit; guard test + LOUD WARNING + scaffold-before-consumers |
+| B5 spec-compliance (no CLAUDE.md parse)| REFUTED  | Validator body has zero filesystem / markdown access; doc-only references     |
+| B6 META (empty-set vs anti-pattern)   | REFUTED   | D6 IS its own first wired runtime consumer; inverts the anti-pattern's shape  |
+| B7 prompt-injection                   | EXHAUSTED | DORMANT pre-team-feature; `%q` quoting correct on claim identifier             |
+| B-T test-seam drift (D2/D5 vs D6)     | **FINDING** | medium-severity — D6 introduces package-level state mutation; D2/D5 do not |
+
+**Verdict on empty-set ship:** JUSTIFIED. OQ#1 disposition is explicit + documented in load.go:2230-2255 (LOUD WARNING) + guarded by `TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard`. D6 is its own first wired runtime consumer — the validator runs on every Load; empty data + real wire is the OPPOSITE of "shipped-but-not-wired" (real data + no wire). The B6 META attack inverts the anti-pattern's frame and concludes D6 is sound.
+
+**Verdict on test-seam consistency:** ASYMMETRIC. D2 (`AgentLookupFn`) and D5 (`BlockedByGraphFn`) each use a single function-pointer seam with no package-level state mutation. D6 introduces a parallel package-level seam (`knownWiredConsumers` mutation in test row 3 with `t.Cleanup`). The drift is correctness-safe today (no `t.Parallel()` anywhere in `load_test.go` — verified via `rg -n "t\.Parallel\(\)" load_test.go` → zero matches) but is a forward-looking hazard if any future test in the package adopts parallelism. See B3 + B-T findings for the entangled refinement path; recommended fix is `LoadOptions.KnownWiredConsumersOverride` (or analogous), eliminating the package-level mutation and restoring D2/D5/D6 seam-shape symmetry.
+
+**Gate runs:**
+
+- `mage testFunc ./internal/templates TestLoadValidatesClaimVsImplCoherence` → **4/4 sub-tests pass** (1 parent + 3 rows) with `-race` (verified — `testFunc` mage target wraps `go test ... -race -count=1`).
+- `mage testFunc ./internal/templates TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard` → **1/1 pass** with `-race`.
+- `mage testPkg ./internal/templates` → **435/435 tests pass** (full package GREEN; +5 over D5's 430 baseline = 4 D6 sub-tests + 1 guard test).
+
+Build round 1 lands the claim-vs-impl coherence validator at the correct chain position (immediately after D5's blocked-by-acyclicity check), with an intentionally-empty `knownWiredConsumers` map per OQ#1 disposition, plus a guard test pinning the length-zero invariant. The validator IS its own first wired runtime consumer (every Load invokes it), inverting the shipped-but-not-wired anti-pattern's frame — the wire is real, the data is empty pending 4c.7 W7+W8. Two medium-severity forward-looking findings logged: (B3) parallel-test isolation hazard on the package-level `knownWiredConsumers` mutation in test row 3 (no `t.Parallel()` in the suite today, so dormant); (B-T) test-seam shape drift versus D2/D5 (both use single function-pointer seam with no package-level state). Both findings entangled — recommended refinement is `LoadOptions.KnownWiredConsumersOverride` to thread the set through the seam cleanly. Gates green; verdict PASS with two refinement-grade findings forwarded to drop closeout.
+
+### Hylla Feedback
+
+N/A — droplet touched only Go files inside `internal/templates/` plus a new TOML fixture plus the workflow MDs. All Go reads were against `load.go` + `load_test.go` plus `testdata/invalid_claim_vs_impl_unknown_consumer.toml` in the uncommitted modified working set per `git status`. Hylla's index is stale for those files (load.go has been modified through W0.5.D1 / D2 / D3 / D4 / D5 / D6 across the day, none of which Hylla has yet seen). Direct `Read` + `rg` against the working tree was the correct evidence path. No Hylla queries attempted on the in-flight files; nothing to log. The post-drop reingest will re-cover this surface.
+
+One ergonomic NIT carried forward from D4 + D5 falsification rounds (recurring; same shape):
+
+- **Query**: `Bash` with `grep -n "<patterns>"` against `internal/templates/load.go` + `load_test.go`.
+- **Missed because**: shell sandbox denied bare `grep` invocations; also denied `cat`/`tail`/`wc`/`ls` style invocations on the workflow MD path during this round.
+- **Worked via**: `rg -n "<patterns>" /Users/evanschultz/Documents/Code/hylla/tillsyn/main/internal/templates/<file>` for source; `Read` tool with offset/limit for the in-progress workflow MD.
+- **Suggestion**: not a Hylla item — recurring sandbox-policy NIT for the orchestrator. Documenting again because the loop cost ~3 retries during this round (D2-D5 all noted the same pattern in narrower form).
