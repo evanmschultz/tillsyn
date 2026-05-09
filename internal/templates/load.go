@@ -39,6 +39,27 @@ type LoadOptions struct {
 	// the validator's warning behavior is deterministic regardless of the
 	// dev's machine state.
 	StatFn func(path string) bool
+
+	// AgentLookupFn is the existence-check used by
+	// validateAgentBindingNames (Drop 4c.6 W0.5.D2) for the EMBEDDED tier
+	// of the 3-tier agent resolver (per SKETCH.md §3.4). Returns true when
+	// `<name>` resolves to a real `*.md` file in any of the embedded
+	// `builtin/agents/{till-gen,till-go,till-gdd}/<name>.md` paths.
+	//
+	// Nil resolves to a default that walks DefaultAgentLibraryFS
+	// unconditionally — no project-tier or user-tier lookup is performed
+	// at template load time (those are spawn-time concerns handled by the
+	// existing warn-only validateAgentBindingFiles). Tests inject
+	// synthetic lookup tables so the validator's behaviour is
+	// deterministic regardless of which embedded files have shipped.
+	//
+	// Pre-W1.D1 (embedded agent .md files not yet shipped) the default
+	// walker returns false for every name — exercising the default in a
+	// unit test without an explicit injection deliberately fails-loud per
+	// W0.5 round-2 FF2 disclosure: tests inject; production callers
+	// (LoadDefaultTemplate*) inherit the post-W1.D1 reality where the
+	// real placeholder files satisfy the floor.
+	AgentLookupFn func(name string) bool
 }
 
 // Load parses a Tillsyn template TOML stream and validates it.
@@ -121,6 +142,14 @@ type LoadOptions struct {
 //     does not exist. Warn-only per Drop 4c.5 Q2 resolution: dev-machine
 //     state is not template-correctness; adopters wanting strict-fail
 //     wrap WarnLogger at the call site. Drop 4c.5 F.5.1 hook.
+//     k'. validateAgentBindingNames — for every AgentBinding HARD-FAIL
+//     when AgentName does not resolve at the embedded tier of the 3-tier
+//     resolver (`internal/templates/builtin/agents/{till-gen,till-go,
+//     till-gdd}/<name>.md`). Distinct from validateAgentBindingFiles:
+//     warn-only is for dev-machine state; this hard-fail is for template
+//     correctness — a dangling agent_name reference catches typos like
+//     "buidler-agent" at Load rather than at spawn. Drop 4c.6 W0.5.D2
+//     hook.
 //     l. validateTillsyn — assert the top-level [tillsyn] globals satisfy
 //     the closed contract: non-negative MaxContextBundleChars and
 //     MaxAggregatorDuration (zero is legal — engine-time default
@@ -225,6 +254,9 @@ func LoadWithOptions(r io.Reader, opts LoadOptions) (Template, error) {
 		return Template{}, err
 	}
 	validateAgentBindingFiles(tpl, opts.WarnLogger, opts.StatFn)
+	if err := validateAgentBindingNames(tpl, opts.AgentLookupFn); err != nil {
+		return Template{}, err
+	}
 	if err := validateTillsyn(tpl); err != nil {
 		return Template{}, err
 	}
@@ -398,6 +430,39 @@ var (
 	// distinct from [agent_bindings] — failures here are global, not
 	// per-binding.
 	ErrInvalidTillsynGlobals = errors.New("invalid tillsyn globals")
+
+	// ErrUnknownAgentName is returned by validateAgentBindingNames when an
+	// AgentBinding.AgentName does not resolve at the EMBEDDED tier of the
+	// 3-tier agent resolver (per SKETCH.md §3.4: project →
+	// `<projectRoot>/.tillsyn/agents/<name>.md` → user
+	// `~/.tillsyn/agents/<group>/<name>.md` → embedded
+	// `internal/templates/builtin/agents/{till-gen,till-go,till-gdd}/<name>.md`).
+	// Resolution succeeds if the agent .md file exists in ANY of the three
+	// embedded groups — that is the floor every binding's name must clear.
+	//
+	// The check is HARD-FAIL (distinct from validateAgentBindingFiles, which
+	// is warn-only against `~/.claude/agents/<name>.md` for dev-machine
+	// state). A dangling agent_name like "buidler-agent" (transposed
+	// letters) silently survives Load today and surfaces only when a
+	// dispatcher attempts to spawn the kind — this sentinel catches the
+	// typo at Load time so adopters see the failure at template-author
+	// time, not at first-spawn time.
+	//
+	// Empty AgentName is also rejected here (the empty string cannot
+	// resolve to any `<group>/.md` file path). The existing
+	// AgentBinding.Validate sentinel ErrInvalidAgentBinding already covers
+	// empty AgentName for downstream consumers of the AgentBinding type;
+	// this validator covers it at Load so Load is a closed contract on its
+	// own.
+	//
+	// The wrapped message names the binding's parent kind and the
+	// offending agent_name verbatim so adopters see the exact line they
+	// need to fix. Per W0.5 plan FF1 disclosure: pelletier/go-toml/v2's
+	// post-decode validators do not carry source-line numbers, so
+	// adopters grep their TOML for the field path.
+	//
+	// Drop 4c.6 W0.5.D2 hook.
+	ErrUnknownAgentName = errors.New("template references an unknown agent name")
 )
 
 // validateMapKeys asserts every key in Template.Kinds,
@@ -1451,4 +1516,163 @@ func validateAgentBindingFiles(tpl Template, logger func(string), statFn func(st
 		logger(fmt.Sprintf("agent_bindings[%q]: agent_name=%q referenced by template but %s not found",
 			kind, name, path))
 	}
+}
+
+// embeddedAgentGroups names the closed set of embedded agent-library groups
+// the default AgentLookupFn walks. Per SKETCH.md §3.4 the 3-tier resolver's
+// embedded floor unions across these three groups; an agent_name resolves at
+// the floor if its `<name>.md` file exists in ANY group's directory.
+//
+// LOUD WARNING TO FUTURE DROPS THAT ADD NEW EMBEDDED GROUPS: extend this
+// slice in the same drop that ships the new group's `builtin/agents/<group>/`
+// directory. Failing to do so will silently bypass the new group from the
+// resolver floor — adopters' agent_name references that resolve only against
+// the new group will appear as ErrUnknownAgentName at Load.
+//
+// Pre-W1.D1 the `internal/templates/builtin/agents/` directory does not yet
+// exist. The default walker handles the missing-directory case gracefully via
+// embed.FS.Open returning an error, which the walker translates to "not
+// found" without panicking.
+var embeddedAgentGroups = []string{"till-gen", "till-go", "till-gdd"}
+
+// embeddedAgentLibraryShipped reports whether DefaultTemplateFS contains at
+// least one agent .md file under any of the embedded groups
+// (`builtin/agents/{till-gen,till-go,till-gdd}/`). Probed once at package
+// init via fs.ReadDir against the embed.FS so the default walker can
+// distinguish "library has shipped, walk strictly" from "library has not
+// yet shipped (pre-W1.D1), walk permissively."
+//
+// Per W0.5 plan FF2: D2's validator code ships before W1.D1 lights up the
+// embedded library. Pre-W1.D1 the FS contains no agent .md files at the
+// embedded paths AND the //go:embed directive in embed.go does not even
+// list the `builtin/agents/` subtree — every default walker call would
+// return false, which would break every existing test that loads the
+// embedded default templates (default-go.toml references "go-builder-agent",
+// "go-planning-agent", etc. — none resolve pre-W1.D1).
+//
+// The reconciliation: the default walker fails-permissive when the
+// embedded library has not yet shipped (no agent .md files probed), and
+// fails-strict once W1.D1 lands the placeholder files. Production callers
+// transition from "validator is structurally wired but vacuously passes"
+// to "validator hard-fails on dangling names" with no D2 code change —
+// the trigger is the embed.FS contents, exactly as the W0.5 plan FF2
+// disclosure pins.
+//
+// Tests that want strict behaviour pre-W1.D1 inject an explicit
+// LoadOptions.AgentLookupFn — this bypasses the default and exercises the
+// hard-fail path the validator's body implements.
+var embeddedAgentLibraryShipped = func() bool {
+	for _, group := range embeddedAgentGroups {
+		entries, err := DefaultTemplateFS.ReadDir("builtin/agents/" + group)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+				return true
+			}
+		}
+	}
+	return false
+}()
+
+// defaultAgentLookupFn is the production existence-check used by
+// validateAgentBindingNames when LoadOptions.AgentLookupFn is nil. Walks the
+// embedded `builtin/agents/{till-gen,till-go,till-gdd}/<name>.md` paths in
+// DefaultTemplateFS and returns true on the first hit, false otherwise.
+//
+// Per W0.5 plan FF2 disclosure: this default walker exercises embed.FS
+// UNCONDITIONALLY — it does not depend on any post-W0.5.D2 rewire. Pre-W1.D1
+// the FS contains no agent .md files at the embedded paths AND the embed
+// directive does not even cover `builtin/agents/` yet, so the function
+// fails-permissive (returns true for every name) per the
+// `embeddedAgentLibraryShipped` probe at package init. Tests inject
+// synthetic LoadOptions.AgentLookupFn values to exercise the validator's
+// hard-fail path pre-W1.D1. Post-W1.D1 the same default walker switches to
+// strict mode automatically because the probe sees real placeholder files;
+// the validator code is final on D2 land.
+//
+// Path layout: `builtin/agents/<group>/<name>.md`. The walker strips no
+// extension or prefix — `<name>` is the literal AgentBinding.AgentName as
+// authored.
+func defaultAgentLookupFn(name string) bool {
+	if name == "" {
+		return false
+	}
+	if !embeddedAgentLibraryShipped {
+		// Pre-W1.D1 fail-permissive mode: the embedded agent library
+		// has not yet shipped, so the floor is structurally vacuous.
+		// Production callers (LoadDefaultTemplate*) get a no-op pass on
+		// the validator until W1.D1 lights the library. Tests that need
+		// to exercise the hard-fail path inject an explicit
+		// LoadOptions.AgentLookupFn.
+		return true
+	}
+	for _, group := range embeddedAgentGroups {
+		path := "builtin/agents/" + group + "/" + name + ".md"
+		f, err := DefaultTemplateFS.Open(path)
+		if err != nil {
+			continue
+		}
+		_ = f.Close()
+		return true
+	}
+	return false
+}
+
+// validateAgentBindingNames asserts every AgentBinding.AgentName resolves at
+// the EMBEDDED tier of the 3-tier agent resolver per SKETCH.md §3.4. The
+// embedded tier is the union of `internal/templates/builtin/agents/{till-gen,
+// till-go,till-gdd}/<name>.md`; resolution succeeds on the first hit across
+// the three groups.
+//
+// Hard-fail (NOT warn-only — distinct from validateAgentBindingFiles, which
+// checks `~/.claude/agents/<name>.md` warn-only for dev-machine state). A
+// dangling agent_name reference is a template-correctness failure: typos
+// like "buidler-agent" silently survive Load today and surface only at
+// dispatch time when the dispatcher cannot resolve the binding.
+//
+// Project-tier (`<projectRoot>/.tillsyn/agents/<name>.md`) and user-tier
+// (`~/.tillsyn/agents/<group>/<name>.md`) checks are NOT performed here —
+// those are spawn-time concerns. The embedded floor is the load-time
+// invariant every binding must clear; project + user tiers can legitimately
+// add (override) but cannot subtract.
+//
+// lookupFn nil resolves to defaultAgentLookupFn (walks DefaultTemplateFS
+// across embeddedAgentGroups). Tests inject a synthetic lookupFn so the
+// validator's behaviour is deterministic regardless of which embedded files
+// have shipped.
+//
+// Empty AgentName is rejected with a distinct error message ("agent_name is
+// empty") before the lookup is attempted — the empty string cannot resolve
+// to any `<group>/.md` filename, and the explicit message gives adopters a
+// clearer diagnostic than a generic "not found at embedded floor."
+//
+// Outer-map iteration order is non-deterministic (Go map iteration); the
+// validator returns on the FIRST offending binding to keep the error surface
+// bounded. Future drops that want exhaustive reporting can switch to error
+// aggregation; the closed-enum + load-time-reject pattern doesn't need it
+// today.
+//
+// All non-nil returns wrap ErrUnknownAgentName so callers using
+// `errors.Is(err, ErrUnknownAgentName)` route correctly.
+//
+// Drop 4c.6 W0.5.D2 hook.
+func validateAgentBindingNames(tpl Template, lookupFn func(string) bool) error {
+	if lookupFn == nil {
+		lookupFn = defaultAgentLookupFn
+	}
+	for kind, binding := range tpl.AgentBindings {
+		name := binding.AgentName
+		if name == "" {
+			return fmt.Errorf("%w: agent_bindings[%q].agent_name is empty",
+				ErrUnknownAgentName, kind)
+		}
+		if lookupFn(name) {
+			continue
+		}
+		return fmt.Errorf("%w: agent_bindings[%q].agent_name %q does not resolve at the embedded floor (looked under builtin/agents/{%s}/%s.md)",
+			ErrUnknownAgentName, kind, name, strings.Join(embeddedAgentGroups, ","), name)
+	}
+	return nil
 }

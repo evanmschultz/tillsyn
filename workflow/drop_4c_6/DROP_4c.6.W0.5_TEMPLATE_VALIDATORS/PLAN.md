@@ -82,7 +82,7 @@ The chain order matches the L1 spawn directive: kind-enum + agent_name first →
 
 ### Droplet 4c.6.W0.5.D2 — `agent_name` Existence Across 3-Tier Resolution Priority (Embedded-Tier Hard Floor)
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/templates/load.go`, `internal/templates/load_test.go`, `internal/templates/testdata/invalid_unknown_agent_name.toml` (NEW), `internal/templates/testdata/valid_minimal_with_known_agent.toml` (NEW)
 - **Packages:** `github.com/evanmschultz/tillsyn/internal/templates`
 - **Acceptance:**

@@ -1,0 +1,33 @@
+# invalid_unknown_agent_name — exercises validateAgentBindingNames (W0.5.D2).
+#
+# Structurally identical to valid_minimal.toml except the [agent_bindings.build]
+# block declares an agent_name that does NOT resolve at the 3-tier resolver's
+# embedded floor (`internal/templates/builtin/agents/{till-gen,till-go,till-gdd}/`).
+# Tests inject a synthetic LoadOptions.AgentLookupFn that returns false for
+# "no-such-agent". Loader MUST reject with ErrUnknownAgentName wrapping a
+# message naming the binding's kind ("build") and the offending agent_name
+# ("no-such-agent").
+
+schema_version = "v1"
+
+[kinds.build]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = ["build-qa-proof", "build-qa-falsification"]
+structural_type = "droplet"
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+[agent_bindings.build]
+agent_name = "no-such-agent"
+model = "opus"

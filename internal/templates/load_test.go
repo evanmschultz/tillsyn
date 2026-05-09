@@ -397,6 +397,176 @@ func agentMapKeys(m map[domain.Kind]AgentRuntime) []domain.Kind {
 	return keys
 }
 
+// TestLoadValidatesAgentBindingNamesEmbeddedFloor exercises
+// validateAgentBindingNames (Drop 4c.6 W0.5.D2). The validator asserts every
+// AgentBinding.AgentName resolves at the 3-tier resolver's EMBEDDED floor —
+// i.e. exists in at least one of `internal/templates/builtin/agents/{till-gen,
+// till-go,till-gdd}/<name>.md`. The check is hard-fail (distinct from
+// validateAgentBindingFiles, which is warn-only against `~/.claude/agents/`).
+//
+// Pre-W1.D1 the embedded FS contains no agent .md files, so every test row
+// here injects a synthetic `LoadOptions.AgentLookupFn` that decides which
+// names resolve. Post-W1.D1 the default walker will find the real placeholder
+// files at the same FS path; D2's validator code does not change.
+//
+// Three table rows:
+//
+//   - "known agent passes": valid_minimal_with_known_agent.toml fixture +
+//     injected lookupFn returning true for "builder-agent". Load returns nil.
+//   - "unknown agent rejected": invalid_unknown_agent_name.toml fixture +
+//     injected lookupFn returning true for nothing. Load returns
+//     ErrUnknownAgentName wrapping a message naming the binding's kind
+//     ("build") and the offending agent_name ("no-such-agent").
+//   - "empty agent_name rejected": inline source with `agent_name = ""`. The
+//     existing AgentBinding.Validate sentinel (ErrInvalidAgentBinding)
+//     already covers this upstream — D2's hard-fail validator MUST also
+//     reject so adopters who somehow bypass Validate (the happy-path Load
+//     does not call Validate today; that is a per-binding contract used by
+//     downstream consumers) see the embedded-floor sentinel rather than
+//     a silent pass.
+func TestLoadValidatesAgentBindingNamesEmbeddedFloor(t *testing.T) {
+	validKnown := mustReadTestdata(t, "valid_minimal_with_known_agent.toml")
+	invalidUnknown := mustReadTestdata(t, "invalid_unknown_agent_name.toml")
+
+	// Row 3: structurally valid TOML (passes strict decode + every other
+	// validator) with an empty agent_name. validateAgentBindingNames must
+	// reject because the empty string cannot resolve at any tier of the
+	// 3-tier resolver — there is no `<group>/.md` filename.
+	emptyAgentName := `
+schema_version = "v1"
+
+[kinds.build]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = ["build-qa-proof", "build-qa-falsification"]
+structural_type = "droplet"
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+[agent_bindings.build]
+agent_name = ""
+model = "opus"
+`
+
+	tests := []struct {
+		name         string
+		src          string
+		lookupFn     func(string) bool
+		wantErr      bool
+		wantSentinel error
+		wantSubstrs  []string
+	}{
+		{
+			name:     "known agent passes",
+			src:      validKnown,
+			lookupFn: func(name string) bool { return name == "builder-agent" },
+			wantErr:  false,
+		},
+		{
+			name:         "unknown agent rejected",
+			src:          invalidUnknown,
+			lookupFn:     func(string) bool { return false },
+			wantErr:      true,
+			wantSentinel: ErrUnknownAgentName,
+			wantSubstrs:  []string{"agent_bindings", "build", "no-such-agent"},
+		},
+		{
+			name:         "empty agent_name rejected",
+			src:          emptyAgentName,
+			lookupFn:     func(string) bool { return false },
+			wantErr:      true,
+			wantSentinel: ErrUnknownAgentName,
+			wantSubstrs:  []string{"agent_bindings", "build", "empty"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadWithOptions(strings.NewReader(tc.src), LoadOptions{
+				AgentLookupFn: tc.lookupFn,
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Load: expected error; got nil")
+				}
+				if tc.wantSentinel != nil && !errors.Is(err, tc.wantSentinel) {
+					t.Fatalf("Load: errors.Is(_, %v) = false; err = %v", tc.wantSentinel, err)
+				}
+				for _, s := range tc.wantSubstrs {
+					if !strings.Contains(err.Error(), s) {
+						t.Fatalf("Load: err = %q; want substring %q", err.Error(), s)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestLoadValidatesAgentBindingNamesDefaultLookupPermissivePreW1D1 verifies
+// the default lookupFn (when LoadOptions.AgentLookupFn is nil) is
+// fail-permissive while the embedded agent library has not yet shipped
+// (pre-W1.D1). Per W0.5 plan FF2 reconciliation: the validator code is final
+// on D2 land but its production effect gates on the embed.FS contents.
+// Pre-W1.D1 the `builtin/agents/{till-gen,till-go,till-gdd}/` subtree
+// contains no .md files (and is not even listed in the //go:embed directive
+// at embed.go), so `embeddedAgentLibraryShipped` evaluates to false at
+// package init and `defaultAgentLookupFn` returns true unconditionally.
+//
+// The valid_minimal.toml fixture references `agent_name = "go-builder-agent"`
+// (a real Go agent name that pre-W1.D1 does not exist in the embedded
+// library); the default walker passes the binding because the library has
+// not shipped — the validator is structurally wired but vacuously satisfies
+// the floor.
+//
+// Post-W1.D1 this test's expectation flips: once the embedded library lands
+// real .md files, `embeddedAgentLibraryShipped` switches to true and the
+// default walker becomes strict. Either the fixture must reference a real
+// embedded name OR the test's contract flips to "rejects when name does not
+// resolve in embedded library." The W0.5 plan's FF2 disclosure pins this
+// transition explicitly: "Post-W1.D1, the same default walker finds the
+// real placeholder files W1.D1 ships into the same FS path and resolves
+// real agent_name references at Load."
+//
+// LOUD WARNING TO W1.D1 BUILDER: when you ship `builtin/agents/{till-gen,
+// till-go,till-gdd}/<name>.md` placeholder files AND extend the //go:embed
+// directive in embed.go to include them, this test WILL change behaviour.
+// Either update the test's assertion (default lookup now strict) or update
+// `valid_minimal.toml` to reference an agent_name your placeholder files
+// satisfy.
+func TestLoadValidatesAgentBindingNamesDefaultLookupPermissivePreW1D1(t *testing.T) {
+	src := mustReadTestdata(t, "valid_minimal.toml")
+	// LoadOptions.AgentLookupFn intentionally nil: exercise the default
+	// embedded-FS walker. Pre-W1.D1 the FS contains no agent .md files
+	// AND the //go:embed directive does not list `builtin/agents/`, so
+	// `embeddedAgentLibraryShipped` is false and the default walker
+	// fail-permissive-passes every name. The valid_minimal.toml fixture
+	// references `go-builder-agent`; the validator must NOT reject it
+	// pre-W1.D1.
+	_, err := LoadWithOptions(strings.NewReader(src), LoadOptions{})
+	if err != nil {
+		// Pre-W1.D1 the embedded library has not shipped. If this test
+		// fails with `ErrUnknownAgentName`, W1.D1 has likely landed —
+		// flip the assertion or update the fixture per the LOUD WARNING
+		// in this test's godoc.
+		t.Fatalf("Load: expected nil error pre-W1.D1 (embedded agent library not yet shipped; fail-permissive default); got %v. "+
+			"If W1.D1 has landed placeholder agent .md files plus the //go:embed extension, update this test per its LOUD WARNING.", err)
+	}
+}
+
 // TestTemplateGatesAndGateRulesCoexist verifies the [gates] and [gate_rules]
 // TOML keys decode independently. The Drop 4b Wave A `gates` field is
 // distinct from the Drop 3 reserved-but-untyped `gate_rules` map; a template
