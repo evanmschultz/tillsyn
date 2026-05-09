@@ -14,30 +14,45 @@
 # Wave A heads (no blockers — parallel-launchable on drop start)
 # 4c.6.W0       (no [[blockers]] entry — empty blocked_by)
 # 4c.6.W0.5     (no [[blockers]] entry)
-# 4c.6.W1.D1    (no [[blockers]] entry)
-# 4c.6.W5.D1    (no [[blockers]] entry)
 # 4c.6.W6.D2    (no [[blockers]] entry)
 # 4c.6.W6.D3    (no [[blockers]] entry)
+#
+# ROUND-2 (HF1 + HF2): W1.D1 and W5.D1 are NO LONGER Wave-A heads. Both touch
+# the `internal/templates` Go package and now serialize through the chain:
+#   W0.5 → W1.D1 → W5.D1 → W5.D2 → W5.D3.
+# This eliminates the package-compile race that Round-1 plan-QA-falsification
+# flagged (counterexamples 1.1 + 1.2 + 1.3). HF7 transitive-race auto-resolved
+# by this chain.
+
+[[blockers]]
+node = "4c.6.W1.D1"
+blocked_by = ["4c.6.W0.5"]
+reason = "ROUND-2 HF1+HF2 — both edit internal/templates Go package; W0.5's load-time validators (claim-vs-impl Go-internal known-wired-set type) land first so W1.D1's embed-list extension lands on top of that compile state. Package-level lock per CLAUDE.md § Blocker Semantics."
 
 [[blockers]]
 node = "4c.6.W2"
 blocked_by = ["4c.6.W1.D1"]
-reason = "W2's till init copies the embedded agent .md files + agents.example.toml shipped by W1.D1 — without W1.D1 there's nothing to copy"
+reason = "W2's till init copies the embedded agent .md files + agents.example.toml shipped by W1.D1 — without W1.D1 there's nothing to copy. Transitively waits on W0.5 via W1.D1's blocker."
 
 [[blockers]]
 node = "4c.6.W3"
 blocked_by = ["4c.6.W1.D1", "4c.6.W0"]
-reason = "W3's 3-tier resolver consumes W1's embedded till-<group>/<name>.md files; W3's frontmatter strip wiring calls into W0's render-time strip helper"
+reason = "W3's 3-tier resolver consumes W1's embedded till-<group>/<name>.md files; W3's frontmatter strip wiring calls into W0's render-time strip helper. Transitively waits on W0.5 via W1.D1."
+
+[[blockers]]
+node = "4c.6.W5.D1"
+blocked_by = ["4c.6.W1.D1"]
+reason = "ROUND-2 HF1 — both edit internal/templates/embed.go + embed_test.go AND share internal/templates package compile/test unit; W1.D1 lands the //go:embed list extension first, W5.D1 then rebases its rename onto the post-W1.D1 directive. Transitively chains to W0.5 via W1.D1."
 
 [[blockers]]
 node = "4c.6.W5.D2"
 blocked_by = ["4c.6.W5.D1"]
-reason = "both edit internal/templates/embed.go and embed_test.go — package + file-lock chain"
+reason = "both edit internal/templates/embed.go and embed_test.go — package + file-lock chain. Transitively waits on W1.D1 + W0.5 via W5.D1's chain (HF7 derivative auto-resolved)."
 
 [[blockers]]
 node = "4c.6.W5.D3"
 blocked_by = ["4c.6.W5.D1", "4c.6.W5.D2", "4c.6.W1.D1"]
-reason = "edits the renamed till-go.toml (W5.D1) + till-gen.toml (W5.D2) AND the placeholder agent .md frontmatter shipped by W1.D1"
+reason = "edits the renamed till-go.toml (W5.D1) + till-gen.toml (W5.D2) AND the placeholder agent .md frontmatter shipped by W1.D1. Transitively waits on W0.5 via the chain."
 
 [[blockers]]
 node = "4c.6.W6.D1"
@@ -47,7 +62,7 @@ reason = "AGENTS_CONFIG.md describes W0's schema + override semantics + frontmat
 [[blockers]]
 node = "4c.6.W6.D4"
 blocked_by = ["4c.6.W3"]
-reason = "doc-comment corrections at SPAWN_PIPELINE.md:24-31 + CLI_ADAPTER_AUTHORING.md must reflect what W3 actually shipped"
+reason = "ROUND-2 HF3 — W6.D4 is SOLE OWNER of SPAWN_PIPELINE.md:24-31 + CLI_ADAPTER_AUTHORING.md doc-comment corrections (W3's previously-claimed SPAWN_PIPELINE.md scope was stripped to eliminate duplicate ownership). W6.D4 must come AFTER W3 lands so the doc reflects W3-shipped reality."
 
 [[blockers]]
 node = "4c.6.W6.D5"
