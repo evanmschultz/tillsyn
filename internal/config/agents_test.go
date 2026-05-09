@@ -430,6 +430,299 @@ func TestResolve_AbsentKindReturnsPreset(t *testing.T) {
 	}
 }
 
+// TestMergeLocal_OverrideModel loads `local_override_model.toml` over a project
+// registry whose [agents.build] block sets several fields including model. The
+// resulting registry must reflect local's model in the merged [agents.build]
+// block while project's other build-block fields survive — block-level
+// field-merge, not block-level replace.
+func TestMergeLocal_OverrideModel(t *testing.T) {
+	t.Parallel()
+
+	project := &AgentsRegistry{
+		Preset: Preset{
+			Client: "claude",
+			Model:  "sonnet",
+		},
+		Overrides: map[domain.Kind]Override{
+			domain.KindBuild: {
+				Model:        ptrStr("sonnet"),
+				MaxBudgetUSD: ptrFloat(5.0),
+				ToolsAllow:   ptrSlice([]string{"Read", "Edit", "Bash"}),
+			},
+		},
+	}
+
+	local, err := LoadRegistry(filepath.Join("testdata", "agents", "local_override_model.toml"))
+	if err != nil {
+		t.Fatalf("LoadRegistry(local) returned error: %v", err)
+	}
+
+	merged, err := MergeLocal(project, local)
+	if err != nil {
+		t.Fatalf("MergeLocal returned error: %v", err)
+	}
+
+	build, ok := merged.Overrides[domain.KindBuild]
+	if !ok {
+		t.Fatal("merged Overrides[build] missing")
+	}
+	if build.Model == nil || *build.Model != "opus" {
+		t.Errorf("merged Overrides[build].Model = %v, want %q (local override)", build.Model, "opus")
+	}
+	if build.MaxBudgetUSD == nil || *build.MaxBudgetUSD != 5.0 {
+		t.Errorf("merged Overrides[build].MaxBudgetUSD = %v, want 5.0 (project survives)", build.MaxBudgetUSD)
+	}
+	if build.ToolsAllow == nil || !equalStrings(*build.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
+		t.Errorf("merged Overrides[build].ToolsAllow = %v, want [Read Edit Bash] (project survives)", build.ToolsAllow)
+	}
+}
+
+// TestMergeLocal_ToolsDenyRejected asserts that `tools_deny` set anywhere in
+// the local registry returns the bare ErrToolsDenyNotOverridable sentinel.
+// D5 wraps this sentinel into a position-aware *ConfigError; D3 owns only the
+// sentinel-rejection contract.
+func TestMergeLocal_ToolsDenyRejected(t *testing.T) {
+	t.Parallel()
+
+	project := &AgentsRegistry{
+		Preset: Preset{
+			ToolsDeny: []string{"WebFetch"},
+		},
+		Overrides: map[domain.Kind]Override{},
+	}
+
+	local, err := LoadRegistry(filepath.Join("testdata", "agents", "local_tools_deny_rejected.toml"))
+	if err != nil {
+		t.Fatalf("LoadRegistry(local) returned error: %v", err)
+	}
+
+	_, err = MergeLocal(project, local)
+	if err == nil {
+		t.Fatal("MergeLocal returned nil error for local tools_deny; want sentinel rejection")
+	}
+	if !errors.Is(err, ErrToolsDenyNotOverridable) {
+		t.Errorf("error chain does not contain ErrToolsDenyNotOverridable: %v", err)
+	}
+}
+
+// TestMergeLocal_ToolsDenyDefaultsBlockRejected asserts that `tools_deny` set
+// in the local [agents] defaults block (not just per-kind) is also rejected.
+// SKETCH § 4.3.1: "MUST NOT override," not "MUST NOT override per-kind."
+func TestMergeLocal_ToolsDenyDefaultsBlockRejected(t *testing.T) {
+	t.Parallel()
+
+	project := &AgentsRegistry{
+		Preset:    Preset{ToolsDeny: []string{"WebFetch"}},
+		Overrides: map[domain.Kind]Override{},
+	}
+
+	// Construct local in code: tools_deny in the [agents] defaults block.
+	local := &AgentsRegistry{
+		Preset:    Preset{ToolsDeny: []string{"AnotherTool"}},
+		Overrides: map[domain.Kind]Override{},
+	}
+
+	_, err := MergeLocal(project, local)
+	if err == nil {
+		t.Fatal("MergeLocal returned nil error for local defaults-block tools_deny; want sentinel rejection")
+	}
+	if !errors.Is(err, ErrToolsDenyNotOverridable) {
+		t.Errorf("error chain does not contain ErrToolsDenyNotOverridable: %v", err)
+	}
+}
+
+// TestMergeLocal_NilLocal asserts that calling MergeLocal with a nil local
+// registry returns the project registry equivalent — no local file is valid
+// (the .local.toml is optional per SKETCH § 4.3).
+func TestMergeLocal_NilLocal(t *testing.T) {
+	t.Parallel()
+
+	project := &AgentsRegistry{
+		Preset: Preset{
+			Client:       "claude",
+			Model:        "sonnet",
+			MaxBudgetUSD: 5.0,
+			ToolsAllow:   []string{"Read", "Bash"},
+		},
+		Overrides: map[domain.Kind]Override{
+			domain.KindBuild: {Model: ptrStr("sonnet")},
+		},
+	}
+
+	merged, err := MergeLocal(project, nil)
+	if err != nil {
+		t.Fatalf("MergeLocal(project, nil) returned error: %v", err)
+	}
+	if merged == nil {
+		t.Fatal("MergeLocal returned nil registry for nil local")
+	}
+	if merged.Preset.Client != project.Preset.Client {
+		t.Errorf("merged.Preset.Client = %q, want %q", merged.Preset.Client, project.Preset.Client)
+	}
+	if merged.Preset.Model != project.Preset.Model {
+		t.Errorf("merged.Preset.Model = %q, want %q", merged.Preset.Model, project.Preset.Model)
+	}
+	if merged.Preset.MaxBudgetUSD != project.Preset.MaxBudgetUSD {
+		t.Errorf("merged.Preset.MaxBudgetUSD = %v, want %v", merged.Preset.MaxBudgetUSD, project.Preset.MaxBudgetUSD)
+	}
+	if !equalStrings(merged.Preset.ToolsAllow, project.Preset.ToolsAllow) {
+		t.Errorf("merged.Preset.ToolsAllow = %v, want %v", merged.Preset.ToolsAllow, project.Preset.ToolsAllow)
+	}
+	if _, ok := merged.Overrides[domain.KindBuild]; !ok {
+		t.Errorf("merged.Overrides[build] missing; want preserved from project")
+	}
+}
+
+// TestMergeLocal_NilProject asserts that calling MergeLocal with a nil project
+// registry returns an error — agents.toml is required per SKETCH § 3.3 and a
+// local file without a project is invalid.
+func TestMergeLocal_NilProject(t *testing.T) {
+	t.Parallel()
+
+	local := &AgentsRegistry{Preset: Preset{Model: "sonnet"}, Overrides: map[domain.Kind]Override{}}
+
+	_, err := MergeLocal(nil, local)
+	if err == nil {
+		t.Fatal("MergeLocal(nil, local) returned nil error; want error for missing project")
+	}
+}
+
+// TestMergeLocal_PartialBlock asserts that a local registry whose [agents.build]
+// block sets only one field (Model) merges field-by-field over project's
+// [agents.build] — project's other field overrides survive untouched.
+func TestMergeLocal_PartialBlock(t *testing.T) {
+	t.Parallel()
+
+	project := &AgentsRegistry{
+		Preset: Preset{Client: "claude", Model: "sonnet"},
+		Overrides: map[domain.Kind]Override{
+			domain.KindBuild: {
+				Model:        ptrStr("sonnet"),
+				MaxBudgetUSD: ptrFloat(5.0),
+				MaxTurns:     ptrInt(40),
+				ToolsAllow:   ptrSlice([]string{"Read", "Edit", "Bash"}),
+			},
+		},
+	}
+
+	local, err := LoadRegistry(filepath.Join("testdata", "agents", "local_partial_block.toml"))
+	if err != nil {
+		t.Fatalf("LoadRegistry(local) returned error: %v", err)
+	}
+
+	merged, err := MergeLocal(project, local)
+	if err != nil {
+		t.Fatalf("MergeLocal returned error: %v", err)
+	}
+
+	build, ok := merged.Overrides[domain.KindBuild]
+	if !ok {
+		t.Fatal("merged Overrides[build] missing")
+	}
+	if build.Model == nil || *build.Model != "haiku" {
+		t.Errorf("merged Overrides[build].Model = %v, want %q (local override)", build.Model, "haiku")
+	}
+	if build.MaxBudgetUSD == nil || *build.MaxBudgetUSD != 5.0 {
+		t.Errorf("merged Overrides[build].MaxBudgetUSD = %v, want 5.0 (project survives)", build.MaxBudgetUSD)
+	}
+	if build.MaxTurns == nil || *build.MaxTurns != 40 {
+		t.Errorf("merged Overrides[build].MaxTurns = %v, want 40 (project survives)", build.MaxTurns)
+	}
+	if build.ToolsAllow == nil || !equalStrings(*build.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
+		t.Errorf("merged Overrides[build].ToolsAllow = %v, want [Read Edit Bash] (project survives)", build.ToolsAllow)
+	}
+}
+
+// TestMergeLocal_PresetFieldMerge asserts that local's [agents] defaults block
+// fields override project's [agents] block field-by-field — local's set fields
+// win, project's other fields survive. Top-level Preset is concrete (not
+// pointer-shaped), so "absent" in local can only be inferred from the zero
+// value; the merge therefore uses zero-value-as-absent semantics for Preset
+// scalars and zero-length-as-absent for Preset list/map fields. (Pointer-based
+// Override is layered on top via per-kind blocks for explicit-zero discrimination.)
+func TestMergeLocal_PresetFieldMerge(t *testing.T) {
+	t.Parallel()
+
+	project := &AgentsRegistry{
+		Preset: Preset{
+			Client:       "claude",
+			Model:        "sonnet",
+			MaxBudgetUSD: 5.0,
+			MaxTurns:     40,
+			EnvSet:       map[string]string{"A": "1"},
+			CliArgs:      []string{"--strict-mcp-config"},
+		},
+		Overrides: map[domain.Kind]Override{},
+	}
+
+	// Local sets Model and adds an EnvSet entry; everything else absent.
+	local := &AgentsRegistry{
+		Preset: Preset{
+			Model:  "opus",
+			EnvSet: map[string]string{"B": "2"},
+		},
+		Overrides: map[domain.Kind]Override{},
+	}
+
+	merged, err := MergeLocal(project, local)
+	if err != nil {
+		t.Fatalf("MergeLocal returned error: %v", err)
+	}
+
+	if merged.Preset.Client != "claude" {
+		t.Errorf("merged.Preset.Client = %q, want %q (project survives)", merged.Preset.Client, "claude")
+	}
+	if merged.Preset.Model != "opus" {
+		t.Errorf("merged.Preset.Model = %q, want %q (local wins)", merged.Preset.Model, "opus")
+	}
+	if merged.Preset.MaxBudgetUSD != 5.0 {
+		t.Errorf("merged.Preset.MaxBudgetUSD = %v, want 5.0 (project survives)", merged.Preset.MaxBudgetUSD)
+	}
+	if merged.Preset.MaxTurns != 40 {
+		t.Errorf("merged.Preset.MaxTurns = %d, want 40 (project survives)", merged.Preset.MaxTurns)
+	}
+	if v, ok := merged.Preset.EnvSet["A"]; !ok || v != "1" {
+		t.Errorf("merged.Preset.EnvSet[A] = %q (present=%v), want %q present (project survives)", v, ok, "1")
+	}
+	if v, ok := merged.Preset.EnvSet["B"]; !ok || v != "2" {
+		t.Errorf("merged.Preset.EnvSet[B] = %q (present=%v), want %q present (local merged)", v, ok, "2")
+	}
+	if !equalStrings(merged.Preset.CliArgs, []string{"--strict-mcp-config"}) {
+		t.Errorf("merged.Preset.CliArgs = %v, want [--strict-mcp-config] (project survives, local absent)", merged.Preset.CliArgs)
+	}
+}
+
+// TestMergeLocal_NewKindBlock asserts that a [agents.<kind>] block present in
+// local but absent in project lands as a fresh override key in the merged
+// registry.
+func TestMergeLocal_NewKindBlock(t *testing.T) {
+	t.Parallel()
+
+	project := &AgentsRegistry{
+		Preset:    Preset{Client: "claude", Model: "sonnet"},
+		Overrides: map[domain.Kind]Override{},
+	}
+
+	local := &AgentsRegistry{
+		Preset: Preset{},
+		Overrides: map[domain.Kind]Override{
+			domain.KindCommit: {Model: ptrStr("haiku")},
+		},
+	}
+
+	merged, err := MergeLocal(project, local)
+	if err != nil {
+		t.Fatalf("MergeLocal returned error: %v", err)
+	}
+	commit, ok := merged.Overrides[domain.KindCommit]
+	if !ok {
+		t.Fatal("merged Overrides[commit] missing; want fresh kind from local")
+	}
+	if commit.Model == nil || *commit.Model != "haiku" {
+		t.Errorf("merged Overrides[commit].Model = %v, want %q (local-only kind)", commit.Model, "haiku")
+	}
+}
+
 // equalStrings compares two string slices element-by-element.
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
@@ -456,3 +749,11 @@ func ptrSlice(s []string) *[]string { return &s }
 // ptrMap returns a pointer to m. Test helper for constructing Override map
 // fields in code rather than via TOML decode.
 func ptrMap(m map[string]string) *map[string]string { return &m }
+
+// ptrFloat returns a pointer to f. Test helper for constructing Override
+// numeric fields in code.
+func ptrFloat(f float64) *float64 { return &f }
+
+// ptrInt returns a pointer to n. Test helper for constructing Override
+// integer fields in code.
+func ptrInt(n int) *int { return &n }

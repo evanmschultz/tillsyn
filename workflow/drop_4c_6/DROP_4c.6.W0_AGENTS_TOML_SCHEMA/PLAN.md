@@ -102,7 +102,7 @@ Tests are co-located with each droplet's production file. D1 ships `agents_test.
 
 ### Droplet 4c.6.W0.D3 — `Merge(local, project)` deep-merge for `agents.local.toml` + `tools_deny` rejection
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/config/agents.go` (MODIFY — append `MergeLocal` function + `ErrToolsDenyNotOverridable` sentinel), `internal/config/agents_test.go` (MODIFY — append local-merge tests), `internal/config/testdata/agents/local_*.toml` (NEW — `local_override_model.toml`, `local_tools_deny_rejected.toml`, `local_partial_block.toml`).
 - **Packages:** `internal/config`.

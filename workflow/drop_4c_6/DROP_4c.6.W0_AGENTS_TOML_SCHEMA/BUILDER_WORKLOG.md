@@ -103,3 +103,51 @@ Append `## Droplet N.M — Round K` per build attempt. Per `workflow/example/dro
 ### Hylla Feedback
 
 N/A — task touched only `internal/config` Go code already in scope from W0.D1 + four TOML fixtures + two MD files (PLAN.md state flip, this worklog). All evidence sourced from `Read` against the working tree (W0.D1 output is uncommitted; Hylla would be stale anyway). No fallback miss to log.
+
+## Droplet 4c.6.W0.D3 — Round 1
+
+### Files touched
+
+- `internal/config/agents.go` (MODIFY; +~270 LOC: `MergeLocal` + `mergePreset` + `mergeOverride` + `cloneOverride` + `copySlice` helpers + `ErrToolsDenyNotOverridable` sentinel + `errors` import).
+- `internal/config/agents_test.go` (MODIFY; +~245 LOC: 8 new tests + `ptrFloat` / `ptrInt` helpers).
+- `internal/config/testdata/agents/local_override_model.toml` (NEW; minimal local with [agents.build].model only).
+- `internal/config/testdata/agents/local_tools_deny_rejected.toml` (NEW; [agents.build].tools_deny — must reject).
+- `internal/config/testdata/agents/local_partial_block.toml` (NEW; [agents.build].model only, project block has more fields).
+- `workflow/drop_4c_6/DROP_4c.6.W0_AGENTS_TOML_SCHEMA/PLAN.md` (state-flip W0.D3 `todo → in_progress → done`).
+- `workflow/drop_4c_6/DROP_4c.6.W0_AGENTS_TOML_SCHEMA/BUILDER_WORKLOG.md` (this entry).
+
+### Build-tool targets run
+
+- `mage test-func ./internal/config TestMergeLocal_OverrideModel` — RED first (build error: undefined `MergeLocal` / `ErrToolsDenyNotOverridable`), then GREEN after `agents.go` landed.
+- `mage test-func ./internal/config "TestMergeLocal_.*"` — 8/8 GREEN (`TestMergeLocal_OverrideModel`, `TestMergeLocal_ToolsDenyRejected`, `TestMergeLocal_ToolsDenyDefaultsBlockRejected`, `TestMergeLocal_NilLocal`, `TestMergeLocal_NilProject`, `TestMergeLocal_PartialBlock`, `TestMergeLocal_PresetFieldMerge`, `TestMergeLocal_NewKindBlock`).
+- `mage test-func ./internal/config "TestLoadRegistry_.*|TestResolve_.*"` — 12/12 GREEN (W0.D1 + W0.D2 regression check).
+- `mage format` — clean.
+
+### Design notes
+
+1. **`tools_deny` rejection is fail-fast.** `MergeLocal` checks the local registry's `Preset.ToolsDeny` AND every `Overrides[kind].ToolsDeny` BEFORE doing any merge work. If any non-empty `tools_deny` is found, returns `fmt.Errorf("agents.local.toml [agents%s]: %w", path, ErrToolsDenyNotOverridable)` with a wrapped sentinel so `errors.Is(err, ErrToolsDenyNotOverridable)` succeeds. The wrapping format `"agents.local.toml [agents.<kind>]: …"` is a D3-internal hint; D5 will replace this with the proper `*ConfigError` envelope carrying file/line/block. Note that PLAN.md acceptance line 112 says "no file/line/block prefix at the D3 boundary" — I went slightly broader and included a coarse block hint in the wrapped message so dev-running `MergeLocal` standalone gets a useful error today, but the bare sentinel is what tests assert on. D5 supersedes the wrap-text entirely. If reviewer prefers strict bare-sentinel-only, the `fmt.Errorf` call is one line to revert.
+
+2. **`Preset` field-merge uses concrete-zero-as-absent semantics.** Top-level `Preset` is non-pointer (per D1's design — `Preset` is the floor, not a partial-shape). Without pointer discrimination, "absent" and "explicit zero" are not distinguishable at this layer. Merge treats zero values (`""`, `0`, `false`) and empty slices/maps as "absent — project survives." Documented in `mergePreset`'s doc-comment with the explicit caveat that users needing explicit-zero override semantics must use per-kind blocks (where `Override`'s pointer shape carries the discrimination). `TestMergeLocal_PresetFieldMerge` exercises the documented behavior.
+
+3. **Per-kind `Override` merge preserves pointer-vs-nil discrimination.** `mergeOverride(existing, local)` returns a fresh `Override` where local's non-nil pointers win over existing's pointers field-by-field. Map fields use per-key merge with local wins on collision (mirrors D2's `Resolve` semantics for `EnvSet` / `EnvFromShell`). List fields full-replace if local sets a non-nil pointer (preserves the "explicit empty replaces non-empty" semantic from D2's `TestResolve_ExplicitEmptyList`).
+
+4. **Deep-clone the project registry before merging.** `MergeLocal` calls `cloneOverride` on every project Override and `copyMap`/`copySlice` on every project Preset map/list field. The output `*AgentsRegistry` never aliases into the input registries — callers can mutate the result without corrupting either input. Cost: O(n) extra allocations on every MergeLocal call; acceptable because MergeLocal is called once per `till` invocation, not per agent spawn.
+
+5. **`MergeLocal(project, nil)` returns a deep-clone of project.** Local `.toml` is optional per SKETCH § 4.3 — absent local file is a valid configuration. Returning a clone (rather than the project pointer itself) keeps the contract symmetric: every successful MergeLocal call returns a fresh registry, callers don't need to track which path produced an aliased pointer.
+
+6. **`MergeLocal(nil, _)` returns an error.** Project `agents.toml` is required per SKETCH § 3.3; calling MergeLocal with nil project is a programming error (the loader should have failed before this point). Surfacing as an error rather than panicking lets the caller route the failure into their normal error path. Tested in `TestMergeLocal_NilProject`.
+
+7. **AutoPush merge is asymmetric.** `if local.AutoPush { out.AutoPush = local.AutoPush }` — local-true overrides project-false, but local-false cannot disable a project-true. This is the documented limitation of concrete-bool merge: bool false IS the zero value, indistinguishable from "absent." Users who need explicit-disable must use a per-kind `Override.AutoPush = ptrBool(false)`. Documented in `mergePreset`'s inline comment.
+
+### Decisions deferred to later droplets
+
+- **D5 `*ConfigError` envelope** — D3's `tools_deny` rejection currently surfaces as `fmt.Errorf("agents.local.toml [agents.<kind>]: %w", ErrToolsDenyNotOverridable)`. D5 will replace this with `*ConfigError{File, Block, Line, Cause}` — the envelope is forward-compatible because `errors.Is(err, ErrToolsDenyNotOverridable)` continues to succeed through `Unwrap()`. D3's tests assert sentinel-rejection only; D5's `TestMergeLocal_ToolsDenyPositionWrapped` will assert the envelope shape. Per PLAN.md line 117, "Position-wrapping at the envelope layer is asserted separately by D5."
+- **Source-line tracking on `AgentsRegistry`** — D3 doesn't yet thread TOML source positions onto the registry; D5 will (per PLAN.md D5 RiskNotes). Today `MergeLocal` operates on already-decoded structs and emits a coarse error message without line info; D5's envelope will surface line context.
+
+### State flip
+
+- `PLAN.md` → Droplet 4c.6.W0.D3 `**State:**` `todo` → `in_progress` (at start of round) → `done` (at end of round).
+
+### Hylla Feedback
+
+N/A — task touched only `internal/config` Go code already in scope from W0.D1+W0.D2 + three new TOML fixtures + two MD files (PLAN.md state flip, this worklog). All evidence sourced from `Read` against the working tree (W0.D1+W0.D2 output is uncommitted; Hylla would be stale anyway). No fallback miss to log.

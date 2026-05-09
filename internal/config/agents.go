@@ -16,6 +16,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 
@@ -23,6 +24,16 @@ import (
 
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
+
+// ErrToolsDenyNotOverridable is the closed sentinel returned when an
+// agents.local.toml registry sets `tools_deny` (in either the [agents]
+// defaults block or any per-kind block). Per SKETCH.md § 4.3.1, tools_deny
+// is the safety floor: users CANNOT relax denials via .local.toml. D5's
+// *ConfigError envelope wraps this sentinel with file/line/block position
+// information; D3 raises only the bare sentinel.
+//
+// Callers inspect the rejection contract via errors.Is(err, ErrToolsDenyNotOverridable).
+var ErrToolsDenyNotOverridable = errors.New("tools_deny is not user-overridable; remove the field")
 
 // Preset captures the [agents] defaults block in agents.toml. Every field is
 // a concrete value (not a pointer) — Preset is the floor that per-kind
@@ -330,5 +341,327 @@ func copyMap(m map[string]string) map[string]string {
 	for k, v := range m {
 		out[k] = v
 	}
+	return out
+}
+
+// MergeLocal deep-merges the local AgentsRegistry over the project
+// AgentsRegistry, returning a fresh registry whose contents reflect both
+// inputs per SKETCH.md § 4.3 + § 5. The merge runs at registry-level BEFORE
+// Resolve runs at kind-level — order is load-bearing: per-kind blocks in
+// local must field-merge into project's per-kind blocks; running Resolve
+// first would collapse each side to a flat AgentRuntime and lose the
+// pointer-vs-zero discrimination Override carries.
+//
+// Field-merge semantics:
+//
+//   - Top-level Preset (concrete fields, no pointer discrimination): zero
+//     values in local are treated as "absent" (project survives); non-zero
+//     values in local win. Map fields (EnvSet, EnvFromShell) merge per-key
+//     with local keys winning on collision. List fields (CliArgs,
+//     ToolsAllow, ClaudeMDAddons) full-replace if local sets a non-empty
+//     list; empty/nil local list preserves project. Concrete-field semantics
+//     necessarily collapse "absent" and "explicit zero" — users who need
+//     explicit-zero must use a per-kind override block, which carries
+//     pointer-based discrimination.
+//   - Per-kind Override blocks (pointer-shaped): local's non-nil pointers
+//     win field-by-field over project's pointers; nil pointers preserve
+//     project's pointers. Pointer-to-slice / pointer-to-map preserve the
+//     explicit-empty-vs-absent distinction inherited from D1.
+//
+// tools_deny rejection: any non-empty tools_deny in local — whether in the
+// [agents] defaults block (Preset.ToolsDeny) or in a per-kind Override
+// (Override.ToolsDeny non-nil and non-empty) — returns the bare sentinel
+// ErrToolsDenyNotOverridable. D5's envelope wraps this with file/line/block
+// position info; D3 surfaces only the sentinel.
+//
+// MergeLocal(project, nil) returns a deep-cloned copy of project — local
+// .toml is optional. MergeLocal(nil, _) returns an error: project agents.toml
+// is required per SKETCH § 3.3.
+//
+// Usage:
+//
+//	merged, err := MergeLocal(project, local)
+//	if err != nil { return err }
+//	runtime, err := Resolve(merged, kind)
+func MergeLocal(project, local *AgentsRegistry) (*AgentsRegistry, error) {
+	if project == nil {
+		return nil, fmt.Errorf("MergeLocal: project registry is nil; agents.toml is required")
+	}
+
+	// Reject local tools_deny BEFORE merging — fail loud per SKETCH § 4.3.1.
+	if local != nil {
+		if len(local.Preset.ToolsDeny) > 0 {
+			return nil, fmt.Errorf("agents.local.toml [agents]: %w", ErrToolsDenyNotOverridable)
+		}
+		for kind, ov := range local.Overrides {
+			if ov.ToolsDeny != nil && len(*ov.ToolsDeny) > 0 {
+				return nil, fmt.Errorf("agents.local.toml [agents.%s]: %w", kind, ErrToolsDenyNotOverridable)
+			}
+		}
+	}
+
+	out := &AgentsRegistry{
+		Preset:    project.Preset,
+		Overrides: make(map[domain.Kind]Override, len(project.Overrides)),
+	}
+	// Deep-clone project's Preset map fields so output never aliases inputs.
+	out.Preset.EnvSet = copyMap(project.Preset.EnvSet)
+	out.Preset.EnvFromShell = copyMap(project.Preset.EnvFromShell)
+	out.Preset.CliArgs = copySlice(project.Preset.CliArgs)
+	out.Preset.ToolsAllow = copySlice(project.Preset.ToolsAllow)
+	out.Preset.ToolsDeny = copySlice(project.Preset.ToolsDeny)
+	out.Preset.ClaudeMDAddons = copySlice(project.Preset.ClaudeMDAddons)
+	for kind, ov := range project.Overrides {
+		out.Overrides[kind] = cloneOverride(ov)
+	}
+
+	if local == nil {
+		return out, nil
+	}
+
+	// Preset field-merge: local non-zero wins; zero treated as absent.
+	mergePreset(&out.Preset, local.Preset)
+
+	// Per-kind Override merge: local pointers win field-by-field.
+	for kind, lov := range local.Overrides {
+		existing, ok := out.Overrides[kind]
+		if !ok {
+			out.Overrides[kind] = cloneOverride(lov)
+			continue
+		}
+		out.Overrides[kind] = mergeOverride(existing, lov)
+	}
+
+	return out, nil
+}
+
+// mergePreset overlays local's non-zero Preset fields onto out. Top-level
+// Preset uses concrete (non-pointer) fields, so "zero value" is the only
+// signal for "absent" available at this layer. Users who need explicit-zero
+// override semantics must use per-kind Override blocks.
+func mergePreset(out *Preset, local Preset) {
+	if local.Client != "" {
+		out.Client = local.Client
+	}
+	if local.Model != "" {
+		out.Model = local.Model
+	}
+	if local.Effort != "" {
+		out.Effort = local.Effort
+	}
+	if local.MaxTries != 0 {
+		out.MaxTries = local.MaxTries
+	}
+	if local.MaxBudgetUSD != 0 {
+		out.MaxBudgetUSD = local.MaxBudgetUSD
+	}
+	if local.MaxTurns != 0 {
+		out.MaxTurns = local.MaxTurns
+	}
+	if local.BlockedRetries != 0 {
+		out.BlockedRetries = local.BlockedRetries
+	}
+	if local.BlockedRetryCooldown != "" {
+		out.BlockedRetryCooldown = local.BlockedRetryCooldown
+	}
+	if local.AutoPush {
+		// AutoPush=false in local cannot disable a project-true; documented
+		// limitation of concrete-field merge. Per-kind Override carries the
+		// pointer discrimination if explicit-false override is needed.
+		out.AutoPush = local.AutoPush
+	}
+	// Maps: merge per-key, local wins on collision.
+	if len(local.EnvSet) > 0 {
+		if out.EnvSet == nil {
+			out.EnvSet = make(map[string]string, len(local.EnvSet))
+		}
+		for k, v := range local.EnvSet {
+			out.EnvSet[k] = v
+		}
+	}
+	if len(local.EnvFromShell) > 0 {
+		if out.EnvFromShell == nil {
+			out.EnvFromShell = make(map[string]string, len(local.EnvFromShell))
+		}
+		for k, v := range local.EnvFromShell {
+			out.EnvFromShell[k] = v
+		}
+	}
+	// Lists: full-replace if local sets a non-empty list. Empty/nil local
+	// preserves project's list (concrete-field layer cannot express
+	// "explicit empty replaces non-empty"; per-kind Override carries that).
+	if len(local.CliArgs) > 0 {
+		out.CliArgs = copySlice(local.CliArgs)
+	}
+	if len(local.ToolsAllow) > 0 {
+		out.ToolsAllow = copySlice(local.ToolsAllow)
+	}
+	// ToolsDeny: rejected up-front via ErrToolsDenyNotOverridable; never
+	// reaches this branch under valid local registries.
+	if len(local.ClaudeMDAddons) > 0 {
+		out.ClaudeMDAddons = copySlice(local.ClaudeMDAddons)
+	}
+}
+
+// mergeOverride produces a fresh Override that combines existing (project)
+// with local, where local's non-nil pointers win field-by-field. Pointer-vs-
+// nil discrimination preserves the absent-vs-explicit-zero semantics from D1.
+func mergeOverride(existing, local Override) Override {
+	out := cloneOverride(existing)
+	if local.Client != nil {
+		v := *local.Client
+		out.Client = &v
+	}
+	if local.Model != nil {
+		v := *local.Model
+		out.Model = &v
+	}
+	if local.Effort != nil {
+		v := *local.Effort
+		out.Effort = &v
+	}
+	if local.MaxTries != nil {
+		v := *local.MaxTries
+		out.MaxTries = &v
+	}
+	if local.MaxBudgetUSD != nil {
+		v := *local.MaxBudgetUSD
+		out.MaxBudgetUSD = &v
+	}
+	if local.MaxTurns != nil {
+		v := *local.MaxTurns
+		out.MaxTurns = &v
+	}
+	if local.BlockedRetries != nil {
+		v := *local.BlockedRetries
+		out.BlockedRetries = &v
+	}
+	if local.BlockedRetryCooldown != nil {
+		v := *local.BlockedRetryCooldown
+		out.BlockedRetryCooldown = &v
+	}
+	if local.AutoPush != nil {
+		v := *local.AutoPush
+		out.AutoPush = &v
+	}
+	if local.EnvSet != nil {
+		// Per-key merge into existing map (or fresh map).
+		merged := make(map[string]string)
+		if out.EnvSet != nil {
+			for k, v := range *out.EnvSet {
+				merged[k] = v
+			}
+		}
+		for k, v := range *local.EnvSet {
+			merged[k] = v
+		}
+		out.EnvSet = &merged
+	}
+	if local.EnvFromShell != nil {
+		merged := make(map[string]string)
+		if out.EnvFromShell != nil {
+			for k, v := range *out.EnvFromShell {
+				merged[k] = v
+			}
+		}
+		for k, v := range *local.EnvFromShell {
+			merged[k] = v
+		}
+		out.EnvFromShell = &merged
+	}
+	if local.CliArgs != nil {
+		v := copySlice(*local.CliArgs)
+		out.CliArgs = &v
+	}
+	if local.ToolsAllow != nil {
+		v := copySlice(*local.ToolsAllow)
+		out.ToolsAllow = &v
+	}
+	// ToolsDeny rejected up-front; never reaches this branch.
+	if local.ClaudeMDAddons != nil {
+		v := copySlice(*local.ClaudeMDAddons)
+		out.ClaudeMDAddons = &v
+	}
+	return out
+}
+
+// cloneOverride returns a deep-clone of ov so the merged AgentsRegistry never
+// aliases input pointers. Pointer-shape preserved: a nil pointer in the input
+// stays nil in the output, a non-nil pointer is duplicated (fresh underlying
+// value, fresh pointer).
+func cloneOverride(ov Override) Override {
+	out := Override{}
+	if ov.Client != nil {
+		v := *ov.Client
+		out.Client = &v
+	}
+	if ov.Model != nil {
+		v := *ov.Model
+		out.Model = &v
+	}
+	if ov.Effort != nil {
+		v := *ov.Effort
+		out.Effort = &v
+	}
+	if ov.MaxTries != nil {
+		v := *ov.MaxTries
+		out.MaxTries = &v
+	}
+	if ov.MaxBudgetUSD != nil {
+		v := *ov.MaxBudgetUSD
+		out.MaxBudgetUSD = &v
+	}
+	if ov.MaxTurns != nil {
+		v := *ov.MaxTurns
+		out.MaxTurns = &v
+	}
+	if ov.BlockedRetries != nil {
+		v := *ov.BlockedRetries
+		out.BlockedRetries = &v
+	}
+	if ov.BlockedRetryCooldown != nil {
+		v := *ov.BlockedRetryCooldown
+		out.BlockedRetryCooldown = &v
+	}
+	if ov.AutoPush != nil {
+		v := *ov.AutoPush
+		out.AutoPush = &v
+	}
+	if ov.EnvSet != nil {
+		v := copyMap(*ov.EnvSet)
+		out.EnvSet = &v
+	}
+	if ov.EnvFromShell != nil {
+		v := copyMap(*ov.EnvFromShell)
+		out.EnvFromShell = &v
+	}
+	if ov.CliArgs != nil {
+		v := copySlice(*ov.CliArgs)
+		out.CliArgs = &v
+	}
+	if ov.ToolsAllow != nil {
+		v := copySlice(*ov.ToolsAllow)
+		out.ToolsAllow = &v
+	}
+	if ov.ToolsDeny != nil {
+		v := copySlice(*ov.ToolsDeny)
+		out.ToolsDeny = &v
+	}
+	if ov.ClaudeMDAddons != nil {
+		v := copySlice(*ov.ClaudeMDAddons)
+		out.ClaudeMDAddons = &v
+	}
+	return out
+}
+
+// copySlice returns a fresh slice with the same elements as s, preserving
+// nil-vs-empty: nil input returns nil; empty non-nil input returns a fresh
+// empty slice (so callers cannot aliase into the input's backing array).
+func copySlice(s []string) []string {
+	if s == nil {
+		return nil
+	}
+	out := make([]string, len(s))
+	copy(out, s)
 	return out
 }

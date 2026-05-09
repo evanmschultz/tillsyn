@@ -1,0 +1,8 @@
+# local_partial_block.toml — golden fixture for TestMergeLocal_PartialBlock.
+#
+# Local registry sets only [agents.build].model. MergeLocal must preserve
+# project's other [agents.build] fields (max_budget_usd, max_turns,
+# tools_allow) — block-level field-merge, not block-level replace.
+
+[agents.build]
+model = "haiku"

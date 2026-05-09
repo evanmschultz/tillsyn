@@ -1,0 +1,8 @@
+# local_override_model.toml — golden fixture for TestMergeLocal_OverrideModel.
+#
+# Local registry sets only [agents.build].model so MergeLocal merges the
+# field-level override over project's [agents.build] block; project's other
+# build-block fields (max_budget_usd, tools_allow) must survive the merge.
+
+[agents.build]
+model = "opus"

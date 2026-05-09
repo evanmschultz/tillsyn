@@ -1,0 +1,8 @@
+# local_tools_deny_rejected.toml — golden fixture for TestMergeLocal_ToolsDenyRejected.
+#
+# Local registry sets [agents.build].tools_deny — MergeLocal MUST reject this
+# with the closed sentinel ErrToolsDenyNotOverridable. tools_deny is the safety
+# floor per SKETCH § 4.3.1: users CANNOT relax denials via .local.toml.
+
+[agents.build]
+tools_deny = ["something"]
