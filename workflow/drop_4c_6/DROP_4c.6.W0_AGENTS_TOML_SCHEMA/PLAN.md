@@ -108,13 +108,13 @@ Tests are co-located with each droplet's production file. D1 ships `agents_test.
 - **Packages:** `internal/config`.
 - **Acceptance:**
   - `MergeLocal(project *AgentsRegistry, local *AgentsRegistry) (*AgentsRegistry, error)` returns a new `AgentsRegistry` with `local`'s fields deep-merged OVER `project`'s. Field-level deep-merge per `SKETCH.md` § 5: top-level fields → per-field replacement (local wins if present); `EnvSet` / `EnvFromShell` → per-key merge; lists `CliArgs` / `ToolsAllow` / `ClaudeMDAddons` → full-replace.
-  - `tools_deny` set in `local` (any per-kind block OR the `[agents]` defaults) returns `ErrToolsDenyNotOverridable` — closed sentinel error citing the TOML line and the offending kind. Per § 4.3.1 + § 5: "`tools_deny` is the safety floor; setting it in `.local.toml` fails loud."
-  - The error message format: `"agents.local.toml [agents.<kind>]:<line>: tools_deny is not user-overridable; remove the field"` (or, for the defaults block: `"agents.local.toml [agents]:<line>: tools_deny is not user-overridable; remove the field"`).
+  - `tools_deny` set in `local` (any per-kind block OR the `[agents]` defaults) returns `ErrToolsDenyNotOverridable` — closed sentinel error identifying the offending kind. Per § 4.3.1 + § 5: "`tools_deny` is the safety floor; setting it in `.local.toml` fails loud." TOML-position wrapping is added by D5's envelope; D3 raises the bare sentinel.
+  - The bare sentinel's message reads `"tools_deny is not user-overridable; remove the field"` (no file/line/block prefix at the D3 boundary). D5 wraps the sentinel into `*ConfigError` so the user-facing message renders as `"agents.local.toml [agents.<kind>]:<line>: tools_deny is not user-overridable; remove the field"` (or `[agents]:<line>` for the defaults block).
   - `MergeLocal(project, nil)` returns `project` unchanged (nil local = no local file present; valid).
   - `MergeLocal(nil, local)` returns an error — local without project is invalid (per § 3.3 "`agents.toml` is required").
   - Deep-merge preserves `project`'s per-kind overrides where `local` doesn't override them; keys present in `local` win at the field level (NOT block-level — within a `[agents.build]` block, local's `Model` overrides project's, but project's `MaxBudgetUSD` survives if local doesn't set it).
   - Test `TestMergeLocal_OverrideModel` loads `local_override_model.toml`; asserts resolved `[agents.build].Model` reflects local, other build fields fall through.
-  - Test `TestMergeLocal_ToolsDenyRejected` loads `local_tools_deny_rejected.toml`; asserts `errors.Is(err, ErrToolsDenyNotOverridable)` AND error message contains the TOML line number.
+  - Test `TestMergeLocal_ToolsDenyRejected` loads `local_tools_deny_rejected.toml`; asserts `errors.Is(err, ErrToolsDenyNotOverridable)` succeeds against the sentinel returned by `MergeLocal`. (Position-wrapping at the envelope layer is asserted separately by D5's `TestMergeLocal_ToolsDenyPositionWrapped`; this bullet covers only the sentinel-rejection contract D3 owns.)
   - Test `TestMergeLocal_NilLocal` constructs a project registry and calls `MergeLocal(project, nil)`; asserts returned registry is equivalent to `project` (deep-equal via `reflect.DeepEqual` or per-field assertion).
   - Test `TestMergeLocal_PartialBlock` loads `local_partial_block.toml` (local only sets `[agents.build].Model`); asserts project's other fields in `[agents.build]` survive.
   - `mage test-pkg ./internal/config` passes.
@@ -125,11 +125,11 @@ Tests are co-located with each droplet's production file. D1 ships `agents_test.
   - **ValidationPlan:** `mage test-pkg ./internal/config`; `mage test-func ./internal/config TestMergeLocal_OverrideModel`; same for `TestMergeLocal_ToolsDenyRejected`, `TestMergeLocal_NilLocal`, `TestMergeLocal_PartialBlock`; `mage ci` green.
   - **RiskNotes:**
     - Order matters: `MergeLocal(project, local)` runs BEFORE `Resolve(merged, kind)`. Document in `MergeLocal`'s doc-comment with a usage example.
-    - `tools_deny` rejection MUST cite the TOML line — without that, the user gets a hostile "your file is broken somewhere" message. Test must assert line-number presence in the error string.
+    - `tools_deny` rejection MUST surface a position-aware error to the user — without TOML-line context, the user gets a hostile "your file is broken somewhere" message. D3 raises the bare sentinel; D5's envelope adds the file/block/line wrapping. D3's tests assert sentinel-rejection only; D5's tests assert the wrapping.
     - `tools_deny` in the `[agents]` defaults block of local (not just per-kind blocks) must also be rejected — `SKETCH.md` § 4.3.1 says "MUST NOT override," not "MUST NOT override per-kind." Test the defaults-block case explicitly.
     - Map-merge semantics in D3 mirror D2's per-key merge for `EnvSet` / `EnvFromShell`. Reuse D2's `mergeMaps` helper to avoid drift.
   - **ContextBlocks:**
-    - `constraint` (critical): `tools_deny` is NEVER user-overridable; setting it in `.local.toml` fails loud with line-number-aware error. Safety floor per `SKETCH.md` § 4.3.1.
+    - `constraint` (critical): `tools_deny` is NEVER user-overridable; setting it in `.local.toml` fails loud via the closed sentinel `ErrToolsDenyNotOverridable` (D3) wrapped into a position-aware `*ConfigError` envelope (D5). Safety floor per `SKETCH.md` § 4.3.1.
     - `constraint` (high): `MergeLocal` operates at registry-level BEFORE `Resolve` (kind-level); ordering is load-bearing.
     - `constraint` (high): per-kind blocks in local field-merge (not block-replace) over project.
     - `reference` (normal): `SKETCH.md` § 4.3 + § 4.3.1 + § 5.
