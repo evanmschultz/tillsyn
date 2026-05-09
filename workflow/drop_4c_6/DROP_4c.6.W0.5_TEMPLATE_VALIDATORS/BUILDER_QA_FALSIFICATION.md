@@ -353,3 +353,145 @@ Build round 1 lands the cycle detector with the unified-graph extension, the sha
 ### Hylla Feedback
 
 N/A — droplet touched only Go files inside `internal/templates/` plus testdata fixtures (TOML) plus the workflow MDs. All Go reads were against `load.go` + `load_test.go` in the uncommitted modified working set per `git status` (load.go was modified through W0.5.D1 / D2 / D3 across the session). Hylla's index is stale for those files until the drop-end reingest. Direct `Read` + `git grep` against the working tree was the correct evidence path. No Hylla queries attempted on the in-flight files; nothing to log.
+
+## Droplet 4c.6.W0.5.D4 — Round 1
+
+**Date:** 2026-05-09
+**Reviewer:** go-qa-falsification-agent (build-QA-falsification, parent.kind=build)
+**Scope:** child_rules recursion-depth bound (commit `38760ee`). Round 1 attack focus: the three builder design refinements — depth=edges-not-nodes, `dfsDetectCycle` not directly reused, new `formatChainPath` helper — plus the standard 7-family attack pass.
+
+### Counterexamples
+
+None CONFIRMED. All seven attack families exhausted; details below. One low-severity NIT logged under B5 (path-length over-allocation) but it is non-functional and is not a counterexample.
+
+#### B1 — Test-coverage attacks
+
+Attempted attacks on `TestLoadValidatesChildRuleRecursionDepth` (`load_test.go:2607`) + `TestLoadValidatesChildRuleRecursionDepthRunsAfterCycleDetection` (`load_test.go:2740`):
+
+- **Depth-5 boundary passes (row 1).** Inline TOML `closeout → research → discussion → refinement → human-verify → commit` (5 edges, 6 nodes). Logical trace through `compute`: commit→0 (leaf), human-verify→1, refinement→2, discussion→3, research→4, closeout→5; `5 <= 5` → continues; no other root produces a path longer than 5; returns nil. Verified by GREEN. REFUTED.
+- **Depth-6 trip (row 2, fixture).** `closeout → … → commit → plan` (6 edges, 7 nodes). compute("closeout") = 6; `6 > 5` → diagnostic walks successorOnLongest from "closeout"; path = [closeout, research, discussion, refinement, human-verify, commit, plan]; renders via `formatChainPath` joined by " -> "; matches all three required substrings (the full path string, `"depth 6"`, `"max 5"`). Verified by GREEN. REFUTED.
+- **Diamond shapes (memoization correctness).** Not directly tested as a fixture, but the algorithm is correct by construction: `compute(node)` reads `depthFrom[node]` cache before any per-call work (line 894), so a shared descendant `D` reached via both `A→B→D` and `A→C→D` resolves once. The cached `depthFrom[D]` already encodes the longest path from `D`, so the second visit observes the same value the first computed. `successorOnLongest[D]` was set on the first computation; the second visit does not overwrite it (the cache hit returns before the `successorOnLongest` write). Tied children pick the FIRST in `graph[node]` iteration order (strict `>` at line 911), and `graph[node]` is built by appending in TOML decode order (deterministic per pelletier/go-toml/v2). REFUTED algorithmically; no counterexample constructible.
+- **Disjoint roots.** Test row 4 (`single root-only kind passes (depth 0)`) constructs `closeout → research` and `refinement → human-verify` — two disjoint single-edge components. compute walks both in sorted-root order; both yield depth 1; both pass. REFUTED.
+- **Empty graph.** Row 3 uses `valid_minimal.toml` (empty `[[child_rules]]`); validator returns nil at line 873 early-return. REFUTED.
+- **Very-deep chain (>20).** Not directly fixture-tested. With 12 closed kinds and the cascade vocabulary, a chain >12 cannot exist without revisiting a kind, which would re-enter the chain and trip D3's cycle detector first. The depth bound (5) is reached well before the closed-enum exhaustion limit. The algorithm scales linearly (memoised DFS is O(V+E)) and recursion depth is bounded by the closed enum cardinality (12) — no stack-overflow risk. REFUTED.
+- **Self-cycle pre-rejection.** A self-loop `build → build` is a cycle; D3 rejects with `ErrTemplateCycle` before D4 runs. The chain-order regression guard (`TestLoadValidatesChildRuleRecursionDepthRunsAfterCycleDetection`) pins this contract by asserting `errors.Is(err, ErrTemplateCycle)` AND NOT `errors.Is(err, ErrChildRuleRecursionTooDeep)` on the cyclic input `build → plan → build`. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B2 — Contract-preservation attacks
+
+- **Chain-order contract: D4 strictly after D3.** Verified at `load.go:245-250` — `validateChildRuleCycles` runs at line 245, `validateChildRuleRecursionDepth` runs at line 248, no validator interposes. The chain-order test at `load_test.go:2740-2768` asserts the contract empirically — a misorder that runs D4 before D3 would either infinite-loop the depth DFS or surface `ErrChildRuleRecursionTooDeep` on a cyclic input, both caught by the test's `errors.Is(err, ErrTemplateCycle)` AND `!errors.Is(err, ErrChildRuleRecursionTooDeep)` assertions. REFUTED.
+- **`Load` godoc validator-chain table updated to include 4(c').** Verified at `load.go:109-114` — the table calls out `validateChildRuleRecursionDepth` between `c. validateChildRuleCycles` and `d. validateRequiredChildRules`, with the chain-order rationale ("Runs immediately after the cycle detector so cyclic graphs are rejected with the better diagnostic") explicit. REFUTED.
+- **Sentinel `ErrChildRuleRecursionTooDeep` follows the established `var ErrXxx = errors.New(...)` pattern.** Verified at `load.go:483-513` — sentinel block, godoc with depth semantics + bound rationale + W0.5 plan FF1 disclosure. REFUTED.
+- **Existing tests untouched.** `mage testPkg ./internal/templates` reports 424/424 GREEN; 18 new tests added since the W0.5.D3 round (round-3 baseline was 418, current is 424). The new validator does not regress any prior test. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B3 — Hidden-coupling attacks
+
+- **Memoization map state isolation across calls.** `depthFrom`, `successorOnLongest`, and `visited` are all declared INSIDE `validateChildRuleRecursionDepth` (lines 888-890); each `Load` call instantiates fresh maps. No package-level state. Two parallel `Load` calls cannot leak depth values across each other. REFUTED.
+- **`successorOnLongest` write/read ordering.** The `compute` function writes `successorOnLongest[node] = bestChild` at line 922 ONLY when `bestDepth >= 0` (i.e. the node has at least one out-edge). Leaves do NOT write to `successorOnLongest`. The diagnostic walk at line 942-949 uses `next, ok := successorOnLongest[node]` — when `ok == false` (leaf node), the loop breaks. So the path rendering correctly terminates at leaves. The depth-6 fixture's terminal node `plan` is a leaf (no out-edge); the path rendering correctly ends with `plan` and renders the full 7-node chain. REFUTED.
+- **`visited` map purpose.** Defense-in-depth guard (line 897-904) — sets `visited[node] = true` BEFORE the recursive descent so a cycle (which D3 should have rejected) treats the back-edge target as a leaf rather than infinite-looping. The `visited` map is never read after `compute(node)` returns because `depthFrom[node]` is the cache the next entry sees. REFUTED — the `visited` map is correctly contained to one call's recursion.
+- **Closure capture in `var compute func(node domain.Kind) int`.** The closure captures `depthFrom`, `successorOnLongest`, `visited`, `graph`, and `compute` itself. All are call-local. No goroutine spawn; no concurrent access. Race-free. REFUTED.
+- **Recursion stack depth.** Closed 12-kind enum bounds the recursion at 12. Default Go goroutine stack (8 KB initial, grows to ~1 GB) trivially covers that. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B4 — YAGNI / scope-creep — PRIMARY FOCUS (3 design refinements)
+
+Reviewer attacks the three design refinements the spawn prompt called out.
+
+**Refinement 1 — Depth=edges, not nodes.** L2 PLAN ContextBlock (`decision (normal): default depth bound is 5 edges; configurable post-MVP via [tillsyn] recursion_depth_max`) is verbatim. Off-by-one risk probed: depth-5 chain has 6 nodes, depth-6 chain has 7 nodes. The constant's doc-comment (load.go:516-527) says "counted in edges from any root" explicitly; `ErrChildRuleRecursionTooDeep`'s godoc (load.go:483-513) repeats the same definition. Diagnostic message format (load.go:950-957) prints `depth N` matching the edge count from the recursive count `bestDepth + 1` at line 921 (which counts edges, not nodes — leaves return 0 and each parent adds 1 edge). Verified by tests row 1 (depth-5 boundary passes) + row 2 (depth-6 trips). The rendering chain has `depth+1` nodes (`path` capacity at line 940) — correct nodes-vs-edges accounting. JUSTIFIED — the edges semantics is internally consistent and externally verifiable. REFUTED.
+
+**Refinement 2 — `dfsDetectCycle` not directly reused.** L2 PLAN line 199 ("Helper extraction `dfsDetectCycle` was NOT needed for D4") is the builder's documented reasoning. Reviewer probes: could the existing helper structurally cover longest-path? `dfsDetectCycle` returns `(cyclePath []K, found bool)` and uses colored-DFS with white/gray/black state. Longest-path needs `depth int` + `successorOnLongest map[K]K`. The two DFS shapes have:
+
+- **Different return types.** Cycle returns a slice; longest-path returns an int + builds a successor map.
+- **Different state.** Cycle uses 3-state coloring (white/gray/black) for back-edge detection. Longest-path uses memoization (cache hit returns immediately).
+- **Different traversal order semantics.** Cycle returns on FIRST back-edge (early termination); longest-path walks every reachable node before resolving the depth (no early termination per node — must visit all out-edges to pick the max).
+
+Forcing reuse via a single helper would either (a) bloat the helper's signature with an `aggregator func(...)` callback that handles both depth-tracking and back-edge detection, or (b) inline-merge the two algorithms into a unified DFS that's harder to reason about. Neither serves the codebase. The L2 PLAN's "graph constructed by D3 is reused by D4 — D4 does NOT re-build it" wording (acceptance bullet 6) was structurally optimistic: D3 builds the graph inside `validateChildRuleCycles` as a local variable; reusing that variable in D4 would require either hoisting the graph build into a shared helper (4 LOC of code worth its own refactor) or passing the graph through `LoadWithOptions`'s call chain (wider blast radius). Builder picked a third path: D4 builds its OWN graph (3 LOC) and inherits the iteration discipline (sort.Strings root order at line 930 mirrors `dfsDetectCycle`'s line 781-785 contract verbatim). The "spirit of reuse" — same iteration order for reproducible diagnostics — is honored without forcing structural reuse of an algorithmically distinct helper. JUSTIFIED. REFUTED.
+
+**Refinement 3 — New `formatChainPath` helper instead of reusing `formatCyclePath`.** L2 PLAN ContextBlock said "warning (normal): `formatCyclePath` reuse (or near-clone) for D4's path rendering keeps the error UX consistent." The L2 PLAN's "near-clone" wording explicitly permits a separate helper. Builder discovered DURING RED→GREEN (worklog line 184-185 documents the test failure) that reusing `formatCyclePath` literally produces the wrong output: `formatCyclePath` strips prefix nodes by finding the first occurrence of the closure (last) element and rendering from there (load.go:815-820). On a non-cyclic chain `[closeout, research, ..., plan]`, the last element `plan` appears only once at the end, so `startIdx` lands on `plan` itself and the rendering becomes just `"plan"` — losing every prefix node. This is a real bug that would have shipped if the renderer were forcibly reused. The new `formatChainPath` (load.go:973-982) is 9 LOC, mirrors `formatCyclePath`'s `~string` constraint + " -> " separator, and avoids the closure-stripping behavior. The diff is small; the alternative (parameterize `formatCyclePath` with a `treatLastAsClosure bool` flag) would have added complexity to a helper used by 2 cycle call sites + 1 chain call site for a 50% conditional split — strictly worse than two clean helpers. JUSTIFIED. REFUTED.
+
+**Sub-attack: was the path-rendering chain length over-allocated?** Line 940: `path := make([]domain.Kind, 0, depth+1)`. For depth=6 the chain has 7 nodes — capacity 7 is exact. For depth=5 the validator does not enter this branch (the `depth <= childRuleRecursionDepthMax` guard at line 935 returns), so the allocation never fires. For depth=N>5 the chain length is exactly `N+1`; capacity `depth+1` is exact. No over-allocation. REFUTED.
+
+**Sub-attack: was `validateChildRuleRecursionDepth` shipped behind a flag instead of wired in the chain?** No — `git grep validateChildRuleRecursionDepth` shows the call site at `load.go:248` inside `LoadWithOptions`. Verified shipped + wired. REFUTED.
+
+Family verdict: REFUTED. All three design refinements justified; no scope creep.
+
+#### B5 — Spec-compliance attacks
+
+L2 acceptance bullets (PLAN.md lines 156-165) mapped to test/code coverage:
+
+| Bullet | Coverage | Status |
+|---|---|---|
+| 1. New validator `validateChildRuleRecursionDepth` walks parent→child graph; rejects when depth > `childRuleRecursionDepthMax = 5` | `load.go:871-960` + wired at `load.go:248` | satisfied |
+| 2. Constant `childRuleRecursionDepthMax = 5` documented as default per `SKETCH.md § 26.W0.5`; configurable post-MVP | `load.go:516-527` | satisfied |
+| 3. New sentinel `ErrChildRuleRecursionTooDeep` added to sentinel block | `load.go:483-513` | satisfied |
+| 4. Wrapped error names offending kind, observed depth, bound, path-from-root | `load.go:950-957` (`%w: kind %q reaches depth %d (max %d): %s`) | satisfied |
+| 5. New malformed fixture `invalid_child_rules_too_deep.toml` rejects with sentinel + path rendering `"closeout -> research -> discussion -> refinement -> human-verify -> commit -> plan"` | row 2 of test (load_test.go:2654-2664) asserts all three substrings; fixture is 6-rule chain | satisfied |
+| 6. Graph constructed by D3 is reused (D4 does NOT re-build) | NOT structurally reused — see B4 Refinement 2; D4 builds its own 3-LOC graph and inherits iteration discipline. **Documented deviation** in the worklog (line 199); justified algorithmically | satisfied (intent honored, structural reuse rejected with rationale) |
+| 7. Cycle vs depth ordering: D3 fails first on cyclic input, D4 never runs | pinned by `TestLoadValidatesChildRuleRecursionDepthRunsAfterCycleDetection` (load_test.go:2740) | satisfied |
+| 8. Table-driven test w/ 4 rows (depth 5 pass, depth 6 fail, empty pass, multi-root pass) | `TestLoadValidatesChildRuleRecursionDepth` rows 1-4 | satisfied |
+| 9. `mage test-func` RED→GREEN | BUILDER_WORKLOG round-1 documents RED via build-error level + commented-out wire-up | satisfied |
+| 10. `mage test-pkg ./internal/templates` clean | re-verified by reviewer (424 tests pass) | satisfied |
+
+Acceptance bullet 6 was deliberately reinterpreted by the builder — see B4 Refinement 2 for the structural reasoning. The intent ("D4 inherits D3's iteration discipline") is honored via `sort.Strings` root order in both validators; the literal "graph variable reuse" is rejected because the graph build is 3 LOC and hoisting it would force either a hoisted package-internal helper or a state-passing rewrite. The deviation is documented at WORKLOG line 199 and the test contract is unchanged.
+
+**NIT-only sub-attack on B5: path-rendering allocation.** The path `make([]domain.Kind, 0, depth+1)` is exactly right-sized for the chain; no over-allocation. Verified at line 940. NIT-only sub-attack found nothing.
+
+Family verdict: REFUTED.
+
+#### B6 — Shipped-but-not-wired attacks
+
+- **`validateChildRuleRecursionDepth` wire-up.** Verified at `load.go:248` inside `LoadWithOptions` chain — between `validateChildRuleCycles` (line 245) and `validateRequiredChildRules` (line 251). Correct insertion point per L2 PLAN (which mandated "after the cycle validator").
+- **Test exercises full Load path, not validator in isolation.** Both `TestLoadValidatesChildRuleRecursionDepth` and the chain-order regression guard call `Load(strings.NewReader(src))` (load_test.go:2705 + 2758) — runs the FULL validator chain. Not stubbed.
+- **Fixture exists and is read at test time.** `mustReadTestdata(t, "invalid_child_rules_too_deep.toml")` (test:2701 → fixture file at `testdata/invalid_child_rules_too_deep.toml`, 50 lines on disk). RED-confirmation in BUILDER_WORKLOG line 184-188 commented the wire-up and observed expected failures.
+- **Sentinel + constant + helpers all reachable from production.** `ErrChildRuleRecursionTooDeep` returned via `fmt.Errorf("%w: ...", ...)` at line 950-957. `childRuleRecursionDepthMax` consumed at line 935 + 955. `formatChainPath` consumed at line 956. All three are live; no dead code.
+
+Re-verified: `mage testPkg ./internal/templates` → 424 tests pass; `mage testFunc ./internal/templates TestLoadValidatesChildRuleRecursionDepth` → 5 sub-tests pass; `mage testFunc ./internal/templates TestLoadValidatesChildRuleRecursionDepthRunsAfterCycleDetection` → 1 test passes. `git grep validateChildRuleRecursionDepth -- '*.go'` returns 6 hits (1 godoc reference in chain table, 1 wire-up call site, 1 sentinel godoc, 1 validator definition, 2 test references) — scope contained.
+
+Family verdict: REFUTED.
+
+#### B7 — Prompt-injection attacks
+
+Pre-team-feature; per `feedback_prompt_injection_team.md` this family is dormant until team functionality lands. No action-item content is attacker-controllable in the W0.5.D4 scope. EXHAUSTED.
+
+Family verdict: EXHAUSTED.
+
+### Required gate runs (executed)
+
+- **`mage testPkg ./internal/templates`** — GREEN. 424/424 tests pass.
+- **`mage testFunc ./internal/templates TestLoadValidatesChildRuleRecursionDepth`** — GREEN. 5/5 sub-tests pass (1 parent + 4 rows).
+- **`mage testFunc ./internal/templates TestLoadValidatesChildRuleRecursionDepthRunsAfterCycleDetection`** — GREEN. 1/1.
+- **`git grep "validateChildRuleRecursionDepth"`** — 6 hits inside `internal/templates/`: 1 godoc chain-table reference (load.go:109), 1 wire-up call site (load.go:248), 1 sentinel godoc (load.go:483), 1 validator definition (load.go:871), 2 test references (load_test.go:2586 + 2589). Scope contained to one package; no cross-package consumer; no external API surface.
+
+### Summary
+
+**Verdict: pass.**
+
+**Counterexample count:** 0
+
+| Family | Result |
+|---|---|
+| B1 test-coverage | REFUTED |
+| B2 contract-preservation | REFUTED |
+| B3 hidden-coupling | REFUTED |
+| B4 yagni / scope-creep (PRIMARY) | REFUTED |
+| B5 spec-compliance | REFUTED (1 documented acceptance-bullet reinterpretation, justified at WORKLOG line 199) |
+| B6 shipped-but-not-wired | REFUTED |
+| B7 prompt-injection | EXHAUSTED |
+
+**Explicit verdict on the three design refinements:**
+
+1. **Depth=edges (not nodes): JUSTIFIED.** The constant's doc-comment (`load.go:516-527`) and the sentinel's godoc (`load.go:483-513`) both explicitly state "edges from any root." Tests row 1 (depth 5 = 5 edges = 6 nodes passes) + row 2 (depth 6 = 6 edges = 7 nodes fails) pin the boundary. Diagnostic message format prints `depth N` matching edge count exactly. No off-by-one risk — `bestDepth + 1` (line 921) increments the edge count per parent step from leaf-zero base.
+
+2. **`dfsDetectCycle` not directly reused: JUSTIFIED.** Cycle detection and longest-path are algorithmically distinct DFS shapes — different return types (slice vs int+map), different state (3-state colors vs memoization), different early-termination semantics (back-edge return vs full-subtree resolution). Forcing reuse via shared helper would either bloat the signature with a callback aggregator or merge the algorithms into a harder-to-reason-about unified DFS. Builder kept the iteration discipline (sort.Strings root order) which is the spirit of reuse the L2 PLAN had in mind; rejected the literal "graph variable reuse" wording because the graph build is 3 LOC and hoisting forces wider blast radius. Documented deviation at WORKLOG line 199.
+
+3. **New `formatChainPath` helper: JUSTIFIED.** Reusing `formatCyclePath` literally produces wrong output on non-cyclic chains — the closure-stripping logic at `load.go:815-820` would render a depth-6 chain as just `"plan"` (the last element). Builder caught this during RED→GREEN (WORKLOG line 184-185 documents the test failure that triggered the renderer split). The L2 PLAN's "near-clone" wording explicitly permits the split. The new helper is 9 LOC, mirrors the cycle renderer's `~string` constraint + " -> " separator, and avoids the closure-stripping bug. The alternative (parameterize `formatCyclePath` with a `treatLastAsClosure bool` flag) is strictly worse — splits a 2-cycle-call-site + 1-chain-call-site helper into a conditional that obscures both call sites.
+
+Build round 1 lands the recursion-depth bound at the correct chain position with edges-semantics depth measurement, a memoised DAG longest-path DFS with `successorOnLongest` chain-walk-back for diagnostic rendering, the new `formatChainPath` renderer, plus a 4-row table-driven test exercising depth-5 boundary, depth-6 fixture, empty graph, and multi-root, paired with a chain-order regression guard pinning the D3-before-D4 contract. Both gates green: `mage testPkg ./internal/templates` (424 tests pass) and per-target `mage testFunc` runs (6 sub-tests pass across the two new tests).
+
+### Hylla Feedback
+
+N/A — droplet touched only Go files inside `internal/templates/` plus a new TOML fixture plus the workflow MDs. All Go reads were against `load.go` + `load_test.go` at HEAD commit `38760ee` (the D4 commit) plus uncommitted `git status` deltas elsewhere in the tree. Hylla's index is stale for `internal/templates/load.go` until the drop-end reingest (load.go has been modified through W0.5.D1 / D2 / D3 / D4 across the day, none of which Hylla has yet seen). Direct `Read` + `git grep` against the working tree was the correct evidence path. No Hylla queries attempted on the in-flight files; nothing to log.
