@@ -57,3 +57,56 @@ Build-QA-Proof axes evaluated:
 ### Hylla Feedback
 
 N/A — verification touched only Go files, but all evidence-gathering used `Read` / `git log` / `git grep` / `mage` (worklog already reported the only Hylla-fallback case for D1). Hylla was not queried during this proof pass because every needed signal (file diff, commit metadata, test results) is post-commit pre-ingest territory where `git` + `mage` are authoritative.
+
+## Droplet 4c.6.W0.D2 — Round 1
+
+### Findings
+
+(none — see Summary)
+
+### Missing Evidence
+
+(none — see Summary)
+
+### Summary
+
+**Verdict: pass** — 0 findings.
+
+Build-QA-Proof axes evaluated:
+
+1. **Diff-vs-spec.** Commit `b56df9c` ("feat(config): w0.d2 resolve inheritance merge engine") touches exactly the declared paths from PLAN.md droplet D2: `internal/config/agents.go` (MODIFY +139 LOC: `Resolve` + `copyMap`), `internal/config/agents_test.go` (MODIFY +274 LOC: 7 `TestResolve_*` tests + `ptrStr` / `ptrSlice` / `ptrMap` helpers), 4 NEW fixtures (`inheritance_full_inherit.toml`, `inheritance_partial_override.toml`, `inheritance_map_merge.toml`, `inheritance_list_replace.toml`) under `internal/config/testdata/agents/`, plus the expected `BUILDER_WORKLOG.md` round entry and one-line state-flip on `PLAN.md` (W0.D2 row `todo` → `done`). No drive-by edits. The newer commit `e999a0b` ("feat(templates): w0.5.d2 …") in `9bf73c9..HEAD` belongs to the separate W0.5 sub-drop (`internal/templates`, disjoint package, separate sub-drop dir) and is correctly out of scope for this D2 review.
+
+2. **AcceptanceCriteria coverage.** Each PLAN.md L2 acceptance bullet for D2 has a verifying test:
+   - "`Resolve(registry *AgentsRegistry, kind Kind) (AgentRuntime, error)` returns the merged effective per-kind config" → exported function present at `agents.go:227-319`; signature matches exactly (`func Resolve(registry *AgentsRegistry, kind domain.Kind) (AgentRuntime, error)`). Exported (capital R), consumer-callable from W3 frontmatter strip + W2 till init per planner intent.
+   - "Per-field semantics … scalar/string/numeric/bool fields → if `Override.<field>` is non-nil, use override value; else use Preset value" → `agents.go:257-284` walks all 9 scalar fields with the `if ov.X != nil { out.X = *ov.X }` pattern. `TestResolve_PartialOverride` (`agents_test.go:239-274`) exercises one scalar (`MaxBudgetUSD = 9.5` override) while every other field falls through to Preset — proves the per-field discrimination on a real TOML decode.
+   - "Per-key map merge … `EnvSet` and `EnvFromShell` merge with override keys winning, default keys absent in override surviving" → `agents.go:287-302` copies Preset map first (via `copyMap` at `agents.go:243-244`) then layers override keys. `TestResolve_MapMerge` (`agents_test.go:279-311`) loads the disjoint-key fixture and asserts `EnvSet = { A = "1", B = "2" }` (preset's A survives, override's B added); `TestResolve_MapMergeOverrideWins` (`agents_test.go:316-338`) covers the precedence half via in-code construction (`{K: preset}` Preset + `{K: override}` Override → `K = override`).
+   - "List full-replace … if override slice is non-nil (even if empty), use override; else use Preset" → `agents.go:305-316` walks all 4 list fields with `if ov.X != nil { out.X = *ov.X }` (no append, no merge). `TestResolve_ListReplace` (`agents_test.go:343-362`) loads the fixture with Preset `tools_allow = [Read, Edit, Bash]` + override `tools_allow = [Read]` and asserts result is `[Read]` (full replace; same shape on `cli_args`).
+   - "Empty-list-vs-nil: `Override.ToolsDeny = &[]string{}` (explicit empty list) MUST replace Preset's non-empty list" → `TestResolve_ExplicitEmptyList` (`agents_test.go:368-393`) constructs the override in-code via `ptrSlice([]string{})` over a Preset with `[rm, WebFetch]`; asserts result is `non-nil empty []string{}`. Pointer-to-slice idiom from D1 carries the discrimination correctly.
+   - "`Resolve` for an absent kind … returns `Preset` verbatim — pure inheritance" → `agents.go:251-255` early-returns after `Overrides[kind]` lookup with `, ok` form. Two coverage paths: `TestResolve_FullInherit` (`agents_test.go:176-234`) exercises the empty-Overrides case via the `inheritance_full_inherit.toml` fixture (no per-kind blocks anywhere); `TestResolve_AbsentKindReturnsPreset` (`agents_test.go:400-431`) exercises the per-kind absent-key path via in-code construction (`KindPlan` has an override but `KindBuild` is queried).
+   - All 5 named PLAN.md tests present (`FullInherit`, `PartialOverride`, `MapMerge`, `ListReplace`, `ExplicitEmptyList`); the 2 additional tests (`MapMergeOverrideWins`, `AbsentKindReturnsPreset`) cover precedence-on-collision and absent-kind paths called out by acceptance prose ("per-kind keys win"; "Resolve for an absent kind … returns Preset"), so they harden coverage rather than drift from spec.
+
+3. **Constraint preservation.** D1 regression check: all 5 `TestLoadRegistry_*` tests still pass (`mage test-func ./internal/config "TestLoadRegistry_.*"` → 5/5 GREEN). D1 production code in `agents.go:1-195` is unchanged — D2's `Resolve` + `copyMap` append at lines 197-334 without disturbing existing schema types. `internal/config/config.go` not touched (D1 already verified single-TOML-lib state; D2 doesn't reintroduce competition). No new imports beyond what D1 already had (`bytes`, `fmt`, `os`, `pelletier/go-toml/v2`, `internal/domain`).
+
+4. **Spec-conformance.** Pointer-vs-deref absent-vs-zero discrimination: `agents.go:257-316` reads every override field via the canonical `if ov.X != nil { out.X = *ov.X }` pattern — non-nil pointer to zero value (e.g. `*ov.MaxTries = 0`) DOES override Preset (per-field branch enters); nil pointer does NOT (branch skipped, Preset value already in `out` from the initial copy at lines 232-249). Map-merge precedence: override-wins-on-collision direction confirmed at `agents.go:291-293` (the loop over `*ov.EnvSet` writes into `out.EnvSet`, overwriting any pre-existing key — Go map assignment semantics); same for `EnvFromShell`. List full-replace including explicit-empty: `agents.go:305-316` uses `*ov.X` (deref to slice value) — a non-nil empty pointer dereferences to `[]string{}` which assigns into `out.X` and overwrites the Preset slice. Defensive copy on maps via `copyMap` (`agents.go:325-334`) avoids aliasing into Preset storage — a downstream caller mutating the returned `EnvSet` cannot accidentally rewrite the Preset for subsequent `Resolve` calls. List fields are NOT defensively copied (worklog Design Note 2 documents the trade-off as acceptable for current consumers); this is a deliberate doc'd choice, not a bug.
+
+5. **Shipped-but-not-wired.** `Resolve` is the consumer entry point for `AgentsRegistry` shipped in D1: D1 stored Preset + Overrides; D2 produces the merged `AgentRuntime` callers consume. `Resolve` is exported (`func Resolve(...)`) so W3 frontmatter strip + W2 till init can reach it across package boundary — verified at `agents.go:227` (capital R, exported per Go visibility rules). `copyMap` is unexported (`func copyMap`) — internal helper, correctly package-private. No fixture is shipped without a consuming test (4 fixtures map 1-1 to the 4 fixture-driven tests; the 3 in-code tests use no fixture). The `Resolve` signature returns `(AgentRuntime, error)` with the error path reserved for D5's `*ConfigError` envelope per worklog Design Note 4 — today the only non-nil error is the `registry == nil` defensive check at `agents.go:228-230`; planner intent documented, not orphaned API surface.
+
+**Gate evidence:**
+
+- `mage test-pkg ./internal/config` — 44/44 GREEN (37 pre-D2 baseline from D1 round + 7 new `TestResolve_*`). Re-run by reviewer this round: identical result.
+- `mage test-func ./internal/config "TestResolve_.*"` — 7/7 GREEN: `FullInherit`, `PartialOverride`, `MapMerge`, `MapMergeOverrideWins`, `ListReplace`, `ExplicitEmptyList`, `AbsentKindReturnsPreset`. Race detector + count=1 enforced by mage target (`-race -count=1` in command line).
+- `mage test-func ./internal/config "TestLoadRegistry_.*"` — 5/5 GREEN (D1 regression check by reviewer): `Baseline`, `MalformedTOML`, `UnknownTopLevelField`, `FileNotFound`, `AbsentBlocksNilSafe`. No regression.
+- `git show --stat b56df9c` — touched files match PLAN.md `Paths` declaration exactly (4 fixtures + agents.go + agents_test.go + worklog + PLAN.md state flip). No drive-by.
+- Diff-scope verified vs `9bf73c9..HEAD`: the second commit `e999a0b` is W0.5.D2 (parallel sub-drop, disjoint package `internal/templates`); not part of W0.D2 review.
+
+**Proof certificate:**
+
+- **Premises** — D2 ships `Resolve(registry, kind)` per §4.2.1-§4.2.3 contract (scalar override-wins, map per-key merge with override-wins-on-collision, list full-replace including explicit empty); pointer-vs-deref discriminates absent-from-zero; D1 tests still pass; `Resolve` is exported for W2/W3 consumers; no shipped-but-not-wired surface.
+- **Evidence** — see per-axis citations above (file:line for every claim) plus the gate evidence block.
+- **Trace or cases** — read PLAN.md D2 acceptance bullets; cross-checked each against `agents.go:197-334` symbols + `agents_test.go:173-431` test bodies + assertions; cross-checked 4 fixtures' contents against test assertions; ran 7 `TestResolve_*` + 5 D1 regression `TestLoadRegistry_*` + full-package gate; verified diff scope via `git show --stat b56df9c`.
+- **Conclusion** — PASS. All five Build-QA-Proof axes satisfied; no findings; no missing evidence.
+- **Unknowns** — none for D2 scope. D5's `*ConfigError` envelope will exercise the currently-always-nil error return path on `Resolve`; that future revision is out of scope for D2's own verdict. Builder Design Note 2 acknowledges list-field defensive-copy as a "revisit if/when downstream mutates" — acceptable today; flagged as future-watch, not a finding.
+
+### Hylla Feedback
+
+N/A — verification touched only Go files. All evidence-gathering used `Read` (production + test + fixture sources), `git show` / `git log` / `git diff` (commit-range scope), and `mage test-pkg` / `mage test-func` (gate runs). Hylla was not queried during this proof pass — D2's surface is post-commit pre-ingest territory where `git` + `mage` + `Read` are authoritative; the live LSP daemon would not have surfaced any committed-state signal that those tools didn't cover.
