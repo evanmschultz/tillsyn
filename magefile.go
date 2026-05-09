@@ -32,8 +32,6 @@ var Aliases = map[string]interface{}{
 	"test-func":          TestFunc,
 	"fmt":                Format,
 	"format-path":        FormatPath,
-	"format-check":       FormatCheck,
-	"install-hooks":      InstallHooks,
 }
 
 // coverageThreshold is the minimum allowed statement coverage for each and all packages.
@@ -220,27 +218,6 @@ func FormatPath(path string) error {
 		return fmt.Errorf("gofumpt path %q: %w", path, err)
 	}
 	return runGofumptWrite([]string{path})
-}
-
-// FormatCheck reports tracked Go files that still need gofumpt formatting.
-//
-// Public wrapper for the private formatCheck gate so .githooks/pre-commit can
-// invoke `mage format-check` without depending on internal helpers.
-func FormatCheck() error {
-	return formatCheck()
-}
-
-// InstallHooks sets `core.hooksPath = .githooks` for this clone so the tracked
-// `.githooks/pre-commit` and `.githooks/pre-push` scripts run on every commit/push.
-// One-time-per-clone — re-running is idempotent (git overwrites the existing
-// config value with the same value).
-func InstallHooks() error {
-	for _, path := range []string{".githooks/pre-commit", ".githooks/pre-push"} {
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("install-hooks: %s missing — run from the worktree root and ensure .githooks/ files are tracked", path)
-		}
-	}
-	return runCommand("git", "config", "core.hooksPath", ".githooks")
 }
 
 // formatCheck reports tracked Go files that still need gofumpt formatting.
