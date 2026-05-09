@@ -1,0 +1,32 @@
+# valid_minimal — shared baseline fixture for the W0.5 validator droplets.
+#
+# Drop 4c.6 W0.5.D1 introduces this directory. Subsequent W0.5 droplets
+# (D2..D6) extend this baseline by appending malformed sub-tables to copies
+# of this file rather than re-authoring the boilerplate. Keep the surface
+# tight: only the tables every Load-time validator already gates on, with
+# the smallest legal contents that satisfy validateRequiredChildRules
+# (kind=build requires both QA-twin child_rules per Drop 4c.5 F.5.1).
+
+schema_version = "v1"
+
+[kinds.build]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = ["build-qa-proof", "build-qa-falsification"]
+structural_type = "droplet"
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"

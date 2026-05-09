@@ -166,6 +166,23 @@ type Template struct {
 	// dispatcher uses when the kind transitions to in_progress.
 	AgentBindings map[domain.Kind]AgentBinding `toml:"agent_bindings"`
 
+	// Agents is the per-kind runtime-config table introduced as a stub by
+	// Drop 4c.6 W0.5.D1 so validateAgentMapKeys can gate the closed-12-kind
+	// enum on `[agents.<kind>]` TOML keys at load time. The struct value
+	// (AgentRuntime) is intentionally minimal today: Drop 4c.6 W0 will land
+	// the real runtime-config value-shape (max_tries, max_budget_usd, etc.)
+	// alongside its dispatcher consumer. Until W0 ships, the Agents map's
+	// only Load-time invariant is "every key is a member of the closed
+	// 12-value domain.Kind enum" — exactly what canonicalizeMapKeys
+	// enforces over the existing Kinds / AgentBindings / Gates maps.
+	//
+	// TODO(W0): replace AgentRuntime stub fields with the real
+	// runtime-config schema. The closed map-key check on this field is
+	// final on D1 land and will not need to change when W0 wires the value
+	// shape — the validator dispatches on key membership, which is
+	// independent of value shape.
+	Agents map[domain.Kind]AgentRuntime `toml:"agents"`
+
 	// Gates is the per-kind gate sequence consumed by the dispatcher's gate
 	// runner (Drop 4b Wave A 4b.2). Each map entry pairs a parent action-item
 	// kind with the ordered list of GateKind values the runner executes
@@ -567,6 +584,25 @@ type AgentBinding struct {
 	// ErrUnknownTemplateKey at load time.
 	Sandbox SandboxRules `toml:"sandbox"`
 }
+
+// AgentRuntime is the per-kind runtime-config value type the W0.5.D1 stub
+// landed alongside Template.Agents. The struct is intentionally a placeholder
+// today: Drop 4c.6 W0 will replace its body with the real runtime-config
+// schema (max_tries, max_budget_usd, blocked_retries, etc.) — scope that the
+// W0.5 plan deliberately deferred to W0 because W0.5's load-time invariant is
+// only the closed-12-kind enum membership of the surrounding `[agents.<kind>]`
+// map keys.
+//
+// The struct exists at all so pelletier/go-toml/v2's strict-decode pass
+// accepts the `[agents.<kind>]` TOML table — without a Go destination strict
+// decode would reject every author who declared an `[agents.<kind>]` block
+// as ErrUnknownTemplateKey, robbing validateAgentMapKeys of the chance to
+// emit its own well-named diagnostic. The empty struct decodes any
+// otherwise-unrecognised body silently for now; W0 will replace this with
+// fields that strict-decode against.
+//
+// TODO(W0): replace with the real runtime-config struct.
+type AgentRuntime struct{}
 
 // SandboxRules is the closed sub-struct on AgentBinding declaring per-spawn
 // sandbox directives consumed by the F.7.3b render layer when rendering

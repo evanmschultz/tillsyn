@@ -1,0 +1,37 @@
+# invalid_agents_unknown_kind — exercises validateAgentMapKeys (W0.5.D1).
+#
+# Structurally identical to valid_minimal.toml plus a single offending
+# [agents.totally-bogus] block whose map key is NOT a member of the closed
+# 12-value domain.Kind enum. Load MUST reject with ErrUnknownKindReference
+# wrapping a message that names the field path "agents" and the offending
+# key "totally-bogus".
+
+schema_version = "v1"
+
+[kinds.build]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = ["build-qa-proof", "build-qa-falsification"]
+structural_type = "droplet"
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"
+
+# Bogus agents-map key: "totally-bogus" is not a member of the closed
+# 12-value domain.Kind enum. validateAgentMapKeys must reject with
+# ErrUnknownKindReference and a message naming "agents map key
+# \"totally-bogus\"".
+[agents.totally-bogus]

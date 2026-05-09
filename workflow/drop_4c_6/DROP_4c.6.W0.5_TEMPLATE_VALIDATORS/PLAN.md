@@ -52,7 +52,7 @@ The chain order matches the L1 spawn directive: kind-enum + agent_name first →
 
 ### Droplet 4c.6.W0.5.D1 — Kind Closed-12-Enum Membership For `[agents.<kind>]` Map
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/templates/load.go`, `internal/templates/load_test.go`, `internal/templates/testdata/valid_minimal.toml` (NEW), `internal/templates/testdata/invalid_agents_unknown_kind.toml` (NEW)
 - **Packages:** `github.com/evanmschultz/tillsyn/internal/templates`
 - **Acceptance:**

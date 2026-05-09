@@ -2,6 +2,8 @@ package templates
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -270,6 +272,129 @@ model = "opus"
 	if !strings.Contains(err.Error(), "totally-bogus") {
 		t.Fatalf("Load: err = %q; want offending key %q in message", err.Error(), "totally-bogus")
 	}
+}
+
+// TestLoadValidatesAgentMapKeysClosedEnum exercises validateAgentMapKeys
+// (Drop 4c.6 W0.5.D1) over the closed-12-kind enum invariant on the new
+// Template.Agents map keys. Mirrors the existing
+// TestLoadRejectsBogusKindsMapKey / TestLoadRejectsBogusAgentBindingsMapKey
+// shape — same sentinel (ErrUnknownKindReference), same error-substring
+// contract — applied to the new `[agents.<kind>]` TOML table.
+//
+// Three table rows:
+//
+//   - "valid kind passes": fixture testdata/valid_minimal.toml plus an
+//     `[agents.build]` block. Load returns nil error; tpl.Agents carries
+//     the canonical lowercase domain.KindBuild key.
+//   - "unknown kind rejected": fixture testdata/invalid_agents_unknown_kind.toml
+//     declares `[agents.totally-bogus]`. Load returns
+//     ErrUnknownKindReference wrapping a message naming "agents map key"
+//     plus the offending key.
+//   - "case-fold canonicalization": inline source with uppercase
+//     `[agents.BUILD]` block. Load succeeds and tpl.Agents indexes by
+//     domain.KindBuild (lowercase) per canonicalizeMapKeys' contract.
+func TestLoadValidatesAgentMapKeysClosedEnum(t *testing.T) {
+	validMinimal := mustReadTestdata(t, "valid_minimal.toml")
+	invalidUnknown := mustReadTestdata(t, "invalid_agents_unknown_kind.toml")
+
+	// Append a valid [agents.build] block to the minimal-valid baseline so
+	// row 1 actually exercises a populated Agents map (rather than the
+	// vacuous empty-map happy path).
+	validWithAgentsBuild := validMinimal + "\n[agents.build]\n"
+
+	// Row 3: uppercase [agents.BUILD] block on the same baseline. The
+	// canonicalizeMapKeys folder lowercases the key on Load so downstream
+	// consumers index by domain.KindBuild.
+	validWithAgentsUppercase := validMinimal + "\n[agents.BUILD]\n"
+
+	tests := []struct {
+		name         string
+		src          string
+		wantErr      bool
+		wantSentinel error
+		wantSubstrs  []string
+		wantAgentKey domain.Kind
+	}{
+		{
+			name:         "valid kind passes",
+			src:          validWithAgentsBuild,
+			wantErr:      false,
+			wantAgentKey: domain.KindBuild,
+		},
+		{
+			name:         "unknown kind rejected",
+			src:          invalidUnknown,
+			wantErr:      true,
+			wantSentinel: ErrUnknownKindReference,
+			wantSubstrs:  []string{"agents map key", "totally-bogus"},
+		},
+		{
+			name:         "case-fold canonicalization",
+			src:          validWithAgentsUppercase,
+			wantErr:      false,
+			wantAgentKey: domain.KindBuild,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tpl, err := Load(strings.NewReader(tc.src))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Load: expected error; got nil")
+				}
+				if tc.wantSentinel != nil && !errors.Is(err, tc.wantSentinel) {
+					t.Fatalf("Load: errors.Is(_, %v) = false; err = %v", tc.wantSentinel, err)
+				}
+				for _, s := range tc.wantSubstrs {
+					if !strings.Contains(err.Error(), s) {
+						t.Fatalf("Load: err = %q; want substring %q", err.Error(), s)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: unexpected error: %v", err)
+			}
+			if tc.wantAgentKey != "" {
+				if _, ok := tpl.Agents[tc.wantAgentKey]; !ok {
+					t.Fatalf("tpl.Agents[%q] missing; got map keys %v", tc.wantAgentKey, agentMapKeys(tpl.Agents))
+				}
+				// Pin the canonicalization contract: an uppercase authoring
+				// key must NOT survive the rebuild.
+				if _, leaked := tpl.Agents[domain.Kind("BUILD")]; leaked {
+					t.Fatalf("tpl.Agents retained pre-canonicalization key %q", "BUILD")
+				}
+			}
+		})
+	}
+}
+
+// mustReadTestdata loads a fixture from internal/templates/testdata/ and
+// fatals the test on any read error. Co-located with
+// TestLoadValidatesAgentMapKeysClosedEnum (Drop 4c.6 W0.5.D1) so subsequent
+// W0.5 droplets (D2..D6) reuse the same helper for their fixture rows.
+func mustReadTestdata(t *testing.T, name string) string {
+	t.Helper()
+	bytes, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read testdata/%s: %v", name, err)
+	}
+	return string(bytes)
+}
+
+// agentMapKeys returns a sorted slice of the keys in tpl.Agents for use in
+// test diagnostic messages. Mirrors the existing mapKeys helper (used by
+// the canonicalization tests) but typed for the Agents map's value type.
+func agentMapKeys(m map[domain.Kind]AgentRuntime) []domain.Kind {
+	keys := make([]domain.Kind, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(a, b domain.Kind) int {
+		return strings.Compare(string(a), string(b))
+	})
+	return keys
 }
 
 // TestTemplateGatesAndGateRulesCoexist verifies the [gates] and [gate_rules]

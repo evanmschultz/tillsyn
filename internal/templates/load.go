@@ -71,6 +71,9 @@ type LoadOptions struct {
 //     Template.AgentBindings, and Template.Gates is a member of the
 //     closed 12-value Kind enum. Catches typos like [kinds.bulid] that
 //     strict decode cannot.
+//     a'. validateAgentMapKeys — same closed-enum check applied to
+//     Template.Agents (the runtime-config map W0 will wire). Drop 4c.6
+//     W0.5.D1 hook; mirrors validateMapKeys' canonicalization shape.
 //     b. validateChildRuleKinds — assert every Kind referenced in
 //     [child_rules] is a member of the closed enum.
 //     c. validateChildRuleCycles — DFS the parent → child kind graph for
@@ -189,6 +192,9 @@ func LoadWithOptions(r io.Reader, opts LoadOptions) (Template, error) {
 	// child-rule kind membership run first so cycle detection never
 	// traverses a corrupt vocabulary.
 	if err := validateMapKeys(&tpl); err != nil {
+		return Template{}, err
+	}
+	if err := validateAgentMapKeys(&tpl); err != nil {
 		return Template{}, err
 	}
 	if err := validateChildRuleKinds(tpl.ChildRules); err != nil {
@@ -441,6 +447,37 @@ func validateMapKeys(tpl *Template) error {
 		return err
 	} else if rebuilt != nil {
 		tpl.Gates = rebuilt
+	}
+	return nil
+}
+
+// validateAgentMapKeys asserts every key in Template.Agents is a member of
+// the closed 12-value domain.Kind enum and canonicalises those keys to their
+// lowercase form, mirroring validateMapKeys' contract for the existing
+// Kinds / AgentBindings / Gates maps. Drop 4c.6 W0.5.D1 introduced this
+// validator alongside the Template.Agents stub field so the closed-enum
+// invariant gates the new `[agents.<kind>]` TOML table at load time —
+// catching typos like `[agents.totally-bogus]` before any runtime consumer
+// (W0 wires those) silently misses the binding.
+//
+// Reuses canonicalizeMapKeys verbatim. Adding a separate validator (rather
+// than extending validateMapKeys to fold Agents into its body) keeps the
+// W0.5 load-chain insertion explicit per PLAN.md § "Cross-Cutting Decisions
+// / Tradeoffs" → "Validator chain insertion point" — the W0.5 plan inserts
+// validateAgentMapKeys after validateMapKeys at the LoadWithOptions chain
+// site so adopters who diff the chain order see a separate D1 step.
+//
+// TOML-line pointers in the wrapped error: pelletier/go-toml/v2's
+// post-decode validators do NOT receive original-source line numbers —
+// canonicalizeMapKeys names the offending field path ("agents") and the
+// offending key verbatim so adopters can grep their TOML for the bad
+// entry. The W0.5 plan accepts this as a stable mitigation pending any
+// upstream go-toml/v2 API extension that exposes per-key positions.
+func validateAgentMapKeys(tpl *Template) error {
+	if rebuilt, err := canonicalizeMapKeys(tpl.Agents, "agents"); err != nil {
+		return err
+	} else if rebuilt != nil {
+		tpl.Agents = rebuilt
 	}
 	return nil
 }
