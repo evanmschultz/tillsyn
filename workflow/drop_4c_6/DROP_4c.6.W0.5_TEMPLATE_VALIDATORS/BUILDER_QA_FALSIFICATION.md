@@ -495,3 +495,188 @@ Build round 1 lands the recursion-depth bound at the correct chain position with
 ### Hylla Feedback
 
 N/A — droplet touched only Go files inside `internal/templates/` plus a new TOML fixture plus the workflow MDs. All Go reads were against `load.go` + `load_test.go` at HEAD commit `38760ee` (the D4 commit) plus uncommitted `git status` deltas elsewhere in the tree. Hylla's index is stale for `internal/templates/load.go` until the drop-end reingest (load.go has been modified through W0.5.D1 / D2 / D3 / D4 across the day, none of which Hylla has yet seen). Direct `Read` + `git grep` against the working tree was the correct evidence path. No Hylla queries attempted on the in-flight files; nothing to log.
+
+## Droplet 4c.6.W0.5.D5 — Round 1
+
+**Date:** 2026-05-09
+**Reviewer:** go-qa-falsification-agent (build-QA-falsification, parent.kind=build)
+**Scope:** `validateBlockedByAcyclicity` + `buildBlockedByGraph` + `LoadOptions.BlockedByGraphFn` test seam + new sentinel `ErrTemplateBlockedByCycle` + new fixture `invalid_blocked_by_acyclicity.toml` + two new tests (`TestLoadValidatesBlockedByAcyclicity` 4-row + `TestLoadValidatesBlockedByAcyclicityRunsAfterChildRuleCycles` chain-order regression guard).
+
+### Counterexamples
+
+None CONFIRMED. All seven attack families exhausted; details below.
+
+#### B1 — test-coverage attacks
+
+Attempted attacks on `TestLoadValidatesBlockedByAcyclicity` (`internal/templates/load_test.go:2817-2909`):
+
+- **Self-cycle (A→A).** Not directly tested by D5. The validator delegates cycle detection entirely to the shared generic `dfsDetectCycle[K ~string]` helper (load.go:819-866). D3's `TestLoadSelfCycleSingleRule` (existing) and `TestLoadValidatesChildRuleCyclesUnifiedGraph`'s self-cycle row (load_test.go:2381+) exercise the helper's self-cycle path. D5 inherits self-cycle correctness via the shared helper. The synthetic graph at row 2 (`build → plan, plan → build`) is a 2-cycle which is the smallest distinct shape; coverage is contractually transitive through the helper. NIT-only, REFUTED as counterexample.
+- **3-cycle (A→B→C→A).** Same shape-coverage argument as self-cycle: `dfsDetectCycle` is helper-tested via D3's tests; D5 inherits. NIT-only, REFUTED.
+- **Empty-graph happy path.** Row 3 ("empty child_rules passes", load_test.go:2862-2867) explicitly covers `len(graph) == 0` via `schema_version = "v1"` only. The validator's defensive early return at load.go:1111 (`if len(graph) == 0 { return nil }`) is exercised. REFUTED.
+- **Production walker on real fixture.** Row 1 ("acyclic production graph passes", load_test.go:2845-2849) loads `valid_minimal.toml` with `graphFn: nil`, hitting the production walker `buildBlockedByGraph` which produces 2 child→parent edges (`build-qa-proof → build`, `build-qa-falsification → build`). The DFS confirms acyclicity over a real (non-injected) graph. REFUTED.
+- **Single-edge cycle.** The synthetic 2-cycle row IS a single-rule-shape cycle once the producing graph fn is interpreted as "one rule per edge." Smaller-cycle ordering (1-edge self-cycle) routes through the helper's tested branch. REFUTED.
+- **`wantNoSubstr` field declared but unused on every row.** Field exists at load_test.go:2842 but no row populates it. Defensive scaffold; no defect. NIT-only, REFUTED.
+
+Family verdict: REFUTED. Coverage is helper-mediated for cycle-shape variations; D5's own rows cover the validator's behavior surface (production walker hit, injected-cycle hit, empty-graph short-circuit, fixture-driven path).
+
+#### B2 — contract-preservation attacks
+
+Chain-order contract pinned by `TestLoadValidatesBlockedByAcyclicityRunsAfterChildRuleCycles` (load_test.go:2932-2944). Verified D3 → D4 → D5 ordering at load.go:278-286:
+
+```
+278: validateChildRuleCycles(tpl.ChildRules)             // D3
+281: validateChildRuleRecursionDepth(tpl.ChildRules)     // D4
+284: validateBlockedByAcyclicity(tpl.ChildRules, opts.BlockedByGraphFn) // D5
+```
+
+The regression guard loads `invalid_child_rules_blocked_by_cycle.toml` (D3's coupled-cycle fixture; both rules have `blocked_by_parent = true` so the cycle exists in BOTH the parent→child and the blocked_by graphs) and asserts:
+
+- `errors.Is(err, ErrTemplateCycle)` — D3 fired first.
+- `!errors.Is(err, ErrTemplateBlockedByCycle)` — D5 was preempted.
+
+A future refactor that swaps D3 and D5 in the chain order would surface the wrong sentinel for every coupled cycle and break adopter `errors.Is` routing. The regression guard catches the swap loudly. The pre-D4 ordering (depth runs before blocked-by) is a chain-position decision, not a correctness invariant — D4 is acyclicity-prerequisite-bounded so it's unaffected by ordering relative to D5. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B3 — hidden-coupling attacks (test-seam reachability)
+
+`LoadOptions.BlockedByGraphFn` is **exported** (capital `B`). Any caller of the public `LoadWithOptions` API can set it, including library users. Attack line: an adopter's malicious `BlockedByGraphFn` could bypass the production walker.
+
+Probe: searched all `*.go` files in the tree (`rg -n 'BlockedByGraphFn|buildBlockedByGraph'`):
+
+- Production callers: `LoadWithOptions` at load.go:284 (passes `opts.BlockedByGraphFn` through). `LoadDefaultTemplate*` (the embedded-template loaders) construct `LoadOptions{}` with the field unset — defaults to nil. **Zero production sets of `BlockedByGraphFn`.**
+- Test callers: `TestLoadValidatesBlockedByAcyclicity` row 2 + row 4 (load_test.go:2882-2884) inject `syntheticCycleFn`.
+
+Semantic analysis: the validator only **rejects** via the seam (it can fail Load with `ErrTemplateBlockedByCycle`). It cannot turn a real cycle into a non-cycle — `dfsDetectCycle` finds the cycle deterministically over whatever graph it walks, and the production-walker output is independent of `BlockedByGraphFn`. The injection ONLY substitutes the graph being walked; it does NOT bypass cycle detection. Worst-case adopter abuse: pass a `BlockedByGraphFn` that always returns a synthetic cycle → adopter's own template fails Load with `ErrTemplateBlockedByCycle`. Self-harming, not data-corrupting.
+
+Two acceptance lenses:
+
+1. **Field naming consistency.** D2's seam `LoadOptions.AgentLookupFn` is also exported (load.go:63). The pattern is consistent; D5 isn't introducing a new exported-seam pattern. Both are documented as "test-only" in their godocs (load.go:65-84 for D5; the AgentLookupFn doc-comment for D2).
+2. **Could be unexported.** Lowercasing `blockedByGraphFn` would force every test caller into the same package (already the case — tests live in `internal/templates`). This is a possible refinement; the builder chose exported for symmetry with `AgentLookupFn`. Refinement-grade NIT, not a counterexample.
+
+REFUTED as counterexample. Lensed as refinement-only NIT for future review (consider unexporting both `AgentLookupFn` and `BlockedByGraphFn` together).
+
+Family verdict: REFUTED.
+
+#### B4 — YAGNI / scope-creep attacks (premature extraction)
+
+`buildBlockedByGraph` (load.go:1134-1142) is 7 LOC, called once by `validateBlockedByAcyclicity` (load.go:1109). Inlining is technically possible. Attack line: the extraction is premature — the validator is dead code today (degenerate forest), and the helper exists "just in case."
+
+Counter-evidence at load.go:1120-1133 (helper's doc-comment):
+
+```
+// buildBlockedByGraph produces the production kind-level blocked_by graph
+// from a [[child_rules]] slice. Each rule whose BlockedByParent is true
+// contributes one edge from rule.CreateChildKind to rule.WhenParentKind
+// (child→parent: child cannot start until parent terminal-completes).
+//
+// Today's schema produces a forest — every edge is a child→parent edge and
+// parents have no incoming blocked_by edges, so no cycle can exist. The
+// helper is its own function rather than inlined into
+// validateBlockedByAcyclicity so future schema expansions (e.g. a
+// `BlockedByKinds []domain.Kind` field on ChildRule) extend the helper in
+// one place rather than threading new edge-construction logic through the
+// validator body.
+```
+
+Justification surfaces:
+
+- Helper has a documented forward-looking purpose (future `BlockedByKinds` schema axis).
+- Helper has a clear single-responsibility (graph construction) vs validator (graph traversal + error wrapping).
+- Helper extraction matches D3's pattern (D3's `validateChildRuleCycles` builds two graphs inline; if D3's blocked_by edge-set construction grows, extracting it is the natural refactor — and D5's `buildBlockedByGraph` is exactly that target).
+
+The extraction is YAGNI-questionable but documented + small. Inlining would force any future schema addition to thread new logic through the validator body. The 7-LOC helper is not over-engineered; it's at the "name-the-concept" granularity that Go readers expect. REFUTED.
+
+Family verdict: REFUTED.
+
+#### B5 — spec-compliance attacks (synthetic-fixture pattern)
+
+Attack line: `invalid_blocked_by_acyclicity.toml` is a structurally valid TOML fixture; the rejection comes from the injected `syntheticCycleFn` in row 4 of the test, not from the fixture content. Does this bypass the validator?
+
+Probe: row 4 ("fixture-driven cycle via injection rejected", load_test.go:2868-2877):
+
+```
+src:     invalidBlockedByCycle,
+graphFn: syntheticCycleFn,
+```
+
+The fixture IS loaded through normal `LoadWithOptions` (load_test.go:2882), passing through every other validator (schema_version, strict decode, validateMapKeys, validateChildRuleKinds, validateChildRuleCycles, validateChildRuleRecursionDepth) BEFORE reaching `validateBlockedByAcyclicity`. The fixture's structural validity is a precondition; the cycle rejection comes from the validator + injected graph fn working as designed. The validator IS exercised — the graph it walks is the injected one, but the rejection path through `dfsDetectCycle → formatCyclePath → ErrTemplateBlockedByCycle` is real production code.
+
+Cross-check against the L2 PLAN W0.5.D5 KindPayload + RiskNote (PLAN.md:194):
+
+> If today's `BlockedByParent: true` schema cannot construct a real cycle ... the fixture instead tests D5 against an injected mock graph via a new `LoadOptions.BlockedByGraphFn` ...
+
+The fixture pattern explicitly matches the planned shape. The fixture's doc-comment (testdata/invalid_blocked_by_acyclicity.toml:1-29) honestly discloses the injection-driven rejection AND cites the forward-looking schema-expansion path. Row 4 provides parity with D3/D4's fixture-shaped rows so adopters who grep `testdata/` for the new sentinel see a real fixture file paired with the test row.
+
+REFUTED. Synthetic injection is necessary because today's schema cannot construct a real kind-level cycle (every `BlockedByParent: true` edge runs child→parent, parents have zero incoming blocked_by edges, the production graph is a trivially-acyclic forest), and the disclosure is honest.
+
+Family verdict: REFUTED.
+
+#### B6 — shipped-but-not-wired attacks
+
+Attack line: `validateBlockedByAcyclicity` is wired into the chain but produces nil for every embedded default template — it's vacuous in production today. Is this the "shipped-but-not-wired" anti-pattern (Drop 3 droplet 3.20)?
+
+Probe:
+
+- Validator IS wired at load.go:284. Every Load goes through it.
+- Production walker `buildBlockedByGraph` produces a real (non-empty) graph for `valid_minimal.toml` (2 edges per the fixture's 2 QA-twin child_rules, both with `blocked_by_parent = true`). The DFS walks the real graph and confirms acyclicity in O(V+E). The work is real, not a no-op.
+- For the embedded `default-go.toml` (the production template with the full chain of QA-twin rules), the production walker produces ~10+ edges, all child→parent, no cycle. Validator returns nil after a real DFS walk.
+
+Distinction from Drop 3 droplet 3.20's "shipped-but-not-wired": that anti-pattern was a SCHEMA FEATURE shipped without any RUNTIME CONSUMER. D5's case is the inverse — the validator IS the runtime consumer; it consumes the existing `BlockedByParent` schema field, walks the existing graph, and confirms acyclicity. The fact that today's schema can't produce a cycle doesn't make the validator unwired — it makes the validator's REJECTION PATH dormant.
+
+Cross-reference: Drop 4a Wave 1.7's runtime `BlockedBy` acyclicity check on action-item UUIDs (cited at load.go:1056-1060) is the runtime mirror. The load-time + runtime pair is intentional: load-time guards the template-author UX (catch cycles BEFORE any action item is created); runtime guards the dispatcher UX (catch cycles introduced by manual orchestrator action-item edits). The vacuous-in-today's-schema posture is documented + accepted.
+
+PLAN.md (line 206) pre-mitigates this attack explicitly:
+
+> **Synthetic-cycle fixture risk.** ... Reviewer might claim "the validator never fires in production." Mitigation: cite Drop 4a Wave 1.7's runtime check as the shape mirror; the load-time validator's value is forward-looking + provides a load-time diagnostic for any future schema addition that could introduce cycles.
+
+REFUTED. The validator IS wired + produces a real DFS walk on every Load; the rejection path is dormant against today's schema but reachable + tested against the injected graph.
+
+Family verdict: REFUTED.
+
+#### B7 — prompt-injection attacks
+
+DORMANT pre-team-feature. Validator inputs are template TOML content authored by the same actor who Loads the template; no attacker-controllable content reaches the error-message rendering. EXHAUSTED.
+
+Family verdict: EXHAUSTED.
+
+### Summary
+
+**Verdict:** PASS.
+
+**Counterexample count:** 0 CONFIRMED, 7 attempted attacks, all REFUTED (B1-B6) or EXHAUSTED (B7).
+
+**Per-family table:**
+
+| Family                                | Verdict   | Notes                                                                         |
+| ------------------------------------- | --------- | ----------------------------------------------------------------------------- |
+| B1 test-coverage                      | REFUTED   | Cycle-shape coverage helper-mediated via shared `dfsDetectCycle`              |
+| B2 contract-preservation              | REFUTED   | Chain-order regression guard pins D3-before-D5 contract                       |
+| B3 hidden-coupling (seam reachability)| REFUTED   | Exported seam is rejection-only; abuse is self-harming. NIT: consider unexport |
+| B4 YAGNI / extraction                 | REFUTED   | `buildBlockedByGraph` extraction has documented forward-looking justification |
+| B5 spec-compliance (synthetic fixture)| REFUTED   | Disclosure is honest; matches L2 PLAN KindPayload shape                       |
+| B6 shipped-but-not-wired              | REFUTED   | Validator IS the runtime consumer; rejection path dormant but real DFS runs  |
+| B7 prompt-injection                   | EXHAUSTED | DORMANT pre-team-feature                                                      |
+
+**Test-seam verdict:** `LoadOptions.BlockedByGraphFn` is justified — production walker is degenerate today; injection lets the validator be exercised by a real RED→GREEN test. Exposure is rejection-only (cannot suppress real cycles, can only inject synthetic ones); abuse is self-harming. NIT: consider unexporting both this field and D2's `AgentLookupFn` together as a future refinement (both are test-only).
+
+**`buildBlockedByGraph` extraction verdict:** Justified. 7 LOC helper with documented forward-looking purpose (future `BlockedByKinds []domain.Kind` schema axis); single-responsibility separation from validator's traversal+wrapping; matches Go's "name-the-concept" granularity. Inlining would force future schema additions to thread new edge-construction logic through the validator body. Not premature.
+
+**Gate runs:**
+
+- `mage testFunc ./internal/templates TestLoadValidatesBlockedByAcyclicity` → 5/5 sub-tests pass (1 parent + 4 rows).
+- `mage testFunc ./internal/templates TestLoadValidatesBlockedByAcyclicityRunsAfterChildRuleCycles` → 1/1 pass.
+- `mage testPkg ./internal/templates` → 430/430 tests pass.
+
+Build round 1 lands the kind-level blocked_by-acyclicity validator at the correct chain position (immediately after D4's recursion-depth check), reusing D3's generic `dfsDetectCycle[K ~string]` + `formatCyclePath[K ~string]` helpers, with a forward-looking `buildBlockedByGraph` extraction documented against future schema expansion. The chain-order regression guard pins the D3-before-D5 contract against the existing coupled-cycle fixture. The synthetic-graph injection seam is honestly disclosed in both the validator's godoc and the fixture's doc-comment. All gates green.
+
+### Hylla Feedback
+
+N/A — droplet touched only Go files inside `internal/templates/` plus a new TOML fixture plus the workflow MDs. All Go reads were against `load.go` + `load_test.go` plus `testdata/invalid_blocked_by_acyclicity.toml` in the uncommitted modified working set per `git status`. Hylla's index is stale for those files (load.go has been modified through W0.5.D1 / D2 / D3 / D4 / D5 across the day, none of which Hylla has yet seen). Direct `Read` + `rg` against the working tree was the correct evidence path. No Hylla queries attempted on the in-flight files; nothing to log. The post-drop reingest will re-cover this surface.
+
+One ergonomic NIT carried forward from D4's worklog (recurring; same shape):
+
+- **Query**: `Bash` with `grep -n "<patterns>"` against `internal/templates/load.go`.
+- **Missed because**: shell sandbox denied bare `grep` invocations.
+- **Worked via**: `rg -n "<patterns>" /Users/evanschultz/Documents/Code/hylla/tillsyn/main/internal/templates/<file>`.
+- **Suggestion**: not a Hylla item — recurring sandbox-policy NIT for the orchestrator. Documenting again because the loop cost ~2 retries during this round; D4 + D5 builder worklogs noted the same pattern.
