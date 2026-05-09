@@ -1,0 +1,60 @@
+# invalid_claim_vs_impl_unknown_consumer — exercises
+# validateClaimVsImplCoherence's unknown-consumer rejection path
+# (Drop 4c.6 W0.5.D6).
+#
+# Per L2 PLAN W0.5.D6 Acceptance bullet 6:
+#   "The fixture itself is structurally valid; the rejection comes from
+#    the injected synthetic claim, not the TOML."
+#
+# Today's schema has NO `[[child_rules]] consumer = "..."` field, so no
+# template can author a real claim against the known-wired-consumer set
+# without test-only injection. The validator's `knownWiredConsumers` map
+# is empty for Drop 4c.6 (Drop 4c.7 W7 + W8 add the first real entries
+# `child_rules_for` and `context_resolve`); pre-4c.7, every claim fails
+# unless explicitly added via the test-only seam.
+#
+# This fixture is therefore a STRUCTURALLY VALID template — every other
+# validator (schema_version pre-pass, strict decode, validateMapKeys,
+# validateChildRuleKinds, validateChildRuleCycles,
+# validateChildRuleRecursionDepth, validateBlockedByAcyclicity,
+# validateRequiredChildRules, ...) accepts it. The rejection is driven
+# entirely by an injected `LoadOptions.ClaimedConsumersFn` in the test row
+# that returns a list containing the unknown consumer identifier
+# `unknown_consumer`. Loader rejects with ErrClaimVsImplUnknownConsumer
+# and a wrapped message naming `unknown_consumer`.
+#
+# Forward-looking: when Drop 4c.7 W7 + W8 wire the first real consumers
+# AND a future schema addition gives ChildRule a `consumer = "..."`
+# field, the fixture flips from "injection-only" to "real schema-claim
+# rejected against an empty-or-mismatched known-wired set" without
+# changing the test contract — the test row simply removes the
+# claimedConsumersFn override and asserts the same sentinel against the
+# real claimed-consumer list extracted from the TOML.
+#
+# Cross-reference: CLAUDE.md § Cascade Tree Structure — sentinel-message
+# hint target. The validator does NOT parse CLAUDE.md at runtime; the
+# closed `knownWiredConsumers` Go map is the source-of-truth.
+
+schema_version = "v1"
+
+[kinds.build]
+owner = "STEWARD"
+allowed_parent_kinds = ["plan"]
+allowed_child_kinds = ["build-qa-proof", "build-qa-falsification"]
+structural_type = "droplet"
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+[agent_bindings.build]
+agent_name = "go-builder-agent"
+model = "opus"

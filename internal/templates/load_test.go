@@ -2942,3 +2942,158 @@ func TestLoadValidatesBlockedByAcyclicityRunsAfterChildRuleCycles(t *testing.T) 
 		t.Fatalf("Load: D3 cycle was misdiagnosed as D5 blocked_by-cycle; err = %v", err)
 	}
 }
+
+// TestLoadValidatesClaimVsImplCoherence exercises validateClaimVsImplCoherence
+// (Drop 4c.6 W0.5.D6). The validator checks every claimed `[[child_rules]]`
+// output kind / template feature against the closed Go-internal
+// `knownWiredConsumers` map and rejects any claim whose consumer identifier is
+// not a member.
+//
+// For Drop 4c.6 the known-wired-consumer set is INTENTIONALLY EMPTY per L1
+// W0.5 sub-plan container Acceptance bullet 4 + Open Question #1 resolution.
+// Drop 4c.7 W7 will add `child_rules_for` and Drop 4c.7 W8 will add
+// `context_resolve` when those waves wire the first real consumers. Pre-4c.7
+// every claim is "unknown" — the validator's only meaningful exercised path is
+// the test-seam injection in row 2.
+//
+// The validator does NOT parse `CLAUDE.md` at runtime. The closed
+// `knownWiredConsumers` Go map is the source-of-truth; CLAUDE.md § Cascade
+// Tree Structure is the authoring reference for adopters but is not
+// consulted at Load.
+//
+// Test rows:
+//
+//   - "empty claims passes": valid_minimal.toml fixture; default
+//     LoadOptions (ClaimedConsumersFn nil → production walker returns
+//     empty slice). Today's schema has no `[[child_rules]] consumer = "..."`
+//     field, so the production walker is vacuous. Validator passes.
+//
+//   - "synthetic unknown-consumer claim rejected":
+//     invalid_claim_vs_impl_unknown_consumer.toml fixture loaded with
+//     ClaimedConsumersFn returning `[]string{"unknown_consumer"}`.
+//     `knownWiredConsumers` is empty; the claim is unknown; loader rejects
+//     with ErrClaimVsImplUnknownConsumer and a wrapped message naming
+//     `unknown_consumer` so adopters can grep their TOML for the offending
+//     identifier (once the schema gains a `consumer = "..."` field).
+//
+//   - "synthetic known-consumer claim passes": valid_minimal.toml fixture
+//     loaded with ClaimedConsumersFn returning `[]string{"temp_test_consumer"}`
+//     AND a t.Cleanup-restored `knownWiredConsumers` entry for
+//     `temp_test_consumer`. Exercises the validator's success-path through
+//     the synthetic-known-consumer match — the only way to test this path
+//     pre-Drop-4c.7 since the production set is empty. The cleanup
+//     deterministically restores the empty set after the row.
+//
+// Per L2 PLAN ContextBlock (warning, high) on TOML-line pointers:
+// pelletier/go-toml/v2 post-decode validators do NOT carry source-line
+// numbers, so the wrapped sentinel message names the offending consumer
+// identifier rather than `line=N`. Adopters grep their TOML for whatever
+// schema field claims the consumer once the schema gains a
+// `[[child_rules]] consumer = "..."` axis.
+//
+// LOUD WARNING TO FUTURE DROPS: adding a runtime consumer for a
+// template-claimed feature requires adding the consumer's identifier to
+// `knownWiredConsumers` in load.go. Failing to do so will cause every
+// template that claims the new feature to fail Load with
+// ErrClaimVsImplUnknownConsumer.
+func TestLoadValidatesClaimVsImplCoherence(t *testing.T) {
+	validMinimal := mustReadTestdata(t, "valid_minimal.toml")
+	invalidUnknownConsumer := mustReadTestdata(t, "invalid_claim_vs_impl_unknown_consumer.toml")
+
+	// syntheticUnknownClaimFn returns one consumer identifier that is not
+	// a member of `knownWiredConsumers` (which is empty for Drop 4c.6).
+	// Tests the rejection path of validateClaimVsImplCoherence.
+	syntheticUnknownClaimFn := func(Template) []string {
+		return []string{"unknown_consumer"}
+	}
+
+	// syntheticKnownClaimFn returns one consumer identifier that the
+	// "synthetic known-consumer claim passes" row temporarily registers
+	// in `knownWiredConsumers` via t.Cleanup-restored mutation. Exercises
+	// the validator's success path through a synthetic-known-consumer
+	// match — the only way to test the success path pre-Drop-4c.7 since
+	// the production set is empty.
+	syntheticKnownClaimFn := func(Template) []string {
+		return []string{"temp_test_consumer"}
+	}
+
+	tests := []struct {
+		name         string
+		src          string
+		claimsFn     func(Template) []string
+		registerTemp string // non-empty → temporarily add to knownWiredConsumers; t.Cleanup restores
+		wantErr      bool
+		wantSubstr   []string
+	}{
+		{
+			name:     "empty claims passes",
+			src:      validMinimal,
+			claimsFn: nil, // default production walker returns empty slice
+			wantErr:  false,
+		},
+		{
+			name:     "synthetic unknown-consumer claim rejected",
+			src:      invalidUnknownConsumer,
+			claimsFn: syntheticUnknownClaimFn,
+			wantErr:  true,
+			wantSubstr: []string{
+				"unknown_consumer",
+			},
+		},
+		{
+			name:         "synthetic known-consumer claim passes",
+			src:          validMinimal,
+			claimsFn:     syntheticKnownClaimFn,
+			registerTemp: "temp_test_consumer",
+			wantErr:      false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.registerTemp != "" {
+				knownWiredConsumers[tc.registerTemp] = struct{}{}
+				t.Cleanup(func() {
+					delete(knownWiredConsumers, tc.registerTemp)
+				})
+			}
+			_, err := LoadWithOptions(strings.NewReader(tc.src), LoadOptions{
+				ClaimedConsumersFn: tc.claimsFn,
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Load: expected error; got nil")
+				}
+				if !errors.Is(err, ErrClaimVsImplUnknownConsumer) {
+					t.Fatalf("Load: errors.Is(_, ErrClaimVsImplUnknownConsumer) = false; err = %v", err)
+				}
+				for _, sub := range tc.wantSubstr {
+					if !strings.Contains(err.Error(), sub) {
+						t.Fatalf("Load: err = %q; want substring %q", err.Error(), sub)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard pins the Drop
+// 4c.6 invariant that `knownWiredConsumers` is empty pre-4c.7. Drop 4c.7 W7
+// will add `child_rules_for`; Drop 4c.7 W8 will add `context_resolve`. Until
+// those waves land, ANY production claim — were the schema to gain a
+// `[[child_rules]] consumer = "..."` axis today — would fail Load.
+//
+// This guard test catches drift: if a future drop accidentally adds an entry
+// to `knownWiredConsumers` without also wiring the runtime consumer (the
+// "shipped-but-not-wired" anti-pattern this validator exists to prevent),
+// the test fails loudly. When Drop 4c.7 W7 + W8 land, this test's expected
+// length advances accordingly.
+func TestLoadValidatesClaimVsImplCoherenceEmptyKnownWiredSetGuard(t *testing.T) {
+	if got := len(knownWiredConsumers); got != 0 {
+		t.Fatalf("knownWiredConsumers has %d entries; want 0 for Drop 4c.6 (Drop 4c.7 W7+W8 add the first entries). Entries: %v", got, knownWiredConsumers)
+	}
+}

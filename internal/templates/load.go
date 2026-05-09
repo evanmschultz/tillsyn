@@ -83,6 +83,34 @@ type LoadOptions struct {
 	// inherit the production walker. Test callers MAY inject a synthetic
 	// graph fn that returns whatever shape exercises the validator.
 	BlockedByGraphFn func(rules []ChildRule) map[domain.Kind][]domain.Kind
+
+	// ClaimedConsumersFn is the test-only injection point used by
+	// validateClaimVsImplCoherence (Drop 4c.6 W0.5.D6) to substitute a
+	// synthetic claimed-consumer list for the production walker's output.
+	// Nil resolves to the production walker that returns an empty slice
+	// for every template — today's schema has no
+	// `[[child_rules]] consumer = "..."` field, so no template can author
+	// a real claim against the known-wired-consumer set without test-only
+	// injection.
+	//
+	// For Drop 4c.6 the validator's `knownWiredConsumers` map is empty
+	// (Drop 4c.7 W7 + W8 add `child_rules_for` and `context_resolve` when
+	// those waves wire the first real consumers). Pre-4c.7 the validator's
+	// only meaningful exercised path is the test-seam injection — tests
+	// supply a synthetic claim list and assert either rejection (when the
+	// claim is unknown) or acceptance (when the claim is in a temporarily-
+	// registered known-wired entry).
+	//
+	// Forward-looking: when Drop 4c.7 W7 + W8 wire the first real
+	// consumers AND a future schema addition gives ChildRule a
+	// `consumer = "..."` field, the production walker extracts the
+	// claimed consumers from the parsed Template and the injection point
+	// becomes vestigial.
+	//
+	// Production callers (LoadDefaultTemplate*) leave this nil and
+	// inherit the production walker. Test callers MAY inject a synthetic
+	// claim list that returns whatever shape exercises the validator.
+	ClaimedConsumersFn func(tpl Template) []string
 }
 
 // Load parses a Tillsyn template TOML stream and validates it.
@@ -145,6 +173,18 @@ type LoadOptions struct {
 //     parent→child and the blocked_by graphs) are caught by D3 with
 //     ErrTemplateCycle FIRST so the diagnostic stays consistent with
 //     pre-D5 behaviour. Drop 4c.6 W0.5.D5 hook.
+//     c'''. validateClaimVsImplCoherence — assert every claimed
+//     `[[child_rules]]` output kind / template feature is a member of
+//     the closed Go-internal `knownWiredConsumers` map. The map is
+//     empty for Drop 4c.6 (Drop 4c.7 W7 adds `child_rules_for`; Drop
+//     4c.7 W8 adds `context_resolve`); production walker returns an
+//     empty claim list for every template today, so the validator
+//     vacuously passes on every embedded default template. The
+//     scaffolding + sentinel + tests ship now so the
+//     shipped-but-not-wired anti-pattern (Drop 3 droplet 3.20) cannot
+//     recur: every future schema feature claiming a runtime consumer
+//     fails Load until the consumer's identifier is added to
+//     `knownWiredConsumers`. Drop 4c.6 W0.5.D6 hook.
 //     d. validateRequiredChildRules — assert that every present
 //     `kind=plan` row has both QA twin child_rules
 //     (`plan-qa-proof` + `plan-qa-falsification`) and every present
@@ -282,6 +322,9 @@ func LoadWithOptions(r io.Reader, opts LoadOptions) (Template, error) {
 		return Template{}, err
 	}
 	if err := validateBlockedByAcyclicity(tpl.ChildRules, opts.BlockedByGraphFn); err != nil {
+		return Template{}, err
+	}
+	if err := validateClaimVsImplCoherence(tpl, opts.ClaimedConsumersFn); err != nil {
 		return Template{}, err
 	}
 	if err := validateRequiredChildRules(tpl); err != nil {
@@ -581,6 +624,49 @@ var (
 	//
 	// Drop 4c.6 W0.5.D5 hook.
 	ErrTemplateBlockedByCycle = errors.New("template blocked_by edges form a cycle")
+
+	// ErrClaimVsImplUnknownConsumer is returned by validateClaimVsImplCoherence
+	// when a template claims a feature whose consumer identifier is not a
+	// member of the closed Go-internal `knownWiredConsumers` map. The
+	// validator exists to prevent the "shipped-but-not-wired" anti-pattern
+	// (Drop 3 droplet 3.20): a schema feature ships without a runtime
+	// consumer, adopters author against it, and Load silently accepts the
+	// claim with no diagnostic until the dispatcher reaches the unwired
+	// path at runtime.
+	//
+	// For Drop 4c.6 the `knownWiredConsumers` map is INTENTIONALLY EMPTY
+	// per L1 W0.5 sub-plan container Acceptance bullet 4 + Open Question #1
+	// resolution. Drop 4c.7 W7 adds `child_rules_for` and Drop 4c.7 W8 adds
+	// `context_resolve` when those waves wire the first real runtime
+	// consumers. Pre-4c.7 the validator's only meaningful exercised path is
+	// the test-seam injection (LoadOptions.ClaimedConsumersFn); production
+	// callers leave the field nil and inherit the empty production walker,
+	// so the validator vacuously passes on every embedded default template.
+	//
+	// LOUD WARNING TO FUTURE DROPS: adding a runtime consumer for a
+	// template-claimed feature requires adding the consumer's identifier to
+	// `knownWiredConsumers` in this file. Failing to do so will cause every
+	// template that claims the new feature to fail Load with this sentinel.
+	// Conversely, adding an entry to `knownWiredConsumers` WITHOUT also
+	// wiring the runtime consumer recreates the anti-pattern this validator
+	// exists to prevent — TestLoadValidatesClaimVsImplCoherenceEmptyKnownWired-
+	// SetGuard pins the Drop 4c.6 invariant; that guard's expected length
+	// advances when Drop 4c.7 W7 + W8 land.
+	//
+	// The wrapped message names the offending consumer identifier so
+	// adopters can grep their TOML for whatever schema field claims that
+	// consumer once the schema gains a `[[child_rules]] consumer = "..."`
+	// axis. Per W0.5 plan FF1 disclosure: pelletier/go-toml/v2's
+	// post-decode validators do not carry source-line numbers, so the
+	// message names the field-path rather than `line=N`.
+	//
+	// The validator does NOT parse `CLAUDE.md` at runtime. The closed
+	// `knownWiredConsumers` Go map is the source-of-truth; CLAUDE.md §
+	// Cascade Tree Structure is the authoring reference for adopters but
+	// is not consulted at Load.
+	//
+	// Drop 4c.6 W0.5.D6 hook.
+	ErrClaimVsImplUnknownConsumer = errors.New("template claims a feature with no wired consumer")
 )
 
 // childRuleRecursionDepthMax bounds the maximum reachable depth (counted in
@@ -2133,6 +2219,97 @@ func validateAgentBindingNames(tpl Template, lookupFn func(string) bool) error {
 		}
 		return fmt.Errorf("%w: agent_bindings[%q].agent_name %q does not resolve at the embedded floor (looked under builtin/agents/{%s}/%s.md)",
 			ErrUnknownAgentName, kind, name, strings.Join(embeddedAgentGroups, ","), name)
+	}
+	return nil
+}
+
+// knownWiredConsumers is the closed Go-internal set of consumer identifiers
+// representing template features that have at least one wired runtime consumer.
+// validateClaimVsImplCoherence (Drop 4c.6 W0.5.D6) checks every claimed
+// `[[child_rules]]` output kind / template feature against this set and rejects
+// any claim whose consumer identifier is not a member.
+//
+// For Drop 4c.6 the map is INTENTIONALLY EMPTY per L1 W0.5 sub-plan container
+// Acceptance bullet 4 + Open Question #1 resolution. The validator + sentinel
+// + sentinel-test ship now against the empty set; Drop 4c.7 W7 will add
+// `child_rules_for` (the dispatcher-side consumer for `[[child_rules]]`
+// auto-create) and Drop 4c.7 W8 will add `context_resolve` (the
+// context-block resolver) when those waves wire the first real runtime
+// consumers.
+//
+// LOUD WARNING TO FUTURE DROPS: adding a runtime consumer for a
+// template-claimed feature requires adding the consumer's identifier to this
+// map. Failing to do so will cause every template that claims the new feature
+// to fail Load with ErrClaimVsImplUnknownConsumer. Conversely, adding an
+// entry to this map WITHOUT also wiring the runtime consumer recreates the
+// shipped-but-not-wired anti-pattern (Drop 3 droplet 3.20) this validator
+// exists to prevent — TestLoadValidatesClaimVsImplCoherenceEmptyKnownWired-
+// SetGuard pins the Drop 4c.6 invariant of length 0; that guard's expected
+// length advances when Drop 4c.7 W7 + W8 land.
+//
+// The map's value type is `struct{}` (zero-byte sentinel) — set membership
+// is the only relation tested. Mutations from tests are guarded by t.Cleanup
+// so the production set is restored after each test row.
+//
+// Drop 4c.6 W0.5.D6 hook.
+var knownWiredConsumers = map[string]struct{}{}
+
+// defaultClaimedConsumersFn is the production walker that extracts the
+// claimed-consumer list from a parsed Template. Today's schema has no
+// `[[child_rules]] consumer = "..."` field — no claim can be authored against
+// the known-wired-consumer set without test-only injection — so the walker
+// returns an empty slice for every template. The function exists as its own
+// callable rather than inlined into validateClaimVsImplCoherence so a future
+// schema addition (e.g. a `consumer = "..."` field on ChildRule) extends the
+// production walker in one place rather than threading new extraction logic
+// through the validator body.
+//
+// Drop 4c.6 W0.5.D6 hook.
+func defaultClaimedConsumersFn(_ Template) []string {
+	return nil
+}
+
+// validateClaimVsImplCoherence checks every claimed template-feature consumer
+// identifier against the closed Go-internal `knownWiredConsumers` map and
+// rejects any claim whose identifier is not a member with
+// ErrClaimVsImplUnknownConsumer.
+//
+// claimsFn parameter — test-only injection point:
+//
+//   - When claimsFn is non-nil, the validator walks the supplied claim list
+//     verbatim. Tests use this to exercise both the rejection path (claim
+//     not in the empty `knownWiredConsumers` set) and the success path
+//     (claim temporarily registered in `knownWiredConsumers` via
+//     t.Cleanup-restored mutation).
+//
+//   - When claimsFn is nil, the production walker (defaultClaimedConsumersFn)
+//     returns an empty slice for every template. Today's schema has no
+//     `[[child_rules]] consumer = "..."` field, so production callers
+//     pass through the validator vacuously. The sentinel + tests ship now
+//     so Drop 4c.7 W7 (`child_rules_for`) and Drop 4c.7 W8 (`context_resolve`)
+//     inherit the validator without further work.
+//
+// `knownWiredConsumers` is the closed Go-internal source-of-truth — the
+// validator does NOT parse `CLAUDE.md` at runtime. CLAUDE.md § Cascade Tree
+// Structure is the authoring reference for adopters but is not consulted at
+// Load.
+//
+// Per W0.5 plan FF1 disclosure: pelletier/go-toml/v2's post-decode validators
+// do not carry source-line numbers, so the wrapped sentinel message names the
+// offending consumer identifier rather than `line=N`. Adopters grep their TOML
+// for whatever schema field claims that consumer once the schema gains a
+// `[[child_rules]] consumer = "..."` axis.
+//
+// Drop 4c.6 W0.5.D6 hook.
+func validateClaimVsImplCoherence(tpl Template, claimsFn func(tpl Template) []string) error {
+	if claimsFn == nil {
+		claimsFn = defaultClaimedConsumersFn
+	}
+	for _, claimed := range claimsFn(tpl) {
+		if _, ok := knownWiredConsumers[claimed]; !ok {
+			return fmt.Errorf("%w: claimed consumer %q has no wired runtime implementation (knownWiredConsumers is closed; see internal/templates/load.go and CLAUDE.md § Cascade Tree Structure)",
+				ErrClaimVsImplUnknownConsumer, claimed)
+		}
 	}
 	return nil
 }

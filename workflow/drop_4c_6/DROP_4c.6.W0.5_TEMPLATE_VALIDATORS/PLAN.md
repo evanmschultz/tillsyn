@@ -216,7 +216,7 @@ The chain order matches the L1 spawn directive: kind-enum + agent_name first →
 
 ### Droplet 4c.6.W0.5.D6 — Claim-vs-Impl Coherence Validator (With Empty Known-Wired Set)
 
-- **State:** todo
+- **State:** done
 - **Paths:** `internal/templates/load.go`, `internal/templates/load_test.go`, `internal/templates/testdata/invalid_claim_vs_impl_unknown_consumer.toml` (NEW)
 - **Packages:** `github.com/evanmschultz/tillsyn/internal/templates`
 - **Acceptance:**
