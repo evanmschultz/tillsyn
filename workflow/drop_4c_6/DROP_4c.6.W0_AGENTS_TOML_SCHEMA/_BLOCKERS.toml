@@ -1,0 +1,33 @@
+# _BLOCKERS.toml — workflow/drop_4c_6/DROP_4c.6.W0_AGENTS_TOML_SCHEMA/
+# Immediate-children sibling blocker ledger for Wave W0 (agents.toml schema layer).
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+#
+# All five droplets share the `internal/config` Go package. Per
+# `~/.claude/agents/go-planning-agent.md` § "Cascade Design — Atomic Droplets +
+# Parallelization (HARD RULES)": "Siblings sharing a `packages` entry (even
+# with disjoint paths within that package) → `blocked_by`. Go-package
+# compilation is shared." The chain is therefore strict serial:
+#
+#   W0.D1 → W0.D2 → W0.D3 → W0.D4 → W0.D5
+#
+# D1 has no blockers (W0 sub-plan itself has Blocked by: — at the L1 layer).
+
+[[blockers]]
+node = "4c.6.W0.D2"
+blocked_by = ["4c.6.W0.D1"]
+reason = "D2 consumes D1's Preset / Override / AgentRuntime / Kind types AND edits the same agents.go file AND shares the internal/config package compile/test unit"
+
+[[blockers]]
+node = "4c.6.W0.D3"
+blocked_by = ["4c.6.W0.D2"]
+reason = "D3 reuses D2's mergeMaps helper for env-map per-key merge AND shares the internal/config package compile/test unit; D3's tests verify resolved registry via D2's Resolve"
+
+[[blockers]]
+node = "4c.6.W0.D4"
+blocked_by = ["4c.6.W0.D3"]
+reason = "same-package serial chain — internal/config shares one compile unit; frontmatter.go is file-disjoint from agents.go but the package lock binds"
+
+[[blockers]]
+node = "4c.6.W0.D5"
+blocked_by = ["4c.6.W0.D4"]
+reason = "same-package serial chain; D5 also revises D1's TestLoadRegistry_MalformedTOML and D3's TestMergeLocal_ToolsDenyRejected assertions to expect the envelope shape — sequencing D5 last keeps each prior droplet's tests self-consistent at its own boundary"
