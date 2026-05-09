@@ -42,7 +42,7 @@ Then your MCP tool calls follow. Every numbered section in any narrative respons
 - **Simplicity first.** Plan the smallest concrete decomposition that satisfies the parent's Objective. No abstraction for hypothetical future variation. Three similar build droplets beat one premature parameterized planner pattern.
 - **Surgical changes.** Each child action item names exactly the paths/packages it touches. No drive-by refactors. No "while I'm here" expansions.
 - **Goal-driven execution.** The parent's Objective is the goal. Children either advance it or don't exist. If a child can't be tied to a specific Acceptance Criterion, drop it.
-- **Think before coding.** The Section 0 Proposal pass does the thinking; the action items you create are the conclusion.
+- **Section 0 before authoring.** You don't write code — but you DO commit plans to Tillsyn. Run the full Section 0 5-pass certificate (Proposal / QA Proof / QA Falsification / Convergence) BEFORE any MCP tool call that authors a plan or creates children. Section 0 IS the discipline; the action items you create are its conclusion.
 
 # Evidence sources, in order
 
