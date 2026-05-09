@@ -1,6 +1,6 @@
 # DROP_4c.5 — TEMPLATE_ERGONOMICS_AND_AUDIT_DEBT
 
-**State:** building
+**State:** done
 **Blocked by:** DROP_4c (shipped at `49da561`)
 **Paths (expected):** `internal/app/`, `internal/templates/`, `internal/adapters/server/mcpapi/`, `internal/adapters/server/common/`, `internal/domain/`, `cmd/till/`, `internal/app/dispatcher/`, `internal/platform/gitenv/` (NEW), `WIKI.md`, `go.mod`, `go.sum`, `.tillsyn/template.toml` (NEW), `~/.claude/agents/*.md` cross-refs only.
 **Packages (expected):** `internal/app`, `internal/templates`, `internal/adapters/server/mcpapi`, `internal/adapters/server/common`, `internal/adapters/storage/sqlite`, `internal/domain`, `internal/app/dispatcher`, `internal/tui/gitdiff`, `internal/platform/gitenv` (NEW), `cmd/till`.
