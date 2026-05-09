@@ -1,6 +1,6 @@
 # DROP_4c.6.W0.5 — TEMPLATE_VALIDATORS
 
-**State:** planning
+**State:** building
 **Blocked by:** —
 **Paths (expected):** `internal/templates/load.go`, `internal/templates/load_test.go`, `internal/templates/testdata/*.toml` (NEW directory; one malformed-template fixture per droplet plus shared happy-path fixtures as needed)
 **Packages (expected):** `github.com/evanmschultz/tillsyn/internal/templates`
