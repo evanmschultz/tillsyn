@@ -188,3 +188,85 @@ Build-QA-Proof axes evaluated:
 ### Hylla Feedback
 
 N/A — verification touched only Go files. All evidence-gathering used `Read` (production + test + fixture + plan-QA-R3 verdict files), `git show` / `git log` / `git status` (commit-range scope), and `mage test-pkg` / `mage test-func` (gate runs). Hylla was not queried during this proof pass — D3's surface is post-commit pre-ingest territory where `git` + `mage` + `Read` are authoritative for the round-3 contract verification, and the live LSP daemon would not have surfaced any committed-state signal that those tools didn't cover.
+
+## Droplet 4c.6.W0.D3 — Round 2
+
+### Round-1 Counterexample Verification
+
+**W0-D3-CX1: FIXED.**
+
+Round-1 build-QA-falsification CONFIRMED counterexample W0-D3-CX1 — wrap text `fmt.Errorf("agents.local.toml [agents]: %w", ...)` and `fmt.Errorf("agents.local.toml [agents.%s]: %w", kind, ...)` at `agents.go:394` and `:398` carried two of the three forbidden prefix axes (file `agents.local.toml`, block `[agents]` / `[agents.<kind>]`), violating PLAN.md:112's strict spec `"(no file/line/block prefix at the D3 boundary)"`.
+
+Round-2 fix verified at commit `a32aed3` ("fix(config): w0.d3 revert tools_deny wrap to bare sentinel"). Diff scope: `internal/config/agents.go` -3/+3 LOC plus the worklog round-2 entry. Production-code change at `agents.go:391-401` is exactly the reviewer-recommended one-line revert pattern from BUILDER_QA_FALSIFICATION:143:
+
+- **Defaults-block call site (`agents.go:394`)** — was `return nil, fmt.Errorf("agents.local.toml [agents]: %w", ErrToolsDenyNotOverridable)`; is `return nil, ErrToolsDenyNotOverridable` (bare sentinel). File prefix removed; block prefix removed.
+- **Per-kind call site (`agents.go:398`)** — was `return nil, fmt.Errorf("agents.local.toml [agents.%s]: %w", kind, ErrToolsDenyNotOverridable)`; is `return nil, ErrToolsDenyNotOverridable` (bare sentinel). File prefix removed; block prefix removed; kind interpolation removed.
+- **Compile-cleanup at `agents.go:396`** — `for kind, ov := range local.Overrides` rewritten to `for _, ov := range local.Overrides`. Required for compile (Go's `declared and not used` rule on `kind` once the per-kind `fmt.Errorf` no longer references it). Semantics-preserving: `kind` was only used inside the now-removed format string. No callers depend on iteration ordering or the per-kind identity (the iteration is fail-fast on first non-empty `ToolsDeny` regardless of which kind triggers it; from the caller's view, the sentinel return is the same shape).
+
+**Sweep for residual prefix language across `agents.go` (D3 runtime path):**
+
+- String `"agents.local.toml"` appears at the top of file body only as descriptive prose in the `MergeLocal` doc-comment block (lines 350-385) explaining the contract boundary between D3 and D5. Documentation, not a runtime prefix. PLAN.md:112's "no file/line/block prefix" applies to the runtime error message body, not to the doc-comment that explains why D3's runtime omits the prefix.
+- String `[agents]` / `[agents.<kind>]` appears in doc-comments at lines 11, 116, 122, 129, 350, 358, 366, 372 — all descriptive prose explaining schema layout (the TOML block name) or the D5-future envelope shape. None reach a runtime error.
+- Remaining `fmt.Errorf` call sites in agents.go (lines 167, 174, 240, 388): `os.ReadFile` failure (`"read agents.toml at %q: %w"`), decoder error (`"decode agents.toml at %q: %w"`), `Resolve` nil-registry (`"Resolve: registry is nil"`), `MergeLocal` nil-project (`"MergeLocal: project registry is nil; agents.toml is required"`). None of these are on the `tools_deny` rejection path; none use `[agents]` / `[agents.<kind>]` block syntax; the `agents.toml at %q` strings are loader-context metadata for unrelated I/O / decode failures, not the D3 boundary the spec governs.
+
+**Test-contract preservation (no test edits required):**
+
+- `TestMergeLocal_ToolsDenyRejected` at `agents_test.go:484-506` and `TestMergeLocal_ToolsDenyDefaultsBlockRejected` at `:511-532` both assert via `errors.Is(err, ErrToolsDenyNotOverridable)`. `errors.Is(sentinel, sentinel)` returns true (reflexive equality), identical verdict to `errors.Is(fmt.Errorf("...: %w", sentinel), sentinel)` in round 1. Test-file unchanged in round 2 (`git status --porcelain internal/config/agents_test.go` is clean per repository state) — sentinel chain preserved by the simpler bare-return construction.
+
+### Fresh Findings
+
+(none — no high/medium/low findings on the round-2 surface)
+
+Build-QA-Proof axes evaluated against the round-2 surface (3-line delta + 8-test re-run):
+
+1. **Diff-vs-spec.** Round-2 commit `a32aed3` touches exactly `internal/config/agents.go` (3 LOC) + `BUILDER_WORKLOG.md` (round-2 entry). No drive-by edits. PLAN.md state stays `done` per builder's worklog round-2 §"State flip" — round 2 is rework of an already-`done` droplet; no re-flip needed. Diff scope matches the round-1 CX fix-hint verbatim.
+
+2. **AcceptanceCriteria coverage.** PLAN.md:112's strict spec `"no file/line/block prefix at the D3 boundary"` now satisfied by bare-sentinel returns. PLAN.md:111 spec `"closed sentinel error identifying the offending kind"` — note: round-2 revert drops kind identification at the D3 boundary entirely (kind no longer interpolated since both sites return bare sentinel). This is consistent with PLAN.md:112's spec second sentence assigning kind context to D5's envelope (per PLAN.md:202-203 RiskNote, D5 either threads source-line tracking onto `AgentsRegistry` or re-decodes at boundary to recover the offending kind from line position). Round-2 surface ships pure sentinel; D5 owns kind + line + file + block. Tests assert sentinel reachability via `errors.Is`, not kind identification — test contract preserved.
+
+3. **Constraint preservation.** D1 + D2 regression check via `mage test-pkg ./internal/config` → 52/52 GREEN. `TestLoadRegistry_*` (5 tests) and `TestResolve_*` (7 tests) all GREEN — D2 + D3 round-1 production code adjacent to the revert is unchanged (`mergePreset` at `:442-504`, `mergeOverride` at `:509-586`, `cloneOverride` at `:592-655`, `copySlice` at `:660-667` all untouched). Only the rejection guard at `:391-401` and the loop-var rename at `:396` are deltas.
+
+4. **Spec-conformance — D3↔D5 separation contract.** Round-2 surface clean of forbidden prefix language at the D3 runtime boundary:
+   - **File prefix?** None. Both rejection paths return bare `ErrToolsDenyNotOverridable` whose `Error()` returns `"tools_deny is not user-overridable; remove the field"` (verbatim from `agents.go:36`). No file name in the runtime message.
+   - **Block prefix?** None. The kind loop variable is dropped; the rejection no longer carries `[agents]` / `[agents.<kind>]` text.
+   - **Line prefix?** None (was already absent in round 1 — the wrap had no line numbers).
+   - **`errors.Is` chain?** Preserved. Bare sentinel returns satisfy `errors.Is(err, ErrToolsDenyNotOverridable)` reflexively (`err == ErrToolsDenyNotOverridable` directly). D5's future `*ConfigError{Cause: ErrToolsDenyNotOverridable}` will satisfy `errors.Is` via `Unwrap()` per PLAN.md:187. Forward-compat preserved.
+   - **Doc-comment vs runtime distinction.** `MergeLocal`'s doc-comment at `agents.go:371-375` (verified) reads `"D5's envelope wraps this with file/line/block position info; D3 surfaces only the sentinel."` — descriptive prose explaining the contract, not a runtime prefix. PLAN.md:112's parenthetical governs the runtime error message body, not the doc-comment. The doc-comment correctly anticipates D5's wrapping shape.
+
+5. **Shipped-but-not-wired.** No new exports in round 2; existing `MergeLocal` + `ErrToolsDenyNotOverridable` exports unchanged. The loop-var rename is internal-only (the loop body inside the function). No surface change to W2/W3 consumers.
+
+**Loop-var rename necessity check (per round-2 spec):**
+
+Round-2 spawn-prompt asks: "verify the loop-var rename is required (Go compile error otherwise) and doesn't change semantics."
+
+- **Required for compile?** YES. Pre-revert, the loop body referenced `kind` inside `fmt.Errorf("agents.local.toml [agents.%s]: %w", kind, ErrToolsDenyNotOverridable)`. Post-revert, `kind` has no consumer in the loop body. Go's compiler enforces "declared and not used" on loop variables (per `go doc go/spec` and standard error message `kind declared and not used`). Without the rename, `mage test-pkg` would fail with `./agents.go:396:7: kind declared and not used`. The rename to `_` (blank identifier) discards the key while keeping the loop iterating over the map. Compile-required, not optional.
+- **Semantics-preserving?** YES. The loop iterates `local.Overrides` (a `map[domain.Kind]Override`); whether the key is captured into `kind` or discarded into `_` does not change which values are visited, in what order, or whether the rejection fires on the same iteration. Iteration order on Go maps is randomized regardless of capture; the rejection is fail-fast on the first non-empty `ToolsDeny` regardless of which kind triggers it. From the caller's perspective: same set of inputs → same sentinel return.
+
+### Missing Evidence
+
+(none — round-2 surface is fully covered by gate runs and direct inspection)
+
+### Summary
+
+**Verdict: pass** — 0 findings, W0-D3-CX1 verified FIXED.
+
+Round 2 ships exactly the 3-line delta the round-1 CX fix-hint specified (2 bare-sentinel reverts + 1 compile-cleanup loop-var rename). All eight `TestMergeLocal_*` tests GREEN; all 12 D1+D2 regression tests GREEN; full-package gate 52/52 GREEN with `-race -count=1`. The D3↔D5 separation contract per PLAN.md:112 strict reading is now honored: D3's runtime rejection path emits the bare sentinel `ErrToolsDenyNotOverridable` only — no file, no block, no line prefix. D5 retains exclusive ownership of envelope wrapping. `errors.Is` chain preserved. Doc-comments explaining the D3↔D5 boundary remain (correctly descriptive of the contract, not runtime output).
+
+| Axis | Verdict |
+| ---- | ------- |
+| Diff-vs-spec | PASS — 3 LOC, declared paths only, matches CX fix-hint exactly |
+| AcceptanceCriteria | PASS — PLAN.md:112 strict spec satisfied; sentinel reachability preserved |
+| Constraint preservation | PASS — D1+D2 regression 12/12 GREEN; D3 round-1 helpers untouched |
+| Spec-conformance (D3↔D5) | PASS — bare sentinel only; no file/block/line prefix at runtime |
+| Shipped-but-not-wired | PASS — no surface change |
+
+**Proof certificate:**
+
+- **Premises** — Round 2 reverts the wrap text at `agents.go:394` + `:398` to bare `ErrToolsDenyNotOverridable` returns; renames the now-unused `kind` loop variable to `_` for compile; touches no test files; preserves `errors.Is` chain reflexively.
+- **Evidence** — `git show a32aed3` (3 LOC delta in agents.go matching the round-1 fix-hint); direct `Read` of `agents.go:391-401` (bare-sentinel returns confirmed); doc-comment / fmt.Errorf sweep across full agents.go body (no residual file/block/line prefix at runtime); `mage test-pkg ./internal/config` → 52/52 GREEN; `mage test-func ./internal/config "TestMergeLocal_.*"` → 8/8 GREEN with -race -count=1; test files unchanged (`git status --porcelain internal/config/agents_test.go` clean).
+- **Trace or cases** — (1) Defaults-block path: `local.Preset.ToolsDeny` non-empty → `return nil, ErrToolsDenyNotOverridable` (bare). (2) Per-kind path: `local.Overrides[any].ToolsDeny` non-empty → `return nil, ErrToolsDenyNotOverridable` (bare). (3) `errors.Is(sentinel, sentinel)` reflexive truth confirmed by 2 GREEN test cases. (4) D1+D2 regression unchanged: `TestLoadRegistry_*` 5/5 + `TestResolve_*` 7/7 GREEN. (5) Loop-var rename: `kind` no longer referenced in body, `_` discards key, iteration order randomized regardless, fail-fast on first hit — semantics-preserving.
+- **Conclusion** — PASS. W0-D3-CX1 verified FIXED. Fresh 5-axis pass clean. No new findings.
+- **Unknowns** — D5 owns kind identification + file/line/block envelope wrapping per PLAN.md:188-194 + PLAN.md:202-203. Round-2 ships pure sentinel; D5 will thread source-position tracking onto `AgentsRegistry` (or re-decode at `MergeLocal` boundary) to recover kind + line for the user-facing message. Routed forward to D5; not a D3 obligation.
+
+### Hylla Feedback
+
+N/A — verification touched only Go files (already in scope from W0.D1+W0.D2+W0.D3 round-1+round-2). All evidence-gathering used `Read` (production + test + worklog + falsification round-1 verdict), `git show` / `git log` / `git status` (round-2 commit scope), and `mage test-pkg` / `mage test-func` (gate runs). Hylla was not queried during this proof pass — round-2's 3-line delta is post-commit pre-ingest territory where `git diff` + `mage` + `Read` are authoritative. The live LSP daemon would not have surfaced any additional signal beyond what direct file Read covered.

@@ -145,3 +145,81 @@ The following families were attacked and landed REFUTED (no counterexample); the
 ### Hylla Feedback
 
 None — Hylla not queried in this round. Round 1 falsification needed (a) re-reading PLAN.md D3 L2 acceptance bullets at lines 109-120 + RiskNote at 128 + ContextBlock at 132 + KindPayload at 137, (b) re-reading PLAN_QA_FALSIFICATION_R3.md to confirm the round-3 spec lock, (c) re-reading BUILDER_WORKLOG line 128's honest deviation flag, (d) reading `agents.go:392-400` wrap text verbatim, (e) reading `agents_test.go:484-532` for assertion-shape verification, (f) running `mage test-pkg ./internal/config` + `mage test-func ./internal/config "TestMergeLocal_.*"` gates. None are Hylla-shaped queries — (a)-(e) are direct file reading of post-D2-uncommitted in-flight working tree (Hylla would be stale by definition for D3's just-edited code), (f) is build-tool. Confirms the project rule "use `git diff` / `Read` for files touched after the last Hylla ingest." No fallback miss to log; Hylla ergonomic-gripe-free for this round.
+
+## Droplet 4c.6.W0.D3 — Round 2
+
+### Round-1 Counterexample Verification
+
+**W0-D3-CX1: FIXED.**
+
+Round-1 finding (recap): the wrap text at `agents.go:393-400` returned `fmt.Errorf("agents.local.toml [agents]: %w", ...)` and `fmt.Errorf("agents.local.toml [agents.%s]: %w", kind, ...)` — file + block prefix violating PLAN.md:112 verbatim ("no file/line/block prefix at the D3 boundary").
+
+Round-2 production code at `internal/config/agents.go:391-401` verbatim:
+
+```go
+if local != nil {
+    if len(local.Preset.ToolsDeny) > 0 {
+        return nil, ErrToolsDenyNotOverridable
+    }
+    for _, ov := range local.Overrides {
+        if ov.ToolsDeny != nil && len(*ov.ToolsDeny) > 0 {
+            return nil, ErrToolsDenyNotOverridable
+        }
+    }
+}
+```
+
+- **Defaults-block path (`agents.go:394`)**: bare `return nil, ErrToolsDenyNotOverridable`. CONFIRMED-bare.
+- **Per-kind path (`agents.go:398`)**: bare `return nil, ErrToolsDenyNotOverridable`. CONFIRMED-bare.
+- **Sentinel-chain preserved**: both returns ARE the sentinel itself; `errors.Is(ErrToolsDenyNotOverridable, ErrToolsDenyNotOverridable) == true` trivially. `TestMergeLocal_ToolsDenyRejected` and `TestMergeLocal_ToolsDenyDefaultsBlockRejected` both GREEN per gate-run record below.
+- **Residual prefix language scan**: `rg -n "agents\.local\.toml" internal/config/agents.go` returns 1 hit at `:29` (the `ErrToolsDenyNotOverridable` doc-comment, prose describing the contract — NOT a runtime error string). `rg -n "\[agents" internal/config/agents.go` returns 7 hits, all in `//`-style doc-comments (lines 29, 38, 113, 123, 129-130, 198, 372) — descriptive prose explaining schema layout, never formatted into a runtime error message. ZERO file/block prefix language survives in any runtime error path post-revert.
+
+CX1 cleanly fixed by the two-line revert. D3 surface now matches PLAN.md:112 strict bare-sentinel contract; D5's envelope owns the entire prefix shape.
+
+### Fresh Counterexamples
+
+No CONFIRMED counterexamples in round 2. Every fresh attack family lands REFUTED. The loop-variable-drop attack is REFUTED with positive evidence (loop body verified `kind`-free post-revert).
+
+- 2.1 [Family: B2-contract-preservation] [severity: low] **Loop-variable drop semantic check — `for _, ov := range local.Overrides` vs round-1's `for kind, ov := range local.Overrides`.** → repro: `agents.go:396-400` post-revert reads `for _, ov := range local.Overrides { if ov.ToolsDeny != nil && len(*ov.ToolsDeny) > 0 { return nil, ErrToolsDenyNotOverridable } }`. → check: I read every line of the loop body (lines 397-400). The body references ONLY `ov.ToolsDeny` and the literal `ErrToolsDenyNotOverridable` sentinel — `kind` does not appear. The round-1 loop body referenced `kind` ONLY in the now-deleted `fmt.Errorf("...%s...", kind, ...)` formatting; with that formatting gone, `kind` was dead. Dropping the unused loop-variable is a Go compile-required cleanup (`declared and not used`). Iteration semantics over a `map[domain.Kind]Override` are unchanged: `for k, v := range m` and `for _, v := range m` both visit the same set of `(k, v)` pairs in the same (undefined) order; only the binding of the key variable differs. No semantic change. REFUTED.
+- 2.2 [Family: B2-contract-preservation] [severity: low] **Could the kind-drop have orphaned a different reference to `kind` further down the function body?** → repro: `rg -n "\bkind\b" internal/config/agents.go` → 36 hits. Two production-code loops outside the rejection block both LEGITIMATELY use `kind` as a map key: `:414 for kind, ov := range project.Overrides { out.Overrides[kind] = cloneOverride(ov) }` and `:426 for kind, lov := range local.Overrides { ... out.Overrides[kind] = ... }`. These are distinct `for-range` loops with their own scope; the round-1 `kind` deletion is local to the rejection block alone. The other 34 `kind` references are doc-comment prose (`per-kind`, `[agents.<kind>]`, `domain.Kind`, etc.) or the `Resolve(registry, kind)` parameter — none affected by the rejection-block edit. NOT a counterexample. REFUTED.
+- 2.3 [Family: B1-test-coverage] [severity: low] **Test contract preserved through the revert.** → repro: `TestMergeLocal_ToolsDenyRejected` (`agents_test.go:484`) and `TestMergeLocal_ToolsDenyDefaultsBlockRejected` (`:511`) both assert via `errors.Is(err, ErrToolsDenyNotOverridable)`. Pre-revert: `errors.Is(fmt.Errorf("...: %w", sentinel), sentinel) == true` via `%w` chain. Post-revert: `errors.Is(sentinel, sentinel) == true` via root identity. Identical verdict; both tests GREEN per gate-run record. NOT a counterexample. REFUTED.
+- 2.4 [Family: B5-spec-compliance] [severity: low] **PLAN.md:112 verbatim spec satisfied?** → repro: spec reads "The bare sentinel's message reads `\"tools_deny is not user-overridable; remove the field\"` (no file/line/block prefix at the D3 boundary)." Production code post-revert returns `ErrToolsDenyNotOverridable` directly; `err.Error()` returns `"tools_deny is not user-overridable; remove the field"` exactly. Zero file prefix, zero line prefix, zero block prefix at the D3 boundary. NOT a counterexample. REFUTED.
+- 2.5 [Family: B3-hidden-coupling] [severity: low] **Did the revert change `MergeLocal`'s exported behavior?** → repro: function signature unchanged (`MergeLocal(project, local *AgentsRegistry) (*AgentsRegistry, error)`); error type changed from "wrapped sentinel" to "bare sentinel"; `errors.Is(err, ErrToolsDenyNotOverridable)` succeeds either way. No documented external consumer depends on the wrap-text shape (D5 supersedes per PLAN.md:188-194; W2/W3 consumer wiring is downstream). Doc-comment at lines 371-375 already documented "D3 surfaces only the sentinel" as the contract — round 2 brings code into alignment with prose. NOT a counterexample. REFUTED.
+- 2.6 [Family: B4-YAGNI] [severity: low] **Round-2 minimality.** → repro: round-2 diff per BUILDER_WORKLOG round-2 entry is exactly -3 LOC / +3 LOC: revert two `fmt.Errorf` lines + replace `for kind, ov` with `for _, ov`. No additional refactor, no scope creep. The revert removed runtime work (no more `fmt.Errorf` allocation on the hot path) without changing the error-recognition contract. Smallest-concrete-design respected. REFUTED.
+- 2.7 [Family: B6-shipped-but-not-wired] DEFERRED — same as round 1; W2/W3 wiring acceptable per L1 directive.
+- 2.8 [Family: B7-prompt-injection] EXHAUSTED — DORMANT pre-team-feature.
+
+**File and package gating attacks (post-Drop-1 surface):**
+
+- Edits stay within declared `paths`: `internal/config/agents.go` (MODIFY) only — no test files, no fixtures, no MD files outside the workflow worklog. `git status --porcelain internal/config/agents.go` shows the round-2 modification cleanly. REFUTED.
+- Package gate: `internal/config` only. REFUTED.
+
+**Concurrency / interface-misuse / error-swallowing / goroutine-leak / raw-go-command / `mage install` attack surfaces:** Round-2 surface is two reverted return statements + one loop-variable name change. No goroutines, no mutexes, no channels, no `init()` side effects, no panic-able assertions, no error swallowing (the bare sentinel IS the error — properly returned). `mage test-pkg` + `mage test-func` are the gates (no raw `go test`). `mage install` not invoked. ALL EXHAUSTED.
+
+**Gate run record:**
+
+- `mage test-pkg ./internal/config` — 52/52 GREEN, wall-clock 0.28s.
+- `mage test-func ./internal/config "TestMergeLocal_.*"` — 8/8 GREEN, wall-clock 1.25s (includes `-race`).
+- `rg -n "\bkind\b" internal/config/agents.go` — 36 hits; all confirmed legitimate (loop-variables in different loops at `:414` + `:426`, `Resolve` parameter at `:238`, `addOverride` parameter at `:201`, doc-comment prose).
+- `rg -n "agents\.local\.toml" internal/config/agents.go` — 1 hit at `:29` (doc-comment).
+- `rg -n "\[agents" internal/config/agents.go` — 7 hits, all in `//`-style doc-comments (lines 29, 38, 113, 123, 129-130, 198, 372). ZERO runtime-error-string hits.
+
+### Summary
+
+**Verdict: pass** — W0-D3-CX1 cleanly fixed via two-line revert; loop-variable drop semantically equivalent (loop body verified `kind`-free post-revert); all fresh attack families landed REFUTED or EXHAUSTED.
+
+| Family | Attack target | Result |
+| ------ | ------------- | ------ |
+| B1 (test-coverage) | sentinel-chain test contract preserved through revert; existing tests still cover both rejection paths | REFUTED — `TestMergeLocal_ToolsDenyRejected` + `TestMergeLocal_ToolsDenyDefaultsBlockRejected` both GREEN; `errors.Is` chain works identically against bare sentinel and wrapped sentinel. |
+| B2 (contract-preservation) | loop-variable drop semantic equivalence; orphaned `kind` references; exported behavior change | REFUTED — loop body `kind`-free post-revert; other `kind` references in distinct scopes; signature unchanged; `errors.Is` chain preserved. |
+| B3 (hidden-coupling) | external consumer dependency on wrap-text shape | REFUTED — no consumer exists today (W2/W3 deferred); doc-comment prose already documented bare-sentinel contract. |
+| B4 (YAGNI) | round-2 scope minimality | REFUTED — exactly -3/+3 LOC; no scope creep; runtime allocation removed from hot path. |
+| **B5 (spec-compliance)** | **PLAN.md:112 verbatim "no file/line/block prefix at the D3 boundary"** | **REFUTED — production code returns bare sentinel; `err.Error()` is the exact spec-mandated string; zero forbidden prefix axes survive.** |
+| B6 (shipped-but-not-wired) | MergeLocal consumer | REFUTED — appendix-acceptable deferral to W2/W3. |
+| B7 (prompt-injection) | DORMANT pre-team-feature | EXHAUSTED. |
+
+**W0-D3-CX1 verdict: FIXED.** D3 surface now strictly matches PLAN.md:112 round-3-finalized contract. D5 owns the entire envelope. Round 2 PASSES.
+
+### Hylla Feedback
+
+None — Hylla not queried in round 2. Verification needed (a) `Read` of `internal/config/agents.go` post-revert verbatim, (b) `Read` of round-1 BUILDER_QA_FALSIFICATION.md to recall CX1, (c) `Read` of BUILDER_WORKLOG round-2 entry, (d) `Read` of PLAN.md line 112 verbatim spec, (e) `mage test-pkg` + `mage test-func` gates, (f) `rg -n` scans for residual prefix language and `kind` references. None are Hylla-shaped — (a)-(d) are direct file reading of post-D3-uncommitted working tree (Hylla stale by definition); (e) is build-tool; (f) is `rg` text search appropriate for residual-string verification (not symbol-discovery, which would have used Hylla). No fallback miss to log; ergonomic-gripe-free this round.
