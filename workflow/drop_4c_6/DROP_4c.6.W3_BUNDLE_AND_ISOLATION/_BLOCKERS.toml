@@ -1,0 +1,55 @@
+# _BLOCKERS.toml — workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/
+# Immediate-children sibling blocker ledger for Wave W3 (bundle full content + isolation enforcement fix).
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+#
+# Six droplets across three Go packages:
+#
+#   - internal/app/dispatcher                          (D1)
+#   - internal/app/dispatcher/cli_claude/render        (D2, D3, D5, D6 — same package, same file render.go)
+#   - internal/app/dispatcher/cli_claude               (D4 — parent package, file-disjoint env.go)
+#
+# Per `~/.claude/agents/go-planning-agent.md` § "Cascade Design — Atomic
+# Droplets + Parallelization (HARD RULES)": "Siblings sharing a `packages`
+# entry (even with disjoint paths within that package) → `blocked_by`. Go-
+# package compilation is shared." All four render-package droplets MUST
+# serialize on the package compile lock. Cross-package droplets (D1 in
+# `dispatcher`, D4 in `cli_claude`) parallel each other and parallel the
+# render-package chain start.
+#
+# Cross-package dependencies that ride on the chain (over and above the
+# package-lock rule):
+#
+#   - D2 reads binding.SystemPromptTemplatePath (the field D1 plumbs)        → D2 blocked_by D1
+#   - D3 mutates the body D2 produces                                        → D3 blocked_by D2
+#   - D5 validates the body D2 + D3 produce                                  → D5 blocked_by D2 + D3
+#   - D6 doc-comment block at render.go:307-319 sits adjacent to function-
+#     body edits D2/D3/D5 land in the same file; doc-only droplet but file-
+#     edit ordering matters to avoid clobbering                              → D6 blocked_by D2 + D3 + D5
+#
+# Render-package serial chain therefore reads:
+#
+#   W3.D1 ──▶ W3.D2 ──▶ W3.D3 ──▶ W3.D5 ──▶ W3.D6
+#                 (D4 parallel — own package, own file env.go)
+#
+# Wave-level blockers (carried on the W3 sub-plan container row at L1
+# PLAN.md lines 137-153, NOT mirrored in this file): 4c.6.W1.D1 + 4c.6.W0.
+
+[[blockers]]
+node = "4c.6.W3.D2"
+blocked_by = ["4c.6.W3.D1"]
+reason = "D2 reads binding.SystemPromptTemplatePath plumbed by D1 AND shares the broader render-pipeline contract — without D1 the field doesn't exist on BindingResolved; cross-package dependency rides on the chain start"
+
+[[blockers]]
+node = "4c.6.W3.D3"
+blocked_by = ["4c.6.W3.D2"]
+reason = "D3 mutates the body D2 produces via the resolver; same assembleAgentFileBody function; same render.go file; same internal/app/dispatcher/cli_claude/render package compile/test unit"
+
+[[blockers]]
+node = "4c.6.W3.D5"
+blocked_by = ["4c.6.W3.D2", "4c.6.W3.D3"]
+reason = "D5 validates the post-D2-D3 body shape — the post-strip frontmatter must STILL contain name + description per Signal B; same render.go file; same internal/app/dispatcher/cli_claude/render package compile/test unit; HF8 wiring contract requires D5's TestRenderValidatorFailsOnEmptyAgentBody to assert on Render()'s return value"
+
+[[blockers]]
+node = "4c.6.W3.D6"
+blocked_by = ["4c.6.W3.D2", "4c.6.W3.D3", "4c.6.W3.D5"]
+reason = "D6 edits doc-comment block at render.go:307-319 in the same file as D2/D3/D5's function-body edits; same internal/app/dispatcher/cli_claude/render package compile; serializing D6 last guarantees D2/D3/D5's edits don't clobber D6's adjacent doc-comment edit AND lets D6 author the corrected comment with full knowledge of the final post-D2-D3-D5 code shape; HF3 boundary — D6 MUST NOT touch SPAWN_PIPELINE.md (sole owner W6.D4)"
