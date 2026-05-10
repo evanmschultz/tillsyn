@@ -183,3 +183,53 @@ N/A — task touched only `internal/config` Go code already in scope from W0.D1+
 ### Hylla Feedback
 
 N/A — task touched only `internal/config` Go code (already in scope from W0.D1+W0.D2+W0.D3 round 1) + this worklog MD file. All evidence sourced from `Read` against the working tree. No fallback miss to log.
+
+## Droplet 4c.6.W0.D4 — Round 1
+
+### Files touched
+
+- `internal/config/frontmatter.go` (NEW; ~140 LOC including doc comments + the `StripFrontmatterKeys` exported function + `marshalNode` helper + two package-level frontmatter-key constants).
+- `internal/config/frontmatter_test.go` (NEW; ~245 LOC covering 11 distinct cases + 4 sub-tests under `TestStripFrontmatterKeys_EmptyInput` for a total of 15 test invocations).
+- `go.mod` (MODIFY; promote `gopkg.in/yaml.v3 v3.0.1` from `// indirect` to direct require — no version bump, no new dep added; `go mod tidy` ran cleanly).
+- `workflow/drop_4c_6/DROP_4c.6.W0_AGENTS_TOML_SCHEMA/PLAN.md` (state-flip W0.D4 `todo → in_progress → done`).
+- `workflow/drop_4c_6/DROP_4c.6.W0_AGENTS_TOML_SCHEMA/BUILDER_WORKLOG.md` (this entry).
+
+### Build-tool targets run
+
+- `mage test-func ./internal/config TestStripFrontmatterKeys_StripModel` — RED (build error: undefined `StripFrontmatterKeys`), then GREEN after `frontmatter.go` landed.
+- `mage test-func ./internal/config "TestStripFrontmatterKeys_.*"` — first run 14/15 GREEN, 1 FAIL on `TestStripFrontmatterKeys_InvalidYAMLReturnsNonNilErr` because the original "name: foo\n  bad-indent\n" input is leniently parsed by yaml.v3 as a multi-line scalar. Replaced with tab-indented input (`"name: foo\nlist:\n\t- bad-tab\n"`) which yaml.v3 rejects with a "found character that cannot start any token" error. Re-run: 15/15 GREEN.
+- `mage test-func ./internal/config "TestLoadRegistry_.*|TestResolve_.*|TestMergeLocal_.*"` — 20/20 GREEN (W0.D1+W0.D2+W0.D3 regression check unaffected).
+- `mage format` — clean.
+
+### Design notes
+
+1. **YAML lib choice resolved by dep survey.** `gopkg.in/yaml.v3 v3.0.1` was already in `go.mod:75` as an indirect dependency of the existing graph. `goccy/go-yaml v1.19.2` is also indirect (line 48) but its API is heavier and the v3 `*yaml.Node` API is canonical for order-preserving manipulation. Promoting v3 to a direct require keeps the new dep cost at exactly zero. No competing yaml lib added.
+
+2. **Both-false short-circuit returns input verbatim.** `go doc gopkg.in/yaml.v3 Node` is explicit: "the content when re-encoded will not have its original textual representation preserved." The first guard in `StripFrontmatterKeys` is `if !stripModel && !stripTools { return frontmatter, nil }` — no parse, no marshal, byte-for-byte identity. `TestStripFrontmatterKeys_BothFalse` locks this in by feeding a comment-laden frontmatter and asserting `out == in`. Without this short-circuit, comments and whitespace would silently disappear.
+
+3. **`*yaml.Node` API for order-preserving strip.** Decoded YAML mapping is a `MappingNode` whose `Content` slice holds alternating key/value pairs (`Content[0]=key0, Content[1]=val0, Content[2]=key1, …`). The strip walks this slice in pairs, filters by `key.Kind == yaml.ScalarNode && key.Value ∈ stripKeys`, and reassigns `root.Content` to the filtered slice. Order is preserved by construction. The map-decode alternative (`map[string]interface{}`) would lose order — explicitly rejected.
+
+4. **Top-level only — root MappingNode walk.** Only `root.Content` is walked; nested mappings (e.g., `metadata: { model: nested-keep }`) are stored in the value slot (`MappingNode` value) of a parent pair and never inspected by the filter loop. `TestStripFrontmatterKeys_TopLevelOnly` exercises exactly this case: the input has `metadata.model: nested-keep-me` and `model: top-strip` at the root; only the latter is removed. PLAN.md's `constraint (high)` ContextBlock at line 173 is satisfied by construction.
+
+5. **`tools:` strip removes three keys as a unit.** Per SKETCH § 15, the runtime narrows agent frontmatter to `{name, description}`; `tools:` (Claude SDK form), `allowedTools:` (alternative form), and `disallowedTools:` (its complement) are aliases for the same surface. The implementation builds the strip set in one pass: `stripModel` adds `model`; `stripTools` adds all three tools-related keys. Tests assert all three vanish together when `stripTools=true` and that `stripModel=true, stripTools=false` leaves the tools triplet intact (and vice versa).
+
+6. **Empty-input short-circuit.** `len(frontmatter) == 0 → return ("", nil)` regardless of flags. yaml.v3 will tolerate empty input (the resulting `*yaml.Node` has `Kind == 0`), but the explicit short-circuit avoids a round-trip through the parser for a degenerate case W3 may legitimately encounter (an agent file with empty frontmatter).
+
+7. **Error path surfaces parse position via wrap.** `yaml.Unmarshal` errors on malformed input contain "line N: …" in the `Error()` string. `StripFrontmatterKeys` wraps via `fmt.Errorf("frontmatter parse failed: %w", err)`, so the line marker survives `errors.Unwrap` and `errors.Is` chains. PLAN.md acceptance line 157 ("error message includes parse-position info") is satisfied. Test confirms via `strings.Contains(err.Error(), "line")`.
+
+8. **Non-mapping root is re-emitted via `marshalNode`.** Defensive case: if frontmatter parses as a list or scalar at root (degenerate but legal YAML), there are no top-level keys to strip; `marshalNode(&doc)` re-emits the parsed tree. This path is unreachable from real agent .md files (every shipped agent has a mapping frontmatter), but the function stays well-defined under all valid YAML inputs.
+
+9. **Trailing-newline normalization.** `marshalNode` trims trailing newlines and re-appends exactly one (`bytes.TrimRight(buf, "\n") + "\n"`). yaml.v3's `Marshal` always appends a single newline; the trim+append idiom is defensive against future yaml.v3 versions that might emit two newlines for documents.
+
+### Decisions deferred to later droplets / waves
+
+- **W3 wires the helper into `render.go`.** D4 ships the pure helper; W3 calls into `StripFrontmatterKeys` from `render.go:assembleAgentFileBody` per SKETCH § 26.W3. Tests for the wiring belong to W3.
+- **D5 envelope wrapping.** D4's parse-error wrapping uses raw `fmt.Errorf` with `%w` — D5's `*ConfigError` envelope lives on the agents.go side and wraps decode errors from `LoadRegistry` / `MergeLocal`. The frontmatter strip path is render-time, not config-load-time, so it stays outside the D5 envelope. If a future drop wants unified error formatting across config + render, that's a refinement on top of D5.
+
+### State flip
+
+- `PLAN.md` → Droplet 4c.6.W0.D4 `**State:**` `todo` → `in_progress` (at start of round) → `done` (at end of round).
+
+### Hylla Feedback
+
+N/A — task touched only `internal/config` Go code (new files, no committed-state lookups required) + `go.mod` + this worklog MD file. All semantic evidence came from `go doc gopkg.in/yaml.v3` (Context7 returned v4-targeted docs that didn't match the v3 API the project ships) and direct file `Read`s. No Hylla query was needed for the work surface; the one Hylla query attempted (`yaml.v3 import` keyword search) returned a single substring-match in MCP-related markdown that was not actually relevant. No fallback miss to log because there was no prior Hylla query failure forcing the fallback — the `go doc` route was the appropriate first-choice tool for an external-language-semantics question.

@@ -138,7 +138,7 @@ Tests are co-located with each droplet's production file. D1 ships `agents_test.
 
 ### Droplet 4c.6.W0.D4 — Frontmatter `model:` / `tools:` strip helper
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/config/frontmatter.go` (NEW), `internal/config/frontmatter_test.go` (NEW). Sibling files inside the `internal/config` package; NO overlap with `agents.go` / `agents_test.go`.
 - **Packages:** `internal/config`.
