@@ -6522,19 +6522,22 @@ func TestLoadProjectTemplate_NilProjectReturnsSkip(t *testing.T) {
 }
 
 // mustReadDefaultGoTOML reads the on-disk byte content of the embedded
-// default-go.toml so F.1.2 walk fixtures can author valid v1 templates
-// without inlining ~hundred lines of TOML per test. The path is
-// relative to the test working directory (Go's `testing` package runs
-// each test with the package directory as cwd), so `../templates/...`
-// resolves to internal/templates/builtin/default-go.toml regardless of
-// where the test binary was built. Failure to read is a hard test
-// failure — the file MUST exist post-F.2.1 rename.
+// Go-flavored builtin (post-Drop-4c.6 W5.D1: `till-go.toml`) so F.1.2 walk
+// fixtures can author valid v1 templates without inlining ~hundred lines of
+// TOML per test. The path is relative to the test working directory (Go's
+// `testing` package runs each test with the package directory as cwd), so
+// `../templates/...` resolves to internal/templates/builtin/till-go.toml
+// regardless of where the test binary was built. Failure to read is a hard
+// test failure — the file MUST exist post-W5.D1 rename. The helper name is
+// retained (rather than renamed to `mustReadTillGoTOML`) to keep the
+// caller-audit footprint of W5.D1 minimal; renaming the helper would touch
+// every test that uses it.
 func mustReadDefaultGoTOML(t *testing.T) []byte {
 	t.Helper()
-	path := filepath.Join("..", "templates", "builtin", "default-go.toml")
+	path := filepath.Join("..", "templates", "builtin", "till-go.toml")
 	bytes, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read default-go.toml at %s: %v", path, err)
+		t.Fatalf("read till-go.toml at %s: %v", path, err)
 	}
 	return bytes
 }
@@ -6548,9 +6551,10 @@ func mustReadDefaultGoTOML(t *testing.T) []byte {
 // non-zero positive int passes validateTillsyn.
 //
 // Pre-condition: base must NOT already contain a `[tillsyn]` table
-// (the embedded default-go.toml does not, as of F.2.1). If a future
-// drop adds one to default-go.toml, this helper must be reworked to
-// in-place mutate rather than append.
+// (the embedded till-go.toml does not, as of F.2.1; rebadged from
+// default-go.toml in Drop 4c.6 W5.D1). If a future drop adds one to
+// till-go.toml, this helper must be reworked to in-place mutate rather
+// than append.
 func withTillsynMarker(base []byte, marker int) []byte {
 	suffix := fmt.Sprintf("\n[tillsyn]\nmax_context_bundle_chars = %d\n", marker)
 	out := make([]byte, 0, len(base)+len(suffix))
@@ -6710,7 +6714,7 @@ func TestLoadProjectTemplate_BothAbsentEmbedded(t *testing.T) {
 		t.Fatalf("Template.SchemaVersion = %q; want %q (embedded default loaded)", tpl.SchemaVersion, templates.SchemaVersionV1)
 	}
 	if tpl.Tillsyn.MaxContextBundleChars != 0 {
-		t.Fatalf("Tillsyn.MaxContextBundleChars = %d; want 0 (embedded default-go.toml ships without [tillsyn] table); marker collision suggests an on-disk fixture leaked into the walk", tpl.Tillsyn.MaxContextBundleChars)
+		t.Fatalf("Tillsyn.MaxContextBundleChars = %d; want 0 (embedded till-go.toml ships without [tillsyn] table); marker collision suggests an on-disk fixture leaked into the walk", tpl.Tillsyn.MaxContextBundleChars)
 	}
 }
 

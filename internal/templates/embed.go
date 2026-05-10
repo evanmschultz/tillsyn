@@ -19,10 +19,17 @@ import (
 // `default-go.toml` so sibling builtins (and, post-Q1 resolution, future
 // language-flavored variants) can ship alongside without stepping on the
 // Go-flavored content. Drop 4c.5 droplet F.2.2 added the language-agnostic
-// `default-generic.toml` sibling. The directive uses an EXPLICIT FILE LIST
+// `default-generic.toml` sibling. Drop 4c.6 W5.D1 rebadged the Go-flavored
+// builtin a second time, from `default-go.toml` to `till-go.toml`, to
+// align with the `till-` prefix family the cascade-methodology trilogy
+// adopts (per `SKETCH.md` § 3.5.1 / § 21.6 — communicates "shipped from
+// Tillsyn binary"). The dual-history record (default.toml → default-go.toml
+// → till-go.toml) preserves both rebadge events so future readers can
+// trace the file's lineage. The directive uses an EXPLICIT FILE LIST
 // rather than a glob (`builtin/*.toml`) per F.2.1 falsification mitigation
-// #2 (carried forward to F.2.2): an explicit list cannot accidentally pick
-// up unrelated .toml fixtures or leftover files in builtin/.
+// #2 (carried forward to F.2.2 + W5.D1): an explicit list cannot
+// accidentally pick up unrelated .toml fixtures or leftover files in
+// builtin/.
 //
 // Drop 4c.5 droplet F.1.3 added the language-aware resolver
 // `LoadDefaultTemplateForLanguage` and reduced `LoadDefaultTemplate` to a
@@ -45,7 +52,7 @@ import (
 // `validateAgentBindingNames` flips from fail-permissive to fail-strict
 // the moment any `builtin/agents/<group>/*.md` file ships into the
 // embed.FS (probed at package init via `embeddedAgentLibraryShipped`).
-// `default-go.toml` (which W5.D3 will rebadge to bare names) currently
+// `till-go.toml` (which W5.D3 will rebadge to bare names) currently
 // references `go-builder-agent`, `go-planning-agent`, `go-research-agent`,
 // `go-qa-proof-agent`, `go-qa-falsification-agent`, plus
 // `orchestrator-managed` for the four coordination kinds — those names
@@ -62,7 +69,7 @@ import (
 // workflow/drop_4c_6/PLAN.md droplet 4c.6.W1.D1 +
 // workflow/drop_4c_6/SKETCH.md § 4.1 + § 4.2 + § 11.1 + § 14.2 + § 21.6.
 //
-//go:embed builtin/default-go.toml builtin/default-generic.toml
+//go:embed builtin/till-go.toml builtin/default-generic.toml
 //go:embed builtin/agents.example.toml
 //go:embed builtin/agents/till-gen/planning-agent.md
 //go:embed builtin/agents/till-gen/builder-agent.md
@@ -162,9 +169,10 @@ func LoadDefaultTemplate() (Template, error) {
 //   - `""`     → loads `builtin/default-generic.toml` (the
 //     language-agnostic showcase shipped by F.2.2 — 12 kinds + 4 child
 //     rules + 6 STEWARD seeds, ZERO `[agent_bindings]`).
-//   - `"go"`   → loads `builtin/default-go.toml` (the Go-flavored full
-//     catalog rebadged by F.2.1 — 12 kinds + child rules + STEWARD
-//     seeds + agent bindings + gates + context).
+//   - `"go"`   → loads `builtin/till-go.toml` (the Go-flavored full
+//     catalog rebadged by F.2.1 from `default.toml` and again by Drop
+//     4c.6 W5.D1 to the `till-` prefix family — 12 kinds + child rules +
+//     STEWARD seeds + agent bindings + gates + context).
 //   - `"fe"`   → returns an error wrapping `ErrLanguageNotSupported`
 //     per Q1 resolution (workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5).
 //     FE template ships post-MVP via the F.4 marketplace CLI once an
@@ -194,7 +202,7 @@ func LoadDefaultTemplateForLanguage(lang string) (Template, error) {
 	case "":
 		path = "builtin/default-generic.toml"
 	case "go":
-		path = "builtin/default-go.toml"
+		path = "builtin/till-go.toml"
 	case "fe":
 		// Deferred per workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5
 		// (Q1 resolution). Surface a clear, lang-tagged error so
@@ -230,11 +238,13 @@ func LoadDefaultTemplateForLanguage(lang string) (Template, error) {
 //
 // The function returns a fresh slice on every call so callers cannot mutate
 // the package-level source of truth. Pre-MVP the list contains
-// "default-generic" + "default-go" only; the FE template ships post-MVP via
-// the F.4 marketplace CLI per the Q1 resolution in
-// workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5.
+// "default-generic" + "till-go" only (Drop 4c.6 W5.D1 rebadged the
+// Go-flavored builtin from `default-go` to `till-go`; W5.D2 will rebadge
+// the language-agnostic builtin `default-generic` → `till-gen` next, in
+// lockstep). The FE template ships post-MVP via the F.4 marketplace CLI
+// per the Q1 resolution in workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5.
 func BuiltinTemplateNames() []string {
-	return []string{"default-generic", "default-go"}
+	return []string{"default-generic", "till-go"}
 }
 
 // MarshalTOML serializes a Template back to canonical TOML bytes via

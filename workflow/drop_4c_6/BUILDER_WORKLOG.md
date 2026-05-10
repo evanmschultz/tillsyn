@@ -413,3 +413,268 @@ here for completeness:
   ingest cadence + drop cycle. Auto-reingest on drop merge would close
   this gap; that's a known-tracked Hylla refinement.
 
+## Droplet 4c.6.W6.D5 — Round 1
+
+### Files touched
+
+- `README.md` — added a new "Methodology docs" paragraph + 3 bullets between
+  the existing repo-doc cross-references block (lines 22-25) and the
+  "Local dogfood repo layout note" block (was line 27, now shifted). Each
+  bullet points at one of `AGENTS_CONFIG.md`, `CASCADE_METHODOLOGY.md`,
+  `GDD_METHODOLOGY.md` with a one-line purpose blurb. No restructuring of
+  existing README content.
+- `workflow/drop_4c_6/PLAN.md` — flipped W6.D5 `**State:**` line
+  `todo → in_progress → done`.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### Build-tool targets run
+
+- `mage ci` — green (full CI suite). Doc-only change, but ran per the droplet
+  ValidationPlan.
+
+### Design notes
+
+- **Placement choice.** The new pointer block sits adjacent to the existing
+  `CONTRIBUTING.md` / `AGENTS.md` / `CLAUDE.md` cross-references (was lines
+  22-25). That keeps all "read these other top-level docs" pointers in one
+  visual neighborhood near the top of the README, so a new adopter who's
+  scanning for orientation hits both groups together.
+- **Format.** A short prose lead-in ("Methodology docs (top-level, read these
+  to understand how Tillsyn is built and used):") followed by 3 bullets,
+  each `` `<file>` — <one-line purpose> ``. Mirrors the existing pointer
+  style higher in the README without introducing a new heading level (the
+  surrounding pointer block also uses inline prose, not a `##` heading,
+  so the change is a minimal-restructuring extension).
+- **Idempotency.** Pre-edit, ran a Grep across README.md for
+  `AGENTS_CONFIG|CASCADE_METHODOLOGY|GDD_METHODOLOGY|Methodology Docs|methodology docs`
+  → `NO_MATCHES`. Confirmed safe to add without duplicating. The edit used
+  `Edit` (not `Write`) per the droplet RiskNote.
+- **Target docs verified to exist.** `ls -l` confirmed `AGENTS_CONFIG.md`
+  (31k), `CASCADE_METHODOLOGY.md` (32k), `GDD_METHODOLOGY.md` (3.0k) at the
+  repo root before linking. So the README pointers won't dangle.
+- **GDD line.** `GDD_METHODOLOGY.md` is a placeholder per the methodology-
+  docs tracker memory; the bullet says so explicitly so a reader who clicks
+  through and finds a stub isn't surprised.
+
+### Hylla Feedback
+
+N/A — task touched non-Go files only (`README.md` + `workflow/drop_4c_6/*.md`).
+Hylla today indexes Go only, so no Hylla query was relevant. Pre-edit
+verification used `Bash` (`ls`, `wc`, `rg`) and `Read` against the README,
+PLAN.md, and BUILDER_WORKLOG.md — appropriate per the project's "Non-Go
+files use Read/Grep/Glob/Bash" rule.
+
+---
+
+## Droplet 4c.6.W5.D1 — Round 1
+
+**Builder:** go-builder-agent (subagent).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W5.D1 — Rename default-go.toml → till-go.toml (file move + embed.go + caller audit)`.
+
+### Files touched
+
+- `internal/templates/builtin/till-go.toml` — RENAMED from
+  `internal/templates/builtin/default-go.toml` via `git mv` (history-
+  preserving rename). Header comment block extended with the dual-history
+  record (`default.toml → default-go.toml → till-go.toml`).
+- `internal/templates/embed.go` — three load-bearing edits + dual-history
+  comment-block update + two forward-looking doc-comment updates:
+  - L65 `//go:embed builtin/default-go.toml` → `//go:embed builtin/till-go.toml`.
+  - L204 switch case path literal `builtin/default-go.toml` → `builtin/till-go.toml`.
+  - L245 `BuiltinTemplateNames()` literal `"default-go"` → `"till-go"`
+    (sibling `"default-generic"` retained — W5.D2 will rebadge it next).
+  - Lines 16-26 (was 19-25) — F.2.1 rebadge doc-comment block extended
+    with the dual-history note recording the W5.D1 rebadge per droplet
+    RiskNotes ("LINES 16-23 references 'rebadged from default.toml to
+    default-go.toml' — update those to record the second rebadge").
+  - L48 forward-looking comment `default-go.toml (which W5.D3 will
+    rebadge to bare names)` → `till-go.toml (...)`.
+  - L172 forward-looking resolver doc-comment for the `"go"` case →
+    `builtin/till-go.toml ... rebadged by F.2.1 from default.toml and
+    again by Drop 4c.6 W5.D1 to the till- prefix family`.
+  - L240-243 `BuiltinTemplateNames` doc-comment updated to reflect
+    `["default-generic", "till-go"]` post-W5.D1 + named the W5.D2
+    follow-on for the `default-generic` rebadge.
+  - HISTORICAL refs at L19, L23, L26, L128 RETAINED verbatim per HF5
+    historical-rename-record rule — they describe past behavior /
+    rebadge events.
+- `internal/templates/embed_test.go` — eight forward-looking doc-comment
+  + assertion-message updates:
+  - L41-49 `TestDefaultTemplateGoLoadsCleanly` doc-comment — extended
+    with the W5.D1 rebadge note; test function name retained per
+    minimal-caller-audit-footprint discipline.
+  - L71, L75, L79, L112, L150 `default-go` short-name → `till-go`.
+  - L345 `(see comment in default-go.toml)` → `till-go.toml`.
+  - L431, L457, L460 `loaded default-go.toml` (test name + 2 t.Fatalf
+    assertion messages) → `till-go.toml`.
+  - L490, L547 `embedded default-go.toml` / `[gates.build] in
+    default-go.toml` → `till-go.toml`.
+  - L899-908 generic-vs-Go discriminator-test comment block + t.Fatalf
+    message — `default-go` → `till-go`.
+  - L912-925 `TestLoadDefaultTemplateForLanguage_Go` doc-comment —
+    `builtin/default-go.toml` → `builtin/till-go.toml`; `default-go
+    ships 12` → `till-go ships 12`.
+  - L942 t.Fatalf message — `lang="go" must route to default-go.toml`
+    → `till-go.toml`.
+  - HISTORICAL refs at L22, L45, L49, L1018 RETAINED verbatim
+    (pre-F.1.3 SEMANTIC SHIFT, F.2.1 rebadge history).
+- `internal/app/service.go` — L383 forward-looking doc-comment naming
+  the embedded fallback file path: `default-go.toml or default-generic.toml`
+  → `till-go.toml or default-generic.toml` (`default-generic` retained;
+  W5.D2 follows up).
+- `internal/app/service_test.go` — load-bearing fix + forward-looking
+  doc-comment updates:
+  - L6534 `filepath.Join("..", "templates", "builtin", "default-go.toml")`
+    → `"till-go.toml"` (LOAD-BEARING: failed test until updated).
+  - L6537 t.Fatalf message `read default-go.toml at` → `read till-go.toml at`.
+  - L6524-6533 `mustReadDefaultGoTOML` doc-comment extended with the
+    W5.D1 rebadge note. Helper function NAME retained
+    (`mustReadDefaultGoTOML`) to keep the W5.D1 caller-audit footprint
+    minimal — renaming the helper would touch every test that uses it,
+    which sits outside W5.D1's declared paths and outside the droplet's
+    KindPayload `shape_hint` ("string literal updates only").
+  - L6551-6555 forward-looking doc-comment about `[tillsyn]`-table
+    pre-condition — `default-go.toml` → `till-go.toml` with rebadge note.
+  - L6713 t.Fatalf message — `embedded default-go.toml ships without
+    [tillsyn]` → `embedded till-go.toml ships without [tillsyn]`.
+- `internal/app/auto_generate_steward_test.go` — L18 doc-comment for
+  `withSeedTemplateFixture` mentioning embedded-default content drift —
+  `default-go.toml / default-generic.toml` → `till-go.toml /
+  default-generic.toml` (default-generic deferred to W5.D2).
+- `internal/adapters/server/common/mcp_surface.go` — L906 BakeSource
+  doc-comment for `"embedded-default-go"` extended: file path
+  `internal/templates/builtin/default-go.toml` → `till-go.toml`. Added
+  inline note that the BakeSource STRING value `embedded-default-go`
+  is intentionally retained as a stable wire identifier separate from
+  the on-disk file name (BakeSource is the wire surface for
+  `till.template get`; renaming the wire string would be a
+  wire-protocol-breaking change outside W5.D1's scope).
+- `internal/adapters/server/mcpapi/extended_tools.go` — L1867 size-
+  comparison doc-comment for `templateInputMaxBytes` — `embedded
+  default-go.toml (~5 KiB)` → `embedded till-go.toml (~5 KiB; rebadged
+  from default-go.toml in Drop 4c.6 W5.D1)`.
+- `workflow/drop_4c_6/PLAN.md` — flipped W5.D1 `**State:**` line `todo
+  → in_progress → done`.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — appended this round entry.
+
+### Design decisions
+
+- **Strict declared-paths discipline.** Per the spawn prompt's "Edit ONLY
+  declared paths" rule, restricted edits to the 8 files listed in the
+  droplet's `**Paths:**` field (the renamed TOML, embed.go, embed_test.go,
+  and the 5 caller-audit sites per HF6's regenerated audit list). Did NOT
+  edit `internal/templates/load.go`, `internal/templates/load_test.go`,
+  the `internal/templates/builtin/agents/till-{gen,go,gdd}/*.md`
+  placeholder files, `internal/templates/builtin/default-generic.toml`,
+  or `.tillsyn/template.toml` even though they carry forward-looking
+  `default-go.toml` doc-comment refs. Rationale: (1) those files are NOT
+  in W5.D1's declared paths — editing them would be scope expansion;
+  (2) HF5's "non-doc-comment" criterion is satisfied (every remaining
+  `default-go.toml` hit is in a doc-comment / Markdown frontmatter /
+  TOML header comment); (3) `internal/templates/load.go`'s 3 hits are
+  test-helper / future-drop-warning doc-comments that mention BOTH
+  `default-go.toml` and `default-generic.toml` together — the cleanest
+  fix lives in W5.D2 / W5.D3 alongside the second rename pass when both
+  refs flip in one edit, avoiding two disturbances of the same lines.
+  The orchestrator may want to confirm that's the right deferral target.
+- **HF6 5-site list hewed strictly.** `internal/app/template_service.go`
+  and `internal/app/auto_generate_steward.go` were on the Round-1 plan
+  but flagged as over-claimed in the Round-2 HF6 regenerated audit
+  (zero `default-go.toml` hits). Verified via fresh `git grep` — both
+  files have zero hits at HEAD. Skipped them.
+- **TDD RED→GREEN cycle exercised via the rename itself.** Step
+  sequence: (1) `mage test-func ./internal/templates
+  TestDefaultTemplateGoLoadsCleanly` baseline GREEN (pre-rename); (2)
+  `git mv default-go.toml till-go.toml` — test now RED (build failure
+  on `//go:embed builtin/default-go.toml` directive — file no longer
+  exists); (3) update `embed.go` directive + switch + names literal —
+  test back GREEN; (4) `mage test-pkg ./internal/templates` — all 458
+  tests GREEN; (5) `mage test-pkg ./internal/app` —
+  `TestLoadProjectTemplate_*` 4 tests RED (mustReadDefaultGoTOML opens
+  the renamed file via hardcoded path); (6) update L6534 path literal —
+  all 476 internal/app tests GREEN; (7) `mage ci` final — 3005 tests
+  across 25 packages GREEN, every package ≥ 70% coverage. The implicit
+  RED is the cleanest TDD path here because the rename is mechanical
+  and the existing tests pin the contract — no new test assertion was
+  needed.
+- **Dual-history note pattern applied per droplet RiskNotes.** Lines
+  16-23 of embed.go were specifically called out: "update those to
+  record the second rebadge 'to till-go.toml' per dual-history note."
+  Mirrored the same dual-history pattern in (a) the till-go.toml file
+  header and (b) the auto_generate_steward_test.go / service.go /
+  service_test.go / mcp_surface.go / extended_tools.go forward-looking
+  comments — each rebadge-aware comment now records BOTH the F.2.1
+  rebadge AND the W5.D1 rebadge so future readers can trace the
+  full lineage.
+- **Test helper name + BakeSource wire string retained intentionally.**
+  Two forward-looking renames were considered and rejected:
+  (1) `mustReadDefaultGoTOML` → `mustReadTillGoTOML` would touch every
+  test that calls the helper (4 + the failed-tests-now-passing set —
+  scope outside W5.D1's "string literal updates only" KindPayload
+  shape_hint). Helper retained with a doc-comment update naming the
+  rebadge; cleaner unification can land in W5.D2/W5.D3 or a later
+  refinement drop.
+  (2) `embedded-default-go` BakeSource string is a wire-protocol value
+  consumed by `till.template get`. Renaming it would be a wire-breaking
+  change outside W5.D1's scope. Retained verbatim with a doc-comment
+  note that the wire string is intentionally separate from the on-disk
+  file name.
+- **`BuiltinTemplateNames()` post-W5.D1 returns `["default-generic",
+  "till-go"]`.** Per the droplet acceptance bullet 166. `default-generic`
+  retains its short name in W5.D1 (W5.D2 lands the second rename to
+  `till-gen`). Stable lexical order preserved: `default-generic` < `till-go`
+  (`d` < `t`).
+- **HF5 grep verification post-edit.** `git grep "default-go.toml" --
+  cmd/ internal/ *.go` confirms every remaining hit is in a doc-comment
+  / Markdown frontmatter / TOML comment header / historical-rename-record.
+  No load-bearing strings, no `//go:embed` directives, no switch-case
+  literals, no `BuiltinTemplateNames()` literal entries reference the
+  old name. The retained doc-comment hits split into two classes: (a)
+  HISTORICAL — describe past rebadge events / pre-F.1.3 semantic shifts
+  (RETAINED per HF5); (b) FORWARD-LOOKING but in files outside W5.D1's
+  declared paths — `internal/templates/load.go` (3 hits),
+  `internal/templates/load_test.go` (2 hits), the
+  `builtin/agents/till-{gen,go,gdd}/*.md` placeholders (multiple),
+  `internal/templates/builtin/default-generic.toml` (8 hits),
+  `.tillsyn/template.toml` (5 hits). Forward-looking refs in
+  out-of-scope files are deferred to W5.D2/W5.D3 or a later
+  refinement.
+
+### Mage targets run
+
+- `mage test-func ./internal/templates TestDefaultTemplateGoLoadsCleanly`
+  — pre-rename baseline GREEN (1.29s); post-`git mv` pre-embed.go-fix
+  RED (build failure as expected); post-embed.go-fix GREEN (1.28s).
+- `mage test-pkg ./internal/templates` — 458 tests GREEN (0.28s).
+- `mage test-pkg ./internal/app` — 472/4-FAIL initially (4
+  `TestLoadProjectTemplate_*` failures from hardcoded `default-go.toml`
+  path literal); after L6534 fix → 476 GREEN (1.77s).
+- `mage test-pkg ./internal/adapters/server/mcpapi` — 226 tests GREEN
+  (1.19s) — unchanged before + after; the
+  `TestTillTemplate_ListBuiltin` test asserts on the
+  `stubExpandedService.Templates` fixture (still set to
+  `["default-generic", "default-go"]`), not on real
+  `BuiltinTemplateNames()`. The stub fixture is in
+  `extended_tools_test.go` (NOT in W5.D1's declared paths per HF6 — only
+  `extended_tools.go` is). The stub fixture is technically a
+  forward-looking-comment-equivalent; future drift between stub and real
+  return could hide a bug. Flagged in closing-response-Unknowns for the
+  orchestrator to route — likely candidate is a follow-on droplet in
+  W5.D3 or a refinement drop.
+- `mage ci` — 3005 tests across 25 packages GREEN; every package ≥ 70%
+  coverage (`internal/app` at 71.6%, `internal/templates` at 94.5%);
+  build of `./cmd/till` SUCCESS.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. Used `git grep` (the explicit
+HF5-verification path) and `Read` against the named caller-audit files
+(droplet HF6 regenerated audit list). No Hylla query was needed because
+the droplet's `**Paths:**` field already enumerates the affected files
++ line numbers, and `git grep` is the canonical HF5 verification tool
+named in the acceptance bullets. Hylla's strength (committed-code
+semantic search) is not the right tool for "find every `default-go.toml`
+string occurrence" — that's a syntactic grep job, which `git grep`
+handles directly.
+

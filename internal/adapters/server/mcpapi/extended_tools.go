@@ -1864,8 +1864,9 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 // filesystem write path. Chosen at 1 MiB per Drop 4c.5 F.3.2 falsification
 // mitigation #1 (and reused by F.3.3 per its falsification mitigation
 // F1): matches typical CI YAML caps and is two orders of magnitude above
-// the embedded `default-go.toml` (~5 KiB), so legitimate adopter
-// templates never bump the ceiling.
+// the embedded `till-go.toml` (~5 KiB; rebadged from `default-go.toml`
+// in Drop 4c.6 W5.D1), so legitimate adopter templates never bump the
+// ceiling.
 //
 // Pre-F.3.3 the constant was named templateValidateMaxInputBytes; F.3.3
 // renamed it to reflect the dual-callsite reality (validate + set) and

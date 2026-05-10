@@ -903,7 +903,10 @@ type GetProjectTemplateRequest struct {
 //   - "<primary-worktree>"      — Template loaded from
 //     <project.RepoPrimaryWorktree>/.tillsyn/template.toml.
 //   - "embedded-default-go"     — Template loaded from the embedded
-//     `internal/templates/builtin/default-go.toml` builtin.
+//     `internal/templates/builtin/till-go.toml` builtin (file rebadged
+//     from `default-go.toml` in Drop 4c.6 W5.D1; the BakeSource string
+//     value `embedded-default-go` is intentionally retained as a stable
+//     wire identifier separate from the on-disk file name).
 //   - "embedded-default-generic" — Template loaded from the embedded
 //     `internal/templates/builtin/default-generic.toml` builtin.
 //

@@ -38,7 +38,7 @@ func loadDefaultOrFatal(t *testing.T) Template {
 }
 
 // TestDefaultTemplateGoLoadsCleanly verifies the embedded
-// builtin/default-go.toml parses + validates without error. Any sentinel
+// builtin/till-go.toml parses + validates without error. Any sentinel
 // from load.go (unknown key, schema-version mismatch, unknown kind
 // reference, child-rule cycle) would surface here, so this is the canary
 // for the whole embed pipeline. Renamed from `TestDefaultTemplateLoadsCleanly`
@@ -46,6 +46,10 @@ func loadDefaultOrFatal(t *testing.T) Template {
 // file rebadge; rewired in Drop 4c.5 droplet F.1.3 to call
 // `LoadDefaultTemplateForLanguage("go")` directly because the
 // `LoadDefaultTemplate()` wrapper now resolves to the generic template.
+// Drop 4c.6 W5.D1 rebadged the file a second time, `default-go.toml` →
+// `till-go.toml`, to align with the `till-` prefix family; the test
+// function name is intentionally retained to keep the caller-audit
+// footprint of W5.D1 minimal.
 func TestDefaultTemplateGoLoadsCleanly(t *testing.T) {
 	t.Parallel()
 
@@ -68,15 +72,15 @@ func TestDefaultTemplateGoLoadsCleanly(t *testing.T) {
 //     load.go sentinel — unknown key, schema-version mismatch, unknown kind
 //     reference, child-rule cycle, agent-binding-tool-gating — would
 //     surface here).
-//  3. Carries the closed 12-kind catalog (same vocabulary as default-go).
+//  3. Carries the closed 12-kind catalog (same vocabulary as till-go).
 //  4. Carries exactly four standard child_rules: build→build-qa-proof,
 //     build→build-qa-falsification, plan→plan-qa-proof,
 //     plan→plan-qa-falsification. The two drop-narrowed entries
-//     (DROP-PLAN-QA-PROOF, DROP-PLAN-QA-FALSIFICATION) that default-go.toml
+//     (DROP-PLAN-QA-PROOF, DROP-PLAN-QA-FALSIFICATION) that till-go.toml
 //     ships are INTENTIONALLY OMITTED — drop-level cascade is
 //     Tillsyn-runtime-specific scaffolding, not language-agnostic shape.
 //     Per F.2.2 acceptance criterion #4 + the corresponding test scenario.
-//  5. Carries the same six STEWARD persistent-parent seeds as default-go
+//  5. Carries the same six STEWARD persistent-parent seeds as till-go
 //     (DISCUSSIONS, HYLLA_FINDINGS, LEDGER, WIKI_CHANGELOG, REFINEMENTS,
 //     HYLLA_REFINEMENTS) — STEWARD coordination scaffolding is
 //     language-agnostic.
@@ -109,7 +113,7 @@ func TestLoadDefaultGenericTemplate(t *testing.T) {
 		t.Fatalf("SchemaVersion = %q; want %q", tpl.SchemaVersion, SchemaVersionV1)
 	}
 
-	// Closed 12-kind catalog — same vocabulary as default-go.
+	// Closed 12-kind catalog — same vocabulary as till-go.
 	if got, want := len(tpl.Kinds), len(allKinds); got != want {
 		t.Fatalf("len(Kinds) = %d; want %d (closed 12-kind catalog)", got, want)
 	}
@@ -147,7 +151,7 @@ func TestLoadDefaultGenericTemplate(t *testing.T) {
 		}
 	}
 
-	// Six STEWARD seeds — same coordination scaffold as default-go.
+	// Six STEWARD seeds — same coordination scaffold as till-go.
 	if got, want := len(tpl.StewardSeeds), 6; got != want {
 		t.Fatalf("len(StewardSeeds) = %d; want %d (DISCUSSIONS / HYLLA_FINDINGS / LEDGER / WIKI_CHANGELOG / REFINEMENTS / HYLLA_REFINEMENTS)", got, want)
 	}
@@ -342,7 +346,7 @@ func TestDefaultTemplateChildRulesForPlan(t *testing.T) {
 //
 // The drop-planner droplet rule named by PLAN.md § 19.3 line 1635 is
 // DEFERRED because it produces a plan->plan self-loop the load-time
-// cycle validator rejects (see comment in default-go.toml). The drop-orch
+// cycle validator rejects (see comment in till-go.toml). The drop-orch
 // creates the drop-planner manually pre-cascade.
 func TestDefaultTemplateChildRulesForDropPlan(t *testing.T) {
 	t.Parallel()
@@ -428,7 +432,7 @@ func TestDefaultTemplateBuildersRunOpus(t *testing.T) {
 }
 
 // TestDefaultTemplateMatchesNestingFixture cross-validates the loaded
-// default-go.toml against the hand-coded fixtureTemplate() in nesting_test.go
+// till-go.toml against the hand-coded fixtureTemplate() in nesting_test.go
 // per finding 5.B.12 (CE7). The two assertion paths share one source of
 // truth: the four reverse-hierarchy prohibitions. We assert that for every
 // (parent, child) pair the hand-coded fixture rejects, the loaded template
@@ -450,10 +454,10 @@ func TestDefaultTemplateMatchesNestingFixture(t *testing.T) {
 			}
 			loadedAllow, loadedReason := loaded.AllowsNesting(parent, child)
 			if loadedAllow {
-				t.Fatalf("loaded default-go.toml AllowsNesting(%q, %q) = true; fixture rejects — prohibition set drifted", parent, child)
+				t.Fatalf("loaded till-go.toml AllowsNesting(%q, %q) = true; fixture rejects — prohibition set drifted", parent, child)
 			}
 			if loadedReason == "" {
-				t.Fatalf("loaded default-go.toml AllowsNesting(%q, %q) reason empty; fixture rejects with non-empty reason", parent, child)
+				t.Fatalf("loaded till-go.toml AllowsNesting(%q, %q) reason empty; fixture rejects with non-empty reason", parent, child)
 			}
 		}
 	}
@@ -483,7 +487,7 @@ func TestDefaultTemplateStewardOwnedKinds(t *testing.T) {
 	}
 }
 
-// TestDefaultTemplateLoadsWithGates asserts the embedded default-go.toml
+// TestDefaultTemplateLoadsWithGates asserts the embedded till-go.toml
 // decodes the [gates] section with the Drop 4c F.7.16 shape:
 // [gates.build] = ["mage_ci", "commit", "push"]. Drop 4b Wave A 4b.1 originally
 // shipped only ["mage_ci"]; Drop 4c F.7.16 expanded the sequence per master
@@ -540,7 +544,7 @@ func TestDefaultTemplateLoadsWithGates(t *testing.T) {
 // + validates clean (closed-enum gate kinds all valid post-F.7.13/14)."
 //
 // Regression guard against two distinct failure modes:
-//  1. Someone adds a new string to [gates.build] in default-go.toml without
+//  1. Someone adds a new string to [gates.build] in till-go.toml without
 //     also extending the closed GateKind enum + validGateKinds in schema.go.
 //  2. Someone removes a GateKind constant in schema.go without checking
 //     that no template TOML still references it.
@@ -896,18 +900,18 @@ func TestLoadDefaultTemplateForLanguage_Generic(t *testing.T) {
 		t.Fatalf("SchemaVersion = %q; want %q", tpl.SchemaVersion, SchemaVersionV1)
 	}
 
-	// Generic template's load-bearing distinguishing feature vs default-go:
+	// Generic template's load-bearing distinguishing feature vs till-go:
 	// zero agent_bindings (per F.2.2 acceptance criterion #2). If the
-	// resolver mistakenly routed lang="" to default-go.toml this assertion
-	// would fail because default-go ships 12 agent bindings.
+	// resolver mistakenly routed lang="" to till-go.toml this assertion
+	// would fail because till-go ships 12 agent bindings.
 	if got := len(tpl.AgentBindings); got != 0 {
-		t.Fatalf("len(AgentBindings) = %d; want 0 (lang=\"\" must route to default-generic.toml; default-go ships 12 bindings)", got)
+		t.Fatalf("len(AgentBindings) = %d; want 0 (lang=\"\" must route to default-generic.toml; till-go ships 12 bindings)", got)
 	}
 }
 
 // TestLoadDefaultTemplateForLanguage_Go asserts that the `"go"` language
 // axis (the only currently-shipping non-empty closed-enum value per the
-// Q1 deferral of FE) resolves to `builtin/default-go.toml` and parses
+// Q1 deferral of FE) resolves to `builtin/till-go.toml` and parses
 // cleanly through the full validation chain.
 //
 // Drop 4c.5 droplet F.1.3 acceptance criterion #3 + #8. The
@@ -916,7 +920,7 @@ func TestLoadDefaultTemplateForLanguage_Generic(t *testing.T) {
 // regression in the resolver-to-Go-file routing immediately surfaces.
 //
 // The Go-distinguishing assertion is the 12 agent bindings — the
-// generic file ships zero, default-go ships 12. The bindings count is
+// generic file ships zero, till-go ships 12. The bindings count is
 // thus the cleanest discriminator without baking content drift into the
 // test.
 func TestLoadDefaultTemplateForLanguage_Go(t *testing.T) {
@@ -935,7 +939,7 @@ func TestLoadDefaultTemplateForLanguage_Go(t *testing.T) {
 	// mistakenly routed lang="go" to default-generic.toml this
 	// assertion would fail.
 	if got, want := len(tpl.AgentBindings), len(allKinds); got != want {
-		t.Fatalf("len(AgentBindings) = %d; want %d (lang=\"go\" must route to default-go.toml; generic ships 0 bindings)", got, want)
+		t.Fatalf("len(AgentBindings) = %d; want %d (lang=\"go\" must route to till-go.toml; generic ships 0 bindings)", got, want)
 	}
 }
 

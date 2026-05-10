@@ -156,7 +156,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W5.D1 — Rename `default-go.toml` → `till-go.toml` (file move + embed.go + caller audit)
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/templates/builtin/till-go.toml` (RENAMED from `default-go.toml`), `internal/templates/embed.go` (//go:embed list + `LoadDefaultTemplateForLanguage` switch + `BuiltinTemplateNames`), `internal/templates/embed_test.go`, plus caller-audit edits (string literal updates only) at `internal/app/service.go`, `internal/app/service_test.go`, `internal/app/auto_generate_steward_test.go`, `internal/adapters/server/common/mcp_surface.go`, `internal/adapters/server/mcpapi/extended_tools.go` per `RESEARCH/CASCADE_ENFORCEMENT_AND_CONTEXT_PRELOAD.md` §C audit + ROUND-2 HF6 regenerated audit (caller list verified independently in ROUND-3 via `git grep "default-go.toml" cmd/ internal/` against HEAD `f32b9d8`; over-claimed `internal/app/auto_generate_steward.go` and `internal/app/template_service.go` REMOVED — both have zero `default-go.toml` refs at HEAD; load-bearing sites: `embed.go:34` directive, `embed.go:136-138` resolver switch, `embed.go:178` `BuiltinTemplateNames` literal, `internal/app/service_test.go:6534` fixture).
 - **Packages:** `internal/templates`, `internal/app` (caller audit), `internal/adapters/server/mcpapi` (caller audit).
@@ -330,7 +330,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W6.D5 — `README.md` pointer additions to new docs
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; doc-only — `Irreducible: true`)
 - **Paths:** `README.md` (existing — pointer additions only).
 - **Packages:** none.

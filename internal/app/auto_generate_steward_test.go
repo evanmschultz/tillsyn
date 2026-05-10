@@ -15,7 +15,8 @@ import (
 // seam with the supplied closure for the duration of the test, restoring
 // the previous seam on cleanup. Tests use a hand-built Template so the
 // auto-generator's behavior is exercised without depending on the embedded
-// default-go.toml / default-generic.toml content drift.
+// till-go.toml / default-generic.toml content drift (Go builtin rebadged
+// from `default-go.toml` to `till-go.toml` in Drop 4c.6 W5.D1).
 //
 // Drop 4c.5 droplet F.2.4 signature shift: the seam now takes a single
 // `lang string` argument (the project's `Language` axis) so the production
