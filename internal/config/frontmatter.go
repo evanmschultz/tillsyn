@@ -69,12 +69,12 @@ var frontmatterModelKey = "model"
 // short-circuit path.
 //
 // When EITHER flag is true, the helper:
-//   1. Parses frontmatter into a *yaml.Node tree.
-//   2. Walks the root MappingNode's Content slice (alternating key/value
-//      pairs) and drops the targeted top-level keys. Nested mappings whose
-//      keys happen to be named `model` / `tools` are NOT touched — only the
-//      root level is in scope per PLAN.md "constraint (high)".
-//   3. Re-encodes the modified tree via yaml.Marshal.
+//  1. Parses frontmatter into a *yaml.Node tree.
+//  2. Walks the root MappingNode's Content slice (alternating key/value
+//     pairs) and drops the targeted top-level keys. Nested mappings whose
+//     keys happen to be named `model` / `tools` are NOT touched — only the
+//     root level is in scope per PLAN.md "constraint (high)".
+//  3. Re-encodes the modified tree via yaml.Marshal.
 //
 // Returns the modified frontmatter string and a nil error on success. On
 // malformed YAML, returns ("", error) where the error message includes the
