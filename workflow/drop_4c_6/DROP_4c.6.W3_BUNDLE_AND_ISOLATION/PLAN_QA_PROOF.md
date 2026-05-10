@@ -43,3 +43,58 @@ The plan-shape is sound: 6 droplets, correct package boundaries, correct serial 
 ## 4. Hylla Feedback
 
 N/A — this review touched only Go files committed pre-W3 work-in-progress AND markdown plan / blockers / research artifacts. Hylla coverage was not exercised: the load-bearing reads were direct file Reads on `cli_adapter.go` (HF4 anchor verification at line 102), `render.go` (D2 stub anchor at line 340 + Render exit at line 178 + doc-comment block at lines 307-319), `env.go` (D4 baseline at lines 37-58 + binding loop at 95-101), `frontmatter.go` (D3 helper at line 89), `templates/embed.go` (the existing `DefaultTemplateFS` discovery — load-bearing for Finding 1.1). The load-bearing finding (1.1) needed me to recognize that an existing embed.FS in a SIBLING package was the intended consumer; Hylla might have surfaced this faster via `hylla_search` for `embed.FS` symbols across `internal/templates`, but the file-read path was direct enough that the miss-vs-fallback question doesn't apply here. No misses to log.
+
+---
+
+## Round 2 Verdict
+
+**Reviewer:** L2 plan-QA-proof agent (round 2)
+**Plan under review:** `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md` (round-2 in-place edit)
+**Date:** 2026-05-09
+**Verdict:** **PASS_WITH_FINDINGS** (W3-FF1, W3-FF2, W3-FF5 fully RESOLVED; W3-FF3 PARTIALLY_RESOLVED; W3-FF4 RESOLVED-BUT-FORWARD-DEP; one new HIGH round-2 finding W3-PF1 on existing-test contract preservation)
+
+### Round-1 Finding Resolution
+
+- **W3-FF1 [HIGH] — D2 consumes `templates.DefaultTemplateFS` (no render-package-local `//go:embed`)** — **RESOLVED**.
+  - Evidence: PLAN.md line 105 + line 120 + line 129 lock the seam to `templates.DefaultTemplateFS` via `fs.ReadFile(templates.DefaultTemplateFS, "builtin/agents/<group>/<basename>")`; KindPayload line 133 explicitly notes "NO render-package-local `//go:embed`". Verified at `internal/templates/embed.go:104` (the `var DefaultTemplateFS embed.FS` declaration; the plan cites :101 which is close enough — minor cite drift, NIT). 21 placeholder paths confirmed in the directive list (`embed.go:77-103`).
+  - **Acyclicity verified** — but the plan's reasoning prose is imprecise. PLAN.md line 105 says "templates leaf-imports stdlib only"; line 130 repeats. **This is INACCURATE** — `internal/templates` imports `github.com/evanmschultz/tillsyn/internal/domain` (`catalog.go:4`, `load.go:17`) AND `github.com/pelletier/go-toml/v2` (`embed.go:8`, `load.go:15`). Acyclicity holds via different reasoning: `templates` does not reach back into `dispatcher` or `render`; `dispatcher` already imports `templates` (`binding_resolved.go:6`); adding `render → templates` is a fan-in, not a cycle. NIT-severity prose imprecision in a load-bearing decision block — does not rise to a finding given the conclusion is correct.
+
+- **W3-FF2 [medium] — D3 strip predicate is `*binding.Model != ""` not `binding.Model != nil`** — **RESOLVED**.
+  - Evidence: PLAN.md lines 143, 163, 169 lock `stripModel = binding.Model != nil && *binding.Model != ""`. Test at line 153 covers the empty-string-pointer-target case (`binding.Model = ptr("")`); line 153 also adds a defensive `nil` table case for hardening. Verified at `internal/app/dispatcher/binding_resolved.go:170-171` — `resolveStringPtr`'s no-override path is `v := rawValue; return &v` so `BindingResolved.Model` is NEVER nil after `ResolveBinding`. The empty-string predicate is the correct discriminator.
+
+- **W3-FF3 [medium] — D5 Signal C redesigned to positive-signal (role-section header)** — **PARTIALLY_RESOLVED**.
+  - Evidence: PLAN.md line 224 specifies `"# Section 0"` OR `"## Role"` markers. The negative-blacklist anti-pattern (Signal C as "F.7.3b stub-key-phrase absent") is removed — that part of the redesign is RESOLVED.
+  - **But the cited markers don't match what W1.D1 ships.** Read of `internal/templates/builtin/agents/till-go/builder-agent.md` (and `planning-agent.md` and `till-gen/builder-agent.md`) — every placeholder body is `# PLACEHOLDER — substantive content lands in Drop 4c.8 W4` with no `# Section 0` and no `## Role` marker. The plan provides an escape hatch ("if the actual placeholder convention differs, sub-planner picks the actual marker present in the placeholders and routes the choice through this droplet's authoring decision") — **this reintroduces the same sub-planner-discretion ROUND-1 falsification 1.5 attacked**. Locking-at-plan-time is the doctrine; punting-to-build-time fails it.
+  - Trace: D5's validator wires in W3 (this drop). Sub-planner picks `# PLACEHOLDER` to satisfy W1.D1 → post-W4 (Drop 4c.8) when bodies say `# Section 0`, validator fails on legitimate W4 bodies. Or sub-planner picks all three markers (`# Section 0` OR `## Role` OR `# PLACEHOLDER`) → spec-extension at build time. Both paths violate plan-time-lock.
+  - Severity: medium (escape hatch leaves the same hole as round 1; not HIGH because the build-QA round will catch it within W3, not after).
+
+- **W3-FF4 [medium] — D5 RiskNote calibration claim removed; W4 prompt-length floor accepted** — **RESOLVED-BUT-FORWARD-DEP**.
+  - Evidence: PLAN.md line 240 explicitly removes the calibration argument ("the prior ROUND-1 RiskNote claim that 'Signal C mitigates short-body false positives on Signal A' was logically incoherent and is REMOVED") and pins the >200-char floor as ACCEPTED constraint. Local-to-this-plan piece RESOLVED.
+  - **W4 propagation is forward-only.** W4 lands in Drop 4c.8 (per L1 PLAN.md line 15: "W4-A/B/C/D substantive prompt content (Drop 4c.8)"). This drop's L1 PLAN.md has no W4 row to anchor the constraint into. The plan claims "propagated to the W4 (4c.8) prompt-authoring contract" — verifiable only when Drop 4c.8 reads this L2 plan-QA verdict. Weak guarantee, but acceptable as a forward-dependency in the documented out-of-scope-for-this-drop framing.
+  - **W1.D1 placeholders body length** — direct measurement: `wc -c` on `till-go/builder-agent.md` returns 385 bytes; frontmatter ≈ 147 bytes; body ≈ 238 bytes. **Above the 200 floor by 38 bytes** — Signal A passes for placeholders. Signal C fails (W3-FF3 issue, separate). So the calibration math holds for placeholders even pre-W4.
+
+- **W3-FF5 [medium] — D2 `<group>` derivation uses `path.Dir` (slash-aware), not `filepath.Dir`** — **RESOLVED**.
+  - Evidence: PLAN.md line 102 + line 121 + line 128 lock `path.Dir` (slash-aware) explicitly. `go doc path.Dir` confirms behavior: empty input → `"."`; `"till-gdd/x.md"` → `"till-gdd"`; `"foo.md"` → `"."` → fallback to `till-go`. The plan handles empty case explicitly BEFORE calling `path.Dir`, then post-`path.Dir` `"."` triggers the malformed-fallback rule. All enumerated cases trace correctly.
+
+### New Round-2 Findings
+
+- **W3-PF1 [HIGH] [Bucket: contract-preservation / shipped-but-not-wired]** — D2/D3 do NOT preserve the existing test contract for per-spawn `allowedTools:` / `disallowedTools:` frontmatter injection.
+  - Evidence: existing test `TestRenderAgentFileFrontmatter` in `internal/app/dispatcher/cli_claude/render/render_test.go:331-364` asserts the rendered agent file contains `"allowedTools: Read, Grep"` AND `"disallowedTools: WebFetch, Bash(curl *)"` (lines 356-357). The CURRENT `assembleAgentFileBody` at `render.go:340-364` builds these per-spawn from `binding.ToolsAllowed` / `binding.ToolsDisallowed` (lines 349-358).
+  - Post-D2: body is read from disk / embedded FS; embedded MDs only carry `name:` + `description:` frontmatter (L1 plan line 230: "frontmatter is `name` + `description` ONLY — no `model:`, no `tools:`, no `allowedTools:`, no `disallowedTools:`"). Post-D3: only stripping happens, no addition. Net: rendered file post-D2/D3 lacks `allowedTools:` / `disallowedTools:` lines.
+  - Trace: builder runs D2, runs D3, runs `mage test-pkg ./internal/app/dispatcher/cli_claude/render` per acceptance line 110 — `TestRenderAgentFileFrontmatter` asserts `allowedTools:` substring → fails → D2 cannot pass build-QA without either (a) updating that existing test OR (b) adding per-spawn tool-gating injection logic to D3 (or D2) that wasn't specified.
+  - Plan acknowledges existing test in D4's RiskNote (line 192: "existing tests in `env_test.go` and `adapter_test.go` (whichever tests env shape) MUST continue to pass") for env vars, but does NOT do the same audit for the render package's existing tool-gating tests.
+  - Fix hint: extend D3's acceptance with a "post-strip frontmatter MUST also INJECT per-spawn `allowedTools:` / `disallowedTools:` from `binding.ToolsAllowed` / `binding.ToolsDisallowed` after the strip step" bullet, with an explicit existing-test preservation clause. OR, lock D2's resolver output post-condition as "frontmatter must contain `name:`, `description:`, plus `allowedTools:` and `disallowedTools:` derived from binding when those binding lists are non-empty". Either fix maintains the layer-A tool-gating contract (memory §5).
+
+### Verdict Rationale
+
+The round-2 plan substantially closes the round-1 gap. W3-FF1, W3-FF2, W3-FF5 are cleanly resolved with grounded evidence. W3-FF4 resolves the local-to-this-plan piece and acceptably defers the W4 propagation to a forward dependency. W3-FF3 has the negative-blacklist redesigned away but the locked markers don't match W1.D1's actual placeholder shape, and the escape hatch reintroduces sub-planner discretion — partially resolved.
+
+The round-2 NEW finding W3-PF1 is HIGH because it predicts a deterministic build-QA red on `TestRenderAgentFileFrontmatter` that the plan as written does not anticipate — the plan's "no existing test regresses" framing in D1 (line 73) is correctly scoped to the dispatcher package; the equivalent audit for the render package is missing.
+
+Recommended next round: planner re-authors D5 Signal C marker list to include `# PLACEHOLDER` (or removes Signal C from the W3-shipped validator, deferring it to Drop 4c.8 W4 alongside substantive prompts); and D3 acceptance gains a per-spawn tool-gating injection bullet with explicit existing-test-preservation clause.
+
+### Hylla Feedback (Round 2)
+
+N/A for symbol resolution — review touched the same Go files as round 1 plus production seams (`internal/templates/embed.go`, `internal/templates/load.go`, `internal/templates/catalog.go` for import-cycle reasoning) plus three placeholder MDs. Direct file Reads were sufficient. No Hylla queries forced a fallback in this round.
+
+Ergonomic gripe (carried from round 1 + reinforced this round): `Bash` permission gate denies `grep`, `awk`, `find` against the orchestrator's plan dir, forcing per-file Reads for symbol enumeration. Workable for ~300-line plans + ~800-line test files, expensive for larger surfaces. Falls into "acceptable tool discipline tradeoff" rather than a fileable Hylla issue.
