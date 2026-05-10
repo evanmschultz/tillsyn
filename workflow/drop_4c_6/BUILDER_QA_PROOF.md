@@ -436,3 +436,94 @@ The till- prefix family is now complete (`till-gen` + `till-go`); W5.D3 next han
 ### Hylla Feedback
 
 None — Hylla answered everything needed. Verification used `git status --porcelain` for rename-detection, `git grep "default-generic.toml"` for HF5 audit (the canonical syntactic-grep tool the spec named), `Read` against the embed.go / extended-paths sites / PLAN.md / BUILDER_WORKLOG.md, plus `mage test-pkg` against the 5 named packages. Hylla's strength (committed-code semantic search) is not the right tool for "find every `default-generic.toml` string occurrence + verify stub-vs-want consistency at named lines" — that's a syntactic/filesystem verification surface, which `git grep` + `Read` answer authoritatively. No Hylla miss to report.
+
+---
+
+## Droplet 4c.6.W2.D3a — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent, build-QA-proof axis).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W2.D3a — cmd/till/init_cmd.go skeleton + register in main.go + help-entry`.
+**Parent kind:** `build`.
+**Artifact under review:** `cmd/till/init_cmd.go` (NEW, 58 LOC), `cmd/till/init_cmd_test.go` (NEW, 43 LOC), `cmd/till/main.go` (modified L1905-1906), `cmd/till/help.go` (modified L377-392).
+**Spec sources:** `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` lines 77-101 (W2.D3a row); `workflow/drop_4c_6/BUILDER_WORKLOG.md` lines 917-1092 (Round 1 entry).
+
+### Findings
+
+(none — see Summary)
+
+### Missing Evidence
+
+(none — every acceptance bullet maps to a concrete file location verified below.)
+
+#### Acceptance trace — section A through F
+
+**A. Test correctness — CONSUMER-TIE TEST CONTRACT (W2-FF6 ROUND-2).**
+
+Both new tests invoke the end-to-end `run(...)` form, NOT `cmd.RunE(...)` direct or `runInitTUI(...)` direct:
+
+- `init_cmd_test.go:18` — `err := run(context.Background(), []string{"--app", "tillsyn-init", "init"}, &out, io.Discard)` for the bare-invocation case.
+- `init_cmd_test.go:35` — `err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", "{...}"}, &out, io.Discard)` for the JSON-payload case.
+
+The doc-comment on each test pins the contract explicitly: `// CONSUMER-TIE TEST CONTRACT (W2-FF6 ROUND-2)`. The tests assert error-substring containment via `strings.Contains(err.Error(), want)` against the verbatim stub strings — anchored on the exact wording D3b/D4 builders will need to grep for. The TDD-RED step the builder describes in worklog lines 981-986 (`unknown command "init" for "till"... Did you mean this? init-dev-config`) only surfaces under end-to-end `run(...)` invocation; an `RunE` direct call would pass against the stub without ever exercising the registration. This confirms the contract is load-bearing in practice, not just on paper.
+
+**B. Skeleton dispatch correctness — verbatim stub-error strings.**
+
+`init_cmd.go:38-46`:
+- L38-41: `payload, err := cmd.Flags().GetString("json")` — flag is read, error propagated.
+- L42: `if strings.TrimSpace(payload) != "" {` — non-empty check (whitespace-trimmed).
+- L43: `return errors.New("till init: JSON parse not yet wired (W2.D3b)")` — verbatim per acceptance bullet.
+- L45: `return runInitTUI(stdout, rootOpts)` — empty/no-flag path.
+
+`init_cmd.go:54-58`:
+- `runInitTUI` returns `errors.New("till init: TUI walk not yet wired (W2.D4)")` — verbatim per acceptance bullet.
+- `_ = stdout; _ = opts` blank-identifier discards keep the contract visible to D4.
+
+`--json` flag registration at `init_cmd.go:48`: `cmd.Flags().String("json", "", "Run init in headless mode with a JSON payload (e.g. --json '{\"name\":\"foo\",\"group\":\"till-go\",\"mcp\":false}')")`. Default `""`; usage string includes a worked example.
+
+Both stub error strings match the acceptance-bullet text exactly to the character (parenthetical-tag form, capitalization, colon spacing). D3b and D4 builders can grep for the literal substring `JSON parse not yet wired (W2.D3b)` and `TUI walk not yet wired (W2.D4)` and find the unique replacement site without ambiguity.
+
+**C. Registration — `main.go`.**
+
+`main.go:1905`: `initCmd := newInitCommand(stdout, rootOpts)` — built immediately after the `initDevConfigCmd` literal block ending at line 1903.
+
+`main.go:1906`: `rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd, initCmd)` — `initCmd` appended at the end of the AddCommand argument list. The mage-gate result below proves cobra resolves `till init` to this registration: a missing AddCommand line would surface the same `unknown command "init"` error the builder hit during TDD-RED.
+
+**D. Help entry — `help.go`.**
+
+`help.go:377-392` (the `"till init"` entry in `commandHelpSpecs`):
+- Long description (8 lines, multi-paragraph, names the project-init responsibilities: agents copy, agents.toml, .gitignore, optional .mcp.json, project DB record + re-run safety invariant).
+- Example block with two lines: `"  till init"` (TUI form) and `"  till init --json '{\"name\":\"my-project\",\"group\":\"till-go\",\"mcp\":true}'"` (headless form).
+
+Structurally analogous to the existing `"till init-dev-config"` entry at `help.go:393-406`: both use `strings.TrimSpace(...)` for Long body, both use a flat `Example: []string{...}` slice. The new entry is positioned alphabetically immediately above `"till init-dev-config"` (lines 377-392 then 393-406) — cosmetic for readers, irrelevant for runtime since the map is keyed by `cmd.CommandPath()` not source order (worklog line 995-1001 design note).
+
+**E. mage gate.**
+
+`mage test-pkg ./cmd/till` — **GREEN, 255/255 tests pass, 7.88s.**
+
+```
+[PKG PASS] github.com/evanmschultz/tillsyn/cmd/till (7.88s)
+Test summary
+  tests: 255
+  passed: 255
+  failed: 0
+  skipped: 0
+```
+
+Pre-D3a baseline (worklog memory): 253 tests in `./cmd/till`. Post-D3a: 255 (the 2 new CONSUMER-TIE tests). The +2 delta matches D3a's declared test additions exactly — no other test-count drift. Builder claimed `mage test-func` GREEN only per the agent-file rule that builders skip `mage test-pkg` / `mage ci`; this QA-proof pass exercises the full-package gate the builder deferred. `TestRunRootHelp` (rich-help table-test) and `TestRunSubcommandHelp` (47 subtests) both GREEN within this 255 — those tests inspect the registered-commands list against a hardcoded fixture, and the worklog correctly notes the fixture lists `init-dev-config` only (the assertion surface is "EXISTING items remain visible," not "exact match," so a new `init` command appearing in root help does not regress them).
+
+**F. State flip — `PLAN.md`.**
+
+`workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md:81`: `**State:** done` — confirmed.
+
+### Summary
+
+**Verdict:** `PASS`.
+
+D3a's load-bearing contract — ship a skeleton `cmd/till/init_cmd.go` with `newInitCommand` builder fn, wire `--json` flag, dispatch `RunE` to two verbatim stub-error returns, register the command via `main.go`'s `rootCmd.AddCommand(...)`, add the `"till init"` rich-help entry, and prove the wiring via end-to-end CONSUMER-TIE smoke tests — is fully satisfied. Diff scope hews strictly to the declared 4 paths; no drive-by edits to `init-dev-config` or any sibling. Stub-error strings are verbatim character-for-character against the acceptance bullet wording, so D3b and D4 builders can grep without ambiguity. The CONSUMER-TIE contract is honored under the W2-FF6 ROUND-2 inline-edit pin, and the TDD-RED step the builder describes (`unknown command "init"`) confirms the contract was load-bearing in practice, not just nominally observed.
+
+`mage test-pkg ./cmd/till` returns 255/255 GREEN — full-package gate the builder skipped per agent rule. State flip `todo → done` confirmed at `PLAN.md:81`. Help-entry structure mirrors the existing `init-dev-config` block. The droplet should advance to closeout; D3b is now unblocked on `init_cmd.go`'s `--json` parser stub, with D4 unblocked on `runInitTUI`'s body.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. Verification used `Read` against the four production files + the worklog + the W2 plan, plus `mage test-pkg ./cmd/till` for the build gate. Hylla wasn't queried because every artifact under review is a freshly-landed change in this drop, which `Read` answers directly without staleness risk. The builder's worklog already documented two Hylla misses against snapshot 5 (the generic `run` keyword + the `TestRunInitDevConfigCreatesDebugConfig` test name lookup) — those are recorded in worklog lines 1046-1092 and need no duplication here.

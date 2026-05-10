@@ -78,7 +78,7 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 **ROUND-2 split (W2-FF1):** the round-1 D3 droplet touched 3 production files (`init_cmd.go` + `main.go` + `help.go`) at the under-decomposed smell threshold. Round 2 splits it into D3a (this droplet — skeleton + register + help-entry; no JSON parser) and D3b (JSON parser + table-test, `init_cmd.go`-only). D3b is `Blocked by: D3a`.
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `cmd/till/init_cmd.go` (NEW — skeleton only, no JSON parser body)
   - `cmd/till/init_cmd_test.go` (NEW — minimal smoke test that confirms `--json ""` (empty) and bare invocation both route through `RunE` and return the expected D3a-stage stub errors)

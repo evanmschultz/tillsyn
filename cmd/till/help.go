@@ -374,6 +374,22 @@ This is the resolved runtime paths view for the current invocation.
 			"  till --db /tmp/tillsyn.db --config /tmp/tillsyn.toml paths",
 		},
 	},
+	"till init": {
+		Long: strings.TrimSpace(`
+Initialize the current working directory as a Tillsyn project. Copies the
+agent .md files for the chosen group into <project>/.tillsyn/agents/, writes
+agents.toml from the shipped example, ensures agents.local.toml is gitignored,
+optionally registers the project with Claude Code via .mcp.json, and creates
+the project record in the local Tillsyn database.
+
+Run interactively (TUI walk) or pass --json to run headlessly. Re-runs are
+safe — existing files are skipped, never overwritten.
+`),
+		Example: []string{
+			"  till init",
+			"  till init --json '{\"name\":\"my-project\",\"group\":\"till-go\",\"mcp\":true}'",
+		},
+	},
 	"till init-dev-config": {
 		Long: strings.TrimSpace(`
 Create the dev config file when missing and ensure the logging level is set to

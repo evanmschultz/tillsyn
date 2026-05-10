@@ -912,3 +912,181 @@ semantic search) is not the right tool for "find every
 `default-generic.toml` string occurrence" — that's a syntactic grep
 job, which `git grep` handles directly.
 
+---
+
+## Droplet 4c.6.W2.D3a — Round 1
+
+**Builder:** go-builder-agent (subagent, sonnet).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W2.D3a — cmd/till/init_cmd.go skeleton + register in main.go + help-entry`.
+
+### Files touched
+
+- `cmd/till/init_cmd.go` — NEW. Exports `newInitCommand(stdout io.Writer,
+  rootOpts rootCommandOptions) *cobra.Command` returning a `*cobra.Command`
+  with `Use: "init"`, `cobra.NoArgs`, short + long help, `Example` block.
+  `--json` flag wired (`String`, default `""`); `RunE` reads the flag, returns
+  the JSON-stub error when payload is non-empty (trimmed), otherwise calls
+  `runInitTUI` which itself returns the TUI-stub error. Skeleton-only per the
+  D3a contract — D3b lands the JSON parser, D4 lands the bubbletea walk, D5
+  lands the file-copy pipeline. ~58 lines.
+- `cmd/till/init_cmd_test.go` — NEW. Two CONSUMER-TIE smoke tests
+  (W2-FF6 ROUND-2 contract) that invoke `run(context.Background(),
+  []string{"--app", "tillsyn-init", "init", ...}, &out, io.Discard)`
+  end-to-end (NOT `cmd.RunE` or `runInitTUI` directly):
+    - `TestInit_BareInvocation_ReturnsTUIStubError` — bare `init` returns the
+      `"till init: TUI walk not yet wired (W2.D4)"` error.
+    - `TestInit_JSONInvocation_ReturnsJSONStubError` — `init --json '{...}'`
+      returns the `"till init: JSON parse not yet wired (W2.D3b)"` error.
+- `cmd/till/main.go` — modified. Built `initCmd := newInitCommand(stdout,
+  rootOpts)` immediately after the `initDevConfigCmd` literal block (line
+  1903 area), then added `initCmd` to the trailing
+  `rootCmd.AddCommand(serveCmd, ..., initDevConfigCmd, initCmd)` call. Two-
+  line diff. The `initDevConfigCmd` literal stays in place per D8's
+  responsibility.
+- `cmd/till/help.go` — modified. Added a new `"till init"` entry to the
+  `commandHelpSpecs` map immediately ABOVE the existing `"till init-dev-
+  config"` entry (alphabetical: `"till init"` < `"till init-dev-config"`).
+  Long-form description names the project-init responsibilities (agents
+  copy, agents.toml, .gitignore, optional .mcp.json, project DB record) and
+  the re-run-safety invariant. Two `Example` lines covering bare TUI and
+  `--json` headless invocation.
+- `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` — flipped W2.D3a
+  `**State:**` line `todo → in_progress` at start of round, then
+  `in_progress → done` at end.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — appended this Round 1 entry.
+
+### Design decisions
+
+- **Builder-function shape over inline literal.** Existing sibling commands
+  in `main.go` (e.g. `initDevConfigCmd`) use inline `&cobra.Command{...}`
+  literals built directly inside `run(...)`. The planner explicitly named
+  the file `cmd/till/init_cmd.go` (NEW) and showed the build pattern
+  `initCmd := newInitCommand(...)`, so the new file exports a builder
+  function rather than continuing the inline pattern. Rationale: D4–D7
+  will grow the `init` body substantially (TUI walk, JSON parser, file-copy
+  pipeline) — keeping that out of `main.go` from the start avoids a later
+  same-file disruption when the body lands. The builder fn signature
+  matches what the planner pinned: `newInitCommand(stdout io.Writer,
+  rootOpts rootCommandOptions) *cobra.Command`.
+- **`--json` flag registered, parser body STUB.** Per D3a acceptance: the
+  flag must be wired so `cmd.Flags().GetString("json")` succeeds, but the
+  parser body itself is owned by D3b. D3a's `RunE` reads the flag, checks
+  for non-empty trimmed payload, and routes: empty → `runInitTUI` →
+  TUI-stub error; non-empty → JSON-stub error. Both stub error strings
+  exactly match the acceptance bullet's prescribed text — `"till init:
+  JSON parse not yet wired (W2.D3b)"` and `"till init: TUI walk not yet
+  wired (W2.D4)"`. Future droplets replace each stub-return with the real
+  body; the dispatch shape stays.
+- **TDD RED→GREEN cycle.** Step sequence: (1) wrote
+  `init_cmd_test.go` with both consumer-tie tests against
+  not-yet-existent symbols → `mage test-func ./cmd/till
+  TestInit_BareInvocation_ReturnsTUIStubError` returned RED with the
+  expected message `unknown command "init" for "till"... Did you mean
+  this? init-dev-config`. The cobra error proves the registration was
+  the missing piece, exactly the gap D3a fills. (2) Wrote `init_cmd.go`
+  + edited `main.go` to register + edited `help.go` to add the entry.
+  (3) Re-ran `mage test-func` for both test names → GREEN (2/2 pass,
+  1.96s). (4) Ran `TestRunRootHelp` (47 forms across registered-commands
+  list) → GREEN; `TestRunSubcommandHelp` (47 subtests including the
+  `init-dev-config` `--help` row) → GREEN — confirming neither the
+  registered-commands list assertion nor the subcommand-help table-test
+  noticed the new entry as a regression.
+- **Help-entry alphabetical placement.** `commandHelpSpecs` in `help.go`
+  is a Go map; iteration order is randomized at runtime, so source-line
+  position is purely cosmetic. Placed `"till init"` immediately above
+  `"till init-dev-config"` for the human reader's benefit (alphabetical
+  proximity makes the relationship visible at a glance) — but the actual
+  application via `applyCommandHelpSpecs` keys by `cmd.CommandPath()`,
+  not by source position. No behavioral risk from the placement choice.
+- **CONSUMER-TIE TEST CONTRACT honored.** The W2-FF6 ROUND-2 contract
+  requires the smoke tests to invoke `run(...)` end-to-end — NOT
+  `cmd.RunE(...)` directly, NOT `runInitTUI(...)` directly. Calling
+  unexported helpers would ship a non-wired `init` (the
+  `rootCmd.AddCommand` line in `main.go` would not be exercised). The
+  test-RED phase confirmed this contract was load-bearing: the original
+  RED was specifically `unknown command "init"`, which only an
+  end-to-end `run(...)` invocation can surface. Internal-call tests
+  would have GREEN-passed against the stubs without ever exercising
+  the registration.
+- **`runInitTUI` signature shape.** Defined as
+  `runInitTUI(stdout io.Writer, opts rootCommandOptions) error` in
+  `init_cmd.go`. D4 will replace the stub body but the signature stays.
+  The `_ = stdout; _ = opts` blank-identifier discards in the stub
+  prevent unused-parameter lint warnings while keeping the contract
+  visible to D4.
+- **Did NOT touch out-of-scope files.** Per the spawn prompt's "Edit
+  ONLY declared paths" rule, restricted edits to the four files named:
+  `cmd/till/init_cmd.go` (NEW), `cmd/till/init_cmd_test.go` (NEW),
+  `cmd/till/main.go` (modify register), `cmd/till/help.go` (modify
+  help-entry). Did NOT touch `init-dev-config` references in
+  `main_test.go` (those stay until D8) or any sibling builder/QA
+  worklog content.
+
+### Mage targets run
+
+- `mage test-func ./cmd/till TestInit_BareInvocation_ReturnsTUIStubError|
+  TestInit_JSONInvocation_ReturnsJSONStubError` — RED before implement
+  (cobra `unknown command "init"`), GREEN after (2/2 pass, 1.96s).
+- `mage test-func ./cmd/till TestRunRootHelp` — GREEN (1/1 pass) — the
+  hard-coded registered-commands list does NOT name `"init"` (only
+  `"init-dev-config"`), so the new command does not need to be added
+  to the assertion list. The test asserts the EXISTING items remain
+  visible; new commands appearing in root help do not regress that
+  test.
+- `mage test-func ./cmd/till TestRunSubcommandHelp` — GREEN (47/47
+  subtests pass), including the `init-dev-config` `--help` row.
+- `mage format` — GREEN (formatted Go sources).
+- `mage ci` — NOT run by this builder per
+  `~/.claude/agents/go-builder-agent.md` agent-file rule ("never run
+  `mage test-pkg` or `mage ci` — those are QA gates"). The QA pair
+  (build-qa-proof + build-qa-falsification) spawned post-build runs
+  the gate.
+
+### Hylla Feedback
+
+- **Query**: `hylla_search_keyword query="func run cmd till
+  context.Context args stdout stderr"` (with `node_type=block`,
+  `fields=["content"]`).
+- **Missed because**: the lowercase `run` symbol is too generic + the
+  match space includes every test file's `func TestRun*` plus method
+  receivers named `Run`. Hylla returned 5 results from
+  `internal/domain/` that have no `run` symbol — the keyword scorer
+  matched on `run` substrings inside docstrings ("during", "around",
+  etc.) rather than the function-name token. Default
+  `test_mode=hide_tests` also filtered out tests, which excluded the
+  `run(context.Background(), ...)` call sites in `cmd/till/main_test.go`
+  that would have anchored the lookup.
+- **Worked via**: `Read` against `cmd/till/main.go` lines 100-130
+  (found `func main()` → `run(ctx, os.Args[1:], os.Stdout, os.Stderr)`)
+  and lines 393-401 (found `func run(ctx context.Context, args
+  []string, stdout, stderr io.Writer) error`). Then
+  `Read cmd/till/main_test.go` line 450-490 confirmed the
+  end-to-end invocation form `run(context.Background(), []string{...},
+  &out, io.Discard)`.
+- **Suggestion**: when a query token is a single common word like `run`
+  / `do` / `exec`, Hylla could surface a lower-confidence "the token is
+  too generic, try `<package>.<symbol>` or pass `id_search_mode=
+  exact_full_id`" hint. Or fall back to the package-prefixed form
+  automatically when keyword scoring trips a low-information threshold.
+- **Query**: `hylla_search_keyword
+  query="TestRunInitDevConfigCreatesDebugConfig"` (with default
+  `test_mode=hide_tests`).
+- **Missed because**: Hylla's default test-mode hides tests, but the
+  test name itself is the only way to find a specific test fixture
+  shape. Re-ran with `test_mode=include_tests` → still empty (snapshot
+  5 may not include `cmd/till/main_test.go` test functions in the
+  block index, or the index keys symbols by package-path-tail-only
+  for tests).
+- **Worked via**: `Read` against `cmd/till/main_test.go` lines
+  2900-3000 to find the `TestRunInitDevConfigCreatesDebugConfig`
+  body — needed the canonical `run(ctx, []string{...}, &out,
+  io.Discard)` invocation form to mirror in the new D3a tests.
+- **Suggestion**: if the index does cover tests under
+  `test_mode=include_tests`, `cmd/till/main_test.go` test functions
+  appear to be missing from snapshot 5. Worth confirming whether
+  `cmd/`-rooted test files are excluded by an indexer rule (similar
+  to how Hylla today indexes Go only) or if this is a genuine
+  per-snapshot gap. If a per-snapshot gap, surfaces "no results for
+  test_mode=include_tests" alongside a hint that the test file may
+  not be in this snapshot's coverage.

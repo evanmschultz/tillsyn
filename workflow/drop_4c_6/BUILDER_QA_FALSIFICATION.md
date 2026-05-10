@@ -550,3 +550,99 @@ None — Hylla answered everything needed. The droplet's surface is rename-drive
 ### Hylla Feedback
 
 None — Hylla answered everything needed. The droplet's surface is rename-driven (string-literal flips + file-rename + extended-paths absorption), which is intrinsically a `git grep` job per the AC4 acceptance bullet's explicit `git grep "default-generic.toml"` verification phrase. Hylla's strength (committed-code semantic search) is not the right tool for "find every `default-generic` short-name occurrence" — that's a syntactic regex job which `git grep` handles directly. `Read` against the named declared-path files (8 files per PLAN.md:195 + 3 extended-paths sites) handled file-by-file inspection; `mage ci` exercised the full runtime contract across 25 packages. No Hylla query was attempted because the verification path is fully syntactic (regex + read + test-runner). Mirrors the builder's own Hylla-Feedback rationale at BUILDER_WORKLOG.md:962-970 and the W5.D1 falsification's same rationale at this file's line 467.
+
+---
+
+## Droplet 4c.6.W2.D3a — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, sonnet).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W2.D3a — cmd/till/init_cmd.go skeleton + register in main.go + help-entry`.
+**Artifact under attack:** `cmd/till/init_cmd.go` (NEW, 58 lines), `cmd/till/init_cmd_test.go` (NEW, 44 lines), `cmd/till/main.go` (modified: build `initCmd` + add to `rootCmd.AddCommand` line 1906), `cmd/till/help.go` (modified: added `"till init"` entry to `commandHelpSpecs` map at lines 377-392).
+
+### Counterexamples
+
+(none — empty list)
+
+### Findings (non-CONFIRMED, recorded for audit)
+
+- 1.1 [Family: cobra-wiring] [severity: low] **REFUTED — `cobra.NoArgs` matches local convention.** Builder uses `Args: cobra.NoArgs` at `init_cmd.go:36`. The sibling `init-dev-config` command at `main.go:1899` uses `Args: cobra.NoArgs` (verified by reading lines 1884-1903). Other call sites in `main.go` use `cobra.MaximumNArgs(1)` (project create at 657, project show at 694) for commands that DO accept positional args. The local convention for argless subcommands is `cobra.NoArgs`, which D3a follows. No drift.
+
+- 1.2 [Family: cobra-wiring] [severity: low] **REFUTED — no Aliases collision.** Hylla keyword search `query="Aliases initDevConfigCmd cobra command"` returned only the magefile.go `Aliases` variable (mage tool's hyphenated-target alias map at `magefile.go`); no cobra `Aliases:` field is declared anywhere in `cmd/till/`. The new `Use: "init"` cannot collide with a hidden alias because no cobra command in the tree declares one. Refuted.
+
+- 1.3 [Family: cobra-wiring] [severity: low] **REFUTED — flag retrieval is idiomatic.** `init_cmd.go:38` reads `payload, err := cmd.Flags().GetString("json")` — the idiomatic typed-getter form (NOT the non-idiomatic `cmd.Flag("json").Value.String()`). The error from `GetString` is propagated. Cobra-API discipline preserved.
+
+- 1.4 [Family: stub-error-text] [severity: low] **REFUTED — both stub error strings match the contract verbatim.** Acceptance bullet at PLAN.md line 90 prescribes `"till init: JSON parse not yet wired (W2.D3b)"` and `"till init: TUI walk not yet wired (W2.D4)"`. `init_cmd.go:43` produces `errors.New("till init: JSON parse not yet wired (W2.D3b)")`; `init_cmd.go:57` produces `errors.New("till init: TUI walk not yet wired (W2.D4)")`. Both use `errors.New` (NOT wrapped via `fmt.Errorf` with `%w`) — appropriate for sentinel-style stub errors that downstream tests substring-match on, since wrapping would risk format-string drift. The downstream D3b/D4 contract is preserved byte-for-byte. The smoke tests at `init_cmd_test.go:22-25` and `:39-42` use `strings.Contains(err.Error(), want)` substring matching, so even if a future drop wraps these errors, the consumer-tie tests stay green.
+
+- 1.5 [Family: consumer-tie] [severity: low] **REFUTED — W2-FF6 invocation form is correct.** The smoke tests at `init_cmd_test.go:18` and `:35` invoke `run(context.Background(), []string{"--app", "tillsyn-init", "init", ...}, &out, io.Discard)`. The `--app` flag is a real persistent root flag at `main.go:511` (`rootCmd.PersistentFlags().StringVar(&rootOpts.appName, "app", rootOpts.appName, "Application name for config/data path resolution")`); appName=`tillsyn-init` only affects path-resolution, not the subcommand name. The `init` token after the persistent flags is the subcommand. The pre-existing `TestRunInitDevConfigCreatesDebugConfig` at `main_test.go:2928` uses the symmetric form `[]string{"--app", "tillsyn-init", "init-dev-config"}` — D3a's invocation pattern is the same shape, validated against the same path resolver. Verified the run-tree exercises cobra registration: `mage test-func ./cmd/till TestInit_BareInvocation_ReturnsTUIStubError` GREEN (1.89s).
+
+- 1.6 [Family: help-entry-key] [severity: low] **REFUTED — `cmd.CommandPath()` resolves to `"till init"` exactly.** `applyCommandHelpSpecs` at `help.go:419-432` walks the cobra command tree and keys by `cmd.CommandPath()` (line 421). For a child of `rootCmd` (`Use: "till"` at `main.go:480`) with `Use: "init"` (at `init_cmd.go:18`), `CommandPath()` returns the parent's `Use` joined with the child's `Use` separated by a single space → `"till init"`. The `commandHelpSpecs` map key at `help.go:377` is `"till init"` (exact match). No whitespace / case-sensitivity / separator mismatch. Defensive note: if the key DID mismatch, `applyCommandHelpSpecs` silently `return`s without error (line 422-424) — the inline `Long` set in `init_cmd.go:20-31` would still apply, so the user-facing failure mode is "help text reverts to the inline default" rather than "help blows up." Belt-and-suspenders, not a bug.
+
+- 1.7 [Family: help-entry-key] [severity: low] **REFUTED — alphabetical placement is cosmetic-only.** Builder at BUILDER_WORKLOG.md:995-1001 acknowledges Go map iteration is randomized, and the placement of `"till init"` immediately above `"till init-dev-config"` in `help.go` source order is for human readability — `applyCommandHelpSpecs` keys by `cmd.CommandPath()` at runtime, not by source position. The comment is accurate; the behavior is correct.
+
+- 1.8 [Family: rich-help-content] [severity: low] **REFUTED — help-entry content is sane.** `help.go:377-392` `"till init"` block has: `Long` (lines 378-387) describing project-init responsibilities (agents-dir copy, agents.toml, .gitignore, optional .mcp.json, project DB record) and re-run-safety invariant; `Example` (lines 388-391) covering bare-TUI invocation and `--json` headless invocation. No leftover placeholder strings, no broken markdown, no copy-paste artifacts from `init-dev-config`. The content matches the SKETCH §9 init-vs-install separation (the long-form names cwd-local seeding behavior, not home-local dev-bootstrap behavior — those words are reserved for D7.5's `till install` entry).
+
+- 1.9 [Family: register-call] [severity: low] **REFUTED — `initCmd` registered at the right level.** `main.go:1905` builds `initCmd := newInitCommand(stdout, rootOpts)` immediately after the `initDevConfigCmd` literal block; `main.go:1906` adds `initCmd` as the trailing arg of the `rootCmd.AddCommand(serveCmd, mcpCmd, ..., initDevConfigCmd, initCmd)` call. `initCmd` is registered as a sibling of `initDevConfigCmd` (both children of `rootCmd`), NOT nested under `initDevConfigCmd`. The order of args to `AddCommand` does not impact help output (cobra sorts subcommands alphabetically in help text). No regression.
+
+- 1.10 [Family: adjacent-regressions] [severity: low] **REFUTED — `TestRunRootHelp` does NOT regress.** `main_test.go:476` asserts a hard-coded list of substrings present in root help (`"serve", "mcp", "auth", "project", "embeddings", "capture-state", "kind", "lease", "handoff", "export", "import", "paths", "init-dev-config"`). The list does NOT include `"init"`, but the assertion uses `!strings.Contains(output, want)` — i.e. it requires EXISTING items to remain visible, not that the list be exhaustive. New commands appearing in root help do NOT trigger this assertion. `mage ci` confirms `TestRunRootHelp` GREEN. No regression. (Audit-trail observation: if a future drop wants to extend the assertion to include `"init"`, that's a small follow-on edit; not load-bearing for D3a.)
+
+- 1.11 [Family: adjacent-regressions] [severity: low] **REFUTED — `TestRunSubcommandHelp` does NOT regress, but coverage gap noted.** `main_test.go:498-736` is a hard-coded `cases` table iterated by name (line 740). The table does NOT include a row for `"init"`. The test assertion logic only iterates the named cases — it does NOT dynamically discover all registered subcommands. Therefore: (a) the test still passes (no row to fail) — `mage ci` GREEN confirms; (b) **the new `till init` rich-help block is NOT exercised by any case in the hardcoded table.** A future regression where the `"till init"` map key drifts (e.g. typo, case mismatch, whitespace) would not be caught by `TestRunSubcommandHelp`. Routing this as an **Unknown** rather than a counterexample because: (i) the inline `Long` in `init_cmd.go:20-31` provides a fallback (per Finding 1.6 defensive note), so the user-visible failure mode is graceful degradation not breakage; (ii) the planner's D3a acceptance does NOT name a `TestRunSubcommandHelp` row for `init` — extending the table is out of scope for D3a; (iii) D3b/D4/D5/D6/D7 will continue building out `init`'s body and a natural test extension can land alongside one of those droplets. Recommended follow-up: **add a `"init"` row to `TestRunSubcommandHelp`'s `cases` table** in a future droplet (likely D7 when the success message + rich help fully stabilize). Audit-trail finding, not a counterexample.
+
+- 1.12 [Family: yagni] [severity: low] **REFUTED — stub error text uses `errors.New`, not wrapped.** Both stubs use `errors.New(...)` (lines 43, 57). No premature wrapping with `fmt.Errorf("%w", ...)` for stub-stage messages. The downstream consumer-tie tests substring-match the literal text — `errors.New` is the right call here. When D3b/D4 replace these with real error paths, wrapping is welcome (they'll be wrapping real underlying errors); for stubs, plain is correct.
+
+- 1.13 [Family: file-gating] [severity: low] **REFUTED — edits stay within declared `paths`.** PLAN.md:82-86 declares D3a's paths: `cmd/till/init_cmd.go` (NEW), `cmd/till/init_cmd_test.go` (NEW), `cmd/till/main.go` (modify), `cmd/till/help.go` (modify). Builder edited exactly these four files (BUILDER_WORKLOG.md:923-957). No `main_test.go` edits (those are D8's responsibility per the planner's gating); no out-of-package edits. Clean gating discipline.
+
+- 1.14 [Family: yagni] [severity: low] **REFUTED — skeleton stays minimal.** `init_cmd.go` is 58 lines: package + imports + `newInitCommand` (35 lines including help text) + `runInitTUI` stub (8 lines). No premature abstractions, no helper functions that D3b–D7 don't need. The `runInitTUI` signature `(stdout io.Writer, opts rootCommandOptions) error` is the minimum surface D4 needs to fill. The `_ = stdout; _ = opts` blank-identifier pattern at lines 55-56 prevents unused-parameter lints without introducing dead code. Skeleton-grade only.
+
+- 1.15 [Family: hidden-deps] [severity: low] **REFUTED — no `init()` side effects, no package-level state added.** `init_cmd.go` declares only the `newInitCommand` and `runInitTUI` functions. No `init()` block, no package-level vars or const, no import-side-effect imports. Test file similarly clean. No global state introduced by D3a.
+
+- 1.16 [Family: error-handling] [severity: low] **REFUTED — flag retrieval error is propagated.** `init_cmd.go:39-41` returns the error from `cmd.Flags().GetString("json")` directly, no swallowing. `errors.New(...)` at lines 43 and 57 are sentinel-creating, not swallowing. No `_ = err` patterns, no logged-but-not-returned errors.
+
+- 1.17 [Family: concurrency] [severity: n/a] No concurrency added. Cobra `RunE` is a serial dispatch; the `runInitTUI` stub is synchronous. No goroutines, no channels, no shared state, no context-cancellation paths to exercise yet (D4's bubbletea walk will introduce a `tea.Program`, but D3a is pre-walk).
+
+- 1.18 [Family: raw-go-or-mage-install] [severity: low] **REFUTED — no raw `go` / `mage install` violations.** `BUILDER_WORKLOG.md:1027-1044` records mage targets only: `mage test-func`, `mage format`. No `go test`, `go build`, `go vet`, no `mage install`. Builder explicitly defers `mage ci` to the QA pair per agent-file rule. Disciplined.
+
+### Per-family attack-result table
+
+| Family                      | Verdict        | Notes                                                                 |
+| --------------------------- | -------------- | --------------------------------------------------------------------- |
+| cobra-wiring (1.1–1.3)      | REFUTED        | NoArgs matches convention, no Aliases, GetString idiomatic.           |
+| stub-error-text (1.4)       | REFUTED        | Both stubs verbatim per contract; `errors.New` (no wrapping).         |
+| consumer-tie (1.5)          | REFUTED        | `--app tillsyn-init` form mirrors existing init-dev-config tests.     |
+| help-entry-key (1.6, 1.7)   | REFUTED        | `cmd.CommandPath()` resolves exactly; alphabetical placement cosmetic. |
+| rich-help-content (1.8)     | REFUTED        | Long + Example sane; SKETCH §9 init-vs-install separation honored.    |
+| register-call (1.9)         | REFUTED        | Sibling of `initDevConfigCmd`, not nested.                            |
+| adjacent-regressions (1.10) | REFUTED        | `TestRunRootHelp` not regressing; assertion non-exhaustive.           |
+| adjacent-regressions (1.11) | REFUTED + UNK  | `TestRunSubcommandHelp` non-regressing but D3a's help-entry NOT exercised by table — coverage gap routed as Unknown for D7-era follow-up. |
+| yagni (1.12, 1.14)          | REFUTED        | Skeleton minimal; no premature wrapping/abstractions.                 |
+| file-gating (1.13)          | REFUTED        | Edits stay within declared paths.                                     |
+| hidden-deps (1.15)          | REFUTED        | No init(), no package-level state.                                    |
+| error-handling (1.16)       | REFUTED        | Flag-retrieval error propagated; no swallowing.                       |
+| concurrency (1.17)          | N/A            | No concurrency added in skeleton stage.                               |
+| raw-go-or-mage-install (1.18) | REFUTED      | Mage-only test invocations; no `mage install`.                        |
+
+### Mage gate
+
+- `mage ci` — **GREEN**, 3007 tests pass across 25 packages (this reviewer ran end-to-end). All package coverage thresholds met: `cmd/till` at 75.8%, every package ≥ 70.0%. Build of `./cmd/till` SUCCESS.
+- `mage test-pkg ./cmd/till` — **GREEN**, 255 tests pass.
+- `mage test-func ./cmd/till TestInit_BareInvocation_ReturnsTUIStubError` — **GREEN**, 1 test pass (1.89s).
+
+### Severity breakdown
+
+- **HIGH:** 0
+- **MEDIUM:** 0
+- **LOW:** 17 (audit-trail / verification-of-claim findings only; all REFUTED counterexamples or confirming-evidence)
+- **N/A:** 1 (concurrency family, nothing to attack at skeleton stage)
+
+### Summary
+
+**Verdict: pass.** Counterexample count: 0. All 14 attack families either REFUTED (1.1–1.10, 1.12–1.16, 1.18) or N/A (1.17). One Unknown routed: Finding 1.11 — `TestRunSubcommandHelp`'s hardcoded `cases` table at `main_test.go:498-736` does NOT include a row for `"init"`, so D3a's new `"till init"` help-entry rich text is not exercised by any test. Recommended follow-up: extend the table with an `"init"` row in a future droplet (D7 candidate when the success-message rich text fully stabilizes). The inline `Long` in `init_cmd.go:20-31` provides a graceful-degradation fallback if the help-spec map key ever drifts, so the user-visible risk of the gap is "help reverts to inline default," not "help breaks." Audit-trail signal, not a counterexample.
+
+D3a's surface (skeleton + register + help-entry, ~58 LOC of new production code + 44 LOC of new test) is correctly scoped to what the plan declares: cobra command exists, `--json` flag wired (parser body STUB, owned by D3b), `RunE` dispatch routes to TUI-stub or JSON-stub with verbatim error text, registration in `rootCmd.AddCommand` lands at `main.go:1906`, help-entry lands at `help.go:377-392` with proper `cmd.CommandPath()` keying. Both consumer-tie smoke tests (`TestInit_BareInvocation_ReturnsTUIStubError`, `TestInit_JSONInvocation_ReturnsJSONStubError`) invoke the run-tree end-to-end via `run(context.Background(), []string{"--app", "tillsyn-init", "init", ...}, ...)` per the W2-FF6 ROUND-2 contract. `mage ci` GREEN. No counterexamples found across 14 attack families.
+
+### Hylla Feedback
+
+- **Query**: `mcp__hylla__hylla_search_keyword query="func run context Args Stdout cmd/till"` and `query="appFlag tillsyn-init root command --app"` (both `node_type=block`, `fields=[content]`).
+- **Missed because**: the relevant code (`run` at `cmd/till/main.go:394`, `--app` flag at `:511`, the new `init_cmd.go`) was either too high-noise to surface (the `run` symbol shares the `func run` shape with many domain-package helpers, all of which dominated keyword scoring) OR not yet ingested (the new `init_cmd.go` shipped in this drop and Hylla's snapshot 5 predates it). Both are expected staleness / noise patterns, not bugs.
+- **Worked via**: `Read` against `cmd/till/main.go` lines 1-120 + 340-540 + 650-855 + 1860-1916 (multiple ranges); `Read` against `cmd/till/init_cmd.go` (full file, 58 lines); `Read` against `cmd/till/init_cmd_test.go` (full file, 44 lines); `Read` against `cmd/till/help.go` lines 1-100 + 370-447; `Read` against `cmd/till/main_test.go` lines 460-487 + 720-790 + 2890-2960; `Read` against `workflow/drop_4c_6/BUILDER_WORKLOG.md` lines 750-1050. `mage test-func` and `mage test-pkg` and `mage ci` for runtime verification.
+- **Suggestion**: Hylla's keyword search ranks by tail-symbol frequency, which buries the `cmd/till/main.go:run` function under a flood of domain-helper hits with the same `run` prefix. A search-mode that filters by `parent_id` prefix (e.g. `parent_id=github.com/hylla/tillsyn/cmd/till`) at query-input time would have surfaced the right `run` function in one query rather than requiring `Read`-based fallback navigation. Today the `parent_id` field is a response attribute, not a query filter.
