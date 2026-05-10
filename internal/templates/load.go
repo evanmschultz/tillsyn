@@ -162,7 +162,7 @@ type LoadOptions struct {
 //     Runs immediately after the cycle detector so cyclic graphs are
 //     rejected with the better diagnostic (cycle path) before the depth
 //     DFS could be invoked. Drop 4c.6 W0.5.D4 hook.
-//     c''. validateBlockedByAcyclicity — colored-DFS over the kind-level
+//     c”. validateBlockedByAcyclicity — colored-DFS over the kind-level
 //     blocked_by graph (the [blocked_by] edge subgraph independent of
 //     the parent→child auto-create graph); reject directed cycles with
 //     ErrTemplateBlockedByCycle. Today's production graph is degenerate
@@ -173,7 +173,7 @@ type LoadOptions struct {
 //     parent→child and the blocked_by graphs) are caught by D3 with
 //     ErrTemplateCycle FIRST so the diagnostic stays consistent with
 //     pre-D5 behaviour. Drop 4c.6 W0.5.D5 hook.
-//     c'''. validateClaimVsImplCoherence — assert every claimed
+//     c”'. validateClaimVsImplCoherence — assert every claimed
 //     `[[child_rules]]` output kind / template feature is a member of
 //     the closed Go-internal `knownWiredConsumers` map. The map is
 //     empty for Drop 4c.6 (Drop 4c.7 W7 adds `child_rules_for`; Drop
