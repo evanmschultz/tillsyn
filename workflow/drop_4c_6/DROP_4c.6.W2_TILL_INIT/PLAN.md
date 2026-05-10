@@ -2,8 +2,8 @@
 
 **State:** planning
 **Blocked by:** 4c.6.W1.D1 (W2 copies the agent .md files shipped by W1; without W1's embedded scaffolding there's nothing to copy)
-**Paths (expected):** `internal/vendor/fsatomic/**`, `internal/vendor/configmerge/**`, `internal/vendor/VENDOR_SOURCE.md`, `cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`, `cmd/till/install_cmd.go`, `cmd/till/install_cmd_test.go`, `cmd/till/main.go`, `cmd/till/main_test.go`, `cmd/till/help.go`
-**Packages (expected):** `github.com/evanmschultz/tillsyn/internal/vendor/fsatomic`, `github.com/evanmschultz/tillsyn/internal/vendor/configmerge`, `github.com/evanmschultz/tillsyn/cmd/till`
+**Paths (expected):** `internal/vendor/fsatomic/**`, `internal/vendor/VENDOR_SOURCE.md`, `cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`, `cmd/till/install_cmd.go`, `cmd/till/install_cmd_test.go`, `cmd/till/main.go`, `cmd/till/main_test.go`, `cmd/till/help.go`
+**Packages (expected):** `github.com/evanmschultz/tillsyn/internal/vendor/fsatomic`, `github.com/evanmschultz/tillsyn/cmd/till`
 **PLAN.md ref:** `workflow/drop_4c_6/PLAN.md` → `4c.6.W2` row (lines 117-133)
 **Workflow:** `workflow/example/drops/WORKFLOW.md`
 **Cascade concept:** `AGENT_CASCADE_DESIGN.md`
@@ -12,7 +12,9 @@
 
 ## Scope
 
-Land `till init` per `SKETCH.md` §9 + §26.W2 — TUI walk (project name + group picker), copy embedded `internal/templates/builtin/agents/<group>/*.md` → `<project>/.tillsyn/agents/*.md` FLAT, copy `agents.example.toml` → `<project>/agents.toml`, ensure `agents.local.toml` in `.gitignore`, optional `.mcp.json` registration, project-DB record creation, Laslig success message, JSON mode (`--json '{...}'`) with identical behavior, re-run safety (never overwrites). Plus: vendor `fsatomic` (52 LOC, zero deps) + `configmerge` (~12kB + tests) from `ta` to `internal/vendor/` with `VENDOR_SOURCE.md` provenance per `SKETCH.md` §9.6 — every vendored Go file MUST carry a 2-3 line block-comment header `// DO NOT EDIT — re-vendor from upstream` plus pointer to `internal/vendor/VENDOR_SOURCE.md` (ROUND-2 OQ#2). Plus: ADD `till install` CLI command (NEW — see OQ#3 verification below) that takes over the dev-config-creation behavior currently in `cmd/till/main.go:2039 runInitDevConfig` BEFORE D8 finalizes the removal of `init-dev-config`. JSON-mode + TUI behaviors must be IDENTICAL apart from input source.
+Land `till init` per `SKETCH.md` §9 + §26.W2 — TUI walk (project name + group picker), copy embedded `internal/templates/builtin/agents/<group>/*.md` → `<project>/.tillsyn/agents/*.md` FLAT, copy `agents.example.toml` → `<project>/agents.toml`, ensure `agents.local.toml` in `.gitignore`, optional `.mcp.json` registration, project-DB record creation, Laslig success message, JSON mode (`--json '{...}'`) with identical behavior, re-run safety (never overwrites). Plus: vendor `fsatomic` (52 LOC, zero deps) from `ta` to `internal/vendor/` with `VENDOR_SOURCE.md` provenance per `SKETCH.md` §9.6 — every vendored Go file MUST carry a 2-3 line block-comment header `// DO NOT EDIT — re-vendor from upstream` plus pointer to `internal/vendor/VENDOR_SOURCE.md` (ROUND-2 OQ#2). Plus: ADD `till install` CLI command (NEW — see OQ#3 verification below) that takes over the dev-config-creation behavior currently in `cmd/till/main.go:2039 runInitDevConfig` BEFORE D8 finalizes the removal of `init-dev-config`. JSON-mode + TUI behaviors must be IDENTICAL apart from input source.
+
+**ROUND-2 update (W2-FF4 — configmerge removed):** earlier rounds vendored `configmerge` from `ta` alongside `fsatomic`. Round-2 audit (W2-FF4) confirmed `configmerge` was never load-bearing in this wave — `agents.example.toml` is COPIED (not merged) per D5, and `.gitignore` is a single-line idempotent append. Removing the `configmerge` vendor saves a droplet and reduces vendored surface. If a future drop needs section-merging TOML behavior, vendor it then.
 
 ## OQ#3 Verification — `till install` Coverage Status
 
@@ -26,10 +28,10 @@ Land `till init` per `SKETCH.md` §9 + §26.W2 — TUI walk (project name + grou
 
 **Verdict: `till install` does NOT exist as a CLI command today.** The L1 directive's premise that "`till install` covers (or is extended to cover) the dev-config-creation behavior" is FALSE. SKETCH §9.1 names `till install` as the destination ("install-time setup (DB creation, default config) folds into `till install`"), so the SKETCH explicitly intends a NEW `till install` CLI command — not a fold-into existing logic.
 
-**Disposition: EXPAND W2 with a NEW droplet `D7.5` that creates `cmd/till/install_cmd.go` (the `till install` Cobra command) and ports the dev-config-creation behavior from `runInitDevConfig` into it.** D7.5 is `blocked_by` D3 (registers commands in `main.go`'s `rootCmd.AddCommand` call) and is a **hard precondition for D8** (D8's removal of `init-dev-config` is a behavior regression unless D7.5 lands first). D8's `Blocked by:` accordingly includes D7.5.
+**Disposition: EXPAND W2 with a NEW droplet `D7.5` that creates `cmd/till/install_cmd.go` (the `till install` Cobra command) and ports the dev-config-creation behavior from `runInitDevConfig` into it.** D7.5 is `blocked_by` D3a (registers commands in `main.go`'s `rootCmd.AddCommand` call — D3a owns the additive register edit; D3b is `init_cmd.go`-only) and is a **hard precondition for D8** (D8's removal of `init-dev-config` is a behavior regression unless D7.5 lands first). D8's `Blocked by:` accordingly includes D7.5.
 
 **Important:** the `init` and `install` commands are SEPARATE — they do different things:
-- `till init` (D3-D7): seeds a project (cwd-local). Copies agent `.md` files, writes `agents.toml`, updates `.gitignore`, optionally writes `.mcp.json`, creates the project DB record. Per-project setup.
+- `till init` (D3a–D7): seeds a project (cwd-local). Copies agent `.md` files, writes `agents.toml`, updates `.gitignore`, optionally writes `.mcp.json`, creates the project DB record. Per-project setup.
 - `till install` (D7.5): bootstraps the local Tillsyn dev environment (home-local). Creates `<dev-paths>/till.toml` with `[logging] level = "debug"`. Per-machine setup.
 
 The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd/till/main.go` file lock so D8 ordering chain remains valid.
@@ -42,7 +44,7 @@ The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd
 - **Paths:**
   - `internal/vendor/fsatomic/atomic.go` (NEW)
   - `internal/vendor/fsatomic/atomic_test.go` (NEW)
-  - `internal/vendor/VENDOR_SOURCE.md` (NEW — created by D1; D2 appends to the same file)
+  - `internal/vendor/VENDOR_SOURCE.md` (NEW — created by D1; sole vendored package this wave per W2-FF4 round-2)
 - **Packages:** `github.com/evanmschultz/tillsyn/internal/vendor/fsatomic` (NEW package)
 - **Acceptance:**
   - Package `fsatomic` exists at `internal/vendor/fsatomic/`. Source matches the `ta` upstream commit cited in `VENDOR_SOURCE.md` byte-for-byte (run `diff` to confirm during build).
@@ -60,51 +62,62 @@ The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd
   - `fsatomic` per SKETCH §9.6: "52 LOC, zero deps." Spawn-prompt MUST include the exact upstream commit hash (dev provides). If the dev hasn't pinned a commit, escalate to orchestrator before vendoring (do NOT pick HEAD silently — provenance is load-bearing).
   - The vendor directory does NOT exist today (`internal/vendor/`: No such file or directory verified 2026-05-09). D1 creates it.
   - Builder runs `mage format` after vendoring; vendored upstream code may not match `gofumpt` and that's acceptable per "DO NOT EDIT" — but the BLOCK-COMMENT HEADER prefix must come BEFORE the original `package` declaration so `gofumpt` doesn't re-order. If `gofumpt` rewrites the file, file a refinement (do NOT keep the rewrite).
-  - The package is a NEW Go package — no file-collision with `cmd/till` or anything else, so D1 runs fully parallel with D3-D8 until D5 needs it.
+  - The package is a NEW Go package — no file-collision with `cmd/till` or anything else, so D1 runs fully parallel with D3a–D8 until D5 needs it.
 
-### Droplet 4c.6.W2.D2 — Vendor `configmerge` package from `ta`
+### Droplet 4c.6.W2.D2 — REMOVED (W2-FF4: `configmerge` vestigial)
 
-- **State:** todo
-- **Paths:**
-  - `internal/vendor/configmerge/*.go` (NEW — multiple files; ~12kB total per SKETCH §9.6)
-  - `internal/vendor/configmerge/*_test.go` (NEW — tests vendored alongside)
-  - `internal/vendor/VENDOR_SOURCE.md` (APPEND — D1 created it; D2 adds the `configmerge` section)
-- **Packages:** `github.com/evanmschultz/tillsyn/internal/vendor/configmerge` (NEW package)
-- **Acceptance:**
-  - Package `configmerge` exists at `internal/vendor/configmerge/`. Sources match the `ta` upstream commit cited in `VENDOR_SOURCE.md` byte-for-byte.
-  - **Every Go file under `internal/vendor/configmerge/` carries the 2-3 line block-comment header** (same shape as D1).
-  - `internal/vendor/VENDOR_SOURCE.md` updated with `configmerge` section: upstream commit hash, date, LOC, dependency note ("one dep already in Tillsyn — verify in builder spawn which one and confirm it's in `go.mod` already"), future-migration plan.
-  - The "one dep already in Tillsyn" claim from SKETCH §9.6 is verified by the builder against `go.mod` BEFORE vendoring. If the dep is NOT already in `go.mod`, escalate to orchestrator (do NOT silently `go get` a new dependency — that's a separate decision and a separate droplet).
-  - `mage test-pkg ./internal/vendor/configmerge` passes.
-  - `mage ci` green.
-- **Blocked by:** —
-- **Notes for builder:**
-  - File-level: D2 appends to `internal/vendor/VENDOR_SOURCE.md`, which D1 also writes. **D2 is `Blocked by: D1`** for the `VENDOR_SOURCE.md` shared-file lock. (Listed below in the explicit `Blocked by` field.)
-  - **Correction:** D2 IS blocked by D1 on the `VENDOR_SOURCE.md` file. Updating the `Blocked by` line above to `D1`.
-- **Blocked by (final):** D1 (shared file `internal/vendor/VENDOR_SOURCE.md`).
+**ROUND-2 removal (W2-FF4):** round-1 D2 vendored `configmerge` from `ta` for use in D5's `.gitignore` ensure step. Round-2 audit confirmed `configmerge` is NOT load-bearing in this wave:
 
-### Droplet 4c.6.W2.D3 — `cmd/till/init_cmd.go` skeleton + flag wiring + JSON mode parser + register in `main.go`
+- D5 `copyAgentsTOML` is a COPY operation, not a merge (PLAN.md D5 acceptance line 135: "copies embedded `agents.example.toml` → `<destDir>/agents.toml` atomically").
+- D5 `ensureGitignore` is a single-line idempotent append. Plan-QA-proof finding 2.3 + plan-QA-falsification finding 1.8 both flagged `configmerge` as the fallback ("hand-written line-presence check is acceptable"); the hand-written path is in fact the right path for the actual D5 use cases. No section-merging TOML behavior is needed in W2.
+- Removing D2 saves a droplet, removes ~12kB of vendored Go + tests, drops one cross-package blocker on D5, and avoids the "one dep already in Tillsyn — verify in builder spawn" escalation hazard.
+
+If a future drop needs section-merging TOML behavior, vendor `configmerge` then. D5 acceptance is updated below to use a hand-written `os.ReadFile` + `bytes.Contains` + `os.WriteFile` (atomically via `fsatomic`) sequence for `.gitignore` line-presence — no vendored merge dep.
+
+### Droplet 4c.6.W2.D3a — `cmd/till/init_cmd.go` skeleton + register in `main.go` + help-entry
+
+**ROUND-2 split (W2-FF1):** the round-1 D3 droplet touched 3 production files (`init_cmd.go` + `main.go` + `help.go`) at the under-decomposed smell threshold. Round 2 splits it into D3a (this droplet — skeleton + register + help-entry; no JSON parser) and D3b (JSON parser + table-test, `init_cmd.go`-only). D3b is `Blocked by: D3a`.
 
 - **State:** todo
 - **Paths:**
-  - `cmd/till/init_cmd.go` (NEW)
-  - `cmd/till/init_cmd_test.go` (NEW — tests for `--json` flag parsing + skeleton invocation)
+  - `cmd/till/init_cmd.go` (NEW — skeleton only, no JSON parser body)
+  - `cmd/till/init_cmd_test.go` (NEW — minimal smoke test that confirms `--json ""` (empty) and bare invocation both route through `RunE` and return the expected D3a-stage stub errors)
   - `cmd/till/main.go` (modify: add `initCmd := newInitCommand(...)` build + add `initCmd` to `rootCmd.AddCommand(...)` at line 1904)
   - `cmd/till/help.go` (modify: add a new entry to the rich-help table at the analogous position to the existing `"till init-dev-config"` block — section is the `commandHelpSpecs` map ending at line 391)
 - **Packages:** `github.com/evanmschultz/tillsyn/cmd/till`
 - **Acceptance:**
   - `cmd/till/init_cmd.go` exports `newInitCommand(stdout io.Writer, rootOpts rootCommandOptions) *cobra.Command` (or whichever signature matches the existing pattern in `main.go`'s sibling builders — verify by reading `main.go` for the `initDevConfigCmd := &cobra.Command{...}` shape and matching). Returns a `*cobra.Command` with `Use: "init"`, short + long help, `Example` block, `cobra.NoArgs` (or `cobra.MaximumNArgs(0)` to match local convention).
-  - The `RunE` function dispatches on whether `--json <payload>` is set: if set, calls `runInitJSON(stdout, opts, payload)`; otherwise calls `runInitTUI(stdout, opts)`. Both functions are STUBS in D3 — they return `errors.New("till init: TUI walk not yet wired (W2.D4)")` and `errors.New("till init: JSON parse OK; file copy not yet wired (W2.D5)")` respectively. The stubs let D3 land in isolation; D4-D7 fill them in.
-  - `--json` flag is wired with a `String` flag default `""`. JSON payload struct is defined in `init_cmd.go`: `type initJSONPayload struct { Name string \`json:"name"\`; Group string \`json:"group"\`; MCP bool \`json:"mcp"\` }`. `runInitJSON` parses the payload via `encoding/json.Unmarshal` and validates `Group` is one of `{"till-gen", "till-go"}` (NOT `till-gdd` per SKETCH §9.3 — greyed-out until post-Hylla-rev). Invalid group → returns a wrapped error.
+  - `--json` flag is wired with a `String` flag default `""` — but the parser body is a STUB in D3a; the flag is registered + readable but the value is not parsed. D3a's stub `RunE` dispatches: if `--json <payload>` is set (non-empty), it returns `errors.New("till init: JSON parse not yet wired (W2.D3b)")`; otherwise calls `runInitTUI(stdout, opts)` which itself returns `errors.New("till init: TUI walk not yet wired (W2.D4)")`. This keeps D3a's surface area to skeleton + register; D3b fills the JSON parser.
   - `cmd/till/main.go:1904` `rootCmd.AddCommand(...)` line includes `initCmd` (`initCmd` built earlier in the same function via `newInitCommand(...)`).
   - `cmd/till/help.go` rich-help table includes a `"till init"` entry analogous to the existing `"till init-dev-config"` entry at lines 377-390.
-  - `cmd/till/init_cmd_test.go`: table-driven test for JSON-payload parsing (valid, invalid-group, malformed-JSON, missing-required-fields). At least one test confirms `--json` + bare TUI invocation route to the right `RunE` branch (using either a fake stdin or a flag-set assertion — pick whichever matches `cmd/till/main_test.go`'s style).
+  - `cmd/till/init_cmd_test.go`: smoke test that `till init` (bare) returns the TUI-stub error AND `till init --json '{...}'` returns the JSON-stub error. No JSON-payload parsing assertions in D3a — those move to D3b.
+  - **CONSUMER-TIE TEST CONTRACT (W2-FF6 ROUND-2 — symmetric to D7.5's W2-FF3 contract):** the D3a smoke tests MUST invoke `run(context.Background(), []string{"--app", "tillsyn-init", "init"}, &out, io.Discard)` (or equivalent end-to-end form) and exercise the route → `cobra` → `initCmd.RunE` chain. Do NOT call `cmd.RunE(...)` directly or invoke unexported helpers — that would ship a non-wired `init` command (the cobra registration in `main.go` would not be exercised). Same discipline as D7.5; pinned here so the smoke tests prove `init` is genuinely wired.
   - `mage test-pkg ./cmd/till` passes.
   - `mage ci` green.
 - **Blocked by:** —
 - **Notes for builder:**
-  - **Sizing watch:** if D3's combined LOC (skeleton + JSON-payload struct + dispatch + tests + main.go register + help.go entry) exceeds ~120 LOC across production files, escalate to orchestrator. D3 may need to split into D3a (skeleton + register, no JSON) and D3b (JSON parser); for now keep one droplet.
-  - File-locks: D3 writes `cmd/till/main.go` (registers init). D8 also writes `cmd/till/main.go` (removes init-dev-config). D3 lands first per L1 directive.
+  - File-locks: D3a writes `cmd/till/main.go` (registers init). D7.5 also writes `cmd/till/main.go` (registers install). D8 also writes `cmd/till/main.go` (removes init-dev-config). D3a lands first per L1 directive (additive before subtractive).
+  - D3a is the FIRST `cmd/till/init_cmd.go` write — D3b, D4, D5, D6, D7 all serialize behind it on the same file lock.
+
+### Droplet 4c.6.W2.D3b — `init_cmd.go` JSON-payload parser + group-validation + table-test
+
+**ROUND-2 NEW (W2-FF1):** split out from round-1 D3 to keep D3a's surface to skeleton + register. D3b lives in `cmd/till/init_cmd.go` only — no `main.go` or `help.go` edits.
+
+- **State:** todo
+- **Paths:**
+  - `cmd/till/init_cmd.go` (modify: replace the D3a JSON-stub error in `RunE` with a real `runInitJSON` function that parses + validates the payload; the stub's downstream file-copy step still returns a D5-stub error in D3b — D5 fills that in)
+  - `cmd/till/init_cmd_test.go` (modify: add table-driven JSON-payload parsing test cases — valid, invalid-group, malformed-JSON, missing-required-fields)
+- **Packages:** `github.com/evanmschultz/tillsyn/cmd/till`
+- **Acceptance:**
+  - JSON payload struct defined in `init_cmd.go`: `type initJSONPayload struct { Name string \`json:"name"\`; Group string \`json:"group"\`; MCP bool \`json:"mcp"\` }`.
+  - `runInitJSON` parses the payload via `encoding/json.Unmarshal` and validates `Group` is one of `{"till-gen", "till-go"}` (NOT `till-gdd` per SKETCH §9.3 — greyed-out until post-Hylla-rev). Invalid group → returns a wrapped error.
+  - On valid parse, `runInitJSON` proceeds to call the file-copy pipeline; in D3b that pipeline is still a stub (D5 wires it). So D3b's `runInitJSON` ends with `return errors.New("till init: file copy not yet wired (W2.D5)")` after a successful parse + validation.
+  - `cmd/till/init_cmd_test.go` table-driven test for JSON-payload parsing: valid (asserts the D5-stub error fires AFTER a successful parse — proving parse + validate ran), invalid-group, malformed-JSON, missing-required-fields. At least one test confirms `--json` and bare TUI invocations route to the right `RunE` branch.
+  - `mage test-pkg ./cmd/till` passes.
+  - `mage ci` green.
+- **Blocked by:** D3a (same-file lock on `cmd/till/init_cmd.go`).
+- **Notes for builder:**
+  - D3b is `init_cmd.go`-only — DO NOT modify `main.go` or `help.go`. If you find yourself wanting to, escalate; the surface allocation between D3a and D3b is deliberate.
 
 ### Droplet 4c.6.W2.D4 — `runInitTUI` — bubbletea walk for project name + group picker
 
@@ -118,12 +131,12 @@ The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd
   - After collection, `runInitTUI` invokes the same downstream pipeline that `runInitJSON` invokes (D5 wires the pipeline). In D4, `runInitTUI` returns the gathered `initJSONPayload`-equivalent struct and lets the caller dispatch to D5's pipeline. In D4, the caller still returns a stub error from the file-copy step — D5 fills that in.
   - Tea-test in `init_cmd_test.go` simulates user pressing `enter` on the default name + selecting `till-go`, asserts the resulting struct.
   - `mage test-pkg ./cmd/till` passes.
-- **Blocked by:** D3 (D4 modifies `cmd/till/init_cmd.go` which D3 created — same-file lock).
+- **Blocked by:** D3b (D4 modifies `cmd/till/init_cmd.go` which D3b last touched — same-file lock; D3b is itself blocked on D3a, so D4 transitively waits for both).
 - **Notes for builder:**
   - Use existing bubbletea infrastructure per SKETCH §26.W2 — `internal/tui/` packages have form/picker patterns; cite the file you're cloning the pattern from in `BUILDER_WORKLOG.md`.
   - Greyed-out `till-gdd` option must be UNSELECTABLE — pressing enter on it should be a no-op or play a UI bell, not advance to next step.
 
-### Droplet 4c.6.W2.D5 — File-copy pipeline + `.gitignore` ensure (uses fsatomic + configmerge)
+### Droplet 4c.6.W2.D5 — File-copy pipeline + `.gitignore` ensure (uses fsatomic)
 
 - **State:** todo
 - **Paths:**
@@ -133,7 +146,7 @@ The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd
 - **Acceptance:**
   - `copyAgentFiles(destDir, group string)` reads embedded `internal/templates/builtin/agents/<group>/*.md` (FS exposed by W1.D1's embed.go) and writes to `<destDir>/.tillsyn/agents/*.md` FLAT (no group prefix). Uses `fsatomic` for atomic writes (write-temp + rename pattern).
   - `copyAgentsTOML(destDir)` copies embedded `internal/templates/builtin/agents.example.toml` → `<destDir>/agents.toml` atomically.
-  - `ensureGitignore(destDir)` adds `agents.local.toml` to `<destDir>/.gitignore` (creates the file if absent; idempotent — re-run does NOT duplicate the line). Uses `configmerge` if the merge logic fits; otherwise hand-written line-presence check is acceptable (justify in `BUILDER_WORKLOG.md`).
+  - `ensureGitignore(destDir)` adds `agents.local.toml` to `<destDir>/.gitignore` (creates the file if absent; idempotent — re-run does NOT duplicate the line). **Implementation (W2-FF4 round-2 decision; W2-FF10 round-2 line-iteration fix):** hand-written `os.ReadFile` + LINE-ITERATION via `strings.Split(string(data), "\n")` (or `bufio.Scanner` against the file content) checking each trimmed line against the literal `"agents.local.toml"` for presence + `os.WriteFile` atomically via `fsatomic`. **Why line-iteration NOT raw `bytes.Contains([]byte("\nagents.local.toml\n"))`:** the raw-`bytes.Contains` form requires a leading `\n` and misses the first-line-only case (file consists solely of `agents.local.toml\n` from a prior run with no preceding entries). Line-iteration handles that case correctly. Handle the trailing-newline corner case (file ends with no `\n` → append `\n` + `agents.local.toml\n`; file ends with `\n` → append `agents.local.toml\n`). NO `configmerge` dependency — round-1 considered it; round-2 removed D2 because section-merging TOML behavior is not needed here.
   - **Re-run safety:** every write goes through a `_, err := os.Stat(target); errors.Is(err, fs.ErrNotExist)` pre-check. Existing files are skipped, NOT overwritten. The function returns counts: `added int, skippedExisting int`.
   - JSON-mode and TUI-mode both call the same `copyAgentFiles` + `copyAgentsTOML` + `ensureGitignore` sequence — behavior IDENTICAL apart from input source.
   - Tests in `init_cmd_test.go`:
@@ -142,7 +155,7 @@ The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd
     - `TestInit_GitignoreIdempotent`: `.gitignore` already contains `agents.local.toml`; re-run does NOT add a duplicate line.
     - `TestInit_PreExistingGitignore_AppendsCleanly`: `.gitignore` exists with unrelated entries; re-run appends `agents.local.toml` once with proper newline handling.
   - `mage test-pkg ./cmd/till` passes.
-- **Blocked by:** D1 (uses `fsatomic`), D2 (uses `configmerge`), D4 (D5 modifies `cmd/till/init_cmd.go` which D4 last touched — same-file lock).
+- **Blocked by:** D1 (uses `fsatomic`), D4 (D5 modifies `cmd/till/init_cmd.go` which D4 last touched — same-file lock). **W2-FF4 round-2:** D2 dropped from the blocker list — `configmerge` no longer vendored.
 - **Notes for builder:**
   - Embedded FS access: read `internal/templates/builtin/embed.go` (extended by W1.D1) to confirm the embed-FS API for accessing per-group `agents.<group>` subdirs. If W1.D1 hasn't shipped yet at builder time, the shared `Blocked by: 4c.6.W1.D1` at the W2 container level catches this.
   - The 7 standard agent names (planning, builder, qa-proof, qa-falsification, research, closeout, commit-message) per SKETCH §11.1 + the `_BLOCKERS.toml` reference in W1.D1's plan; confirm count matches when D5 runs.
@@ -204,11 +217,14 @@ The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd
   - `runInstall` is implemented in `install_cmd.go` (NOT `main.go`) — D7.5 lifts the body of `runInitDevConfig` from `main.go` into `install_cmd.go:runInstall` byte-equivalent (but renamed). D8 then removes the now-orphaned `runInitDevConfig` from `main.go`.
   - `cmd/till/main.go:1904` `rootCmd.AddCommand(...)` line includes `installCmd`.
   - `cmd/till/help.go` rich-help table includes a `"till install"` entry.
-  - `cmd/till/install_cmd_test.go` ports the existing `TestRunInitDevConfigCreatesDebugConfig` (`main_test.go:2906`) and `TestRunInitDevConfigUpdatesExistingConfig` (`main_test.go:2955`) into `TestRunInstall_CreatesDebugConfig` and `TestRunInstall_UpdatesExistingConfig`. Same body, just `[]string{"install"}` instead of `[]string{"init-dev-config"}`. The originals stay in `main_test.go` until D8 removes them.
+  - `cmd/till/install_cmd_test.go` ports the existing `TestRunInitDevConfigCreatesDebugConfig` (`main_test.go:2906`, no-underscore-camelCase shape) and `TestRunInitDevConfigUpdatesExistingConfig` (`main_test.go:2955`, no-underscore-camelCase shape) into `TestRunInstall_CreatesDebugConfig` and `TestRunInstall_UpdatesExistingConfig` (**WITH underscore between `TestRunInstall` and the rest** — deliberate shape change). Same test body, just `[]string{"install"}` instead of `[]string{"init-dev-config"}` for the args slice. **TEST-NAME SHAPE DISAMBIGUATION (W2-FF9 ROUND-2):** the verbatim-port framing ("Same body...") refers to the test's BODY only, NOT the function name. The new test function names introduce an underscore that the no-underscore originals did not have — `TestRunInstallCreatesDebugConfig` (no underscore) is INCORRECT and would fail D8's pre-flight check. The exact correct names are `TestRunInstall_CreatesDebugConfig` and `TestRunInstall_UpdatesExistingConfig`. The originals stay in `main_test.go` until D8 removes them.
+  - **TEST-NAME CONTRACT (W2-FF2 ROUND-2):** the test names `TestRunInstall_CreatesDebugConfig` and `TestRunInstall_UpdatesExistingConfig` are a HARD CONTRACT between D7.5 and D8 — D8's pre-flight check (this droplet's twin in the chain) hard-codes these exact names when verifying D7.5 has shipped equivalent coverage before deleting the originals. **If you rename either test in D7.5, you MUST update D8's pre-flight bullet at the same time.** Renaming silently breaks D8's "coverage does NOT regress" gate.
+  - **CONSUMER-TIE TEST CONTRACT (W2-FF3 ROUND-2):** each new test MUST invoke `run(context.Background(), []string{"--app", "tillsyn-init", "install"}, &out, io.Discard)` end-to-end (NOT call `runInstall(...)` directly). This exercises the route → `cobra` → `installCmd.RunE` → `runInstall` chain and proves the command is genuinely wired. Calling `runInstall` directly would ship a non-wired install command (the cobra registration in `main.go` would not be exercised). Verify wiring via `mage test-func ./cmd/till TestRunInstall_CreatesDebugConfig`.
+  - **LASLIG TITLE CONTRACT (W2-FF5 ROUND-2):** `runInstall`'s `writeCLIKV` first arg (the table title) is `"Dev Config"` — preserved BYTE-FOR-BYTE from the existing `runInitDevConfig` body at `cmd/till/main.go:2089`. The ported test bodies at `main_test.go:2936` and `main_test.go:2991` assert `"Dev Config"` substring in the output; preserving the title keeps the verbatim port mechanical and decision-free. **DO NOT rename the title to `"Install"` or any other string.** If a future drop wants the title to say `"Install"` instead, that is a separate user-visible-label-rename droplet — out of scope for D7.5.
   - `TestShellEscapePath` (`main_test.go:3105`) is NOT moved — `shellEscapePath` itself stays in `main.go` as a shared helper used by `runInstall` (which now lives in `install_cmd.go` and imports `shellEscapePath` from the same package).
   - `mage test-pkg ./cmd/till` passes — both old `init-dev-config` tests AND new `install` tests are green. (Old tests stay until D8.)
   - `mage ci` green.
-- **Blocked by:** D3 (shares `cmd/till/main.go` file-lock with D3's `rootCmd.AddCommand` modification — D3 lands first; D7.5 amends the same line).
+- **Blocked by:** D3a (shares `cmd/till/main.go` file-lock with D3a's `rootCmd.AddCommand` modification — D3a lands first; D7.5 amends the same line). **W2-FF1 round-2 update:** was `D3` round-1; D3a is the part of the round-1 D3 split that owns `main.go` + `help.go`, so the `main.go` file-lock binds D7.5 to D3a (not D3b, which is `init_cmd.go`-only).
 - **Notes for builder:**
   - **Critical:** D7.5 LIFTS-and-RENAMES the `runInitDevConfig` body into `runInstall` in a new file. It does NOT delete the original — that's D8's job. The duplication is intentional and short-lived: D7.5 leaves D8 in charge of removing the old. This keeps the file-lock graph clean (D7.5 adds; D8 removes).
   - **Why not a same-droplet add+remove?** Because D7.5 + D8 have different scopes: D7.5 ADDS a CLI command (low risk, additive); D8 REMOVES a CLI command (higher risk — touches `help.go`, `main_test.go` with multiple test functions, the `rootCmd.AddCommand` line, the `commandHelpSpecs` map). Splitting lets D7.5 ship + verify-green BEFORE D8's surgery starts.
@@ -229,25 +245,26 @@ The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd
   - `cmd/till/main_test.go` no longer references `init-dev-config` in any test name, table-test row, or assertion list.
   - `mage test-pkg ./cmd/till` passes — D7.5's `TestRunInstall_CreatesDebugConfig` + `TestRunInstall_UpdatesExistingConfig` cover the equivalent behavior; coverage does NOT regress.
   - `mage ci` green.
-- **Blocked by:** D3 (shares `cmd/till/main.go` file-lock — D3's add lands first per L1 directive: "D3 first since D8 only removes; safer than reverse"); D7.5 (D8's behavior-removal is a regression unless D7.5 has shipped the replacement `till install` first — OQ#3 verification finding).
+- **Blocked by:** D3a (shares `cmd/till/main.go` file-lock — D3a's add lands first per L1 directive: "D3 first since D8 only removes; safer than reverse"; round-2 W2-FF1 split renamed D3 → D3a for the `main.go`-touching half); D7.5 (D8's behavior-removal is a regression unless D7.5 has shipped the replacement `till install` first — OQ#3 verification finding).
 - **Notes for builder:**
-  - **Pre-flight check before deletion:** D8 builder MUST run `mage test-pkg ./cmd/till` against the current state and confirm `TestRunInstall_CreatesDebugConfig` + `TestRunInstall_UpdatesExistingConfig` are present and passing. If they are NOT (i.e. D7.5 didn't ship those tests under those exact names), STOP and escalate to orchestrator — D8's removal premise depends on D7.5 having landed equivalent coverage under the new names.
+  - **Pre-flight check before deletion (W2-FF2 ROUND-2 contract):** D8 builder MUST run `mage test-pkg ./cmd/till` against the current state and confirm `TestRunInstall_CreatesDebugConfig` + `TestRunInstall_UpdatesExistingConfig` are present and passing. **These exact names are a hard contract pinned in D7.5's acceptance** — if they are NOT present (i.e. D7.5 didn't ship those tests under those exact names), STOP and escalate to orchestrator. The names are not internal builder choice; renaming requires updating BOTH D7.5 AND this pre-flight bullet at the same time. Cross-reference: D7.5 acceptance "TEST-NAME CONTRACT (W2-FF2 ROUND-2)".
   - The `TestShellEscapePath` test at `main_test.go:3105` does NOT need to be removed — `shellEscapePath` is still in `main.go` and still used by `runInstall` (in `install_cmd.go`). D8 only updates the doc-comment to drop the "init-dev-config" mention.
+  - **D8 doc-comment phrasing (W2-PF1 ROUND-2 carryforward, pinned at orchestrator dispatch time):** the exact replacement string for the `init-dev-config` mention in `TestShellEscapePath`'s doc-comment is set by the orchestrator in the D8 spawn prompt — NOT a builder-discretion choice. Builder reads the spawn-prompt directive and applies it verbatim. (Round-1 NIT 1.6 + round-2 W2-PF1 left the exact string unspecified at plan-level; orchestrator pins it inline at D8 dispatch time so the plan stays decision-free.)
   - Be mindful when removing the rich-help table-test row (`main_test.go:732-734`) that other rows have similar shape — use line-anchored deletion, not pattern-match.
 
 ## Notes
 
-- **OQ#3 verification result is a load-bearing finding.** The L1 directive's premise that "`till install` covers (or is extended to cover) the dev-config-creation behavior" is FALSE — `till install` does NOT exist in the CLI today (only `mage install` exists, which is a build target, not a CLI subcommand). SKETCH §9.1 names `till install` as the destination, so the disposition is to add `till install` as a NEW CLI command (D7.5) before D8 finalizes the removal of `init-dev-config`. This is documented inline in the "OQ#3 Verification" section above and reflected in the droplet decomposition (D7.5 is new; D8 is `Blocked by` D7.5 in addition to D3).
+- **OQ#3 verification result is a load-bearing finding.** The L1 directive's premise that "`till install` covers (or is extended to cover) the dev-config-creation behavior" is FALSE — `till install` does NOT exist in the CLI today (only `mage install` exists, which is a build target, not a CLI subcommand). SKETCH §9.1 names `till install` as the destination, so the disposition is to add `till install` as a NEW CLI command (D7.5) before D8 finalizes the removal of `init-dev-config`. This is documented inline in the "OQ#3 Verification" section above and reflected in the droplet decomposition (D7.5 is new; D8 is `Blocked by` D7.5 in addition to D3a — round-2 W2-FF1 split renamed D3 → D3a for the `main.go`-touching half).
 
-- **OQ#2 verification result.** Both D1 and D2 acceptance criteria explicitly require the 2-3 line `// DO NOT EDIT — re-vendor from upstream.` block-comment header on every vendored Go file. Provenance also lives in `internal/vendor/VENDOR_SOURCE.md` (created by D1, appended by D2).
+- **OQ#2 verification result.** D1 acceptance criterion explicitly requires the 2-3 line `// DO NOT EDIT — re-vendor from upstream.` block-comment header on every vendored Go file. Provenance lives in `internal/vendor/VENDOR_SOURCE.md` (created by D1). _(W2-FF4 round-2: D2/`configmerge` removed; D1 is the sole remaining vendor droplet.)_
 
-- **Vendor packages are NEW (verified 2026-05-09).** `internal/vendor/` does not exist; `fsatomic` and `configmerge` are not in `go.mod` (only nominal substring matches in unrelated dependency names). D1+D2 are clean greenfield package additions — they do not collide with `cmd/till` and run fully parallel until D5 needs them.
+- **Vendor packages are NEW (verified 2026-05-09).** `internal/vendor/` does not exist; `fsatomic` is not in `go.mod` (only nominal substring matches in unrelated dependency names). D1 is a clean greenfield package addition — it does not collide with `cmd/till` and runs fully parallel until D5 needs it. _(W2-FF4 round-2: `configmerge` was originally going to be a second vendor droplet; round-2 removed it as vestigial — see Scope §ROUND-2 update.)_
 
-- **Same-package serialization (`cmd/till`).** D3, D4, D5, D6, D7, D7.5, D8 all live in `cmd/till` and most touch `cmd/till/init_cmd.go` directly. The serial chain D3 → D4 → D5 → D6 → D7 reflects the same-file lock on `init_cmd.go`. D7.5 introduces a NEW file (`install_cmd.go`) but shares `cmd/till/main.go` with D3, so D7.5 is `Blocked by: D3`. D8 modifies BOTH `main.go` and `init_cmd.go`-adjacent surfaces (`help.go`, `main_test.go`) and is `Blocked by: D3, D7.5`.
+- **Same-package serialization (`cmd/till`).** D3a, D3b, D4, D5, D6, D7, D7.5, D8 all live in `cmd/till` and most touch `cmd/till/init_cmd.go` directly. The serial chain D3a → D3b → D4 → D5 → D6 → D7 reflects the same-file lock on `init_cmd.go` (D3a creates it; D3b–D7 each modify it in turn). D7.5 introduces a NEW file (`install_cmd.go`) but shares `cmd/till/main.go` with D3a, so D7.5 is `Blocked by: D3a`. D8 modifies BOTH `main.go` and `init_cmd.go`-adjacent surfaces (`help.go`, `main_test.go`) and is `Blocked by: D3a, D7.5`.
 
-- **D5 cross-package blockers.** D5 is `Blocked by: D1, D2, D4` because D5 imports `internal/vendor/fsatomic` and `internal/vendor/configmerge` (D1+D2 are NEW packages that must exist before D5 compiles), and D5 modifies `cmd/till/init_cmd.go` which D4 last edited (same-file lock).
+- **D5 cross-package blocker.** D5 is `Blocked by: D1, D4` because D5 imports `internal/vendor/fsatomic` (D1 is a NEW package that must exist before D5 compiles), and D5 modifies `cmd/till/init_cmd.go` which D4 last edited (same-file lock). _(W2-FF4 round-2: D2 removed; `configmerge` not used.)_
 
-- **Sizing watch for D3.** D3 combines skeleton + flag wiring + JSON parser + `main.go` register + `help.go` entry. Builder is asked to escalate if combined LOC exceeds ~120 — possible split is D3a (skeleton + register, no JSON) and D3b (JSON parser + validation). Not pre-decided here; flagged for the builder to surface.
+- **D3 split (W2-FF1 round-2).** Round-1 D3 combined skeleton + flag wiring + JSON parser + `main.go` register + `help.go` entry across 3 production files at the under-decomposed smell threshold. Round-2 split it into D3a (skeleton + register + help-entry; touches `init_cmd.go` + `main.go` + `help.go`) and D3b (JSON parser + validation + table-test; touches `init_cmd.go` only). D3b `Blocked by: D3a`. Downstream chain rewired: D4 `Blocked by: D3b` (was `D3`); D7.5 `Blocked by: D3a` (was `D3`); D8 `Blocked by: D3a, D7.5` (was `D3, D7.5`).
 
 - **Re-run safety is a hard invariant.** D5's idempotency tests are mandatory — every file write must check existence first and skip-not-overwrite. Re-running `till init` in an already-initialized project is the most common dev workflow and must be safe.
 

@@ -2,6 +2,7 @@
 # Immediate-children sibling blocker ledger.
 # Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
 # Created 2026-05-09 by L2 W2 sub-planner (round 1).
+# Updated 2026-05-09 by L2 W2 sub-planner (round 2 — applied W2-FF1 D3 split + W2-FF4 D2 removal).
 
 # D1 — vendor fsatomic. NEW package; no blockers.
 [[blockers]]
@@ -9,29 +10,43 @@ node = "4c.6.W2.D1"
 blocked_by = []
 reason = "first vendor droplet; creates internal/vendor/ + VENDOR_SOURCE.md"
 
-# D2 — vendor configmerge. Shares VENDOR_SOURCE.md with D1.
-[[blockers]]
-node = "4c.6.W2.D2"
-blocked_by = ["4c.6.W2.D1"]
-reason = "shared file internal/vendor/VENDOR_SOURCE.md (D1 creates, D2 appends)"
+# D2 — REMOVED in round 2 per W2-FF4. configmerge was vestigial:
+#       - copyAgentsTOML is a copy, not a merge
+#       - ensureGitignore is a single-line idempotent append (hand-written sufficient)
+#       Future drop can vendor configmerge if section-merging TOML behavior is needed.
+#       (Entry kept commented to preserve audit trail.)
+# [[blockers]]
+# node = "4c.6.W2.D2"
+# blocked_by = ["4c.6.W2.D1"]
+# reason = "shared file internal/vendor/VENDOR_SOURCE.md (D1 creates, D2 appends)"
 
-# D3 — init_cmd.go skeleton + flag wiring + main.go register + help.go entry. NEW file in cmd/till; no blockers (D8 also touches main.go but D3 lands first per L1 directive).
+# D3a — init_cmd.go skeleton + register in main.go + help.go entry. NEW file in cmd/till; no blockers.
+# Round-2 W2-FF1 split: round-1 D3 split into D3a (skeleton + register + help) and D3b (JSON parser).
 [[blockers]]
-node = "4c.6.W2.D3"
+node = "4c.6.W2.D3a"
 blocked_by = []
-reason = "skeleton droplet; first edit to cmd/till/init_cmd.go (NEW file); first add to cmd/till/main.go rootCmd.AddCommand line"
+reason = "skeleton droplet; first edit to cmd/till/init_cmd.go (NEW file); first add to cmd/till/main.go rootCmd.AddCommand line; first add to cmd/till/help.go commandHelpSpecs"
+
+# D3b — JSON-payload parser + group-validation + table-test. cmd/till/init_cmd.go-only.
+# Round-2 W2-FF1 NEW: split out from round-1 D3 to keep D3a's surface to skeleton + register.
+[[blockers]]
+node = "4c.6.W2.D3b"
+blocked_by = ["4c.6.W2.D3a"]
+reason = "same-file lock cmd/till/init_cmd.go (D3a created it; D3b modifies it to add JSON parser body)"
 
 # D4 — runInitTUI bubbletea walk. Same-file lock on cmd/till/init_cmd.go.
+# Round-2 W2-FF1 update: blocked_by changed from D3 → D3b (D3b is the most recent init_cmd.go writer).
 [[blockers]]
 node = "4c.6.W2.D4"
-blocked_by = ["4c.6.W2.D3"]
-reason = "same-file lock cmd/till/init_cmd.go (D3 created it; D4 modifies it)"
+blocked_by = ["4c.6.W2.D3b"]
+reason = "same-file lock cmd/till/init_cmd.go (D3b last edited; transitively waits for D3a too)"
 
-# D5 — file-copy pipeline + .gitignore. Imports fsatomic + configmerge; same-file lock on init_cmd.go.
+# D5 — file-copy pipeline + .gitignore. Imports fsatomic; same-file lock on init_cmd.go.
+# Round-2 W2-FF4 update: D2 dropped from blocker list; configmerge no longer vendored.
 [[blockers]]
 node = "4c.6.W2.D5"
-blocked_by = ["4c.6.W2.D1", "4c.6.W2.D2", "4c.6.W2.D4"]
-reason = "imports internal/vendor/fsatomic (D1) + internal/vendor/configmerge (D2); same-file lock cmd/till/init_cmd.go (D4 last edited)"
+blocked_by = ["4c.6.W2.D1", "4c.6.W2.D4"]
+reason = "imports internal/vendor/fsatomic (D1); same-file lock cmd/till/init_cmd.go (D4 last edited); W2-FF4 round-2 removed configmerge dep so D2 dropped"
 
 # D6 — .mcp.json optional registration. Same-file lock on init_cmd.go.
 [[blockers]]
@@ -45,14 +60,17 @@ node = "4c.6.W2.D7"
 blocked_by = ["4c.6.W2.D6"]
 reason = "same-file lock cmd/till/init_cmd.go (D6 last edited)"
 
-# D7.5 — till install CLI command (NEW per OQ#3 verification). NEW file install_cmd.go; shares cmd/till/main.go with D3.
+# D7.5 — till install CLI command (NEW per OQ#3 verification). NEW file install_cmd.go; shares cmd/till/main.go + cmd/till/help.go with D3a.
+# Round-2 W2-FF1 update: blocked_by changed from D3 → D3a (D3a owns the main.go + help.go edits; D3b is init_cmd.go-only).
 [[blockers]]
 node = "4c.6.W2.D7.5"
-blocked_by = ["4c.6.W2.D3"]
-reason = "shares cmd/till/main.go file-lock with D3 (D3 added initCmd to rootCmd.AddCommand; D7.5 amends the same line to add installCmd); D3 lands first per L1 directive"
+blocked_by = ["4c.6.W2.D3a"]
+reason = "shares cmd/till/main.go AND cmd/till/help.go file-locks with D3a (D3a added initCmd to rootCmd.AddCommand + help table; D7.5 amends both to add installCmd); D3a lands first per L1 directive"
 
-# D8 — remove init-dev-config from main.go + help.go + main_test.go. Shares cmd/till/main.go with D3; behavior-removal premise depends on D7.5.
+# D8 — remove init-dev-config from main.go + help.go + main_test.go. Shares cmd/till/main.go + help.go with D3a; behavior-removal premise depends on D7.5.
+# Round-2 W2-FF1 update: blocked_by changed from D3 → D3a (D3a is the round-1 D3 main.go-touching half).
+# Round-2 W2-FF2 cross-reference: D8 pre-flight bullet hard-codes test names TestRunInstall_CreatesDebugConfig + TestRunInstall_UpdatesExistingConfig; D7.5 acceptance pins the same names.
 [[blockers]]
 node = "4c.6.W2.D8"
-blocked_by = ["4c.6.W2.D3", "4c.6.W2.D7.5"]
-reason = "shares cmd/till/main.go file-lock with D3 (L1 directive: D3 first since D8 only removes); OQ#3 verification finding: till install does NOT exist today, so D7.5 must add it before D8 removes init-dev-config (otherwise behavior regression on dev-config-creation)"
+blocked_by = ["4c.6.W2.D3a", "4c.6.W2.D7.5"]
+reason = "shares cmd/till/main.go + cmd/till/help.go file-locks with D3a (L1 directive: D3a first since D8 only removes); OQ#3 verification finding: till install does NOT exist today, so D7.5 must add it before D8 removes init-dev-config (otherwise behavior regression on dev-config-creation); D8 pre-flight hard-codes TestRunInstall_* test names per W2-FF2 round-2"
