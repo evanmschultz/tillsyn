@@ -391,11 +391,11 @@ func MergeLocal(project, local *AgentsRegistry) (*AgentsRegistry, error) {
 	// Reject local tools_deny BEFORE merging — fail loud per SKETCH § 4.3.1.
 	if local != nil {
 		if len(local.Preset.ToolsDeny) > 0 {
-			return nil, fmt.Errorf("agents.local.toml [agents]: %w", ErrToolsDenyNotOverridable)
+			return nil, ErrToolsDenyNotOverridable
 		}
-		for kind, ov := range local.Overrides {
+		for _, ov := range local.Overrides {
 			if ov.ToolsDeny != nil && len(*ov.ToolsDeny) > 0 {
-				return nil, fmt.Errorf("agents.local.toml [agents.%s]: %w", kind, ErrToolsDenyNotOverridable)
+				return nil, ErrToolsDenyNotOverridable
 			}
 		}
 	}

@@ -151,3 +151,35 @@ N/A — task touched only `internal/config` Go code already in scope from W0.D1 
 ### Hylla Feedback
 
 N/A — task touched only `internal/config` Go code already in scope from W0.D1+W0.D2 + three new TOML fixtures + two MD files (PLAN.md state flip, this worklog). All evidence sourced from `Read` against the working tree (W0.D1+W0.D2 output is uncommitted; Hylla would be stale anyway). No fallback miss to log.
+
+## Droplet 4c.6.W0.D3 — Round 2
+
+### Files touched
+
+- `internal/config/agents.go` (MODIFY; -3 LOC, +3 LOC: revert two `fmt.Errorf` rejections to bare `return nil, ErrToolsDenyNotOverridable`; drop the now-unused `kind` loop variable from `for _, ov := range local.Overrides`).
+- `workflow/drop_4c_6/DROP_4c.6.W0_AGENTS_TOML_SCHEMA/BUILDER_WORKLOG.md` (this entry).
+
+### Build-tool targets run
+
+- `mage test-func ./internal/config "TestMergeLocal_.*"` — 8/8 GREEN. Sentinel chain preserved through `errors.Is` (test contract is `errors.Is(err, ErrToolsDenyNotOverridable)`, satisfied identically by bare-sentinel return and by previous wrap-with-%w).
+
+### Design notes
+
+1. **One-line revert per the round-1 escape hatch.** Round-1 worklog flagged the wrap as a 2-line revert candidate; build-QA-falsification round 1 confirmed the wrap text violated round-3 finalized W0 plan-QA spec (`PLAN.md:112` verbatim: "no file/line/block prefix at the D3 boundary"). Wrap contained "agents.local.toml" (file axis) + "[agents]" / "[agents.<kind>]" (block axis) — 2 of the 3 forbidden prefix axes. D5 retains exclusive ownership of file/line/block envelope wrapping; D3 surfaces sentinel-only.
+2. **Compile-driven minor cleanup**: per-kind loop dropped its now-unused `kind` loop variable to satisfy Go's `declared and not used` rule. Replaced `for kind, ov := range local.Overrides` with `for _, ov := range local.Overrides`. No semantic change — `kind` was only used inside the now-removed `fmt.Errorf` formatting.
+3. **Doc-comment on `MergeLocal` (lines 371-375) verified clean.** The doc-comment explicitly documents that `D3 surfaces only the sentinel; D5's envelope wraps this with file/line/block position info` — this is correct prose describing the contract, not a runtime prefix. No edit required.
+4. **Test file unchanged.** `TestMergeLocal_ToolsDenyRejected` and `TestMergeLocal_ToolsDenyDefaultsBlockRejected` use `errors.Is(err, ErrToolsDenyNotOverridable)`. Pre-edit `errors.Is(fmt.Errorf("...: %w", sentinel), sentinel) == true`; post-edit `errors.Is(sentinel, sentinel) == true`. Identical verdict.
+
+### Sweep — D3 surface clean of forbidden prefix language
+
+- Two `fmt.Errorf` call sites at the `tools_deny` rejection points: REVERTED to bare `return nil, ErrToolsDenyNotOverridable`.
+- Doc-comment at lines 371-375 mentions `[agents]` / `[agents.<kind>]` / `file/line/block` only as descriptive prose explaining the contract boundary between D3 and D5; this is documentation, not a runtime prefix.
+- No other `fmt.Errorf` call site in `MergeLocal` references `agents.local.toml` or block syntax.
+
+### State flip
+
+- `PLAN.md` → Droplet 4c.6.W0.D3 `**State:**` remains `done`. Round 2 is rework of an already-`done` droplet; per spawn-prompt directive, state stays.
+
+### Hylla Feedback
+
+N/A — task touched only `internal/config` Go code (already in scope from W0.D1+W0.D2+W0.D3 round 1) + this worklog MD file. All evidence sourced from `Read` against the working tree. No fallback miss to log.
