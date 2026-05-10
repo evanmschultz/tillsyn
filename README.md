@@ -24,6 +24,11 @@ Local branch/worktree workflow expectations are documented in `AGENTS.md`.
 Agent/client integration framing is consolidated into the `Integration Framing For MCP Clients` section below.
 If repo-wide agent workflow policy changes, update the tracked `AGENTS.md`, any tracked `CLAUDE.md` in scope, and the bootstrap/instructions surfaces together so clients stay aligned.
 
+Methodology docs (top-level, read these to understand how Tillsyn is built and used):
+- `AGENTS_CONFIG.md` — schema and authoring guide for `agents.toml` / `agents.local.toml`, the runtime's per-kind agent + model bindings.
+- `CASCADE_METHODOLOGY.md` — the cascade methodology spine (plan-down / build-up, droplet sizing, planner-calls-planner recursion, QA discipline) that drives Tillsyn's coordination model.
+- `GDD_METHODOLOGY.md` — Goal-Driven Development methodology (placeholder; populated post-dogfood).
+
 Local dogfood repo layout note:
 - the bare control repo lives one directory above this checkout,
 - `main/` is the operator/integration worktree,
