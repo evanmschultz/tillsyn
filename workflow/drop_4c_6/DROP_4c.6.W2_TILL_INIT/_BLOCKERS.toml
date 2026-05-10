@@ -1,0 +1,58 @@
+# _BLOCKERS.toml — workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+# Created 2026-05-09 by L2 W2 sub-planner (round 1).
+
+# D1 — vendor fsatomic. NEW package; no blockers.
+[[blockers]]
+node = "4c.6.W2.D1"
+blocked_by = []
+reason = "first vendor droplet; creates internal/vendor/ + VENDOR_SOURCE.md"
+
+# D2 — vendor configmerge. Shares VENDOR_SOURCE.md with D1.
+[[blockers]]
+node = "4c.6.W2.D2"
+blocked_by = ["4c.6.W2.D1"]
+reason = "shared file internal/vendor/VENDOR_SOURCE.md (D1 creates, D2 appends)"
+
+# D3 — init_cmd.go skeleton + flag wiring + main.go register + help.go entry. NEW file in cmd/till; no blockers (D8 also touches main.go but D3 lands first per L1 directive).
+[[blockers]]
+node = "4c.6.W2.D3"
+blocked_by = []
+reason = "skeleton droplet; first edit to cmd/till/init_cmd.go (NEW file); first add to cmd/till/main.go rootCmd.AddCommand line"
+
+# D4 — runInitTUI bubbletea walk. Same-file lock on cmd/till/init_cmd.go.
+[[blockers]]
+node = "4c.6.W2.D4"
+blocked_by = ["4c.6.W2.D3"]
+reason = "same-file lock cmd/till/init_cmd.go (D3 created it; D4 modifies it)"
+
+# D5 — file-copy pipeline + .gitignore. Imports fsatomic + configmerge; same-file lock on init_cmd.go.
+[[blockers]]
+node = "4c.6.W2.D5"
+blocked_by = ["4c.6.W2.D1", "4c.6.W2.D2", "4c.6.W2.D4"]
+reason = "imports internal/vendor/fsatomic (D1) + internal/vendor/configmerge (D2); same-file lock cmd/till/init_cmd.go (D4 last edited)"
+
+# D6 — .mcp.json optional registration. Same-file lock on init_cmd.go.
+[[blockers]]
+node = "4c.6.W2.D6"
+blocked_by = ["4c.6.W2.D5"]
+reason = "same-file lock cmd/till/init_cmd.go (D5 last edited)"
+
+# D7 — project-DB record + Laslig success. Same-file lock on init_cmd.go.
+[[blockers]]
+node = "4c.6.W2.D7"
+blocked_by = ["4c.6.W2.D6"]
+reason = "same-file lock cmd/till/init_cmd.go (D6 last edited)"
+
+# D7.5 — till install CLI command (NEW per OQ#3 verification). NEW file install_cmd.go; shares cmd/till/main.go with D3.
+[[blockers]]
+node = "4c.6.W2.D7.5"
+blocked_by = ["4c.6.W2.D3"]
+reason = "shares cmd/till/main.go file-lock with D3 (D3 added initCmd to rootCmd.AddCommand; D7.5 amends the same line to add installCmd); D3 lands first per L1 directive"
+
+# D8 — remove init-dev-config from main.go + help.go + main_test.go. Shares cmd/till/main.go with D3; behavior-removal premise depends on D7.5.
+[[blockers]]
+node = "4c.6.W2.D8"
+blocked_by = ["4c.6.W2.D3", "4c.6.W2.D7.5"]
+reason = "shares cmd/till/main.go file-lock with D3 (L1 directive: D3 first since D8 only removes); OQ#3 verification finding: till install does NOT exist today, so D7.5 must add it before D8 removes init-dev-config (otherwise behavior regression on dev-config-creation)"
