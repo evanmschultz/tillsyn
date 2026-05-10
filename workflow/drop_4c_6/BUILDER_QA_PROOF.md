@@ -247,3 +247,42 @@ All five verification axes pass: diff-vs-spec, AcceptanceCriteria coverage, cons
 ### Hylla Feedback
 
 N/A — droplet touched non-Go files predominantly; the Go-touching surface (`embed.go` + `embed_test.go`) was reviewed via `Read` against working tree because Hylla snapshot 5 predates the W0.5 + W1.D1 land per the builder's own Hylla Feedback section in BUILDER_WORKLOG.md. Verification of `validateAgentBindingNames` semantics + `embeddedAgentLibraryShipped` probe used `Read` against `internal/templates/load.go` lines 2080-2224 directly. Same expected-staleness pattern as the builder reported — not a Hylla bug.
+
+---
+
+## Droplet 4c.6.W6.D5 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent, opus).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W6.D5 — README.md pointer additions to new docs`.
+**Artifact under review:** `README.md` lines 27-30 (5 inserted lines, commit `6303c95`).
+
+### Findings
+
+- 1.1 [Axis: Diff-vs-spec] [severity: low] `git show --stat 6303c95` reports `README.md | 5 +++++` — exactly 5 insertions, 0 deletions, no surrounding content moved. Insertion sits between line 25 (existing `AGENTS.md` / `CLAUDE.md` cross-references block close) and line 26 (existing `Local dogfood repo layout note:` block). Builder's design-note placement claim ("adjacent to the existing `CONTRIBUTING.md` / `AGENTS.md` / `CLAUDE.md` cross-references") matches the diff; no restructuring of existing README content. → No fix needed.
+- 1.2 [Axis: AcceptanceCriteria coverage] [severity: low] PLAN.md W6.D5 acceptance bullet 1 ("3 short bullets … pointing to `AGENTS_CONFIG.md`, `CASCADE_METHODOLOGY.md`, `GDD_METHODOLOGY.md`") satisfied — the inserted block carries one bullet per doc, each prefixed with the backtick-wrapped filename and an em-dash purpose blurb. PLAN.md acceptance bullet 2 ("Bullet text mentions each doc's purpose in 1 line; cross-referenced to its top-level path") satisfied — each bullet's filename is a relative path at repo root, each carries a one-line purpose. → No fix needed.
+- 1.3 [Axis: Spec-conformance / link targets] [severity: low] All three link targets resolve at repo root: `AGENTS_CONFIG.md` (31k, H1 line 1 = "`agents.toml` Configuration Reference"); `CASCADE_METHODOLOGY.md` (32k, H1 line 1 = "Cascade Methodology"); `GDD_METHODOLOGY.md` (3.0k, H1 line 1 = "GDD Methodology — Graph-Driven Development"). README pointers will not dangle. Cross-direction: `CASCADE_METHODOLOGY.md:7` reciprocally cross-references `AGENTS_CONFIG.md` and `GDD_METHODOLOGY.md`, so the methodology-docs trio mutually links. → No fix needed.
+- 1.4 [Axis: Spec-conformance / nomenclature drift] [severity: medium] **README bullet expands GDD as "Goal-Driven Development" but every other in-tree reference says "Graph-Driven Development".** GDD_METHODOLOGY.md:1 H1 reads `GDD Methodology — Graph-Driven Development`; GDD_METHODOLOGY.md:5 body reads `Graph-Driven Development (GDD) is the companion methodology to Cascade`; CASCADE_METHODOLOGY.md:7 cross-reference reads `GDD_METHODOLOGY.md (Graph-Driven Development methodology, which composes with this one post-Hylla-rev)`; W6.D3 BUILDER_WORKLOG.md:57-58 records `Title is `GDD Methodology — Graph-Driven Development``. The README bullet ("Goal-Driven Development methodology (placeholder; populated post-dogfood)") is the only place in the repo claiming "Goal-Driven." Pointer text contradicts pointee on what the acronym actually expands to. PLAN.md W6.D5 acceptance does not constrain the expansion text directly, but acceptance bullet 2 ("Bullet text mentions each doc's purpose in 1 line") is undermined when the bullet's purpose statement misrepresents the doc's title. → Fix hint: change README.md line 30 to `` `GDD_METHODOLOGY.md` — Graph-Driven Development methodology (placeholder; populated post-dogfood). ``
+- 1.5 [Axis: Constraint preservation / idempotency] [severity: low] PLAN.md W6.D5 RiskNotes flag idempotency as the load-bearing constraint and direct the builder to use `Read+Edit` (not `Write`) and verify bullets don't already exist before adding. BUILDER_WORKLOG.md entry confirms the pre-edit Grep pattern `AGENTS_CONFIG|CASCADE_METHODOLOGY|GDD_METHODOLOGY|Methodology Docs|methodology docs` returned `NO_MATCHES` and that the edit used `Edit` (not `Write`). The committed diff shows a single 5-line insertion at one location — re-running the same Edit would no-op (the surrounding `old_string` would now match a region that already contains the new lines, so a re-add would either fail to find unique match or be detected by the same Grep prelude). Idempotency contract preserved. → No fix needed.
+- 1.6 [Axis: Shipped-but-not-wired] [severity: low] N/A for doc-only droplet. README pointers are passive markdown links; no runtime consumer to wire. → No fix needed.
+- 1.7 [Axis: Worklog/PLAN state drift] [severity: low] PLAN.md W6.D5 `**State:**` line at line 333 reads `done` (verified via Read). BUILDER_WORKLOG.md W6.D5 round entry was appended at lines 416-465 under the existing W1.D1 round (no overwrite of prior W1.D1 / W6.D1 / W6.D2 / W6.D3 sections). Drop's other work-in-flight (`workflow/drop_4c_5/*` shows `BUILDER_WORKLOG.md` and `THEME_F_PLAN.md` as still-modified per repo `git status`; that's W5.D1's parallel work — independent of W6.D5 and not in scope for this review). → No fix needed.
+- 1.8 [Axis: Build-tool gate] [severity: low] BUILDER_WORKLOG.md W6.D5 entry claims `mage ci — green (full CI suite)`. Doc-only change, so the CI gate is informational rather than load-bearing for the README edit; but the builder running it satisfies the droplet ValidationPlan ("doc review pass; `mage ci`"). The QA pass takes the builder's claim at face value because (a) re-running it here would consume substantial QA time on a doc-only change with zero Go surface, (b) the parallel falsification reviewer or drop-orch closeout will exercise `mage ci` independently if the verdict needs hardening, and (c) the diff is purely 5 lines of markdown prose with no embedded code that could break a lint or vet pass. → No fix needed.
+
+### Missing Evidence
+
+- 2.1 None. PLAN.md W6.D5 acceptance bullets (3-bullet structure, 1-line purposes, cross-referenced to top-level path, no restructuring) all map to verifiable content in the committed diff. Idempotency claim verified via the builder's pre-edit Grep documentation. Link-target existence verified via `Read` of each of the three target docs' first lines. The only finding (1.4) is a content-drift defect that is fully visible in the existing evidence — not a missing-evidence gap.
+
+### Summary
+
+Verdict: **PASS with one medium-severity finding** (1.4 — GDD acronym expansion mismatch between README bullet and linked doc). 8 informational findings total; 0 high severity; 1 medium; 7 low. The PASS-with-finding reflects that:
+
+- Every PLAN.md W6.D5 acceptance bullet is satisfied by the committed diff: 3 bullets exist, each names one of the three target docs, each carries a 1-line purpose, no restructuring of existing README content, target docs exist at repo root.
+- Idempotency contract preserved (pre-edit Grep documented `NO_MATCHES`; `Edit` not `Write`; diff is single +5/-0 insertion).
+- Diff scope is minimal and matches the spec's "pointer additions only" framing.
+- Finding 1.4 is content drift, not a structural failure: the link target resolves correctly, the linked doc carries correct content, and only the README bullet's prose expansion of the GDD acronym is wrong. Fix is a one-word edit (`Goal-Driven` → `Graph-Driven`) on README.md line 30 — orchestrator can route it to a single-line follow-up Edit and re-run QA, or accept-with-note depending on parallel falsification's findings + drop-end ledger discipline.
+
+The W6.D5 droplet's load-bearing contract — make the three new methodology docs discoverable from the README — is met. The drift on 1.4 should not block W6.D5 from `done` state given the builder already committed; orchestrator's call on whether the one-word fix lands as a W6.D5 round 2 or as a follow-up cleanup.
+
+### Hylla Feedback
+
+N/A — droplet touched non-Go files only (`README.md` + `workflow/drop_4c_6/*.md`). Hylla today indexes Go only, so no Hylla query was relevant. Verification used `Read` against `README.md` / `AGENTS_CONFIG.md` / `CASCADE_METHODOLOGY.md` / `GDD_METHODOLOGY.md` / `PLAN.md` / `BUILDER_WORKLOG.md`, plus `Bash` (`git show`, `git log`) for diff reconstruction — appropriate per the project's "Non-Go files use Read/Grep/Glob/Bash" rule.
