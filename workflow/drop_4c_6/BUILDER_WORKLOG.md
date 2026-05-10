@@ -750,3 +750,165 @@ named in the acceptance bullets. Hylla's strength (committed-code
 semantic search) is not the right tool for "find every `default-go.toml`
 string occurrence" — that's a syntactic grep job, which `git grep`
 handles directly.
+
+---
+
+## Droplet 4c.6.W5.D2 — Round 1
+
+**Builder:** go-builder-agent (subagent).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W5.D2 — Rename default-generic.toml → till-gen.toml (file move + embed.go + caller audit + extended-paths absorption of W5.D1 routed Unknowns)`.
+
+### Files touched
+
+- `internal/templates/builtin/till-gen.toml` — RENAMED from
+  `internal/templates/builtin/default-generic.toml` via `git mv`
+  (history-preserving rename). Header comment block extended with the
+  dual-history record (`default-generic.toml → till-gen.toml`) and
+  pointer updates from `default-go.toml` → `till-go.toml` in the
+  sibling-mirror references.
+- `internal/templates/embed.go` — three load-bearing edits + dual-history
+  comment-block update + forward-looking doc-comment updates:
+  - `//go:embed` directive: `builtin/default-generic.toml` →
+    `builtin/till-gen.toml`.
+  - `LoadDefaultTemplateForLanguage("")` switch case path: `builtin/default-generic.toml`
+    → `builtin/till-gen.toml`.
+  - `BuiltinTemplateNames()` literal: `["default-generic", "till-go"]` →
+    `["till-gen", "till-go"]` (stable lexical order preserved —
+    `till-gen` < `till-go`).
+  - Dual-history doc-block records both rebadge events
+    (`default.toml → default-go.toml → till-go.toml` AND
+    `default-generic.toml → till-gen.toml`).
+- `internal/templates/embed_test.go` — load-bearing test-body open-path
+  updates plus 5 forward-looking doc-comment edits across
+  `TestLoadDefaultGenericTemplate`, `TestLoadDefaultTemplateForLanguage_Generic`,
+  `TestLoadDefaultTemplateForLanguage_Go`, and
+  `TestLoadDefaultTemplate_WrapsLanguageEmpty`.
+- `internal/app/service.go` — L383-386 forward-looking doc-comment
+  naming the embedded fallback file paths — `till-go.toml or
+  default-generic.toml` → `till-go.toml or till-gen.toml` with the
+  dual-history rebadge lineage now naming both W5.D1 and W5.D2.
+- `internal/app/service_test.go` — L6852 forward-looking doc-comment
+  about post-F.1.3 routing — `routes to default-generic.toml` →
+  `routes to till-gen.toml, rebadged from default-generic.toml in
+  Drop 4c.6 W5.D2`.
+- `internal/app/auto_generate_steward_test.go` — L18 `withSeedTemplateFixture`
+  doc-comment — `till-go.toml / default-generic.toml content drift` →
+  `till-go.toml / till-gen.toml content drift` with both W5.D1 and
+  W5.D2 rebadge notes recorded.
+- `internal/adapters/server/common/mcp_surface.go` — TWO edits:
+  - L911 BakeSource doc-comment for `embedded-default-generic` —
+    file-path reference `internal/templates/builtin/default-generic.toml`
+    → `till-gen.toml`. Inline note added that the BakeSource STRING
+    value `embedded-default-generic` is intentionally retained as a
+    stable wire identifier separate from the on-disk file name
+    (mirroring W5.D1's wire-string-vs-filename split).
+  - L922 `ListBuiltinTemplatesResult` doc-comment — `today: ["default-generic",
+    "default-go"]` → `today: ["till-gen", "till-go"]`. Closes the
+    W5.D1 round-1 falsification finding 1.1 routed to W5.D2
+    extended-paths.
+- `internal/app/template_service.go` — L114 `ListBuiltinTemplates`
+  doc-comment — returns `["default-generic", "default-go"]` →
+  returns `["till-gen", "till-go"]` with the dual-rebadge note.
+  (Per W5.D1 round-1 falsification routing — the doc-comment was
+  stale relative to the production return.)
+- `internal/adapters/server/mcpapi/extended_tools_test.go` — TWO
+  load-bearing edits + 2 doc-comment updates:
+  - L883 stub-fixture `Templates: []string{"default-generic",
+    "default-go"}` → `["till-gen", "till-go"]`. LOAD-BEARING:
+    matches real `BuiltinTemplateNames()` post-W5.D2 to prevent
+    silent stub-fixture-vs-real-return drift.
+  - L3815 test-body `want := []string{"default-generic",
+    "default-go"}` → `["till-gen", "till-go"]`. Pairs with the
+    stub flip to keep the round-trip assertion honest.
+  - Stub doc-comment + `TestTillTemplate_ListBuiltin` doc-comment —
+    closed-list update.
+- `workflow/drop_4c_6/PLAN.md` — flipped W5.D2 `**State:**` line
+  `todo → in_progress → done`.
+
+### Design decisions
+
+- **Strict TDD discipline.** Step sequence: (1) baseline GREEN
+  `mage test-func ./internal/templates TestLoadDefaultGenericTemplate`
+  (1.28s); (2) `git mv default-generic.toml till-gen.toml` — test now
+  RED with build error (`//go:embed builtin/default-generic.toml`
+  directive references a missing file); (3) update embed.go directive
+  + switch case + names literal → still RED (test body opens
+  `builtin/default-generic.toml` directly); (4) update embed_test.go
+  open path + t.Fatalf messages → GREEN (1.28s); (5) full-package
+  `mage test-pkg ./internal/templates` 458/458 GREEN; (6) sibling
+  packages `mage test-pkg ./internal/app` 476/476, `./internal/adapters/server/mcpapi`
+  226/226, `./internal/adapters/server/common` 165/165, `./cmd/till`
+  253/253 all GREEN.
+- **Strict declared-paths discipline + extended-paths from spawn
+  prompt.** Per the spawn prompt's "Edit ONLY declared paths + the 3
+  extended-paths sites" rule, restricted edits to the declared path
+  set (the renamed TOML, embed.go, embed_test.go, and the 4
+  caller-audit sites) PLUS the 3 extended-paths sites
+  (`extended_tools_test.go` line 883/3815 stub-fixture drift,
+  `template_service.go` line 114 doc-comment, `mcp_surface.go` line
+  922 doc-comment). Did NOT touch `internal/templates/load.go`
+  (lines 388 + 1240 historical doc-comments — outside W5.D2 declared
+  paths; deferred to W5.D3 alongside schema cleanup) or
+  `internal/app/auto_generate_steward.go:108` short-name historical
+  doc-comment (also W5.D3 deferral target). Both deferral sites
+  raised as W5-D2-FF1 audit-trail finding by build-QA-falsification;
+  orchestrator absorbed them into W5.D3's declared paths in the
+  L1 PLAN.md row prior to W5.D2 commit.
+- **Wire-string preservation.** Wire-protocol strings intentionally
+  retained (matching W5.D1's pattern):
+  - `embedded-default-generic` BakeSource sentinel — wire-protocol
+    identifier separate from filename.
+  - The MCP tool description's BakeSource enum
+    `<bare-root>|<primary-worktree>|embedded-default-go|embedded-default-generic`
+    — wire-shape documentation, retained verbatim.
+- **Dual-history doc-comment pattern.** The till-gen.toml file header
+  now opens with the rename lineage. The embed.go doc-block extends
+  W5.D1's rebadge note with the W5.D2 second rebadge. Each downstream
+  forward-looking doc-comment records the W5.D2 rebadge with
+  rebadge-from notation so future readers can trace the full lineage.
+- **HF5 grep verification post-edit.** `git grep "default-generic.toml"
+  -- cmd/ internal/ '*.go'` confirms every remaining hit is in a
+  doc-comment (rebadge-history record), TOML header comment,
+  historical-rename-record, or out-of-scope file (load.go,
+  auto_generate_steward.go — both absorbed into W5.D3's Paths post
+  W5-D2-FF1 audit-trail fix). No load-bearing strings, no `//go:embed`
+  directives, no switch-case literals, no `BuiltinTemplateNames()`
+  literal entries reference the old name.
+- **`BuiltinTemplateNames()` post-W5.D2 returns
+  `["till-gen", "till-go"]`.** Per the droplet acceptance bullet.
+  Stable lexical order preserved.
+- **Extended-paths fixes (3 sites) close W5.D1 round-1 falsification
+  routed Unknowns.** Three pre-existing doc-comment / stub-fixture
+  drift sites from W5.D1's round-1 falsification:
+  (1) `extended_tools_test.go` lines 883 + 3815 stub-fixture drift;
+  (2) `template_service.go` line 114 doc-comment drift;
+  (3) `mcp_surface.go` line 922 doc-comment drift. All resolved.
+
+### Mage targets run
+
+- `mage test-func ./internal/templates TestLoadDefaultGenericTemplate`
+  — pre-rename baseline GREEN (1.28s); post-`git mv` pre-embed.go-fix
+  RED (build failure); post-fix GREEN (1.28s).
+- `mage test-pkg ./internal/templates` — 458 tests GREEN.
+- `mage test-pkg ./internal/app` — 476 tests GREEN.
+- `mage test-pkg ./internal/adapters/server/mcpapi` — 226 tests GREEN
+  (post stub-fixture flip — the stub now matches real return).
+- `mage test-pkg ./internal/adapters/server/common` — 165 tests GREEN.
+- `mage test-pkg ./internal/adapters/storage/sqlite` — 93 tests GREEN.
+- `mage test-pkg ./cmd/till` — 253 tests GREEN.
+- `mage ci` — run by build-QA-falsification (NOT by builder per agent
+  rule) — 3005/3005 tests GREEN across 25 packages.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. Used `git grep` (the explicit
+HF5-verification path named in the spawn prompt) and `Read` against
+the named caller-audit files. No Hylla query was needed because the
+droplet's `**Paths:**` field already enumerates the affected files +
+line numbers, and `git grep` is the canonical HF5 verification tool
+named in the acceptance bullets. Hylla's strength (committed-code
+semantic search) is not the right tool for "find every
+`default-generic.toml` string occurrence" — that's a syntactic grep
+job, which `git grep` handles directly.
+

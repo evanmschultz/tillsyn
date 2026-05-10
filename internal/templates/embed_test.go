@@ -63,8 +63,9 @@ func TestDefaultTemplateGoLoadsCleanly(t *testing.T) {
 }
 
 // TestLoadDefaultGenericTemplate is the canary for the language-agnostic
-// builtin shipped in Drop 4c.5 droplet F.2.2. It verifies that
-// builtin/default-generic.toml:
+// builtin shipped in Drop 4c.5 droplet F.2.2 and rebadged in Drop 4c.6
+// W5.D2 from `default-generic.toml` to `till-gen.toml`. It verifies that
+// builtin/till-gen.toml:
 //
 //  1. Opens cleanly from the embed.FS (the //go:embed directive on
 //     DefaultTemplateFS extends to both files in F.2.2).
@@ -98,15 +99,15 @@ func TestDefaultTemplateGoLoadsCleanly(t *testing.T) {
 func TestLoadDefaultGenericTemplate(t *testing.T) {
 	t.Parallel()
 
-	f, err := DefaultTemplateFS.Open("builtin/default-generic.toml")
+	f, err := DefaultTemplateFS.Open("builtin/till-gen.toml")
 	if err != nil {
-		t.Fatalf("DefaultTemplateFS.Open(default-generic.toml): unexpected error: %v", err)
+		t.Fatalf("DefaultTemplateFS.Open(till-gen.toml): unexpected error: %v", err)
 	}
 	defer f.Close()
 
 	tpl, err := Load(f)
 	if err != nil {
-		t.Fatalf("Load(default-generic.toml): unexpected error: %v", err)
+		t.Fatalf("Load(till-gen.toml): unexpected error: %v", err)
 	}
 
 	if tpl.SchemaVersion != SchemaVersionV1 {
@@ -880,8 +881,8 @@ func TestDefaultTemplatePlanContextHasNoDescendants(t *testing.T) {
 
 // TestLoadDefaultTemplateForLanguage_Generic asserts that the empty-string
 // language axis (the closed-enum zero value for `domain.Project.Language`)
-// resolves to `builtin/default-generic.toml` and parses cleanly through the
-// full validation chain.
+// resolves to `builtin/till-gen.toml` (rebadged from `default-generic.toml`
+// in Drop 4c.6 W5.D2) and parses cleanly through the full validation chain.
 //
 // Drop 4c.5 droplet F.1.3 acceptance criterion #2 + #8. Mirrors the
 // generic-template content asserts in TestLoadDefaultGenericTemplate (F.2.2)
@@ -905,7 +906,7 @@ func TestLoadDefaultTemplateForLanguage_Generic(t *testing.T) {
 	// resolver mistakenly routed lang="" to till-go.toml this assertion
 	// would fail because till-go ships 12 agent bindings.
 	if got := len(tpl.AgentBindings); got != 0 {
-		t.Fatalf("len(AgentBindings) = %d; want 0 (lang=\"\" must route to default-generic.toml; till-go ships 12 bindings)", got)
+		t.Fatalf("len(AgentBindings) = %d; want 0 (lang=\"\" must route to till-gen.toml; till-go ships 12 bindings)", got)
 	}
 }
 
@@ -936,7 +937,7 @@ func TestLoadDefaultTemplateForLanguage_Go(t *testing.T) {
 
 	// Go template's load-bearing distinguishing feature vs generic: 12
 	// agent bindings (one per closed-enum kind). If the resolver
-	// mistakenly routed lang="go" to default-generic.toml this
+	// mistakenly routed lang="go" to till-gen.toml this
 	// assertion would fail.
 	if got, want := len(tpl.AgentBindings), len(allKinds); got != want {
 		t.Fatalf("len(AgentBindings) = %d; want %d (lang=\"go\" must route to till-go.toml; generic ships 0 bindings)", got, want)
@@ -1015,8 +1016,9 @@ func TestLoadDefaultTemplateForLanguage_UnknownRejected(t *testing.T) {
 // that lets future drops trust the equivalence.
 //
 // SEMANTIC SHIFT regression net: pre-F.1.3 `LoadDefaultTemplate()` read
-// default-go.toml directly. Post-F.1.3 it routes to default-generic.toml
-// via `LoadDefaultTemplateForLanguage("")`. Future drops that touch the
+// default-go.toml directly. Post-F.1.3 it routes to till-gen.toml
+// (rebadged from default-generic.toml in Drop 4c.6 W5.D2) via
+// `LoadDefaultTemplateForLanguage("")`. Future drops that touch the
 // wrapper or the resolver must keep these two call paths in sync;
 // reflect.DeepEqual is the strict invariant.
 func TestLoadDefaultTemplate_WrapsLanguageEmpty(t *testing.T) {

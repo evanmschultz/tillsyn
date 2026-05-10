@@ -111,7 +111,8 @@ func (s *Service) GetProjectTemplate(ctx context.Context, in GetProjectTemplateI
 // project-context-free, deterministic across processes.
 //
 // Drop 4c.5 droplet F.3.1 acceptance criterion #3: returns
-// `["default-generic", "default-go"]` post-F.2.
+// `["till-gen", "till-go"]` post-F.2 (rebadged from
+// `["default-generic", "default-go"]` in Drop 4c.6 W5.D1 + W5.D2).
 func (s *Service) ListBuiltinTemplates(_ context.Context) (ListBuiltinTemplatesOutput, error) {
 	return ListBuiltinTemplatesOutput{
 		Templates: templates.BuiltinTemplateNames(),

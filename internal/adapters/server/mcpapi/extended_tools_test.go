@@ -871,16 +871,18 @@ func (s *stubExpandedService) GetProjectTemplate(_ context.Context, in common.Ge
 
 // ListBuiltinTemplates is the test stub backing the till.template
 // `list_builtin` MCP operation (Drop 4c.5 droplet F.3.1). Returns the
-// closed list `["default-generic", "default-go"]` in stable lexical
-// order, mirroring templates.BuiltinTemplateNames so tests assert against
-// the same wire vocabulary the production resolver exposes.
+// closed list `["till-gen", "till-go"]` in stable lexical order
+// (rebadged from `["default-generic", "default-go"]` in Drop 4c.6
+// W5.D1 + W5.D2), mirroring templates.BuiltinTemplateNames so tests
+// assert against the same wire vocabulary the production resolver
+// exposes.
 func (s *stubExpandedService) ListBuiltinTemplates(_ context.Context) (common.ListBuiltinTemplatesResult, error) {
 	s.listBuiltinTemplatesCalls++
 	if s.listBuiltinTemplatesErr != nil {
 		return common.ListBuiltinTemplatesResult{}, s.listBuiltinTemplatesErr
 	}
 	return common.ListBuiltinTemplatesResult{
-		Templates: []string{"default-generic", "default-go"},
+		Templates: []string{"till-gen", "till-go"},
 	}, nil
 }
 
@@ -3770,10 +3772,11 @@ func TestTillTemplate_Get_BareRootSourced(t *testing.T) {
 
 // TestTillTemplate_ListBuiltin verifies the Drop 4c.5 droplet F.3.1
 // `till.template list_builtin` operation. Asserts: (a) the JSON-OUT envelope
-// contains the closed list ["default-generic", "default-go"] in that lexical
-// order, (b) the call routes through the service stub (incrementing the call
-// counter), and (c) the operation does NOT require project_id (read-only,
-// project-context-free).
+// contains the closed list ["till-gen", "till-go"] in that lexical order
+// (rebadged from ["default-generic", "default-go"] in Drop 4c.6 W5.D1 +
+// W5.D2), (b) the call routes through the service stub (incrementing the
+// call counter), and (c) the operation does NOT require project_id
+// (read-only, project-context-free).
 func TestTillTemplate_ListBuiltin(t *testing.T) {
 	t.Parallel()
 
@@ -3812,7 +3815,7 @@ func TestTillTemplate_ListBuiltin(t *testing.T) {
 		name, _ := raw.(string)
 		names = append(names, name)
 	}
-	want := []string{"default-generic", "default-go"}
+	want := []string{"till-gen", "till-go"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("templates = %v, want %v (closed lexical order)", names, want)
 	}

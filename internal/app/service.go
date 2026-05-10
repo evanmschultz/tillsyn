@@ -381,10 +381,11 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 //     template exists (file-system source resolution lands in droplet 3.14
 //     alongside the embedded default), OR
 //   - the embedded internal/templates/builtin/till-go.toml or
-//     default-generic.toml fallback (Go builtin rebadged from
-//     `default-go.toml` to `till-go.toml` in Drop 4c.6 W5.D1 alongside
-//     the F.2.1 + F.2.2 dual-history; selected per project Language
-//     axis).
+//     till-gen.toml fallback (Go builtin rebadged from `default-go.toml`
+//     to `till-go.toml` in Drop 4c.6 W5.D1; language-agnostic builtin
+//     rebadged from `default-generic.toml` to `till-gen.toml` in Drop
+//     4c.6 W5.D2 — alongside the F.2.1 + F.2.2 dual-history; selected
+//     per project Language axis).
 //
 // RELEASE NOTE — Drop 4c.5 droplets F.1.1 + F.1.2 BEHAVIOR CHANGE: prior
 // to F.1.1 this helper was a no-op for every project (loadProjectTemplate

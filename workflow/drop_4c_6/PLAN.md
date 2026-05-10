@@ -190,7 +190,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W5.D2 — Rename `default-generic.toml` → `till-gen.toml` (file move + embed.go + caller audit)
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/templates/builtin/till-gen.toml` (RENAMED from `default-generic.toml`), `internal/templates/embed.go`, `internal/templates/embed_test.go`, plus caller-audit edits regenerated via ROUND-2 HF6 `git grep "default-generic.toml" cmd/ internal/`:
   - `internal/app/service.go:384` — doc-comment forward-looking → update to `till-gen.toml`.
@@ -222,7 +222,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 - **State:** todo
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
-- **Paths:** `internal/templates/builtin/till-go.toml` (NOTE: post-W5.D1 rename), `internal/templates/builtin/till-gen.toml` (post-W5.D2 rename), plus the placeholder agent .md files shipped in W1 — strip `tools:` / `model:` from their frontmatter so agents.toml is sole authority per `SKETCH.md` § 4.4 + § 15.
+- **Paths:** `internal/templates/builtin/till-go.toml` (NOTE: post-W5.D1 rename), `internal/templates/builtin/till-gen.toml` (post-W5.D2 rename), plus the placeholder agent .md files shipped in W1 — strip `tools:` / `model:` from their frontmatter so agents.toml is sole authority per `SKETCH.md` § 4.4 + § 15. **W5-D2-FF1 ROUND-2 ABSORPTION:** also `internal/templates/load.go` (lines 388 + 1240, paired historical doc-comments referencing both `default-go.toml + default-generic.toml`) and `internal/app/auto_generate_steward.go` (line 108, short-name historical doc-comment `default-generic vs default-go`) — these doc-comment-only sites were deferred from W5.D1 + W5.D2 routed Unknowns and absorbed here so the rebadge cleanup closes in this droplet.
 - **Packages:** `internal/templates`.
 - **Acceptance:**
   - In `till-go.toml`, every `[agent_bindings.<kind>] agent_name = "go-<name>"` becomes `agent_name = "<name>"` (per `SKETCH.md` § 7) — Go specialization comes from group choice at init time, not from agent name.
@@ -230,6 +230,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
   - In every `internal/templates/builtin/agents/<group>/*.md` placeholder file shipped by W1, frontmatter is `name` + `description` ONLY — no `model:`, no `tools:`, no `allowedTools:`, no `disallowedTools:` per `SKETCH.md` § 15.
   - Existing `tools` field on `agent_bindings` at runtime: per `SKETCH.md` § 4.1 + § 4.2, `tools_allow` + `tools_deny` MOVE from agent .md frontmatter / `[agent_bindings]` to `agents.toml`. After this droplet, `[agent_bindings.<kind>]` blocks have ONLY cascade-structural fields (`agent_name`, `commit_agent`, `[…context]`, etc.); runtime fields (`model`, `tools`, etc.) are absent. NOTE: any actual schema-level changes to `templates.AgentBinding` to drop fields are OUT OF SCOPE for this droplet — those would orphan tests + downstream consumers; the field-removal-from-schema is a Drop 4c.7+ concern. THIS droplet only ensures the SHIPPED `till-*.toml` files don't SET those fields, even though the schema still accepts them.
   - `mage test-pkg ./internal/templates` passes; `mage ci` green; integration test exercising template loading via `till-go.toml` confirms no `tools` field is read from `[agent_bindings]`.
+  - **W5-D2-FF1 ROUND-2 ABSORBED:** `internal/templates/load.go:388` + `:1240` paired historical doc-comments updated to read `till-gen.toml + till-go.toml` (current names, with optional `← default-generic.toml + default-go.toml` rebadge note matching the dual-history pattern from W5.D1/W5.D2). `internal/app/auto_generate_steward.go:108` short-name doc-comment updated to `till-gen vs till-go` (with optional rebadge note). After this droplet, `git grep "default-generic"` returns ZERO non-historical hits and `git grep "default-go"` returns ZERO non-historical hits across `cmd/`, `internal/`, `*.go` — rebadge cleanup is complete.
 - **Blocked by:** 4c.6.W5.D1, 4c.6.W5.D2, 4c.6.W1.D1 (this droplet edits the renamed files from D1+D2 AND the placeholder agent .md files from W1).
 - **Specify (droplet-scope; inherits `SKETCH.md` § 26.W5 + § 4.4 + § 15):**
   - **Objective:** Migrate runtime fields (`model`, `tools_allow/deny`) out of template-defined surfaces (`[agent_bindings]` and agent .md frontmatter) and into `agents.toml`'s sole authority. Drops `go-` prefix from `agent_name` so group choice (not name) carries language specialization.

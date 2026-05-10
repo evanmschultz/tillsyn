@@ -334,3 +334,105 @@ The droplet should advance to closeout. Orchestrator should track the two routed
 ### Hylla Feedback
 
 None — Hylla answered everything needed. Verification used `git show` / `git log --follow` / `git grep` for diff reconstruction + HF5 grep semantics, plus `Read` against the 8 declared-path files + `BUILDER_WORKLOG.md` + `PLAN.md`, plus `mage test-pkg` against the three named packages. Hylla queries were not the right tool for this droplet's verification surface — the droplet's load-bearing contract is "string literal updates" + a `git mv`, both of which are syntactic/filesystem questions that `git grep` + `git log --follow` answer authoritatively. Hylla's strength (committed-code semantic search) would not have added signal here. No Hylla miss to report.
+
+---
+
+## Droplet 4c.6.W5.D2 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent, build-QA-proof axis).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W5.D2 — Rename default-generic.toml → till-gen.toml (file move + embed.go + caller audit + extended-paths to close W5.D1 routed Unknowns)`.
+**Parent kind:** `build`.
+**Artifact under review:** uncommitted working-tree state at HEAD `08e3507` (rename + edits per builder worklog § Droplet 4c.6.W5.D2 — Round 1).
+**Spec sources:** `workflow/drop_4c_6/PLAN.md` lines 191-219 (W5.D2 row); `workflow/drop_4c_6/BUILDER_WORKLOG.md` § Droplet 4c.6.W5.D2 — Round 1; W5.D1 round-1 falsification verdict at `workflow/drop_4c_6/BUILDER_QA_FALSIFICATION.md` § W5.D1 (source of routed Unknowns 1.1 + 1.3).
+
+### Findings
+
+(none — every acceptance component maps to a concrete artifact location; see Trace below.)
+
+### Missing Evidence
+
+(none.)
+
+### Acceptance trace
+
+**A. Rename + embed.go correctness — VERIFIED.**
+
+- `internal/templates/builtin/till-gen.toml` exists; `default-generic.toml` does NOT (`ls internal/templates/builtin/` returned `agents.example.toml`, `till-gen.toml`, `till-go.toml`; `git status --porcelain` shows `RM internal/templates/builtin/default-generic.toml -> internal/templates/builtin/till-gen.toml` confirming history-preserving rename).
+- `internal/templates/embed.go:75` `//go:embed builtin/till-go.toml builtin/till-gen.toml` — directive references the new filename. No `default-generic.toml` directive remains.
+- `internal/templates/embed.go:209` `case "":` returns `path = "builtin/till-gen.toml"` — switch-case load-bearing string flip confirmed.
+- `internal/templates/embed.go:255` `BuiltinTemplateNames()` returns `[]string{"till-gen", "till-go"}` — stable lexical order preserved (`till-gen` < `till-go`).
+- `internal/templates/embed.go:128` doc-comment names `builtin/till-gen.toml` (rebadged from `default-generic.toml` in Drop 4c.6 W5.D2). Dual-history doc-block at L18-30 records both rebadge events per droplet RiskNotes.
+
+**B. HF5 grep semantics — CLEAN.**
+
+`git grep "default-generic.toml" -- cmd/ internal/ '*.go'` returned 18 hits; classifying each:
+
+| Site | Class | Status |
+|------|-------|--------|
+| `internal/adapters/server/common/mcp_surface.go:912` | dual-history doc-comment | RETAINED (correct) |
+| `internal/app/auto_generate_steward_test.go:20` | dual-history doc-comment | RETAINED (correct) |
+| `internal/app/service.go:386` | dual-history doc-comment | RETAINED (correct) |
+| `internal/app/service_test.go:6853` | dual-history doc-comment | RETAINED (correct) |
+| `internal/templates/builtin/till-gen.toml:3,9,11` | TOML header dual-history record | RETAINED (correct — file's own rename lineage) |
+| `internal/templates/builtin/till-go.toml:6` | sibling cross-reference comment | RETAINED (correct — Drop 4c.5 F.2.1 historical) |
+| `internal/templates/embed.go:22,27,30,128,175` | dual-history doc-block + forward-looking doc-comments naming new file | RETAINED (correct) |
+| `internal/templates/embed_test.go:67,884,1020` | dual-history / SEMANTIC SHIFT regression-note doc-comments | RETAINED (correct) |
+| `internal/templates/load.go:388,1240` | doc-comment refs `(default-go.toml + default-generic.toml)` together | RETAINED — out-of-scope per W5.D1+W5.D2 declared-path discipline; deferred to W5.D3 |
+
+ZERO hits in non-doc-comment locations: no `//go:embed` directives, no switch-case literals, no `BuiltinTemplateNames()` literal entries, no test fixture data references the old name. `internal/templates/load.go` is NOT in W5.D2's declared `Paths:` field — the W5.D1 builder also explicitly deferred these to W5.D3, so the deferral pattern is consistent.
+
+**C. Extended-paths W5.D1 routed Unknowns closure — VERIFIED.**
+
+W5.D1 round-1 falsification flagged two doc-comment / fixture-drift Unknowns; the orchestrator routed them as W5.D2 extended-paths. Each closure verified:
+
+- `internal/adapters/server/mcpapi/extended_tools_test.go:885` stub fixture: `Templates: []string{"till-gen", "till-go"}` ✓
+- `internal/adapters/server/mcpapi/extended_tools_test.go:3818` want literal: `want := []string{"till-gen", "till-go"}` ✓
+  - **Stub-vs-want consistency holds**: both flipped together, so `TestTillTemplate_ListBuiltin` asserts the post-W5.D2 reality (no doc-comment-vs-assertion drift).
+- `internal/app/template_service.go:114` doc-comment: `returns "['till-gen', 'till-go']" post-F.2 (rebadged from "['default-generic', 'default-go']" in Drop 4c.6 W5.D1 + W5.D2)` ✓
+- `internal/adapters/server/common/mcp_surface.go:912` BakeSource doc-comment: file path `internal/templates/builtin/till-gen.toml` ✓ (with retained `embedded-default-generic` wire-string note matching the W5.D1 wire-string-vs-filename split pattern)
+- `internal/adapters/server/common/mcp_surface.go:926` `ListBuiltinTemplatesResult` doc-comment: `today: ["till-gen", "till-go"]` ✓
+
+**D. mage gates — ALL GREEN.**
+
+Re-run from current working-tree state (uncommitted; matches builder's claimed numbers exactly):
+
+| Gate | Builder claim | Re-verify |
+|------|---------------|-----------|
+| `mage test-pkg ./internal/templates` | 458/458 | 458/458 ✓ |
+| `mage test-pkg ./internal/adapters/server/mcpapi` | 226/226 | 226/226 ✓ |
+| `mage test-pkg ./internal/app` | 476/476 | 476/476 ✓ |
+| `mage test-pkg ./internal/adapters/server/common` | 165/165 | 165/165 ✓ |
+| `mage test-pkg ./cmd/till` | 253/253 | 253/253 ✓ |
+
+Builder's `mage ci`-not-run discipline is correct (per `~/.claude/agents/go-builder-agent.md` agent-file rule); QA-proof scope deliberately runs the 5 named per-package gates rather than full `mage ci` — drop-orch runs `mage ci` once at drop end per WORKFLOW.md Phase 4.
+
+**E. State flip — VERIFIED.**
+
+`workflow/drop_4c_6/PLAN.md` line 193: `**State:** done` ✓.
+
+**F. PLAN acceptance audit — ALL BULLETS SATISFIED.**
+
+Cross-checking each PLAN.md W5.D2 acceptance bullet against on-disk reality:
+
+1. `internal/templates/builtin/default-generic.toml` renamed via `git mv` ✓ (history-preserving — `git status` shows `RM ... -> ...`).
+2. `//go:embed` directive references `builtin/till-gen.toml` ✓ (embed.go:75).
+3. `LoadDefaultTemplateForLanguage("")` switch case returns the new path ✓ (embed.go:209). `BuiltinTemplateNames()` returns `["till-gen", "till-go"]` ✓ (embed.go:255).
+4. `git grep "default-generic.toml"` returns zero hits in **non-doc-comment locations** ✓ (HF5 audit above; every remaining hit classified as dual-history / TOML-header / out-of-scope deferral).
+5. `mage ci` green — surface verification via the 5 per-package gates above; full `mage ci` is the drop-orch's drop-end gate.
+
+### Summary
+
+**Verdict:** `PASS`.
+
+W5.D2's load-bearing contract — rename the language-agnostic builtin from `default-generic.toml` to `till-gen.toml` with a history-preserving `git mv`, update every load-bearing reference (embed directive at L75, switch-case at L209, name vocabulary at L255), apply dual-history doc-comments at the 4 caller-audit sites + 3 W5.D1-routed extended-paths sites, and keep mage gates green — is fully satisfied. Diff scope hews strictly to the declared paths plus the explicitly-routed extended paths; no drive-by edits. HF5 grep returns zero non-doc-comment hits in `cmd/` + `internal/` + `*.go`. `BuiltinTemplateNames()` returns `["till-gen", "till-go"]` in stable lexical order. Historical refs and dual-history records preserved verbatim per HF5 historical-rename-record rule.
+
+**Verdict on extended-paths W5.D1 routed Unknowns:**
+- Unknown #1 (`extended_tools_test.go:883,3815` stub-fixture drift) — **CLOSED**. Stub at line 885 + want literal at line 3818 both flipped to `["till-gen", "till-go"]` together; round-trip `TestTillTemplate_ListBuiltin` asserts post-W5.D2 reality, no silent drift.
+- Unknown #2 (forward-looking doc-comments in `template_service.go` + `mcp_surface.go`) — **CLOSED**. Both files updated with dual-rebadge note naming W5.D1 + W5.D2 lineage.
+
+The till- prefix family is now complete (`till-gen` + `till-go`); W5.D3 next handles the remaining out-of-scope deferrals in `internal/templates/load.go` alongside its schema cleanup. The droplet should advance to closeout.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. Verification used `git status --porcelain` for rename-detection, `git grep "default-generic.toml"` for HF5 audit (the canonical syntactic-grep tool the spec named), `Read` against the embed.go / extended-paths sites / PLAN.md / BUILDER_WORKLOG.md, plus `mage test-pkg` against the 5 named packages. Hylla's strength (committed-code semantic search) is not the right tool for "find every `default-generic.toml` string occurrence + verify stub-vs-want consistency at named lines" — that's a syntactic/filesystem verification surface, which `git grep` + `Read` answer authoritatively. No Hylla miss to report.

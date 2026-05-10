@@ -6850,7 +6850,8 @@ func TestBakeProjectKindCatalog_NonEmptyPathFallsThroughToEmbedded(t *testing.T)
 // Pre-F.2.4 the STEWARD-seed seam ignored project.Language entirely —
 // every project, regardless of axis, materialized seeds from the
 // language-AGNOSTIC `LoadDefaultTemplate()` (which post-F.1.3 routes
-// to `default-generic.toml`). Post-F.2.4 the seam takes a `lang`
+// to `till-gen.toml`, rebadged from `default-generic.toml` in Drop
+// 4c.6 W5.D2). Post-F.2.4 the seam takes a `lang`
 // argument so the seed path picks the correct embedded TOML per the
 // project's `Language` field. This test substitutes the seam with a
 // closure that records the received language AND returns a

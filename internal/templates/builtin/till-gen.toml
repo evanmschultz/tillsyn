@@ -1,10 +1,22 @@
 # Tillsyn language-agnostic default cascade template (builtin).
 #
-# Sibling to builtin/default-go.toml. Ships the closed 12-kind catalog, the
+# Originally shipped as `default-generic.toml` in Drop 4c.5 Theme F droplet
+# F.2.2 as a sibling to `default-go.toml`. Drop 4c.6 W5.D1 rebadged the
+# Go-flavored sibling from `default-go.toml` to `till-go.toml` to align
+# with the `till-` prefix family the cascade-methodology trilogy adopts
+# (per workflow/drop_4c_6/SKETCH.md § 3.5.1 / § 21.6 — communicates
+# "shipped from Tillsyn binary"). Drop 4c.6 W5.D2 rebadged THIS file in
+# lockstep, from `default-generic.toml` to `till-gen.toml`, completing
+# the `till-` prefix family. The dual-history record
+# (default-generic.toml → till-gen.toml) is preserved here and in the
+# embed.go directive doc-comment so future readers can trace the file's
+# lineage.
+#
+# Sibling to builtin/till-go.toml. Ships the closed 12-kind catalog, the
 # four standard child_rules (build→build-qa-proof, build→build-qa-falsification,
 # plan→plan-qa-proof, plan→plan-qa-falsification), the six STEWARD
 # persistent-parent seeds, and the build-only [gates] sequence — the
-# language-agnostic core of default-go.toml's shape, with TWO deliberate
+# language-agnostic core of till-go.toml's shape, with TWO deliberate
 # omissions:
 #
 #   1. NO [agent_bindings] table — agent identities are language-specific.
@@ -33,11 +45,11 @@
 #   F.1.3 acceptance criteria 2 + 6, `lang == ""` (the project's
 #   `domain.Project.Language` zero value) selects this generic file. Until
 #   F.1.3 lands, `LoadDefaultTemplate()` continues to read default-go.toml
-#   directly (preserving the prior behavior byte-for-byte). F.2.2 only ships
-#   the file + extends the //go:embed directive; downstream droplets wire
-#   the language-aware resolver.
+#   (now till-go.toml post-W5.D1) directly (preserving the prior behavior
+#   byte-for-byte). F.2.2 only ships the file + extends the //go:embed
+#   directive; downstream droplets wire the language-aware resolver.
 #
-# Encoding rules (mirrors default-go.toml):
+# Encoding rules (mirrors till-go.toml):
 #   - schema_version pinned to "v1"; bumping requires migration in load.go.
 #   - Reverse-hierarchy prohibitions (PLAN.md § 19.3 finding 5.B.16 N3) are
 #     EXPLICIT via [kinds.<parent>].allowed_child_kinds enumerating every

@@ -908,7 +908,11 @@ type GetProjectTemplateRequest struct {
 //     value `embedded-default-go` is intentionally retained as a stable
 //     wire identifier separate from the on-disk file name).
 //   - "embedded-default-generic" — Template loaded from the embedded
-//     `internal/templates/builtin/default-generic.toml` builtin.
+//     `internal/templates/builtin/till-gen.toml` builtin (file rebadged
+//     from `default-generic.toml` in Drop 4c.6 W5.D2; the BakeSource
+//     string value `embedded-default-generic` is intentionally retained
+//     as a stable wire identifier separate from the on-disk file name,
+//     mirroring the W5.D1 wire-string-vs-filename split).
 //
 // Drop 4c.5 droplet F.3.1.
 type GetProjectTemplateResult struct {
@@ -919,7 +923,7 @@ type GetProjectTemplateResult struct {
 
 // ListBuiltinTemplatesResult is the wire envelope returned by `till.template
 // list_builtin`. The Templates list is the closed enum of language-axis
-// names embedded in the binary (today: ["default-generic", "default-go"]).
+// names embedded in the binary (today: ["till-gen", "till-go"]).
 //
 // Drop 4c.5 droplet F.3.1.
 type ListBuiltinTemplatesResult struct {
