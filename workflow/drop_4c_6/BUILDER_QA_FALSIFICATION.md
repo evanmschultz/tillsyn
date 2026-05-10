@@ -148,3 +148,151 @@ AGENTS_CONFIG.md + GDD_METHODOLOGY.md present).
 ### Hylla Feedback
 
 N/A — task touched non-Go files only.
+
+---
+
+## Droplet 4c.6.W6.D1 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, doc-only mode).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W6.D1 — AGENTS_CONFIG.md (new top-level doc)`.
+**Artifact under attack:** `AGENTS_CONFIG.md` (NEW top-level adopter-facing reference, 396 lines, 12 numbered H2 sections + ToC).
+
+### Counterexamples
+
+(none — empty list)
+
+### Findings (non-CONFIRMED, recorded for audit)
+
+- 1.1 [Family: contract-preservation] [severity: low] **Dangling `L20` reference at line 62.**
+  The `[agents]` schema example renders `auto_push = false` with the trailing comment
+  `# post-build commit-and-push gate (off by default per L20)`. `L20` is not defined or
+  referenced anywhere else in `AGENTS_CONFIG.md`, in `workflow/drop_4c_6/SKETCH.md`
+  (verified via `git grep -nE "L20" workflow/drop_4c_6/SKETCH.md` → 0 hits), or in any
+  other doc at repo root. SKETCH.md actually addresses `auto_push` at lines 189
+  (`auto_push = false` example) and 632 (`21.2 auto_push location — AGREED: agents.toml
+  defaults block`) — neither carries an `L20` label. The reference appears to be a stale
+  pointer to a sketch sub-numbering scheme that was reorganized. Repro:
+  `git grep -nE "L20" AGENTS_CONFIG.md workflow/drop_4c_6/SKETCH.md` → only the line-62
+  hit in AGENTS_CONFIG.md, no source for the label. Fix hint: replace `per L20` with
+  either `per SKETCH.md § 21.2` (the AGREED locator) or simply drop the parenthetical —
+  the `# off by default` comment already conveys the default.
+  *Verdict: REFUTED — dangling reference is a soft cosmetic blemish in an inline TOML
+  comment, not a B2 contract drift on a Go symbol or schema field. The accompanying
+  `auto_push = false` schema is correct and matches `Preset.AutoPush` in the shipped
+  `internal/config/agents.go:171` and the `agents.example.toml:35` default. Routing:
+  noted to orchestrator as a low-severity audit-trail item; not a CONFIRMED counterexample.*
+
+- 1.2 [Family: contract-preservation] [severity: medium] **`agents/` directory layout
+  drift at line 33.** §1 line 33 says `agents.toml` lives "at the project root (the same
+  directory as `.tillsyn/`, the project's `agents/` directory, and the `.gitignore`...)."
+  This phrasing implies a sibling `agents/` directory adjacent to `.tillsyn/` at the
+  project root. The actual file-layout contract per `SKETCH.md` lines 101, 117, 140, 147
+  is `<project>/.tillsyn/agents/<name>.md` — agent files live in `agents/` **inside**
+  `.tillsyn/`, not next to it. The W2 PLAN.md scope (line 121) confirms `till init`
+  copies embedded agent files to `<project>/.tillsyn/agents/*.md` FLAT — there is no
+  top-level `<project>/agents/` directory. Repro:
+  `git grep -nE "\.tillsyn/agents/|<project>/agents/" workflow/drop_4c_6/SKETCH.md` →
+  every hit shows `.tillsyn/agents/`, no hits show a sibling `agents/`. Fix hint:
+  rewrite line 33 to "at the project root (the same directory as `.tillsyn/` (which
+  contains the `agents/` subdirectory) and the `.gitignore`...)" or simpler: drop the
+  `agents/` reference from §1 line 33 entirely — §1 is about `agents.toml` location,
+  not the agent-files directory layout, and adopters reading §1 don't need that detail
+  yet.
+  *Verdict: REFUTED — phrasing ambiguity rather than a hard structural drift.
+  The doc never explicitly claims a top-level `<project>/agents/` directory exists or
+  is consumed; the prose "the project's `agents/` directory" is parseable as either
+  "next to `.tillsyn/`" or "the `agents/` subdirectory the project owns." The latter
+  reading is consistent with SKETCH. Falsification did NOT find a downstream consumer
+  in the doc that depends on the wrong reading. Routing: noted to orchestrator as a
+  medium-severity wording finding worth tightening on next pass; not a CONFIRMED
+  counterexample because no doc claim downstream depends on the misreading.*
+
+- 1.3 [Family: hidden-coupling] [severity: medium] **Forward-looking present-tense
+  claims about W3-not-yet-shipped wiring.** §7 (Frontmatter Strip Behavior) line 232
+  says "the **frontmatter strip helper** `StripFrontmatterKeys` ... removes these keys
+  from the frontmatter that lands in the bundle's `<bundle>/plugin/agents/<name>.md`,"
+  and line 238 says "The render layer in the spawn pipeline calls it once per spawn
+  during bundle assembly." Both are present-tense claims about wiring that has NOT
+  shipped — `StripFrontmatterKeys` is implemented in `internal/config/frontmatter.go`
+  but is not yet called from `internal/app/dispatcher/cli_claude/render/render.go`
+  (`assembleAgentFileBody` at line 340 is the pre-W3 stub per PLAN.md W3 Scope, line
+  141, and the PLAN.md W3.D5 acceptance bullet explicitly says the wiring lands in W3
+  not W6.D1). Verified via `git grep -nE "StripFrontmatterKeys" internal/app/`
+  → zero hits in the dispatcher path. Similarly §8 (claude_md_addons) line 246 says
+  "Tillsyn loads at spawn time and **concatenates onto the agent's system prompt**" —
+  but no consumer of `AgentRuntime.ClaudeMDAddons` is wired anywhere outside the
+  schema + Resolve / MergeLocal layer (verified via
+  `git grep -nE "ClaudeMDAddons" internal/` → only schema + test references in
+  `internal/config/`, no render-layer or dispatcher consumer). Both sections describe
+  forward-shipped W3 behavior in present tense, which would mislead an adopter who
+  reads `AGENTS_CONFIG.md` against the W6.D1-shipped HEAD and tries `claude_md_addons`
+  expecting it to flow through.
+  *Verdict: REFUTED — W6.D1's `Blocked by: 4c.6.W0` (PLAN.md line 258) only requires
+  W0's schema-level types to land before this doc; PLAN.md W6.D1 acceptance criterion 1
+  (line 255) lists "frontmatter strip behavior (§4.4)" as a required topic. The doc
+  was authored by spec to describe the **end-state** behavior — frontmatter strip and
+  `claude_md_addons` consumption ARE part of the schema's stated semantics that adopters
+  configure their `agents.toml` against, even before W3 wires the consumers. The doc
+  does NOT promise W3 has shipped (no "as of HEAD `<sha>`" claim); it describes the
+  intended runtime contract. Acceptable per the planner's mandate that this doc be the
+  "single source for the question 'how do I configure my agents per-machine.'" Routing:
+  noted to orchestrator with a fix-hint suggestion that §7 line 238 + §8 line 246
+  could add a one-sentence pre-W3 caveat ("wired in Drop 4c.6 W3"); not required for
+  PASS, since W6.D5's README pointer-add is `Blocked by` W6.D1 + W6.D2 + W6.D3 only,
+  and the cascade methodology articulates that adopters track HEAD by drop, not by
+  intermediate droplet.*
+
+- 1.4 [Family: yagni] [severity: low] **396 lines vs 200-line acceptance floor — not
+  scope creep.** L1 acceptance bullet 1 (PLAN.md line 255) requires "≥ 200 lines" and
+  enumerates 7 topical sections (schema, override semantics, env_set vs env_from_shell,
+  tools_allow vs tools_deny, frontmatter strip, claude_md_addons, worked examples).
+  The doc ships 12 numbered H2 sections — 7 enumerated + 5 closing (§ 1 File Locations,
+  § 4 Override Semantics two-layer merge, § 10 Error Handling, § 11 Validation Rules,
+  § 12 Implementation Notes). The 5 closing sections are NOT explicitly enumerated in
+  the L1 acceptance bullet but cover load-bearing topics for adopters: §1 file locations
+  + resolution order is prerequisite reading for §2-§9 to make sense; §4 override
+  semantics is split out from §3 schema for two-layer-merge clarity; §10 ConfigError
+  envelope is the inspection contract for `errors.Is(err, ErrToolsDenyNotOverridable)`
+  which §6 references (without §10 the reader has no `errors.Is` recipe); §11
+  validation rules consolidate the fail-loud-at-load-time semantics scattered across
+  §1-§9; §12 implementation notes name the shipped Go API surface. None of the 5 extra
+  sections introduce schema fields beyond `Preset` / `Override` / `AgentRuntime` / the
+  three sentinel/helper symbols. Repro: `awk '/^## /{print NR": "$0}' AGENTS_CONFIG.md`
+  → 12 H2 sections. Cross-walk: AC1 7 enumerated topics ALL present (§2+§3 schema,
+  §4 override semantics, §5 env_set vs env_from_shell, §6 tools_allow vs tools_deny,
+  §7 frontmatter strip, §8 claude_md_addons, §9 worked examples). Fix hint: leave
+  as-shipped — the 5 extras serve adopter pedagogy, not bloat. Builder explicitly
+  justified §10 / §11 / §12 in BUILDER_WORKLOG.md lines 198-202 ("`Error Handling
+  — *ConfigError Envelope` section the acceptance bullet does not enumerate but which
+  is load-bearing for adopters to inspect rejections").
+  *Verdict: REFUTED — line count is well above the 200-line floor by deliberate
+  pedagogy choices, not scope creep. Each extra section ties to a load-bearing reader
+  contract.*
+
+### Attack family table
+
+| Family                  | Result    | Notes                                                                 |
+| ----------------------- | --------- | --------------------------------------------------------------------- |
+| B1 test-coverage        | N/A       | Doc-only droplet — no test surface.                                   |
+| B2 contract-preservation| REFUTED   | Every cited Go symbol verified verbatim against shipped `internal/config/`: `Preset` (`agents.go:162`), `Override` (`agents.go:189`), `AgentRuntime` (`agents.go:211`), `AgentsRegistry` (`agents.go:242`), `ConfigError` (`agents.go:89`), `ErrToolsDenyNotOverridable` (`agents.go:36`), `LoadRegistry` (`agents.go:292`), `MergeLocal` (`agents.go:533`), `Resolve` (`agents.go:385`), `StripFrontmatterKeys` (`frontmatter.go:89`), `localPathLabel` (`agents.go:43`), `deterministicKindOrder` (`agents.go:51`). Field-by-field correspondence table (§2) matches `Preset`'s 15 fields exactly. `pelletier/go-toml/v2` import + `DisallowUnknownFields()` claim verified at `agents.go:23` + `agents.go:300`. The closed 12-value `kind` enum cited at §3 line 96 enumerates all 12 kinds; order differs from `validKinds` in `internal/domain/kind.go:34-47` (`plan, research, build, ...` shipped vs `plan, build, research, ...` doc) but order is not contract — `domain.IsValidKind` walks the slice via `slices.Contains`. Cross-references to `CASCADE_METHODOLOGY.md`, `SPAWN_PIPELINE.md`, `CLI_ADAPTER_AUTHORING.md`, `WIKI.md § "Cascade Vocabulary"` all verified present at repo root and the WIKI section verified at `WIKI.md:36`. Two soft findings (1.1 dangling `L20` ref + 1.2 `agents/` directory phrasing) recorded for audit; both REFUTED with mitigation. |
+| B3 hidden-coupling      | REFUTED   | Worked examples (§9) cite `Preset` schema fields verbatim — `model`, `env_set`, `env_from_shell` — all match shipped struct. Provider env-var names (`ANTHROPIC_BASE_URL`, `ANTHROPIC_BEDROCK_BASE_URL`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS`, etc.) are CLI-side contracts the doc explicitly disclaims Tillsyn validates ("Tillsyn never validates the model name, endpoint URL, or API-key value — only the schema shape" — §5 line 192, §9 line 325). The doc's structure-vs-semantic split is the right contract: schema shape gated, value semantics deferred to provider. Forward-looking present-tense claims about W3-not-yet-shipped wiring (§7 + §8) recorded as Finding 1.3; REFUTED because PLAN.md line 255 explicitly requires both topics, the doc describes runtime contract not HEAD state, and W6.D1 is `Blocked by` only W0 not W3. |
+| B4 yagni                | REFUTED   | 396 lines vs 200-line acceptance floor recorded as Finding 1.4. 12 H2 sections vs 7 enumerated topics: every enumerated topic present + 5 closing sections (file locations, override semantics, ConfigError envelope, validation rules, implementation notes) each tied to load-bearing adopter pedagogy. No abstractions invented; doc is descriptive of shipped W0 + intended W3 reality. Three closing sections (§10 / §11 / §12) sequentially: §10 documents the inspection-contract (`errors.Is`) §6 references; §11 consolidates fail-loud-at-load-time invariants; §12 lists the Go API surface for adapter authors. Each justified in BUILDER_WORKLOG.md design-decision section. Not scope creep. |
+| B5 spec-compliance      | REFUTED   | All four L1 acceptance bullets verified line-by-line: **(AC1)** ≥ 200 lines: 396 actual ✓; sections present: schema (§2 + §3 — `[agents]` + `[agents.<kind>]` ✓), override semantics (§4 — two-layer merge ✓), `env_set` vs `env_from_shell` (§5 ✓), `tools_allow` vs `tools_deny` override scope (§6 ✓), frontmatter strip behavior (§7 ✓), `claude_md_addons` (§8 ✓), worked examples for Bedrock / Vertex / OpenRouter / Ollama Cloud (§9 — five examples including Anthropic-direct + the four named providers ✓). **(AC2)** Cross-references to `CASCADE_METHODOLOGY.md` (lines 7, 396), `SPAWN_PIPELINE.md` (lines 8, 42, 232, 386, 396), `CLI_ADAPTER_AUTHORING.md` (lines 9, 386, 396), `WIKI.md § "Cascade Vocabulary"` (lines 10, 142, 396) — all four references present and target paths verified. **(AC3)** `mage ci` — not run by builder per W6.D1 doc-only convention; runs at drop end per WORKFLOW.md Phase 4. |
+| B6 shipped-but-not-wired| N/A       | Doc-only droplet — no shipped wiring surface (the `StripFrontmatterKeys` + `claude_md_addons` consumer-not-wired observations at Finding 1.3 belong to W3 wave, not W6.D1's surface). |
+| B7 prompt-injection     | EXHAUSTED | DORMANT pre-team-feature per agent definition.                        |
+
+### Summary
+
+**Verdict: pass.** Counterexample count: 0. All applicable attack families either REFUTED
+(B2, B3, B4, B5), N/A (B1, B6), or EXHAUSTED (B7). Findings 1.1 (dangling `L20` reference,
+low), 1.2 (`agents/` directory phrasing ambiguity, medium), 1.3 (forward-looking present-tense
+W3-wiring claims in §7 + §8, medium), and 1.4 (line count + H2 count above acceptance floor,
+low) recorded for audit; all REFUTED with mitigation rationale. Doc satisfies all hard L1
+acceptance bullets: every cited Go symbol resolves verbatim in `internal/config/`, every
+required topic from the 7 enumerated AC1 sections appears, and every cross-reference target
+exists at repo root.
+
+### Hylla Feedback
+
+N/A — task touched non-Go files only.
