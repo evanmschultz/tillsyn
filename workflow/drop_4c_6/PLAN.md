@@ -268,7 +268,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W6.D2 — `CASCADE_METHODOLOGY.md` skeleton
 
-- **State:** in_progress
+- **State:** done
 - **Kind:** `build` (atomic droplet; doc-only — `Irreducible: true`)
 - **Paths:** `CASCADE_METHODOLOGY.md` (NEW top-level skeleton).
 - **Packages:** none.
