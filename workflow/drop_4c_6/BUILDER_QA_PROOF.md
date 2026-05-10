@@ -286,3 +286,51 @@ The W6.D5 droplet's load-bearing contract — make the three new methodology doc
 ### Hylla Feedback
 
 N/A — droplet touched non-Go files only (`README.md` + `workflow/drop_4c_6/*.md`). Hylla today indexes Go only, so no Hylla query was relevant. Verification used `Read` against `README.md` / `AGENTS_CONFIG.md` / `CASCADE_METHODOLOGY.md` / `GDD_METHODOLOGY.md` / `PLAN.md` / `BUILDER_WORKLOG.md`, plus `Bash` (`git show`, `git log`) for diff reconstruction — appropriate per the project's "Non-Go files use Read/Grep/Glob/Bash" rule.
+
+---
+
+## Droplet 4c.6.W5.D1 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W5.D1 — Rename default-go.toml → till-go.toml (file move + embed.go + caller audit)`.
+**Commit reviewed:** `a1217ee feat(templates): w5.d1 rename default-go to till-go`.
+
+### Findings
+
+- 1.1 [Axis: diff-vs-spec] [severity: low] Diff scope matches the 8 declared paths exactly (renamed `till-go.toml` + `embed.go` + `embed_test.go` + 5 caller-audit sites: `service.go`, `service_test.go`, `auto_generate_steward_test.go`, `mcp_surface.go`, `extended_tools.go`) plus the 2 workflow MDs (`PLAN.md` state flip, `BUILDER_WORKLOG.md` round entry). Zero drive-by edits outside scope. Verified via `git show --stat a1217ee` (10 files: 8 in-scope code + 2 workflow MDs). → No fix needed.
+- 1.2 [Axis: AcceptanceCriteria coverage] [severity: low] AC #1 (rename via `git mv`): `default-go.toml` no longer present at HEAD; `till-go.toml` present at the same path. `git log --follow internal/templates/builtin/till-go.toml` traces back through the rename chain (`a1217ee` → `9e6548d` → `e0a8b18` "rebadge default-go" → ...), confirming history-preserving rename. → No fix needed.
+- 1.3 [Axis: AcceptanceCriteria coverage] [severity: low] AC #2 (`//go:embed` directive): `internal/templates/embed.go:72` reads `//go:embed builtin/till-go.toml builtin/default-generic.toml`. → No fix needed.
+- 1.4 [Axis: AcceptanceCriteria coverage] [severity: low] AC #3 (`LoadDefaultTemplateForLanguage("go")` switch): `embed.go:205` reads `path = "builtin/till-go.toml"`. `BuiltinTemplateNames()` at `embed.go:247` returns `[]string{"default-generic", "till-go"}` — lexical order preserved (`d` < `t`); `default-generic` deferred to W5.D2. → No fix needed.
+- 1.5 [Axis: AcceptanceCriteria coverage / HF5 grep semantics] [severity: low] AC #4 (HF5 grep): `git grep "default-go.toml" -- cmd/ internal/ '*.go'` returns 5 hits — all in doc-comments (`mcp_surface.go:903-906`, `extended_tools.go:1867`, `auto_generate_steward_test.go:18`, `service.go:380-385`, `service_test.go:6533+6553+6717`). Zero non-doc-comment hits in `*.go` files. Embed-directive, switch-case literal, and `BuiltinTemplateNames` literal are all post-rename. → No fix needed.
+- 1.6 [Axis: AcceptanceCriteria coverage / HF6 caller list] [severity: low] AC #5 (5 caller-audit sites): `service.go:380-385` doc-comment forward-looking — updated to `till-go.toml`; `service_test.go:6534` filepath literal — load-bearing fix to `till-go.toml` applied; `auto_generate_steward_test.go:18` — updated; `mcp_surface.go:903-906` — updated with rationale for retaining `embedded-default-go` BakeSource string as wire identifier; `extended_tools.go:1867` — updated. All 5 HF6 sites verified via `git show`. → No fix needed.
+- 1.7 [Axis: constraint preservation / shipped-but-not-wired] [severity: low] `BuiltinTemplateNames()` returns the new vocabulary; `LoadDefaultTemplateForLanguage("go")` returns the new path; the embed directive references the new file. Production wiring is consistent end-to-end — no orphan symbols, no dangling references. → No fix needed.
+- 1.8 [Axis: spec-conformance] [severity: low] Re-ran the three named verification targets locally to confirm builder's `mage ci` claim:
+  - `mage test-pkg ./internal/templates` → 458 tests GREEN.
+  - `mage test-pkg ./internal/app` → 476 tests GREEN.
+  - `mage test-pkg ./internal/adapters/server/mcpapi` → 226 tests GREEN.
+  - Builder's `mage ci 3005/3005 GREEN` claim is plausible and consistent with these three targets. → No fix needed.
+- 1.9 [Axis: constraint preservation / dual-history note] [severity: low] RiskNotes-mandated dual-history note applied at `embed.go:18-28` (records `default.toml → default-go.toml → till-go.toml` lineage); mirrored in `till-go.toml` header `:5-13`, `service.go:381-385`, `auto_generate_steward_test.go:17-19`, `mcp_surface.go:906-909`, `extended_tools.go:1867-1869`. Historical refs at `embed.go:19-21, 23, 26-27, 128` retained verbatim per HF5 historical-rename-record rule. → No fix needed.
+- 1.10 [Axis: routed Unknown #1 verification] [severity: low] `extended_tools_test.go:883` (stub `ListBuiltinTemplates` returning `Templates: []string{"default-generic", "default-go"}`) and `:3815` (`want := []string{"default-generic", "default-go"}` assertion) — both confirmed via `Read`. The stub feeds itself: the assertion asserts against the stub's return value, not against the real `templates.BuiltinTemplateNames()`. Tests pass because the test harness is internally consistent, BUT the stub doc-comment at `:874-876` claims "mirroring `templates.BuiltinTemplateNames`" while in fact it lies about what it mirrors post-W5.D1. This is a real drift that should be reconciled in W5.D2 (when `default-generic` → `till-gen` would force the stub to flip to `["till-gen", "till-go"]` to keep the doc-comment honest). Builder correctly routed this as W5.D2 deferral — `extended_tools_test.go` is NOT in W5.D1's declared paths (only `extended_tools.go` is per HF6). → CORRECTLY DEFERRED.
+- 1.11 [Axis: routed Unknown #2 verification] [severity: low] Forward-looking refs in out-of-scope files: `internal/templates/load.go` (3 hits at L255, L592, L735), `internal/templates/load_test.go` (2 hits at L1709, L1927), `internal/templates/builtin/agents/till-{gen,go,gdd}/*.md` placeholders (multiple hits per file), `internal/templates/builtin/default-generic.toml` (multiple hits), `.tillsyn/template.toml` (multiple hits). All five of these file paths are explicitly NOT in W5.D1's declared `Paths:` field (PLAN.md line 161). All hits are doc-comments / Markdown frontmatter / TOML header comments — none are load-bearing string literals or `//go:embed` directives. The PLAN.md acceptance bullet at line 174 explicitly carves these out as "deferred to W5.D2/W5.D3 or a later refinement". → CORRECTLY DEFERRED.
+- 1.12 [Axis: helper-name retention rationale] [severity: low] `mustReadDefaultGoTOML` helper name retained per builder rationale (renaming would touch every test that calls it, scope outside W5.D1's "string literal updates only" KindPayload `shape_hint`). `embedded-default-go` BakeSource wire string retained per builder rationale (wire-protocol value consumed by `till.template get`; renaming would be wire-breaking). Both rationales documented inline. → No fix needed; both are deliberate scope-discipline decisions.
+
+### Missing Evidence
+
+- 2.1 None. PLAN.md W5.D1 acceptance bullets (file rename, `//go:embed` directive, switch-case path, `BuiltinTemplateNames()` lexical-order vocabulary, HF5 grep semantics, HF6 5-site caller audit, `mage ci` green) all map to verifiable content in the committed diff (`a1217ee`). Three target packages re-tested locally (`mage test-pkg ./internal/templates` 458/458, `mage test-pkg ./internal/app` 476/476, `mage test-pkg ./internal/adapters/server/mcpapi` 226/226). Both routed Unknowns inspected via `Read` and confirmed to be legitimate W5.D2 deferral targets, not W5.D1 violations.
+
+### Summary
+
+Verdict: **PASS — clean, no findings requiring fixes.** 12 informational findings (all severity: low). 0 high. 0 medium. 0 actual W5.D1 violations.
+
+W5.D1's load-bearing contract — rename the Go-flavored builtin file from `default-go.toml` to `till-go.toml` with a history-preserving `git mv` and update every load-bearing reference (embed directive, switch-case, name vocabulary, filesystem-path test fixture) plus the 5 HF6 forward-looking doc-comment caller sites — is fully satisfied by commit `a1217ee`. Diff scope matches the 8 declared paths exactly with zero drive-by edits. HF5 grep returns zero non-doc-comment hits in `cmd/` + `internal/` + `*.go`. `BuiltinTemplateNames()` returns `["default-generic", "till-go"]` in stable lexical order. Historical refs preserved verbatim per HF5 historical-rename-record rule; dual-history note applied at every forward-looking site per RiskNotes.
+
+**Verdict on routed Unknowns:**
+- Unknown #1 (`extended_tools_test.go:883,3815` stub-fixture drift) — **CORRECTLY DEFERRED to W5.D2**. The stub feeds itself, so tests pass; the doc-comment drift will surface naturally when W5.D2 flips `default-generic` to `till-gen` and the stub must be updated to remain consistent. `extended_tools_test.go` is not in W5.D1's declared paths.
+- Unknown #2 (forward-looking refs in `load.go`, `load_test.go`, agent .md placeholders, `default-generic.toml`, `.tillsyn/template.toml`) — **CORRECTLY DEFERRED to W5.D2/W5.D3 or a refinement**. None of these files are in W5.D1's declared `Paths:` field; all hits are doc-comment / frontmatter / TOML-header refs (no load-bearing strings); PLAN.md line 174 explicitly carves them out.
+
+The droplet should advance to closeout. Orchestrator should track the two routed Unknowns as W5.D2 prerequisites (the stub-fixture flip at line 883 is the load-bearing one — it's a doc-comment-vs-fixture-drift that will become assertive drift once `BuiltinTemplateNames()` returns `["till-gen", "till-go"]` post-W5.D2, at which point the stub must flip in lockstep or this assertion will silently lie about wire reality).
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. Verification used `git show` / `git log --follow` / `git grep` for diff reconstruction + HF5 grep semantics, plus `Read` against the 8 declared-path files + `BUILDER_WORKLOG.md` + `PLAN.md`, plus `mage test-pkg` against the three named packages. Hylla queries were not the right tool for this droplet's verification surface — the droplet's load-bearing contract is "string literal updates" + a `git mv`, both of which are syntactic/filesystem questions that `git grep` + `git log --follow` answer authoritatively. Hylla's strength (committed-code semantic search) would not have added signal here. No Hylla miss to report.
