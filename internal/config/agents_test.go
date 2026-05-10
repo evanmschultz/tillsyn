@@ -723,6 +723,209 @@ func TestMergeLocal_NewKindBlock(t *testing.T) {
 	}
 }
 
+// TestConfigError_FormatsCorrectly asserts that the *ConfigError envelope's
+// Error() method produces the canonical "<file> <block>:<line>: <cause>"
+// shape when all fields are populated. The format is part of the public
+// surface (downstream W3 / W11 callers may match on it); document the
+// canonical shape via a fixed-point test.
+func TestConfigError_FormatsCorrectly(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("tools_deny is not user-overridable; remove the field")
+	cerr := &ConfigError{
+		File:  "agents.local.toml",
+		Block: "[agents.build]",
+		Line:  42,
+		Cause: cause,
+	}
+
+	got := cerr.Error()
+	want := "agents.local.toml [agents.build]:42: tools_deny is not user-overridable; remove the field"
+	if got != want {
+		t.Errorf("ConfigError.Error() = %q, want %q", got, want)
+	}
+}
+
+// TestConfigError_FormatsWithoutLine asserts that when Line == 0 (e.g.,
+// MergeLocal-side rejections that lack source-line context per the L2
+// PLAN.md RiskNotes), the envelope omits the colon-line suffix instead of
+// printing a misleading ":0" position. Keeps the format unambiguous.
+func TestConfigError_FormatsWithoutLine(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("tools_deny is not user-overridable; remove the field")
+	cerr := &ConfigError{
+		File:  "agents.local.toml",
+		Block: "[agents.build]",
+		Line:  0,
+		Cause: cause,
+	}
+
+	got := cerr.Error()
+	want := "agents.local.toml [agents.build]: tools_deny is not user-overridable; remove the field"
+	if got != want {
+		t.Errorf("ConfigError.Error() with Line=0 = %q, want %q", got, want)
+	}
+}
+
+// TestConfigError_FormatsWithoutBlock asserts that when Block == "" (e.g.,
+// a top-level syntax error before any TOML key resolves), the envelope
+// renders "<file>:<line>: <cause>" without an empty bracket. Keeps the
+// format clean for the malformed-TOML path.
+func TestConfigError_FormatsWithoutBlock(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("syntax error")
+	cerr := &ConfigError{
+		File:  "agents.toml",
+		Block: "",
+		Line:  8,
+		Cause: cause,
+	}
+
+	got := cerr.Error()
+	want := "agents.toml:8: syntax error"
+	if got != want {
+		t.Errorf("ConfigError.Error() with Block= = %q, want %q", got, want)
+	}
+}
+
+// TestConfigError_UnwrapPreservesSentinel asserts that errors.Is against the
+// closed sentinel ErrToolsDenyNotOverridable still succeeds when the sentinel
+// is wrapped inside a *ConfigError envelope. Load-bearing for D3's bare-
+// sentinel rejection contract surviving the D5 wrap — callers must continue
+// to be able to inspect the rejection contract via errors.Is.
+func TestConfigError_UnwrapPreservesSentinel(t *testing.T) {
+	t.Parallel()
+
+	cerr := &ConfigError{
+		File:  "agents.local.toml",
+		Block: "[agents.build]",
+		Cause: ErrToolsDenyNotOverridable,
+	}
+
+	if !errors.Is(cerr, ErrToolsDenyNotOverridable) {
+		t.Errorf("errors.Is(*ConfigError wrapping ErrToolsDenyNotOverridable, ErrToolsDenyNotOverridable) = false; want true")
+	}
+
+	// errors.Unwrap should yield the original sentinel directly.
+	if got := errors.Unwrap(cerr); got != ErrToolsDenyNotOverridable {
+		t.Errorf("errors.Unwrap(*ConfigError) = %v, want ErrToolsDenyNotOverridable", got)
+	}
+}
+
+// TestLoadRegistry_PositionWrapped asserts the D5 envelope contract on
+// LoadRegistry's malformed-TOML path: errors.As extracts a *ConfigError with
+// File set to the loaded path and Line > 0 (extracted from
+// *toml.DecodeError.Position()). This test REVISES (extends) the D1
+// TestLoadRegistry_MalformedTOML expectation — the inner *toml.DecodeError
+// remains reachable via the unwrap chain, which TestLoadRegistry_MalformedTOML
+// continues to assert.
+func TestLoadRegistry_PositionWrapped(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("testdata", "agents", "malformed.toml")
+	_, err := LoadRegistry(path)
+	if err == nil {
+		t.Fatal("LoadRegistry returned nil error for malformed input")
+	}
+
+	var cerr *ConfigError
+	if !errors.As(err, &cerr) {
+		t.Fatalf("error chain does not contain *ConfigError: %v", err)
+	}
+	if cerr.File != path {
+		t.Errorf("ConfigError.File = %q, want %q", cerr.File, path)
+	}
+	if cerr.Line <= 0 {
+		t.Errorf("ConfigError.Line = %d, want > 0 (from *toml.DecodeError.Position())", cerr.Line)
+	}
+
+	// The inner *toml.DecodeError must remain extractable via the unwrap chain
+	// so existing callers using errors.As(*toml.DecodeError) continue working.
+	var decodeErr *toml.DecodeError
+	if !errors.As(err, &decodeErr) {
+		t.Errorf("errors.As(err, &*toml.DecodeError) = false; want true (unwrap chain preservation)")
+	}
+}
+
+// TestMergeLocal_ToolsDenyPositionWrapped asserts that MergeLocal wraps the
+// bare ErrToolsDenyNotOverridable sentinel into a *ConfigError envelope with
+// File = "agents.local.toml" and Block = "[agents.build]" (since the fixture
+// sets tools_deny inside the per-kind block). This is the D5-owned position-
+// wrapping behavior that D3's TestMergeLocal_ToolsDenyRejected deferred:
+// D3 owns the bare sentinel; D5 owns the envelope wrap.
+func TestMergeLocal_ToolsDenyPositionWrapped(t *testing.T) {
+	t.Parallel()
+
+	project := &AgentsRegistry{
+		Preset:    Preset{ToolsDeny: []string{"WebFetch"}},
+		Overrides: map[domain.Kind]Override{},
+	}
+
+	local, err := LoadRegistry(filepath.Join("testdata", "agents", "local_tools_deny_rejected.toml"))
+	if err != nil {
+		t.Fatalf("LoadRegistry(local) returned error: %v", err)
+	}
+
+	_, err = MergeLocal(project, local)
+	if err == nil {
+		t.Fatal("MergeLocal returned nil error for local tools_deny; want envelope-wrapped sentinel")
+	}
+
+	// Sentinel chain still walks through the envelope.
+	if !errors.Is(err, ErrToolsDenyNotOverridable) {
+		t.Errorf("errors.Is(err, ErrToolsDenyNotOverridable) = false; want true (chain preservation through ConfigError wrap)")
+	}
+
+	var cerr *ConfigError
+	if !errors.As(err, &cerr) {
+		t.Fatalf("error chain does not contain *ConfigError: %v", err)
+	}
+	if cerr.File != "agents.local.toml" {
+		t.Errorf("ConfigError.File = %q, want %q", cerr.File, "agents.local.toml")
+	}
+	if cerr.Block != "[agents.build]" {
+		t.Errorf("ConfigError.Block = %q, want %q", cerr.Block, "[agents.build]")
+	}
+}
+
+// TestMergeLocal_ToolsDenyDefaultsPositionWrapped asserts that tools_deny set
+// in the local [agents] defaults block (not just per-kind) is also wrapped
+// with the correct Block context — "[agents]" rather than "[agents.<kind>]".
+// Companion to TestMergeLocal_ToolsDenyDefaultsBlockRejected: D3 covers the
+// sentinel rejection; D5 covers the block-context wrapping.
+func TestMergeLocal_ToolsDenyDefaultsPositionWrapped(t *testing.T) {
+	t.Parallel()
+
+	project := &AgentsRegistry{
+		Preset:    Preset{ToolsDeny: []string{"WebFetch"}},
+		Overrides: map[domain.Kind]Override{},
+	}
+	// In-code local with tools_deny in the defaults block; Path left empty
+	// so the envelope falls back to "agents.local.toml" canonical label.
+	local := &AgentsRegistry{
+		Preset:    Preset{ToolsDeny: []string{"AnotherTool"}},
+		Overrides: map[domain.Kind]Override{},
+	}
+
+	_, err := MergeLocal(project, local)
+	if err == nil {
+		t.Fatal("MergeLocal returned nil error; want envelope-wrapped sentinel")
+	}
+
+	var cerr *ConfigError
+	if !errors.As(err, &cerr) {
+		t.Fatalf("error chain does not contain *ConfigError: %v", err)
+	}
+	if cerr.Block != "[agents]" {
+		t.Errorf("ConfigError.Block = %q, want %q", cerr.Block, "[agents]")
+	}
+	if !errors.Is(err, ErrToolsDenyNotOverridable) {
+		t.Errorf("errors.Is(err, ErrToolsDenyNotOverridable) = false; want true")
+	}
+}
+
 // equalStrings compares two string slices element-by-element.
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {

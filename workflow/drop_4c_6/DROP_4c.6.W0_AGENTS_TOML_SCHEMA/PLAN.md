@@ -178,7 +178,7 @@ Tests are co-located with each droplet's production file. D1 ships `agents_test.
 
 ### Droplet 4c.6.W0.D5 — Position-tracking error envelope
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/config/agents.go` (MODIFY — append `ConfigError` envelope type + `WrapWithPosition` helper + update `LoadRegistry` / `MergeLocal` to wrap raw `*toml.DecodeError` returns into the envelope), `internal/config/agents_test.go` (MODIFY — append envelope tests).
 - **Packages:** `internal/config`.

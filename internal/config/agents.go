@@ -35,6 +35,122 @@ import (
 // Callers inspect the rejection contract via errors.Is(err, ErrToolsDenyNotOverridable).
 var ErrToolsDenyNotOverridable = errors.New("tools_deny is not user-overridable; remove the field")
 
+// localPathLabel is the canonical user-facing file label for errors raised
+// from MergeLocal — independent of the actual on-disk path. Users care that
+// the offending content came from "their .local.toml," not the absolute
+// filesystem path the loader was invoked with. Hardcoded here so the format
+// stays stable across callers (`till init`, render-layer wiring, MCP boundary).
+const localPathLabel = "agents.local.toml"
+
+// deterministicKindOrder mirrors the closed 12-value Kind enum sequence in
+// internal/domain/kind.go. Used to iterate the per-kind override map in a
+// stable order so error messages naming the offending block (e.g. when
+// rejecting tools_deny in MergeLocal) are reproducible across runs — Go's
+// map iteration is intentionally randomized and would produce flaky test
+// fixtures + ambiguous user-facing diagnostics if used directly.
+var deterministicKindOrder = []domain.Kind{
+	domain.KindPlan,
+	domain.KindResearch,
+	domain.KindBuild,
+	domain.KindPlanQAProof,
+	domain.KindPlanQAFalsification,
+	domain.KindBuildQAProof,
+	domain.KindBuildQAFalsification,
+	domain.KindCloseout,
+	domain.KindCommit,
+	domain.KindRefinement,
+	domain.KindDiscussion,
+	domain.KindHumanVerify,
+}
+
+// ConfigError is the unified envelope wrapping every error returned from
+// LoadRegistry and MergeLocal. It carries file/block/line position context
+// alongside the underlying cause so downstream consumers (W3 render layer,
+// W11 MCP boundary) get a single typed error to inspect via errors.As and
+// a stable user-facing format.
+//
+// Format produced by Error():
+//
+//	"<file> <block>:<line>: <cause>"
+//
+// When Block is "" the envelope renders "<file>:<line>: <cause>"; when Line
+// is 0 the envelope renders "<file> <block>: <cause>" (or "<file>: <cause>"
+// if Block is also empty). The canonical case (every field set) reads e.g.
+// "agents.local.toml [agents.build]:42: tools_deny is not user-overridable;
+// remove the field".
+//
+// Unwrap returns Cause so errors.Is and errors.As walk transitively against
+// sentinels like ErrToolsDenyNotOverridable and against the inner
+// *toml.DecodeError emitted by pelletier/go-toml/v2 on malformed input.
+//
+// Single-level wrapper by design — composing envelope-of-envelope is W0.5's
+// problem, not W0's. The format string is part of the public surface;
+// downstream tests may match on it. Avoid changing it lightly.
+type ConfigError struct {
+	File  string // user-facing file label (e.g. "agents.toml" or "agents.local.toml")
+	Block string // TOML table path in bracket form (e.g. "[agents.build]"); "" if no block context
+	Line  int    // 1-based source line (from *toml.DecodeError.Position()); 0 if unavailable
+	Cause error  // wrapped underlying error
+}
+
+// Error formats the envelope per the canonical "<file> <block>:<line>: <cause>"
+// shape. Empty Block / zero Line gracefully degrade to "<file>:<line>: <cause>"
+// or "<file> <block>: <cause>" or "<file>: <cause>" so the format is never
+// misleading (e.g. ":0:" appearing in user output).
+func (e *ConfigError) Error() string {
+	if e == nil {
+		return "<nil ConfigError>"
+	}
+	cause := "<nil cause>"
+	if e.Cause != nil {
+		cause = e.Cause.Error()
+	}
+
+	// Build the position prefix piece-by-piece based on which fields are set.
+	switch {
+	case e.Block != "" && e.Line > 0:
+		return fmt.Sprintf("%s %s:%d: %s", e.File, e.Block, e.Line, cause)
+	case e.Block != "" && e.Line == 0:
+		return fmt.Sprintf("%s %s: %s", e.File, e.Block, cause)
+	case e.Block == "" && e.Line > 0:
+		return fmt.Sprintf("%s:%d: %s", e.File, e.Line, cause)
+	default:
+		return fmt.Sprintf("%s: %s", e.File, cause)
+	}
+}
+
+// Unwrap returns the wrapped cause so errors.Is / errors.As walk transitively.
+// Critical for callers that use errors.Is(err, ErrToolsDenyNotOverridable)
+// against MergeLocal's wrapped output and errors.As(err, &*toml.DecodeError)
+// against LoadRegistry's wrapped output.
+func (e *ConfigError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+// keyToBlock formats a pelletier/go-toml/v2 Key (a []string of dotted path
+// segments) into the canonical "[seg.seg.seg]" bracket form used by
+// ConfigError.Block. Empty key returns "" so callers can omit the block
+// component for top-level syntax errors that don't resolve to any key.
+//
+// Example: Key{"agents", "build"} → "[agents.build]";  Key{} → "".
+func keyToBlock(key toml.Key) string {
+	if len(key) == 0 {
+		return ""
+	}
+	out := "["
+	for i, seg := range key {
+		if i > 0 {
+			out += "."
+		}
+		out += seg
+	}
+	out += "]"
+	return out
+}
+
 // Preset captures the [agents] defaults block in agents.toml. Every field is
 // a concrete value (not a pointer) — Preset is the floor that per-kind
 // Override pointers fall through to in D2's Resolve. Field naming follows
@@ -114,9 +230,19 @@ type AgentRuntime struct {
 // block plus the map of per-kind override blocks keyed by domain.Kind. The
 // map is always non-nil after a successful LoadRegistry — absent per-kind
 // blocks simply do not appear as keys.
+//
+// Path records the filesystem path LoadRegistry was invoked with, populated
+// at successful decode. Empty when the registry is constructed in code (e.g.
+// in tests) or via composition operations (e.g. MergeLocal returns a fresh
+// merged registry whose Path is set to the project's path). Used by D5's
+// *ConfigError envelope to populate the File field for downstream errors
+// surfaced by Resolve / future validators; MergeLocal hardcodes the canonical
+// "agents.local.toml" label rather than using local.Path so user-facing
+// messages remain stable regardless of the actual on-disk filesystem path.
 type AgentsRegistry struct {
 	Preset    Preset
 	Overrides map[domain.Kind]Override
+	Path      string
 }
 
 // agentsTOMLRoot is the on-disk shape pelletier/go-toml/v2 decodes into.
@@ -153,11 +279,13 @@ type agentsTOMLBlock struct {
 
 // LoadRegistry reads and decodes an agents.toml file at path. The decoder is
 // strict: unknown top-level fields are rejected so user-typos in field names
-// fail loud rather than silently drop. Returns a position-aware
-// *toml.DecodeError (wrapped via fmt.Errorf with %w) on malformed input —
-// callers can recover row/column via errors.As. D5 wraps DecodeError into
-// the unified ConfigError envelope; pre-D5 callers see the raw DecodeError
-// in the chain.
+// fail loud rather than silently drop. Returns a *ConfigError envelope
+// wrapping the underlying *toml.DecodeError on malformed input — callers can
+// recover the inner DecodeError via errors.As(err, &*toml.DecodeError) and
+// the envelope itself via errors.As(err, &*ConfigError) for File/Block/Line
+// position info. File-read failures (path missing, permission denied) are
+// returned via fmt.Errorf("%w") rather than the envelope because they have
+// no source-position to report.
 //
 // A nil registry is never returned alongside a nil error. On any error, the
 // returned registry is nil.
@@ -171,7 +299,25 @@ func LoadRegistry(path string) (*AgentsRegistry, error) {
 	dec := toml.NewDecoder(bytes.NewReader(content))
 	dec = dec.DisallowUnknownFields()
 	if err := dec.Decode(&root); err != nil {
-		return nil, fmt.Errorf("decode agents.toml at %q: %w", path, err)
+		// Wrap *toml.DecodeError into the unified *ConfigError envelope so
+		// downstream callers get a single typed error to inspect. The inner
+		// DecodeError remains reachable via the Unwrap chain.
+		var decodeErr *toml.DecodeError
+		if errors.As(err, &decodeErr) {
+			row, _ := decodeErr.Position()
+			return nil, &ConfigError{
+				File:  path,
+				Block: keyToBlock(decodeErr.Key()),
+				Line:  row,
+				Cause: decodeErr,
+			}
+		}
+		// Non-DecodeError decode failures (e.g. strict-decode rejections that
+		// aren't position-tagged) wrap into the envelope without a Line.
+		return nil, &ConfigError{
+			File:  path,
+			Cause: err,
+		}
 	}
 
 	overrides := make(map[domain.Kind]Override, 12)
@@ -191,6 +337,7 @@ func LoadRegistry(path string) (*AgentsRegistry, error) {
 	return &AgentsRegistry{
 		Preset:    root.Agents.Preset,
 		Overrides: overrides,
+		Path:      path,
 	}, nil
 }
 
@@ -389,13 +536,37 @@ func MergeLocal(project, local *AgentsRegistry) (*AgentsRegistry, error) {
 	}
 
 	// Reject local tools_deny BEFORE merging — fail loud per SKETCH § 4.3.1.
+	// Wrap the bare ErrToolsDenyNotOverridable sentinel into a *ConfigError
+	// envelope so downstream callers get File + Block context. The sentinel
+	// remains reachable via errors.Is through the Unwrap chain. Source-line
+	// tracking is not threaded for MergeLocal-side rejections (Line stays 0)
+	// — pelletier/go-toml/v2 emits *toml.DecodeError only on decode failure;
+	// successful decode yields no per-field position metadata. Block context
+	// alone is sufficient to point users at the offending TOML table.
 	if local != nil {
 		if len(local.Preset.ToolsDeny) > 0 {
-			return nil, ErrToolsDenyNotOverridable
+			return nil, &ConfigError{
+				File:  localPathLabel,
+				Block: "[agents]",
+				Cause: ErrToolsDenyNotOverridable,
+			}
 		}
-		for _, ov := range local.Overrides {
+		// Iterate the closed Kind enum (not the map) so the rejected block name
+		// is deterministic across runs — map iteration order is randomized in
+		// Go and would produce unstable error messages when multiple per-kind
+		// blocks set tools_deny. Order mirrors the closed-12-enum sequence in
+		// internal/domain/kind.go.
+		for _, kind := range deterministicKindOrder {
+			ov, ok := local.Overrides[kind]
+			if !ok {
+				continue
+			}
 			if ov.ToolsDeny != nil && len(*ov.ToolsDeny) > 0 {
-				return nil, ErrToolsDenyNotOverridable
+				return nil, &ConfigError{
+					File:  localPathLabel,
+					Block: "[agents." + string(kind) + "]",
+					Cause: ErrToolsDenyNotOverridable,
+				}
 			}
 		}
 	}
@@ -403,6 +574,7 @@ func MergeLocal(project, local *AgentsRegistry) (*AgentsRegistry, error) {
 	out := &AgentsRegistry{
 		Preset:    project.Preset,
 		Overrides: make(map[domain.Kind]Override, len(project.Overrides)),
+		Path:      project.Path,
 	}
 	// Deep-clone project's Preset map fields so output never aliases inputs.
 	out.Preset.EnvSet = copyMap(project.Preset.EnvSet)
