@@ -1,6 +1,6 @@
 # DROP_4c.6.W0 — AGENTS_TOML_SCHEMA
 
-**State:** building
+**State:** done
 **Blocked by:** —
 **Paths (expected):** `internal/config/agents.go` (NEW), `internal/config/agents_test.go` (NEW), `internal/config/frontmatter.go` (NEW), `internal/config/frontmatter_test.go` (NEW), `internal/config/testdata/agents/*.toml` (NEW golden fixtures, one per merge edge case)
 **Packages (expected):** `internal/config`
