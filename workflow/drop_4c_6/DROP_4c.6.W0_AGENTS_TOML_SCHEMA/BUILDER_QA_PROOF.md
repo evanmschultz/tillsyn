@@ -270,3 +270,71 @@ Round 2 ships exactly the 3-line delta the round-1 CX fix-hint specified (2 bare
 ### Hylla Feedback
 
 N/A — verification touched only Go files (already in scope from W0.D1+W0.D2+W0.D3 round-1+round-2). All evidence-gathering used `Read` (production + test + worklog + falsification round-1 verdict), `git show` / `git log` / `git status` (round-2 commit scope), and `mage test-pkg` / `mage test-func` (gate runs). Hylla was not queried during this proof pass — round-2's 3-line delta is post-commit pre-ingest territory where `git diff` + `mage` + `Read` are authoritative. The live LSP daemon would not have surfaced any additional signal beyond what direct file Read covered.
+
+## Droplet 4c.6.W0.D4 — Round 1
+
+### Findings
+
+(none — see Summary)
+
+### Missing Evidence
+
+(none — see Summary)
+
+### Summary
+
+**Verdict: pass** — 0 findings. yaml.v3 dep promotion is benign (indirect→direct at the same version `v3.0.1`; zero new dependency cost; commit-isolated `go.sum` unchanged).
+
+Build-QA-Proof axes evaluated:
+
+1. **Diff-vs-spec.** Commit `bbecef6` ("feat(config): w0.d4 frontmatter strip helper") touches exactly the declared paths from PLAN.md droplet D4:
+   - `internal/config/frontmatter.go` (NEW, 169 LOC).
+   - `internal/config/frontmatter_test.go` (NEW, 256 LOC).
+   - `go.mod` (MODIFY, ±1 LOC: `gopkg.in/yaml.v3 v3.0.1` moved out of `// indirect` block into the direct-require block at line 37; no version bump, no new module added).
+   - `BUILDER_WORKLOG.md` round-1 entry; `PLAN.md` D4 state-flip (`todo` → `done`).
+   `go.sum` unchanged across the commit (verified via `git diff bbecef6^ bbecef6 -- go.sum` empty). No drive-by edits. The PLAN.md `Paths` line item didn't pre-declare the `go.mod` touch but the dep-survey RiskNote at PLAN.md:166 explicitly anticipates a yaml-lib decision at build time, and the indirect→direct promotion is the minimum-cost satisfaction of that survey: every other YAML lib option in the existing graph (`goccy/go-yaml v1.19.2` indirect at line 49) carries a heavier API and is rejected by the worklog Design Note 1. Promoting an existing indirect dep to direct is not a "new dep" in the dep-cost sense.
+
+2. **AcceptanceCriteria coverage.** Each PLAN.md L2 acceptance bullet for D4 has a verifying test:
+   - "`StripFrontmatterKeys(frontmatter string, stripModel bool, stripTools bool) (string, error)` is a pure function — no I/O, no global state" → exported function present at `frontmatter.go:89-157`; signature matches exactly. No `os.*`, `io.*`, `time.*`, or non-const package-level state mutated; package-level `var frontmatterToolsKeys` (`:51`) and `var frontmatterModelKey` (`:56`) are read-only catalogues. Safe for goroutine concurrent invocation per doc-comment at `:83-84`.
+   - "Implementation chooses the smallest YAML-aware approach: parse YAML to a node tree, drop keys, re-emit. If the frontmatter is invalid YAML, return an error with the parser's message." → `yaml.Unmarshal` at `:106` on an `*yaml.Node`; key-drop loop walks `root.Content` pairs at `:144-153`; re-emit via `marshalNode` at `:163-169` calling `yaml.Marshal`. Invalid YAML path wrapped via `fmt.Errorf("frontmatter parse failed: %w", err)` at `:107`; `TestStripFrontmatterKeys_InvalidYAML` (`:112-122`) asserts `strings.Contains(err.Error(), "line")` — yaml.v3 prefixes parse errors with `"yaml: line N: …"` so the line marker survives the wrap.
+   - "Preserves field order for fields NOT being stripped (deterministic output)" → `MappingNode.Content` is an ordered slice (alternating key/value); the strip loop appends in original order at `:152`. Order preservation verified implicitly by `TestStripFrontmatterKeys_PreservesOtherFields` (`:87-105`) — assertion shape uses `strings.Contains` rather than ordered-slice equality, but the order-preserving design is documented and the underlying yaml.v3 API (per `go doc gopkg.in/yaml.v3 Node`) guarantees ordered iteration of `MappingNode.Content`.
+   - "Idempotent: calling `StripFrontmatterKeys` twice with the same args returns the same string" → `TestStripFrontmatterKeys_Idempotent` (`:127-140`) calls the function twice with `(true, true)` flags and asserts equality of the two outputs.
+   - "When BOTH flags are false, returns the input string verbatim (no parse, no re-emit)" → first guard at `:91-93`: `if !stripModel && !stripTools { return frontmatter, nil }`. `TestStripFrontmatterKeys_BothFalse` (`:74-83`) feeds `"# leading comment\nname:    foo\ndescription:   bar  # trailing\nmodel: claude\ntools:\n  - Read\n"` and asserts `out == in` byte-for-byte. Comments + multi-space whitespace + trailing-comment all preserved — confirms no parse cycle.
+   - "`model:` strip removes ONLY the `model:` top-level key; nested keys named `model:` are NOT stripped" → `TestStripFrontmatterKeys_TopLevelOnly` (`:146-163`) feeds `"name: foo\nmetadata:\n  model: nested-keep-me\n  tools:\n    - nested-keep\nmodel: top-strip\ntools:\n  - top-strip\n"` and asserts `nested-keep-me` + `nested-keep` survive while `top-strip` is removed. Walk loop at `:144-153` iterates only `root.Content` (the root MappingNode pairs); nested MappingNodes sit inside value slots and are not visited.
+   - "`tools:` strip removes the top-level `tools:` key AND `allowedTools:` AND `disallowedTools:`" → `frontmatterToolsKeys = ["tools", "allowedTools", "disallowedTools"]` at `:51`; loop at `:135-137` adds all three to the strip set when `stripTools=true`. `TestStripFrontmatterKeys_StripTools` (`:53-67`) feeds frontmatter with all three keys and asserts each removed.
+   - "Test `TestStripFrontmatterKeys_StripModel`" → present at `:31-46`. PASS.
+   - "Test `TestStripFrontmatterKeys_StripTools`" → present at `:53-67`. PASS.
+   - "Test `TestStripFrontmatterKeys_BothFalse`" → present at `:74-83`. PASS.
+   - "Test `TestStripFrontmatterKeys_PreservesOtherFields`" → present at `:87-105`. PASS.
+   - "Test `TestStripFrontmatterKeys_InvalidYAML`" → present at `:112-122`. PASS.
+   - "Test `TestStripFrontmatterKeys_Idempotent`" → present at `:127-140`. PASS.
+   - All 6 named PLAN.md tests present. The 5 additional tests (`TopLevelOnly`, `EmptyInput` with 4 sub-tests, `StripModelKeepsTools`, `StripToolsKeepsModel`, `InvalidYAMLReturnsNonNilErr`) cover paths called out by acceptance prose ("top-level YAML keys only" per :151-152, flag-combination matrix per the helper signature, malformed-YAML hardening per RiskNote line 169). All harden coverage rather than drift from spec; total **15 test invocations** (11 distinct tests + `EmptyInput`'s 4 sub-tests) per worklog Design Note line 192.
+
+3. **Constraint preservation.** D1+D2+D3 regression check via `mage test-func ./internal/config "TestLoadRegistry_.*|TestResolve_.*|TestMergeLocal_.*"` → **20/20 GREEN** (5 D1 + 7 D2 + 8 D3). All upstream production code in `agents.go` is untouched (D4 lives in the sibling `frontmatter.go` file; no edits to `agents.go` per `git show --stat bbecef6`). No competing YAML libs introduced — `gopkg.in/yaml.v3 v3.0.1` was already in `go.mod` as indirect (line 75 pre-commit per `go.mod` history; line 37 post-commit at the direct-require block). `goccy/go-yaml v1.19.2` indirect remains untouched (line 49 unchanged). The promotion is the dep-survey winner: zero version bump, zero new module, transitively-already-present.
+
+4. **Spec-conformance.** Pure function surface verified by direct inspection of `frontmatter.go:89-157` — no `os.*`, `bufio.*`, `io.*`, `time.*`, `sync.*`, `runtime.*` imports beyond `bytes` (used only for `TrimRight` on yaml.Marshal output) and `fmt` (error wrap) and `gopkg.in/yaml.v3` (single YAML lib). No package-level mutable state. The `tools:` 3-key unit-strip is correct per SKETCH § 15: when the runtime owns the tool surface, all three legacy aliases (`tools` SDK form, `allowedTools` alternative, `disallowedTools` complement) must drop together; `frontmatterToolsKeys` enumerates them and the loop applies all three atomically when `stripTools=true`. The `model:` strip is single-key (`frontmatterModelKey = "model"` at `:56`); no aliases per spec. Empty-input short-circuit at `:97-99` returns `("", nil)` for the degenerate case — yaml.Unmarshal of `""` produces a zero-Kind Node which `:113-115` already handles, but the explicit short-circuit avoids the round-trip cost. Trailing-newline normalization in `marshalNode` (`:168`) trims and re-appends exactly one newline — defensive against yaml.v3 version drift per worklog Design Note 9.
+
+5. **Shipped-but-not-wired.** `StripFrontmatterKeys` is exported (capital S, `:89`) so W3's render layer can call across package boundary per PLAN.md:170 ("W3 wires this helper at `render.go:assembleAgentFileBody`"). The helper is intentionally NOT wired into any current call site in D4 — that's W3's responsibility per cascade-design parallelization (PLAN.md:170 RiskNote). `marshalNode` is unexported (lowercase, `:163`) — internal helper, correctly package-private. Package-level vars `frontmatterToolsKeys` + `frontmatterModelKey` are unexported. No fixture is shipped without a consuming test (D4 ships zero TOML fixtures because the helper's surface is YAML-only and inputs are constructed inline in the test file). No orphan code — every symbol is reached by a test or is the public W3 entry point.
+
+**Gate evidence (re-run by reviewer this round):**
+
+- `mage test-pkg ./internal/config` → **67/67 GREEN** (52 pre-D4 baseline from D1+D2+D3 + 15 new D4 invocations). Builder report ("15/15 GREEN" per worklog) matches.
+- `mage test-func ./internal/config "TestStripFrontmatterKeys_.*"` → **15/15 GREEN** with `-race -count=1`: covers all 11 distinct test functions plus the 4 `EmptyInput` sub-tests. Race detector enforced by mage target (`-race -count=1` in the command-line stream).
+- `mage test-func ./internal/config "TestLoadRegistry_.*|TestResolve_.*|TestMergeLocal_.*"` → **20/20 GREEN** (D1+D2+D3 regression check by reviewer this round). No upstream regression.
+- `git show --stat bbecef6` → touched files match PLAN.md `Paths` declaration plus the dep-survey-driven `go.mod` promotion. No drive-by.
+- `git diff bbecef6^ bbecef6 -- go.sum` → empty. The indirect→direct promotion at the same version requires no `go.sum` change (the same module-version checksum already lives in the lock).
+- `git show bbecef6 -- go.mod` → confirmed: `gopkg.in/yaml.v3 v3.0.1` moved from `// indirect` block (line 75 pre) to direct-require block (line 37 post). No version delta. `goccy/go-yaml v1.19.2` indirect untouched.
+
+**Verdict on yaml.v3 dep promotion:** **BENIGN.** The dep was already transitively present at the exact version (`v3.0.1`); promoting to direct adds zero new module download, zero new audit surface, zero CI cost. The dep-survey RiskNote at PLAN.md:166 explicitly authorized this approach ("if `gopkg.in/yaml.v3` is already imported transitively (verify via `go list -m all` or Hylla), reuse it"). `goccy/go-yaml` and `kubernetes-sigs/yaml` were rejected per the same RiskNote on dep-weight grounds; `gopkg.in/yaml.v3` is the canonical Node-API option in the existing graph. No competing TOML lib (rejected at D1) and no competing YAML lib (this droplet) introduced. Net dep-cost delta: **zero**.
+
+**Proof certificate:**
+
+- **Premises** — D4 ships `StripFrontmatterKeys(frontmatter, stripModel, stripTools) (string, error)` per PLAN.md:146 contract; pure function with no I/O / no globals / no mutable state; both-false short-circuit returns input verbatim; top-level-only key strip via `*yaml.Node` walk; `tools:` strip removes 3 keys as a unit per SKETCH § 15; invalid YAML surfaces line-bearing error wrap; idempotent; D1+D2+D3 regression GREEN; yaml.v3 already in dep graph at the same version (zero net dep cost).
+- **Evidence** — see per-axis citations above (file:line for every claim) plus the gate-evidence block. Production-code citations: `frontmatter.go:89-157` (helper) + `:163-169` (marshalNode). Test citations: `frontmatter_test.go:31-256` (11 tests + 4 sub-tests). Diff-scope citations: `git show --stat bbecef6` + `git show bbecef6 -- go.mod` + empty-`go.sum` delta.
+- **Trace or cases** — read PLAN.md D4 acceptance bullets + RiskNotes + ContextBlocks; cross-checked each against `frontmatter.go:1-169` symbols + `frontmatter_test.go:1-256` test bodies + assertions; ran 15 D4 + 20 D1+D2+D3 regression + full-package gate; verified diff scope via `git show --stat bbecef6`; verified yaml.v3 dep promotion is benign via direct `go.mod` diff (indirect→direct, no version change, no `go.sum` change); verified purity by inspecting `frontmatter.go`'s import list (no I/O packages, no time, no sync); verified top-level-only walk by reading the strip loop at `:144-153`.
+- **Conclusion** — **PASS**. All five Build-QA-Proof axes satisfied; no findings; no missing evidence. yaml.v3 dep promotion is benign (indirect→direct at v3.0.1; zero new module cost). Helper is a clean cross-wave deferral (W3 wires it at render-time).
+- **Unknowns** — none for D4 scope. D5's `*ConfigError` envelope intentionally lives on the agents.go side and does not wrap the frontmatter helper's parse-error path (the strip path is render-time, not config-load-time, per worklog "Decisions deferred" §). If a future drop wants unified error formatting across config + render, that's a refinement on top of D5 — explicitly acknowledged in worklog and not a D4 obligation.
+
+### Hylla Feedback
+
+N/A — verification touched only Go files (D4 ships in the sibling `frontmatter.go` + co-located test) and `go.mod`. All evidence-gathering used `Read` (production + test + worklog + PLAN.md acceptance), `git show` / `git log` / `git diff` (commit-range scope, dep-promotion verification, `go.sum`-unchanged confirmation), and `mage test-pkg` / `mage test-func` (gate runs). Hylla was not queried during this proof pass — D4's surface is post-commit pre-ingest territory where `git` + `mage` + `Read` are authoritative for the dep-promotion verification, and the live LSP daemon would not have surfaced any committed-state signal that those tools didn't cover.
