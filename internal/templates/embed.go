@@ -9,9 +9,11 @@ import (
 )
 
 // DefaultTemplateFS embeds the builtin default cascade template TOML files
-// into the binary. Per droplet 3.14 fix L4 the embed path lives under
-// internal/templates/builtin/ — NOT a repo-root templates/ directory — and
-// the //go:embed directive uses relative paths with no parent traversal.
+// AND the placeholder agent .md scaffolding + agents.example.toml runtime-
+// config example into the binary. Per droplet 3.14 fix L4 the embed path
+// lives under internal/templates/builtin/ — NOT a repo-root templates/
+// directory — and the //go:embed directive uses relative paths with no
+// parent traversal.
 //
 // Drop 4c.5 droplet F.2.1 rebadged the original `default.toml` to
 // `default-go.toml` so sibling builtins (and, post-Q1 resolution, future
@@ -28,10 +30,67 @@ import (
 // SEMANTIC SHIFT note on `LoadDefaultTemplate` for the implications for
 // existing callers.
 //
+// Drop 4c.6 W1.D1 extended the directive with 21 placeholder agent .md
+// files (3 groups × 7 standard names: planning, builder, qa-proof,
+// qa-falsification, research, closeout, commit-message) and the
+// agents.example.toml runtime-config fixture. Per the W1.D1 acceptance
+// bullet + ContextBlocks `constraint` (high), the directive uses an
+// EXPLICIT PER-FILE LIST — never `**/*.md` or `builtin/agents/*` glob —
+// carrying forward Drop 4c.5 F.2.1's falsification mitigation #2. The
+// agent .md bodies are PLACEHOLDER scaffolding only; substantive prompt
+// content lands in Drop 4c.8 W4. The till-gdd group ships placeholder
+// shape only at this drop per `SKETCH.md` § 14.2 / § 21.6.
+//
+// Drop 4c.6 W1.D1 cross-droplet handoff with W0.5: the W0.5 validator
+// `validateAgentBindingNames` flips from fail-permissive to fail-strict
+// the moment any `builtin/agents/<group>/*.md` file ships into the
+// embed.FS (probed at package init via `embeddedAgentLibraryShipped`).
+// `default-go.toml` (which W5.D3 will rebadge to bare names) currently
+// references `go-builder-agent`, `go-planning-agent`, `go-research-agent`,
+// `go-qa-proof-agent`, `go-qa-falsification-agent`, plus
+// `orchestrator-managed` for the four coordination kinds — those names
+// must resolve at the embedded floor or `LoadDefaultTemplateForLanguage("go")`
+// fails. Until W5.D3 strips the go- prefix the legacy names ship as
+// additional placeholders alongside the 7 W1.D1 standard names: the 5
+// `go-*-agent.md` placeholders live in `till-go/` (Go-flavored namespace)
+// and `orchestrator-managed.md` lives in `till-gen/` (language-agnostic).
+// The orchestrator-facing closing certificate flags this scope expansion
+// for the orchestrator's audit trail.
+//
 // Canonical specs: workflow/drop_3/PLAN.md droplet 3.14 + main/PLAN.md § 19.3
-// + workflow/drop_4c_5/THEME_F_PLAN.md droplets F.2.1 + F.2.2 + F.1.3.
+// + workflow/drop_4c_5/THEME_F_PLAN.md droplets F.2.1 + F.2.2 + F.1.3 +
+// workflow/drop_4c_6/PLAN.md droplet 4c.6.W1.D1 +
+// workflow/drop_4c_6/SKETCH.md § 4.1 + § 4.2 + § 11.1 + § 14.2 + § 21.6.
 //
 //go:embed builtin/default-go.toml builtin/default-generic.toml
+//go:embed builtin/agents.example.toml
+//go:embed builtin/agents/till-gen/planning-agent.md
+//go:embed builtin/agents/till-gen/builder-agent.md
+//go:embed builtin/agents/till-gen/qa-proof-agent.md
+//go:embed builtin/agents/till-gen/qa-falsification-agent.md
+//go:embed builtin/agents/till-gen/research-agent.md
+//go:embed builtin/agents/till-gen/closeout-agent.md
+//go:embed builtin/agents/till-gen/commit-message-agent.md
+//go:embed builtin/agents/till-go/planning-agent.md
+//go:embed builtin/agents/till-go/builder-agent.md
+//go:embed builtin/agents/till-go/qa-proof-agent.md
+//go:embed builtin/agents/till-go/qa-falsification-agent.md
+//go:embed builtin/agents/till-go/research-agent.md
+//go:embed builtin/agents/till-go/closeout-agent.md
+//go:embed builtin/agents/till-go/commit-message-agent.md
+//go:embed builtin/agents/till-gdd/planning-agent.md
+//go:embed builtin/agents/till-gdd/builder-agent.md
+//go:embed builtin/agents/till-gdd/qa-proof-agent.md
+//go:embed builtin/agents/till-gdd/qa-falsification-agent.md
+//go:embed builtin/agents/till-gdd/research-agent.md
+//go:embed builtin/agents/till-gdd/closeout-agent.md
+//go:embed builtin/agents/till-gdd/commit-message-agent.md
+//go:embed builtin/agents/till-go/go-builder-agent.md
+//go:embed builtin/agents/till-go/go-planning-agent.md
+//go:embed builtin/agents/till-go/go-research-agent.md
+//go:embed builtin/agents/till-go/go-qa-proof-agent.md
+//go:embed builtin/agents/till-go/go-qa-falsification-agent.md
+//go:embed builtin/agents/till-gen/orchestrator-managed.md
 var DefaultTemplateFS embed.FS
 
 // ErrLanguageNotSupported is the closed sentinel returned by

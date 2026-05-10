@@ -88,7 +88,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W1.D1 — Scaffold embedded agent dirs (placeholder content) + ship `agents.example.toml`
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/templates/builtin/agents/till-gen/planning-agent.md` (NEW), `internal/templates/builtin/agents/till-gen/builder-agent.md` (NEW), `internal/templates/builtin/agents/till-gen/qa-proof-agent.md` (NEW), `internal/templates/builtin/agents/till-gen/qa-falsification-agent.md` (NEW), `internal/templates/builtin/agents/till-gen/research-agent.md` (NEW), `internal/templates/builtin/agents/till-gen/closeout-agent.md` (NEW), `internal/templates/builtin/agents/till-gen/commit-message-agent.md` (NEW), same 7 names under `internal/templates/builtin/agents/till-go/` and `internal/templates/builtin/agents/till-gdd/`, `internal/templates/builtin/agents.example.toml` (NEW), `internal/templates/embed.go`, `internal/templates/embed_test.go`.
 - **Packages:** `internal/templates`.
@@ -247,7 +247,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W6.D1 — `AGENTS_CONFIG.md` (new top-level doc)
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; doc-only — `Irreducible: true`)
 - **Paths:** `AGENTS_CONFIG.md` (NEW top-level), `README.md` (single pointer link added — touches a different droplet, see W6.D5).
 - **Packages:** none (markdown only).

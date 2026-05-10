@@ -2,6 +2,7 @@ package templates
 
 import (
 	"errors"
+	"io"
 	"reflect"
 	"slices"
 	"strings"
@@ -1028,4 +1029,91 @@ func TestLoadDefaultTemplate_WrapsLanguageEmpty(t *testing.T) {
 	if !reflect.DeepEqual(wrapped, direct) {
 		t.Fatalf("LoadDefaultTemplate() != LoadDefaultTemplateForLanguage(\"\"); wrapper-equality contract broken\nwrapped = %+v\ndirect  = %+v", wrapped, direct)
 	}
+}
+
+// w1d1StandardAgentNames is the closed list of seven standard agent file names
+// shipped under each `internal/templates/builtin/agents/<group>/` directory by
+// Drop 4c.6 W1.D1. The names match `SKETCH.md` § 11.1 closing note + the Drop
+// 4c.6 W1.D1 PLAN.md droplet acceptance bullet. Drop 4c.8 W4 lands substantive
+// content for these files; W1.D1 ships only a "PLACEHOLDER" body so the
+// embedded-FS resolver path can land without blocking on prompt authoring.
+var w1d1StandardAgentNames = []string{
+	"planning-agent.md",
+	"builder-agent.md",
+	"qa-proof-agent.md",
+	"qa-falsification-agent.md",
+	"research-agent.md",
+	"closeout-agent.md",
+	"commit-message-agent.md",
+}
+
+// w1d1AgentGroups is the closed list of three group directories shipped by
+// Drop 4c.6 W1.D1 under `internal/templates/builtin/agents/`. Each group ships
+// the same seven standard agent names. `till-gen` is the language-agnostic
+// generic group; `till-go` is Go+mage tuning; `till-gdd` is post-Hylla-rev
+// graph-driven (placeholder shape only — substantive content lands post-MVP
+// per `SKETCH.md` § 14.2 / § 21.6).
+var w1d1AgentGroups = []string{"till-gen", "till-go", "till-gdd"}
+
+// TestDefaultTemplateFSEmbedsPlaceholderAgentFiles asserts every Drop 4c.6 W1.D1
+// path resolves via `DefaultTemplateFS.Open` AND every agent .md body contains
+// the literal string "PLACEHOLDER" so a builder mistakenly committing a stub
+// prompt cannot pass embedded-FS introspection silently. Mirrors the F.2.1
+// falsification mitigation #2 pattern (explicit per-file list, never glob).
+//
+// Drop 4c.6 W1.D1 acceptance bullet: "embed_test.go adds an FS-introspection
+// test asserting all 21 placeholder paths + agents.example.toml resolve via
+// DefaultTemplateFS.Open."
+//
+// 21 agent paths = 3 groups × 7 standard names; +1 `agents.example.toml` = 22
+// distinct files validated by this test. Substantive prompt content for the
+// agent files lands in Drop 4c.8 W4; the only contract this test enforces is
+// (a) the embed.FS opens the file and (b) the body carries the PLACEHOLDER
+// marker so accidental drift surfaces immediately.
+func TestDefaultTemplateFSEmbedsPlaceholderAgentFiles(t *testing.T) {
+	t.Parallel()
+
+	for _, group := range w1d1AgentGroups {
+		for _, name := range w1d1StandardAgentNames {
+			path := "builtin/agents/" + group + "/" + name
+			t.Run(path, func(t *testing.T) {
+				t.Parallel()
+				f, err := DefaultTemplateFS.Open(path)
+				if err != nil {
+					t.Fatalf("DefaultTemplateFS.Open(%q): unexpected error: %v", path, err)
+				}
+				defer f.Close()
+				body, err := io.ReadAll(f)
+				if err != nil {
+					t.Fatalf("io.ReadAll(%q): unexpected error: %v", path, err)
+				}
+				if !strings.Contains(string(body), "PLACEHOLDER") {
+					t.Fatalf("agent file %q body missing required \"PLACEHOLDER\" marker; W1.D1 placeholder discipline (substantive content lands Drop 4c.8 W4)", path)
+				}
+			})
+		}
+	}
+
+	// agents.example.toml is the runtime-config example shipped at
+	// internal/templates/builtin/agents.example.toml per W1.D1 acceptance
+	// bullet #2 + SKETCH.md § 4.2 (sane Anthropic-direct defaults). This
+	// test only asserts the file resolves via embed.FS; semantic
+	// correctness (parses cleanly through the W0 loader) is verified by
+	// W0's loader tests once W0 lands. W1.D1 deliberately ships the
+	// fixture without exercising the loader to avoid the chicken/egg.
+	t.Run("agents.example.toml", func(t *testing.T) {
+		t.Parallel()
+		f, err := DefaultTemplateFS.Open("builtin/agents.example.toml")
+		if err != nil {
+			t.Fatalf("DefaultTemplateFS.Open(\"builtin/agents.example.toml\"): unexpected error: %v", err)
+		}
+		defer f.Close()
+		body, err := io.ReadAll(f)
+		if err != nil {
+			t.Fatalf("io.ReadAll(\"builtin/agents.example.toml\"): unexpected error: %v", err)
+		}
+		if len(body) == 0 {
+			t.Fatalf("agents.example.toml body empty; W1.D1 must ship a non-empty fixture")
+		}
+	})
 }
