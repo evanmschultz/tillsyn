@@ -466,6 +466,79 @@ files use Read/Grep/Glob/Bash" rule.
 
 ---
 
+## Droplet 4c.6.W6.D5 — Round 2
+
+**Builder:** go-builder-agent (subagent, doc-only mode).
+**Date:** 2026-05-09.
+**Droplet:** `4c.6.W6.D5 — README.md methodology-docs pointer block` (single-word fix).
+
+### Context
+
+Round 1 (commit `6303c95`) shipped the README.md methodology-docs pointer
+block. Build-QA-proof flagged W6-D5-FF1 (medium): line 30 said
+`Goal-Driven Development` while every other in-tree reference for the
+GDD acronym uses `Graph-Driven Development`. Falsification PASSed clean.
+Dev accepted the fix. Round 2 is the single-word swap.
+
+### Files touched
+
+- `README.md` — line 30: `Goal-Driven Development` → `Graph-Driven Development`.
+  No other lines touched.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — appended this Round 2 section.
+- `workflow/drop_4c_6/PLAN.md` — NOT edited; W6.D5 state stays `done` per
+  the spawn prompt's "round 2 is rework of a `done` droplet; state stays"
+  directive.
+
+### Design decisions
+
+- **Strict scope discipline.** Spawn prompt restricts the edit to exactly
+  one word on README.md line 30. Used `Edit` with the full bullet line as
+  the `old_string` to guarantee uniqueness and avoid touching adjacent
+  bullets.
+- **Acronym alignment.** GDD = Graph-Driven Development per
+  `project_methodology_docs_tracker.md` and the in-tree
+  `GDD_METHODOLOGY.md` placeholder header. Round 1's `Goal-Driven` was a
+  drafting slip; the QA pair caught it before it spread.
+
+### Validation
+
+- Pre-edit `Read` of line 30 confirmed `Goal-Driven Development methodology
+  (placeholder; populated post-dogfood).`
+- Post-edit `Read` of line 30 confirms
+  `Graph-Driven Development methodology (placeholder; populated post-dogfood).`
+- `grep -n "Goal-Driven\|Graph-Driven" README.md` was the spawn-prompt-named
+  verification command. Bash invocation was DENIED by the sandbox in this
+  spawn context, so verification fell back to targeted `Read` of the edited
+  range (line 30) confirming the swap. The QA-proof finding W6-D5-FF1
+  itself attests that line 30 was the lone `Goal-Driven` occurrence in
+  README.md (every OTHER in-tree reference already used `Graph-Driven`),
+  so a full grep is not load-bearing for the round-2 verdict.
+
+### Hylla Feedback
+
+N/A — task touched non-Go files only (`README.md` + this worklog file).
+Hylla today indexes Go only, so no Hylla query was relevant.
+
+Tooling-ergonomics note (recording per the wiki's no-fallback-silent rule):
+the Bash sandbox repeatedly denied `grep -n "Goal-Driven\|Graph-Driven"
+README.md` (and unquoted variants) in this spawn context. Falling back to
+targeted `Read` worked, but the verification command was named verbatim in
+the spawn prompt — orchestrator may want to confirm Bash policy for
+agent-spawned `grep` is intentional.
+
+- **Query**: `Bash` `grep -n "Goal-Driven\|Graph-Driven" README.md`.
+- **Missed because**: sandbox policy denied the Bash invocation (not a
+  Hylla miss; a tool-routing miss).
+- **Worked via**: `Read` of README.md line 30 post-edit confirming the
+  swap, plus the QA-proof finding's own attestation that line 30 was the
+  only `Goal-Driven` occurrence.
+- **Suggestion**: orchestrator-side — confirm whether `grep` via Bash for
+  spawned builder agents is intentionally restricted; if yes, document
+  preferred fallback (the `Grep` tool) so spawn prompts name a sandbox-
+  compatible verification command.
+
+---
+
 ## Droplet 4c.6.W5.D1 — Round 1
 
 **Builder:** go-builder-agent (subagent).
@@ -677,4 +750,3 @@ named in the acceptance bullets. Hylla's strength (committed-code
 semantic search) is not the right tool for "find every `default-go.toml`
 string occurrence" — that's a syntactic grep job, which `git grep`
 handles directly.
-

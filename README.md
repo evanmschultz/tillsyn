@@ -27,7 +27,7 @@ If repo-wide agent workflow policy changes, update the tracked `AGENTS.md`, any 
 Methodology docs (top-level, read these to understand how Tillsyn is built and used):
 - `AGENTS_CONFIG.md` — schema and authoring guide for `agents.toml` / `agents.local.toml`, the runtime's per-kind agent + model bindings.
 - `CASCADE_METHODOLOGY.md` — the cascade methodology spine (plan-down / build-up, droplet sizing, planner-calls-planner recursion, QA discipline) that drives Tillsyn's coordination model.
-- `GDD_METHODOLOGY.md` — Goal-Driven Development methodology (placeholder; populated post-dogfood).
+- `GDD_METHODOLOGY.md` — Graph-Driven Development methodology (placeholder; populated post-dogfood).
 
 Local dogfood repo layout note:
 - the bare control repo lives one directory above this checkout,
