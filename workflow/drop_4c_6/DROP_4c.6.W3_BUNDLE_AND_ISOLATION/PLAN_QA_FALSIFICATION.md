@@ -194,3 +194,127 @@ Recommended next round: address W3-FF6 by either (a) adding `# Section 0` / `## 
 - **Suggestion:** Hylla's search-types parameter shape inconsistency between `fields` (plural array) and `field` (singular string) is a footgun. Round-1 falsification didn't flag it; round-2 hit it on first-try.
 
 - **Ergonomic gripe:** Bash `grep`, `find`, `awk` invocations were uniformly denied by the agent permission gate (same as round-1). Forced to direct-Read 27 placeholder files individually. Acceptable but expensive — `Bash` access for read-only commands like `grep -l "..." path/*.md` would have collapsed five Read calls into one. Round-1 raised this; round-2 confirms.
+
+---
+
+## Round 3 Verdict
+
+**Reviewer:** L2 plan-QA-falsification agent (round 3)
+**Plan under review:** `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md` (round-3 in-place edit)
+**Date:** 2026-05-09
+**Verdict:** **PASS_WITH_FINDINGS** — round-3 patch closes round-2 W3-FF6 (3-marker disjunction validates today's W1.D1 placeholders), W3-FF7 (cross-group fallback ladder routes coordination-kind spawns), W3-FF10 (existing-test fixture preservation verified inline), W3-FF11 (Future-evolution breadcrumb expanded). One MEDIUM-severity counterexample (W3-FF12) on the strip-then-inject pipeline's silent-leak hole, plus three NIT-level findings on Signal C surface area, YAGNI on the 3-marker disjunction, and W3-FF9 forward-dep enforcement gap. None of the new findings are build-breaking; W3-FF12 fails the existing `TestRenderAgentFileWithoutToolGating` contract under a specific accident-prone disk-author scenario, so flagging as MEDIUM rather than NIT.
+
+### 1. Findings (Round 3)
+
+- 1.1 **W3-FF12** [Family: A2-contract-mismatch / hidden-coupling] [severity: **MEDIUM**] **D3's strip-then-inject pipeline does NOT strip stale `allowedTools:` / `disallowedTools:` from disk frontmatter when `binding.ToolsAllowed` AND `binding.ToolsDisallowed` are both empty (binding has no tool gates). This silently leaks accidentally-authored frontmatter from a placeholder MD into the rendered file, breaking the existing `TestRenderAgentFileWithoutToolGating` contract.** PLAN line 145 specifies `stripTools = len(binding.ToolsAllowed) > 0 || len(binding.ToolsDisallowed) > 0` — i.e. strip ONLY fires when binding has at least one tool-gate entry. The strip universe in `internal/config/frontmatter.go:51` is `frontmatterToolsKeys = []string{"tools", "allowedTools", "disallowedTools"}` — when `stripTools=false`, NONE of these keys are stripped; verified at `frontmatter.go:91-93` ("no-op short-circuit: return verbatim to preserve exact bytes" when both flags false). Per PLAN line 153, "Empty `binding.ToolsAllowed` / `binding.ToolsDisallowed` skip injection (mirroring `TestRenderAgentFileWithoutToolGating` contract)." Combined: if a future drop's W1.D1 placeholder author adds a stale `allowedTools: SomeTool` line to a placeholder MD frontmatter (e.g. accidentally during a copy-paste from a substantive prompt template), the strip pipeline does NOT remove it (binding has no gates → stripTools false → strip is no-op short-circuit), AND the inject pipeline does NOT run (binding has no gates → skip injection). Net: stale `allowedTools: SomeTool` survives verbatim into rendered file. → **Repro:** modify `internal/templates/builtin/agents/till-go/go-builder-agent.md` frontmatter to add `allowedTools: Bash` between line 2 and line 3 (between `name:` and the closing `---`); construct `BindingResolved{AgentName: "go-builder-agent", CLIKind: CLIKindClaude}` with empty `ToolsAllowed` + `ToolsDisallowed`; call `Render`. Post-D3 rendered file at `<bundle>/plugin/agents/go-builder-agent.md` contains `allowedTools: Bash` (leaked from disk verbatim). `TestRenderAgentFileWithoutToolGating` at `render_test.go:366-401` asserts `!strings.Contains(str, "allowedTools:")` — FAILS. The plan's "skip injection mirrors TestRenderAgentFileWithoutToolGating" claim is correct only when the disk source frontmatter ALSO has no `allowedTools:` / `disallowedTools:` keys; a defensive disk-source contract requires unconditional strip of the tool-gating keys regardless of binding state, with conditional inject layered on top. → **Fix hint:** decouple strip from binding state for the tool-gating keys. Two viable paths: (a) **always strip tool-gating keys** — D3 unconditionally calls `StripFrontmatterKeys(frontmatter, stripModel, true)` for the tools axis (always strip) regardless of binding.ToolsAllowed/ToolsDisallowed length, then conditionally inject from binding when non-empty. The strip universe is exactly the runtime-owned axis; defense-in-depth strip blocks accidental-disk-leak paths. (b) **add a per-strip-axis config** to `StripFrontmatterKeys` so callers can request "always strip tools, conditionally strip model" without overloading a single bool. Option (a) is the minimal change and matches the SKETCH § 4.4 "runtime owns model+tools surface" framing. Update D3's Acceptance bullets at PLAN lines 145-148, RiskNote line 171 (strip-then-inject ordering), and Decision ContextBlock line 178.
+
+- 1.2 **W3-FF13** [Family: A3-hidden-coupling / over-permissive Signal C] [severity: nit] **D5's Signal C performs unanchored substring matching for `"# PLACEHOLDER"` / `"# Section 0"` / `"## Role"`, allowing a thin-stub body to bypass detection by quoting the marker inside a code-fence or paragraph.** PLAN line 234 + line 251 specify Signal C as `body contains AT LEAST ONE of "# PLACEHOLDER" OR "# Section 0" OR "## Role"` — `strings.Contains` semantics, no head-of-line anchoring, no exclusion of code-fenced content. → **Repro:** a future drop reintroduces a stub-shape body shaped like `"This is a stub. The substantive prompts use \`# Section 0\` headers — pending Drop 4c.8 W4. Behavior loaded from system path."` — body length ~150 chars, BUT the literal `"# Section 0"` substring is present (inside backticks, not as a heading). Signal A fails (length < 200) so this specific repro is caught by Signal A. The harder repro: body length 220 chars including a similar quoted-marker phrase. Signal A passes, Signal B passes (frontmatter intact), Signal C passes (substring match). Validator green-lights a stub body that happens to QUOTE the marker. → **Fix hint:** anchor Signal C to head-of-line — replace `strings.Contains(body, "# PLACEHOLDER")` with `strings.HasPrefix(line, "# PLACEHOLDER ")` over body lines (i.e., regex-equivalent `(?m)^# PLACEHOLDER `, `(?m)^# Section 0`, `(?m)^## Role`). Sub-planner picks line-by-line walk (no regex import needed). NOT load-bearing today (W1.D1 placeholders + drop 4c.8 W4 substantive prompts both use head-of-line markers), but tightening today eliminates a future false-pass surface. Update D5 Acceptance line 234 + RiskNote line 251.
+
+- 1.3 **W3-FF14** [Family: A4-YAGNI / scope-creep] [severity: nit] **D5 Signal C's 3-marker disjunction (`# PLACEHOLDER` + `# Section 0` + `## Role`) is over-specified relative to the dual-state surface (today: placeholder; post-W4: substantive). Two markers would suffice; three increases the test-fixture matrix and the documentation burden without buying additional signal.** PLAN line 234 lists three positive markers; the rationale spans ~30 lines (lines 234, 251, 260). The role-split is: `# PLACEHOLDER` validates W1.D1 today AND any future placeholder-shipping drop; `# Section 0` validates Drop 4c.8 W4 substantive prompts; `## Role` validates "substantive prompts that use role-prose convention." But the third marker (`## Role`) has no concrete W4 design contract anchoring it — the W4 PLAN at the L1 level (`workflow/drop_4c_6/PLAN.md` lines ~155-200) does not pin role-prose-convention as a W4 deliverable. So `## Role` is speculative future-flexibility. → **Repro:** sub-planner Reads the L1 W4 plan, finds no `## Role` anchor, ships D5 with 2-marker disjunction (`# PLACEHOLDER` + `# Section 0`). Equivalent validator behavior, simpler test surface. → **Fix hint:** drop `## Role` from the disjunction unless a forward-pinned W4 sub-planner contract requires it. Plan can hedge with "open for W4 sub-planner to add additional markers if substantive prompts adopt a `## Role` convention" — but locking-the-marker-set today is plan-time-discipline. Sub-planner proposes 2-marker disjunction as the minimal-viable shape; orchestrator-respin gate decides. NOT blocking; reasonable people disagree. NIT level.
+
+- 1.4 **W3-FF15** [Family: A5-shipped-but-not-wired / forward-dep enforcement] [severity: nit] **W3-FF9 round-3 resolution declares `model = ""` as user-error routed to "W0/W0.5 validator warning" (PLAN RiskNote line 169), but no W0/W0.5 validator pass actually exists for this case — the forward dep is unenforced and the plan does not name a refinement-routing seam.** Verified by Read of `internal/templates/load.go:1031-1055` (the AgentBinding validator entry point per AGENT_ARCHITECTURE_TRUTH.md § 2.3): `validateAgentBindingNames` validates AGENT_NAME existence in the embedded-tier (and project-tier post-W0.5), NOT the `model:` field's empty-string state. PLAN line 169's "W0/W0.5 validator warning flags `model = ""`" is a forward-honor-system claim with no implementation seam in W0/W0.5 (both shipped) and no refinement-tracker entry pinning a future implementation. → **Repro:** an adopter writes `[agent_bindings.builder] model = ""` in `agents.toml` deliberately (per W3-FF9 round-2 falsification's exotic-but-valid case) → no validator fires → adopter expects override behavior, gets pass-through (per round-3's locked predicate `*binding.Model != ""` evaluating FALSE) → adopter is confused; no diagnostic surfaces. → **Fix hint:** EITHER (a) raise the gap as a refinement-tracker entry routed to a future W0.5 backfill drop (cleanest), OR (b) add the warning to W3 itself as a small validator extension in D1's scope (expands D1; reasonable since D1 is the field-plumbing site), OR (c) ACCEPT explicitly that "no diagnostic fires for `model = ""`" and remove the "forward dep" framing from PLAN line 169 since no future drop is contracted to add it. Option (a) is the lowest-friction fix; sub-planner adds the refinement-tracker entry alongside D1's commit. NOT blocking W3 ship; the gap is documented somewhere else (or accepted) without changing W3 scope.
+
+### 2. Counterexamples (Round 3)
+
+- 2.1 **W3-FF12 reproduction.** Concrete trace through D3 + `StripFrontmatterKeys`:
+  1. Future-drop placeholder author adds `allowedTools: Bash` to `internal/templates/builtin/agents/till-go/go-builder-agent.md` between line 2 (`name:`) and the closing `---` on line 4 — accidentally during copy-paste from a substantive prompt draft.
+  2. Test invokes `render.Render(...)` with `BindingResolved{AgentName: "go-builder-agent", CLIKind: CLIKindClaude}` — empty `ToolsAllowed` + `ToolsDisallowed` (the `TestRenderAgentFileWithoutToolGating` shape at `render_test.go:374-378`).
+  3. D2 resolves the body from disk: full content of `till-go/go-builder-agent.md` including the leaked `allowedTools: Bash` frontmatter line.
+  4. D3 computes `stripTools = len([])>0 || len([])>0` = `false`. Computes `stripModel` = `binding.Model != nil && *binding.Model != ""` — `binding.Model` is nil (BindingResolved zero value with no resolver call) — so `stripModel = false`.
+  5. D3 calls `config.StripFrontmatterKeys(frontmatter, false, false)` → no-op short-circuit at `frontmatter.go:91-93`, returns frontmatter verbatim.
+  6. D3 inject step: `binding.ToolsAllowed` is empty, skip; `binding.ToolsDisallowed` is empty, skip. No injection.
+  7. D3 emits frontmatter unchanged: still contains `allowedTools: Bash`.
+  8. `TestRenderAgentFileWithoutToolGating` asserts `!strings.Contains(str, "allowedTools:")` — FAILS.
+
+  Concrete fix per Finding 1.1 above (always-strip-tool-keys + conditional inject).
+
+- 2.2 **W3-FF13 reproduction.** Future stub-shape body construction:
+  ```
+  ---
+  name: rogue-agent
+  description: Rogue stub.
+  ---
+
+  This is the rogue stub. Its purpose is to test the validator. The substantive
+  prompts use `# Section 0` headers (per SEMI-FORMAL-REASONING.md), but this
+  one doesn't carry one. Behavior loaded from system path. Tillsyn runtime
+  validates this body via D5's stub-detection signature. The body is exactly
+  the threshold length for Signal A pass — calibrated to be > 200 chars. End.
+  ```
+  Body length ~430 chars → Signal A passes. Frontmatter has `name:` + `description:` → Signal B passes. Body contains literal `"# Section 0"` substring (inside backticks in the third sentence) → Signal C passes. Validator green-lights this stub. The marker-quoted-in-prose case is a legitimate prose pattern (cross-references, documentation prose) that the round-3 unanchored substring match cannot distinguish from a head-of-line marker. Concrete fix per Finding 1.2 above (head-of-line anchoring).
+
+- 2.3 **W3-FF14 reproduction.** Trace the disjunction's marginal value:
+  - W1.D1 placeholders: all 27 use `# PLACEHOLDER` heading (per round-2 verification). `# Section 0` and `## Role` markers absent from every placeholder.
+  - Drop 4c.8 W4 substantive prompts (per L1 plan): use `# Section 0` per `SEMI-FORMAL-REASONING.md` canonical spec. `## Role` is speculative.
+  - Hypothetical adopter agent.md: may use `# Section 0` (likely) OR may use `## Role` (uncommon convention).
+  - Net: `## Role` is a "what if an author uses this convention" hedge with no anchored use case.
+
+  Concrete fix per Finding 1.3 above (drop `## Role` until forward-pinned).
+
+- 2.4 **W3-FF15 reproduction.** Adopter writes `[agent_bindings.builder] model = ""` in `agents.toml`:
+  1. `LoadDefaultTemplateForLanguage("go")` → `internal/templates/load.go` parses + validates → `validateAgentBindingNames` checks agent_name field → passes (no name validation rule fires on `model:` field).
+  2. `ResolveBinding` populates `BindingResolved.Model = ptr("")`.
+  3. `assembleAgentFileBody` runs D3: `stripModel = binding.Model != nil && *binding.Model != ""` = `true && false` = `false`. No strip on `model:`.
+  4. Embedded `model: opus` (or whatever) survives into rendered file.
+  5. Adopter expected the override; got pass-through. No diagnostic fires anywhere.
+
+  No counterexample to D3's correctness — the predicate is internally consistent. Counterexample to the round-3 plan's claim that "W0/W0.5 validator warning flags `model = ""`" — no such validator exists. Concrete fix per Finding 1.4 above (refinement-tracker entry OR scope expansion OR accept-and-document).
+
+### 3. Round-2 Resolution Status (Round 3)
+
+| Round-2 Finding | Round-3 Patch Outcome | Notes |
+| --------------- | --------------------- | ----- |
+| W3-FF6 (Signal C fail-closed on every W1.D1 placeholder) | RESOLVED | PLAN line 234 + line 251 + line 260 lock the 3-marker disjunction `"# PLACEHOLDER" OR "# Section 0" OR "## Role"`. Verified all 27 W1.D1 placeholders contain `# PLACEHOLDER` heading. Today's existing fixture-binding test path passes Signal C. New attack surface flagged in W3-FF13 (substring-not-anchored) + W3-FF14 (3-marker over-spec) — both NIT, not blocking. |
+| W3-FF7 (cross-group ENOENT for orchestrator-managed) | RESOLVED | PLAN line 101 + line 123 + line 131 lock the 2-step lookup ladder (primary `<group>` → fallback `till-gen` on ENOENT). Defensive scope (one-way fallback, bare-filename match, debug-log on fire) explicitly named. Companion negative test `_CrossGroupFallbackMissesBothGroups` covers the both-miss path. |
+| W3-FF8 (W4 prompt-length floor forward dep) | RESOLVED-AS-FORWARD-DEP | PLAN line 251 documents the forward dep explicitly + propagates to W4 sub-planner contract. Honor-system but acknowledged. |
+| W3-FF9 (`*binding.Model != ""` semantic divergence from F.7.17 L9) | RESOLVED-AS-USER-ERROR + FORWARD-DEP-GAP | PLAN line 169 picks Option B (treat empty-string as user-error). New W3-FF15 (this round) flags that the named "W0/W0.5 validator warning" forward dep doesn't actually exist in shipped code — no validator anchors it. NIT-level fix path (refinement-tracker or accept-and-document). |
+| W3-FF10 (existing test-fixture migration) | RESOLVED-INLINE | PLAN line 242 verified inline that today's `fixtureBinding()` `AgentName = "go-builder-agent"` resolves to till-go/go-builder-agent.md placeholder which clears all 3 signals. NO test-fixture mutation required for W3 ship. |
+| W3-FF11 (D6 breadcrumb wording) | RESOLVED | PLAN lines 276 + 293 + 299 lock the 3-landing enumerated breadcrumb wording (F.7.2 schema field; W3.D1 BindingResolved plumbing; W3.D2 render-time resolver). |
+| W3-PF1 (existing-test contract preservation) | RESOLVED | PLAN line 145 + line 152 + line 153 + RiskNotes lines 171, 178-179 lock the strip-then-inject ordering with explicit existing-test preservation clauses for both `TestRenderAgentFileFrontmatter` and `TestRenderAgentFileWithoutToolGating`. NEW W3-FF12 (this round) flags a hidden hole in the strip-then-inject contract: the strip step is conditional on binding state, leaving stale disk-frontmatter unstripped when binding is empty. Different attack surface than W3-PF1. |
+
+### 4. Severity Breakdown (Round 3)
+
+| Severity | Count | IDs |
+| -------- | ----- | --- |
+| HIGH     | 0     | — |
+| MEDIUM   | 1     | W3-FF12 |
+| NIT      | 3     | W3-FF13, W3-FF14, W3-FF15 |
+
+### 5. Summary
+
+**Verdict: PASS_WITH_FINDINGS.** Round-3 closes every round-2 high-severity finding (W3-FF6, W3-FF7) with grounded evidence, plus all three medium round-2 findings (W3-FF8 forward-dep, W3-FF9 semantic-divergence, W3-FF10 fixture-migration) and both nit round-2 findings (W3-FF11 breadcrumb, W3-PF1 strip-then-inject ordering). The round-3 patch is substantively complete.
+
+The new round-3 findings are:
+
+- **W3-FF12 (MEDIUM)** — strip-then-inject pipeline silently leaks stale disk-authored `allowedTools:` / `disallowedTools:` when binding has no tool gates. Concrete `TestRenderAgentFileWithoutToolGating` failure under specific (and accident-prone) future placeholder-author scenario. The fix is small (decouple strip from binding state for the tool-gating axis: always strip, conditionally inject) and ships in D3 acceptance bullets. The build-QA round will catch this if W1.D1 placeholders are clean today and W3 ships as-is — but D3's defense-in-depth posture should explicitly close the hole rather than rely on placeholder-author discipline forever.
+
+- **W3-FF13 (NIT)** — Signal C unanchored substring match enables a marker-quoted-in-prose false-pass on a hypothetical 220+ char stub body. Anchoring to head-of-line tightens the validator with zero impact on legitimate placeholders / W4 prompts.
+
+- **W3-FF14 (NIT)** — 3-marker disjunction is over-specified; `## Role` has no anchored use case. Reasonable people disagree; not blocking.
+
+- **W3-FF15 (NIT)** — W3-FF9 round-3 named a "W0/W0.5 validator warning" forward dep that does not exist in shipped W0/W0.5 code. Refinement-tracker entry OR scope expansion OR explicit accept-and-document closes the gap.
+
+Recommended next round: address W3-FF12 by extending D3 acceptance to "always strip tool-gating frontmatter keys regardless of binding state, conditionally inject from binding when non-empty." Address W3-FF13 + W3-FF14 + W3-FF15 inline at the same respin OR carry as accepted-NITs into build-QA. Build-QA round catches W3-FF12 deterministically if a future drop ever introduces the leaky placeholder; round-3 plan-QA flags it before that future drop forces the surface.
+
+The cascade-shape, blocker graph, atomicity, and L1-vs-L2 contract alignment all remain sound from round 1. No structural counterexamples surfaced in round 3.
+
+| Family                        | Round-3 Result | Findings                |
+| ----------------------------- | -------------- | ----------------------- |
+| A1. Concurrency / blocked_by  | PASS           | Acyclic, locks honored. |
+| A2. Contract-mismatch         | FINDINGS       | 1.1 (W3-FF12 strip-leak) |
+| A3. Hidden-coupling           | FINDINGS       | 1.2 (W3-FF13 unanchored) |
+| A4. YAGNI / scope-creep       | FINDINGS       | 1.3 (W3-FF14 3-marker over-spec) |
+| A5. Shipped-but-not-wired     | FINDINGS       | 1.4 (W3-FF15 forward-dep gap) |
+| A6. Atomicity                 | PASS           | Round-3 patch did not alter droplet count or paths. |
+| A7. Prompt-injection          | EXHAUSTED      | DORMANT pre-team-feature. |
+| Phase-2 missing blocked_by    | PASS           | Cross-package deps unchanged. |
+| Phase-2 cycles                | PASS           | DAG verified, no new edges. |
+| Phase-2 drift (L1 ↔ L2)      | PASS           | Round-3 patch does not introduce L1-vs-L2 drift. |
+
+### 6. Hylla Feedback (Round 3)
+
+N/A for symbol resolution — round-3 review touched only Go files (verified via `Read`) and plan / placeholder MDs / TOML fixtures (Hylla is Go-only today per the project memory). Direct file Reads + the `Bash ls` listing of agent placeholder dirs were sufficient. No Hylla queries forced a fallback in this round.
+
+- **Ergonomic gripe (carried from rounds 1 + 2):** `Bash` permission gate denies `grep`, `find`, `awk` against the orchestrator's plan dir, forcing per-file Reads for symbol enumeration and substring confirmation. This round used `ls` (allowed) for directory enumeration. Workable but expensive at scale; ergonomic friction unchanged from prior rounds.
+
+- **Ergonomic gripe (round-3 specific):** parameter-shape inconsistency on `mcp__hylla__hylla_search`'s `field` (singular) vs `fields` (plural array) carried from round 2. Not exercised this round; no new instances.

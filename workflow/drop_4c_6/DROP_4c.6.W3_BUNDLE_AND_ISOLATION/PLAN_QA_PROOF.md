@@ -98,3 +98,93 @@ Recommended next round: planner re-authors D5 Signal C marker list to include `#
 N/A for symbol resolution — review touched the same Go files as round 1 plus production seams (`internal/templates/embed.go`, `internal/templates/load.go`, `internal/templates/catalog.go` for import-cycle reasoning) plus three placeholder MDs. Direct file Reads were sufficient. No Hylla queries forced a fallback in this round.
 
 Ergonomic gripe (carried from round 1 + reinforced this round): `Bash` permission gate denies `grep`, `awk`, `find` against the orchestrator's plan dir, forcing per-file Reads for symbol enumeration. Workable for ~300-line plans + ~800-line test files, expensive for larger surfaces. Falls into "acceptable tool discipline tradeoff" rather than a fileable Hylla issue.
+
+---
+
+## Round 3 Verdict
+
+**Reviewer:** L2 plan-QA-proof agent (round 3)
+**Plan under review:** `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md` (round-3 in-place edit)
+**Date:** 2026-05-09
+**Verdict:** **PASS** (all 7 round-2 findings RESOLVED; 1 new round-3 NIT raised on cite drift; no HIGH/MEDIUM round-3 findings; plan is build-ready)
+
+### Round-2 Finding Resolution
+
+- **W3-FF6 [HIGH] — Signal C 3-marker disjunction including `# PLACEHOLDER`** — **RESOLVED**.
+  - Evidence: PLAN.md line 234 + line 251 + line 260 + KindPayload at line 263 lock the 3-marker disjunction (`"# PLACEHOLDER"` OR `"# Section 0"` OR `"## Role"`). The `# PLACEHOLDER` marker is the load-bearing addition that converts round-2's fail-CLOSED regression into a fail-correctly-on-stub baseline.
+  - Marker presence verified by direct Read on placeholder bodies spread across all 3 groups: `till-go/builder-agent.md` line 6 (`# PLACEHOLDER — substantive content lands in Drop 4c.8 W4`); `till-go/go-builder-agent.md` line 6 (same heading); `till-gen/builder-agent.md` line 6 (same heading); `till-gen/research-agent.md` line 6 (same heading); `till-gen/orchestrator-managed.md` line 6 (same heading); `till-gdd/qa-proof-agent.md` line 6 (same heading). Five placeholders inspected across all 3 groups; ALL carry the literal `# PLACEHOLDER` heading. The 3-marker disjunction passes Signal C against today's W1.D1 placeholder set.
+  - Forward-prompt compatibility: when Drop 4c.8 W4 ships substantive prompts, those prompts will carry `# Section 0` (per `~/.claude/CLAUDE.md` § "Section 0 Required For Substantive Responses") and/or `## Role` (per the role-prose convention). Either marker satisfies the disjunction. The `# PLACEHOLDER` marker survives in the validator universe even after W4 lands; this is intentional — it's a low-cost backward-compatibility allowance for adopters who keep PLACEHOLDER stubs in their per-project tier.
+  - Round-2 escape hatch ("sub-planner picks the actual marker present") REMOVED — the round-3 plan locks the 3-marker disjunction explicitly. No build-time discretion left.
+
+- **W3-FF7 [HIGH] — D2 cross-group fallback ladder** — **RESOLVED**.
+  - Evidence: PLAN.md line 101 (Acceptance — embedded tier description), line 109 (`TestAssembleAgentFileBody_CrossGroupFallbackToTillGen` + `_CrossGroupFallbackMissesBothGroups` enumerated), line 123 (RiskNote LOCKED), line 131 (decision ContextBlock), KindPayload at line 136 all specify the 2-step ladder: primary `builtin/agents/<group>/<basename>` → fallback `builtin/agents/till-gen/<basename>` on `fs.ErrNotExist`.
+  - One-way fallback rule explicit: "cross-group fallback ONLY descends into `till-gen` (the canonical shared group), NOT into `till-go` or `till-gdd` from `till-gen` (no symmetric fallback)" (line 101). Bare-filename match (no path traversal) — line 101 + line 123.
+  - Need verified: `till-go.toml` lines 591-659 (Read-confirmed) bind `[agent_bindings.{closeout,refinement,discussion,human-verify}]` ALL with `agent_name = "orchestrator-managed"` and no `system_prompt_template_path`. Embedded directory listing confirms `orchestrator-managed.md` exists ONLY in `till-gen/` (940 bytes); `till-go/` and `till-gdd/` lack the file. Without the cross-group fallback, every coordination-kind spawn under the till-go template aborts with `ErrAgentBodyNotFound`. The fallback is required.
+  - Side-finding (NIT): `till-gdd/` ALSO lacks `orchestrator-managed.md`. If an adopter binds the till-gdd template with the same coordination-kind shape (orchestrator-managed.md), the same till-gen fallback rescues that case identically. No additional plan change needed; the LOCKED rule covers all 3 groups uniformly.
+  - Debug log on fallback fire: line 101 + KindPayload line 136 specify "debug-log on fallback fire" with sub-planner-verified existing logging idiom (charmbracelet/log per project tech stack). Diagnosability of legitimate config typos is preserved. Acceptance bullet is present, not just a RiskNote — verified at line 101's tail.
+
+- **W3-PF1 [HIGH] — D3 strip-then-inject ordering + existing-test preservation** — **RESOLVED**.
+  - Evidence: PLAN.md line 145 (Acceptance specifies the strip-then-inject ordering: read disk → strip template-time fields → inject runtime fields), line 152 (existing-test preservation contract for `TestRenderAgentFileFrontmatter` at `render_test.go:331-364`), line 153 (existing-test preservation contract for `TestRenderAgentFileWithoutToolGating` at `:366-401`), line 171 (RiskNote LOAD-BEARING strip-then-inject ordering), line 178 (decision ContextBlock LOAD-BEARING), line 179 (constraint LOAD-BEARING — both existing tests stay green).
+  - Strip universe correctly aligned: `frontmatter.go:51` `frontmatterToolsKeys = []string{"tools", "allowedTools", "disallowedTools"}` — this means D3's `stripTools=true` strips embedded `allowedTools:` AND `disallowedTools:` keys BEFORE D3 re-injects per-spawn runtime values. Net: any stale embedded tool-gate frontmatter is wiped, then runtime values are added, satisfying both `TestRenderAgentFileFrontmatter` (assert presence with binding non-empty) and `TestRenderAgentFileWithoutToolGating` (assert absence with binding empty).
+  - Empty-binding-skips-injection bullet present at line 153: "when both [ToolsAllowed and ToolsDisallowed] are nil/empty, D3 emits NO `allowedTools:` / `disallowedTools:` line (mirrors the existing `TestRenderAgentFileWithoutToolGating` at `render_test.go:366-401` contract — verified Read shows the test asserts `!strings.Contains(str, \"allowedTools:\")` and `!strings.Contains(str, \"disallowedTools:\")` when binding has no tool gates)." Direct Read of test lines 390-394 confirms this assertion shape.
+  - RiskNote on ordering present at line 171 — names the inversion-risk explicitly: "Inverting the order would either (a) merge stale embedded `allowedTools:` with runtime values (wrong) or (b) strip the freshly-injected runtime values (wrong)."
+  - KindPayload at line 182 explicitly names BOTH existing tests as "preserve" entries with shape_hint enumerating the contract.
+
+- **W3-FF8 [MEDIUM] — W4 prompt-length floor as forward dep** — **RESOLVED-BUT-FORWARD-DEP**.
+  - Evidence: PLAN.md RiskNote at line 251 explicitly names the forward target: "PROPAGATION TARGET: Drop 4c.8 W4. EXPLICIT FORWARD DEP: W4 sub-planner verifies all 7 agent prompt bodies clear the 200-char floor at authoring time AND the W4 PLAN.md acceptance bullets include 'all authored prompts MUST satisfy len(body_after_frontmatter) > 200.'" Cross-references `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § E.2.5.
+  - Local-to-W3 piece: D5's 200-char floor is enforceable today against W1.D1 placeholders. Round-2 plan-QA already verified `till-go/builder-agent.md` body ≈ 238 chars (385 bytes total minus ~147 frontmatter); `till-gen/builder-agent.md` body ≈ 290 chars (390 bytes minus frontmatter ≈ 100); `till-gdd/qa-proof-agent.md` body ≈ 280 chars (476 bytes minus ~190 frontmatter); all clear the 200-char floor with margin.
+  - Forward-only honor-system claim acknowledged. The plan does NOT claim a W3-resident enforcement seam; it documents the constraint and the propagation target. Acceptable as a documented forward dependency. Not load-bearing for W3 ship.
+
+- **W3-FF9 [MEDIUM] — D3 strip predicate `*binding.Model != ""` + F.7.17 L9 framing** — **RESOLVED**.
+  - Evidence: PLAN.md RiskNote at line 169 (W3-FF9 Option B Decision ContextBlock) explicitly names F.7.17 L9 semantics + the round-2 round-3 choice rationale: "an explicit empty-string `model:` in `agents.toml` means 'use whatever is rendered into the agent .md,' which equals 'no override' — a degenerate case with no useful semantic distinct from omitting the key." Documents the divergence from F.7.17 L9 explicit-zero-is-meaningful semantic for `Model`.
+  - Round-2 predicate (`stripModel = binding.Model != nil && *binding.Model != ""`) STANDS at line 146.
+  - Forward dep documented at line 169: "a W0/W0.5 validator warning flags `model = \"\"` (or `model_template_path = \"\"`) in `agents.toml` as suspicious — the warning lands as part of the W0/W0.5 validateAgentBindingNames pass." Cross-references `internal/templates/load.go:1031-1055`.
+  - Options A and C explicitly REJECTED with rationale at line 169: "Option A would re-introduce the W3-FF2 bug; Option C would expand D1 scope to add `Model` companion `bool` field which violates the 'D1 is plumbing-only' constraint."
+  - The round-2 falsification's concern that the divergence from F.7.17 L9 was unacknowledged is now addressed — the plan names it explicitly as a documented deliberate choice, not an oversight.
+
+- **W3-FF10 [NIT] — No test-fixture mutation required** — **RESOLVED**.
+  - Evidence: PLAN.md line 242 (D5 Acceptance — test-fixture migration analysis): "the existing test fixture `AgentName = \"go-builder-agent\"` resolves cleanly via the embedded-tier lookup to `till-go/go-builder-agent.md` placeholder (verified ls byte-count 609 > 200, frontmatter `name: go-builder-agent` + `description: ...` present at lines 1-4 of that file per Read). NO test-fixture mutation required."
+  - Direct Read confirmation: `till-go/go-builder-agent.md` is 609 bytes (per directory listing); body after frontmatter (line 6 onwards) carries `# PLACEHOLDER — substantive content lands in Drop 4c.8 W4` heading + ~350-400 char body. Frontmatter at lines 1-4 carries `name: go-builder-agent` + `description: PLACEHOLDER — legacy go-prefixed builder name retained until Drop 4c.6 W5.D3 strips the go- prefix from default-go.toml's agent_bindings. Substantive content lands in Drop 4c.8 W4.` Both Signal A (length > 200) and Signal B (frontmatter delimiters + name + description) and Signal C (`# PLACEHOLDER` marker) pass.
+  - Forward note for W5.D3 at line 242: "when W5.D3 renames the legacy `go-builder-agent.md` → other (per L1 PLAN.md W5 scope), test fixtures may need re-pointing; that re-pointing rides on W5's wave-end sub-planner pass, not D5's scope." Out-of-scope-for-W3 framing acceptable.
+
+- **W3-FF11 [NIT] — D6 breadcrumb three-landing enumeration** — **RESOLVED**.
+  - Evidence: PLAN.md line 276 (D6 Acceptance — Future-evolution block update): explicitly enumerates the three landings: "(1) Drop 4c F.7.2 landed the `templates.AgentBinding.SystemPromptTemplatePath` schema field at `internal/templates/schema.go:556` with validator at `load.go:1031-1055`; (2) Drop 4c.6 W3.D1 wired the field through `dispatcher.BindingResolved.SystemPromptTemplatePath` in `cli_adapter.go` + populator in `binding_resolved.go`; (3) Drop 4c.6 W3.D2 implemented the 3-tier render-time resolver in `assembleAgentFileBody` consuming `templates.DefaultTemplateFS` with cross-group till-gen fallback."
+  - RiskNote at line 293 reinforces: "round-2 collapsed form ('F.7.2 + 4c.6 W3.D2 landed the field-and-resolver-wired version') elided the W3.D1 plumbing landing — the expanded form keeps the historical sequence diagnosable from doc-comment alone."
+  - Decision ContextBlock at line 299 LOCKS the 3-landing structure.
+  - KindPayload at line 301 names the W3-FF11 update explicitly.
+
+### New Round-3 Findings
+
+- **W3-PF2** [Axis: well-formedness / cite drift] [severity: **NIT**] — `templates.DefaultTemplateFS` line citation drifts between `:101` (round-2 carried-over) and `:104` (actual). PLAN.md cites `internal/templates/embed.go:101` at lines 97 + 105 + 121, but the actual `var DefaultTemplateFS embed.FS` declaration is at line 104 (verified via Read of `internal/templates/embed.go` lines 70-104; the declaration follows `//go:embed` directives ending at line 103). Round-2 plan-QA-proof flagged this as a NIT not blocking and the round-3 plan inherits the drift without correcting. Build-time impact zero (the symbol is resolved by name, not by line number); audit-trail impact NIT (future readers diffing line numbers will spend a few seconds reconciling). → fix_hint: replace `embed.go:101` with `embed.go:104` at the three citations. Not load-bearing — does not block round-3 PASS.
+
+### Attack-Vector Resolution
+
+Per the orchestrator brief's enumerated attack surface:
+
+1. **Cross-group fallback for till-gdd interaction.** `till-gdd/` ALSO lacks `orchestrator-managed.md` (verified ls listing). The LOCKED one-way fallback rule (`till-gdd → till-gen` on miss) covers this case identically to `till-go → till-gen`. No symmetric fallback complications because till-gen doesn't fall back anywhere. The plan handles all 3 groups uniformly via the same till-gen target. **PASSES.**
+
+2. **Strip universe scope under D3's strip-then-inject.** Verified at `frontmatter.go:51`: strip universe is `["tools", "allowedTools", "disallowedTools"]` for `stripTools=true` and `["model"]` for `stripModel=true`. D3's pipeline strips first, then INJECTS `allowedTools:` / `disallowedTools:` from binding. There is no double-strip-then-reinject hazard because the injection appends NEW lines after the strip completes — the injected values are NOT subject to the strip pass. **PASSES.**
+
+3. **Marker disjunction edge case for post-W4 prompts.** The W3-FF8 forward-dep contract requires W4 prompts carry `# Section 0` or `## Role`. Both markers are conventional structural headers any substantive role-driven prompt will use. The risk that a future W4 prompt accidentally OMITS all 3 markers exists but is mitigated by (a) the documented W4 propagation contract, (b) the build-QA round on W4-A/B/C/D will catch it, (c) PLACEHOLDER-marker survival in the disjunction provides a fallback even if W4 prompts forget the structural markers. Acceptable mitigation. **PASSES.**
+
+4. **Debug log on fallback fire.** PLAN.md line 101 + KindPayload line 136 explicitly require the debug log: "logs a debug message when fallback fires for diagnosability of legitimate typos." This is in the Acceptance criteria, not just a RiskNote. **PASSES.**
+
+5. **`till-go/go-builder-agent.md` filesystem existence.** Directory listing confirms file at 609 bytes; Read confirms frontmatter (`name: go-builder-agent`) + body (`# PLACEHOLDER — substantive content lands in Drop 4c.8 W4`) at line 6. The existing `fixtureBinding()` test helper resolves cleanly without fixture mutation. **PASSES.**
+
+### Verdict Rationale
+
+The round-3 plan resolves all 7 round-2 findings with explicit option-text + acceptance bullets + RiskNotes + KindPayload entries. Each load-bearing decision (W3-FF6 marker disjunction, W3-FF7 cross-group fallback ladder, W3-PF1 strip-then-inject pipeline) is reflected in BOTH Acceptance bullets AND RiskNotes AND decision ContextBlocks AND KindPayload — locked at plan time, not punted to sub-planner build time.
+
+The W3-FF8 forward dep is the only remaining unresolved-but-routed item; it is correctly framed as a Drop 4c.8 W4 contract obligation rather than a W3-resident enforcement seam. Round-2's "load-bearing for ship" / "forward-dep" framing was correct; round-3's RiskNote propagation language tightens the routing.
+
+W3-PF2 (cite drift `:101` vs `:104`) is the only new finding — NIT severity, no build impact, optional fix.
+
+The plan is build-ready. Six droplets across three packages, correct package boundaries, correct serial chain D1→D2→D3→D5→D6 with D4 parallel, full Specify blocks on every droplet, all HF3/HF4/HF8 fixes traceably wired, all round-2 findings resolved.
+
+### Hylla Feedback (Round 3)
+
+- **Query:** Direct Reads on placeholder body files + render.go + render_test.go + frontmatter.go + till-go.toml + embed.go. No Hylla queries attempted in round 3 — the verification surface was entirely committed-Go-and-MD evidence already pre-anchored by rounds 1+2 evidence chains. Direct Read was sufficient.
+- **Missed because:** N/A — no Hylla query attempted; this round's verification was per-finding option-text confirmation against the round-3 PLAN.md and corresponding production evidence.
+- **Worked via:** Direct Read on PLAN.md round-3, 5 placeholder bodies (till-go/builder-agent.md, till-go/go-builder-agent.md, till-gen/builder-agent.md, till-gen/research-agent.md, till-gen/orchestrator-managed.md, till-gdd/qa-proof-agent.md), render.go:300-364, render_test.go:325-401, render_test.go:100-130, frontmatter.go (full), till-go.toml:580-660, embed.go:70-104.
+- **Suggestion:** N/A this round.
+- **Ergonomic gripe (carried):** `Bash` permission gate denies `grep` / `find` / `awk` against the agents directory, forcing per-file Reads to enumerate placeholder body shape across 3 groups. Tradeoff acceptable but the per-file-Read fan-out scales linearly with the validation surface.
