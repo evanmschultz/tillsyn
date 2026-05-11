@@ -404,6 +404,21 @@ surfaces.
 			"  till --home /tmp/tillsyn-dev init-dev-config",
 		},
 	},
+	"till install": {
+		Long: strings.TrimSpace(`
+Bootstrap the local Tillsyn dev environment. Creates the dev config file from
+the shipped default template when missing and enforces the [logging] level to
+debug for local development.
+
+Use this when setting up a fresh local workstation. This is a per-machine
+setup command — see till init for per-project setup.
+`),
+		Example: []string{
+			"  till install",
+			"  till --app tillsyn install",
+			"  till --home /tmp/tillsyn-dev install",
+		},
+	},
 }
 
 // applyCommandHelp layers richer help specs and help-command aliases onto the command tree.

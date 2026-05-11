@@ -226,6 +226,9 @@ func TestBindingResolvedZeroValueIsAllAbsent(t *testing.T) {
 	if br.AgentName != "" {
 		t.Fatalf("zero-value BindingResolved.AgentName = %q; want empty", br.AgentName)
 	}
+	if br.SystemPromptTemplatePath != "" {
+		t.Fatalf("zero-value BindingResolved.SystemPromptTemplatePath = %q; want empty (W3.D1 — empty is the 'use embedded default' sentinel)", br.SystemPromptTemplatePath)
+	}
 	if br.CLIKind != "" {
 		t.Fatalf("zero-value BindingResolved.CLIKind = %q; want empty", br.CLIKind)
 	}
@@ -249,6 +252,40 @@ func TestBindingResolvedZeroValueIsAllAbsent(t *testing.T) {
 	}
 	if br.BlockedRetryCooldown != nil {
 		t.Fatalf("zero-value BindingResolved.BlockedRetryCooldown not nil")
+	}
+}
+
+// TestBindingResolvedSystemPromptTemplatePath asserts the W3.D1-added
+// SystemPromptTemplatePath field is a non-pointer string that round-trips
+// through struct construction and field access cleanly. Two states matter:
+// zero value (empty string — the "use embedded default" sentinel per the
+// 3-tier resolver D2 lands) and populated value (the per-binding source path
+// in `till-<group>/<name>.md` form per W3-FF5 LOCKED).
+func TestBindingResolvedSystemPromptTemplatePath(t *testing.T) {
+	t.Parallel()
+
+	// Zero value — empty string sentinel.
+	var zero BindingResolved
+	if zero.SystemPromptTemplatePath != "" {
+		t.Fatalf("zero-value BindingResolved.SystemPromptTemplatePath = %q; want empty", zero.SystemPromptTemplatePath)
+	}
+
+	// Populated value — verbatim round-trip.
+	populated := BindingResolved{SystemPromptTemplatePath: "till-go/go-builder-agent.md"}
+	if got, want := populated.SystemPromptTemplatePath, "till-go/go-builder-agent.md"; got != want {
+		t.Fatalf("populated BindingResolved.SystemPromptTemplatePath = %q; want %q", got, want)
+	}
+
+	// Type guard — non-pointer string per the W3.D1 acceptance criteria.
+	// Empty string IS the "use embedded default" sentinel; there is NO
+	// explicit-empty vs absent discrimination needed (unlike Model / Effort
+	// / CommitAgent which are *string for that reason).
+	field, ok := reflect.TypeOf(BindingResolved{}).FieldByName("SystemPromptTemplatePath")
+	if !ok {
+		t.Fatalf("BindingResolved missing SystemPromptTemplatePath field")
+	}
+	if field.Type.Kind() != reflect.String {
+		t.Fatalf("BindingResolved.SystemPromptTemplatePath kind = %v; want string (non-pointer per W3.D1 — empty IS the sentinel)", field.Type.Kind())
 	}
 }
 

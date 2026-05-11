@@ -1903,7 +1903,8 @@ default development config file restored quickly.
 	}
 
 	initCmd := newInitCommand(stdout, rootOpts)
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd, initCmd)
+	installCmd := newInstallCommand(stdout, &rootOpts)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd, initCmd, installCmd)
 	applyCommandHelp(rootCmd)
 	return fang.Execute(
 		ctx,

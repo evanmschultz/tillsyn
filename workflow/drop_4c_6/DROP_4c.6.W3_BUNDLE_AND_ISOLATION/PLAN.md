@@ -61,7 +61,7 @@ Tests are co-located with each droplet's production file. D1 appends to `cli_ada
 
 ### Droplet 4c.6.W3.D1 — Plumb `SystemPromptTemplatePath` through `BindingResolved` + `ResolveBinding`
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/app/dispatcher/cli_adapter.go` (MODIFY — append `SystemPromptTemplatePath string` field to the `BindingResolved` struct that begins at line 102 per ROUND-2 HF4 verified Read; field placement at the end of the struct, adjacent to the existing string-typed `AgentName` field for shape symmetry — both are non-pointer strings since `""` is the meaningful "absent / use embedded default" sentinel and there's no `explicit-empty-vs-absent` discrimination needed for a relative file path), `internal/app/dispatcher/cli_adapter_test.go` (MODIFY — extend any existing `BindingResolved` zero-value + populated-value table tests to cover the new field; if no such test exists, append `TestBindingResolvedSystemPromptTemplatePath` covering both states), `internal/app/dispatcher/binding_resolved.go` (MODIFY — `ResolveBinding` reads `templates.AgentBinding.SystemPromptTemplatePath` per `internal/templates/schema.go:556` per `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § D.1.b cite — sub-planner verifies via LSP `gopls workspace_symbol SystemPromptTemplatePath` before authoring; AGENT_ARCHITECTURE_TRUTH.md §2.3 confirms this field exists with validator at `load.go:1031-1055`), `internal/app/dispatcher/binding_resolved_test.go` (MODIFY — append a test case to whatever `ResolveBinding` table-test exists asserting the resolved field equals the `templates.AgentBinding.SystemPromptTemplatePath` source value).
 - **Packages:** `internal/app/dispatcher`.

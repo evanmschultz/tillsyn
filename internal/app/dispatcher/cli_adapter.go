@@ -105,6 +105,31 @@ type BindingResolved struct {
 	// resolver always populates this — it has no sensible "absent" form.
 	AgentName string
 
+	// SystemPromptTemplatePath is the per-binding relative path naming the
+	// canonical agent body source. Mirrored verbatim from
+	// templates.AgentBinding.SystemPromptTemplatePath at ResolveBinding
+	// time — no validation or substitution at the dispatcher layer
+	// (validation lives at template Load time; resolution-tier walk is
+	// the render layer's job).
+	//
+	// Empty string is the "use embedded default" sentinel — distinct from
+	// Model / Effort / CommitAgent (which are *string for absent vs
+	// explicit-zero discrimination) because there IS no meaningful
+	// "explicit-empty" path semantic here: an empty source value always
+	// means "fall back to the embedded default for this binding's group."
+	//
+	// Format when non-empty: `till-<group>/<name>.md` per the W3-FF5 LOCKED
+	// rule on the render-time `<group>` derivation (the render layer takes
+	// `path.Dir` of this path to pick the embedded-FS group; empty defaults
+	// the group to `till-go` for the dogfood case).
+	//
+	// Consumed by render.assembleAgentFileBody at the second + third tiers
+	// of its 3-tier ladder: project `<project>/.tillsyn/agents/<basename>`
+	// → user `~/.tillsyn/agents/<group>/<basename>` → embedded
+	// `builtin/agents/till-<group>/<name>.md` (with cross-group fallback to
+	// `till-gen` for shared agents per W3-FF7 LOCKED).
+	SystemPromptTemplatePath string
+
 	// CLIKind selects which CLI adapter the dispatcher routes the spawn to.
 	// Resolver applies the F.7.17 L15 default-to-claude rule before
 	// populating this field — adapters never see the empty-string sentinel.

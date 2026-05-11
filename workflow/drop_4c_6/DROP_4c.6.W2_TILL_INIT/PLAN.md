@@ -204,7 +204,7 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 ### Droplet 4c.6.W2.D7.5 — `till install` CLI command (NEW — OQ#3 disposition)
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `cmd/till/install_cmd.go` (NEW)
   - `cmd/till/install_cmd_test.go` (NEW)

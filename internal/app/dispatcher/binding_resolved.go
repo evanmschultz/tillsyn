@@ -101,8 +101,10 @@ type BindingOverrides struct {
 //   - Slice-typed fields (Tools, Env, ToolsAllowed, ToolsDisallowed): copy
 //     verbatim from rawBinding (override plumbing not yet wired).
 //
-//   - String-typed fields (AgentName): copy verbatim from rawBinding
-//     (template-controlled).
+//   - String-typed fields (AgentName, SystemPromptTemplatePath): copy
+//     verbatim from rawBinding (template-controlled; empty string is the
+//     "use embedded default" sentinel consumed at render time — no
+//     dispatcher-layer validation or substitution).
 //
 //   - CommitAgent (*string): promoted from rawBinding.CommitAgent (string).
 //     Empty string → nil; non-empty → pointer to a copy.
@@ -115,12 +117,13 @@ type BindingOverrides struct {
 //     templates.Duration → time.Duration conversion.
 func ResolveBinding(rawBinding templates.AgentBinding, overrides ...*BindingOverrides) BindingResolved {
 	resolved := BindingResolved{
-		AgentName:       rawBinding.AgentName,
-		CLIKind:         CLIKind(rawBinding.CLIKind),
-		Env:             cloneStringSlice(rawBinding.Env),
-		Tools:           cloneStringSlice(rawBinding.Tools),
-		ToolsAllowed:    cloneStringSlice(rawBinding.ToolsAllowed),
-		ToolsDisallowed: cloneStringSlice(rawBinding.ToolsDisallowed),
+		AgentName:                rawBinding.AgentName,
+		SystemPromptTemplatePath: rawBinding.SystemPromptTemplatePath,
+		CLIKind:                  CLIKind(rawBinding.CLIKind),
+		Env:                      cloneStringSlice(rawBinding.Env),
+		Tools:                    cloneStringSlice(rawBinding.Tools),
+		ToolsAllowed:             cloneStringSlice(rawBinding.ToolsAllowed),
+		ToolsDisallowed:          cloneStringSlice(rawBinding.ToolsDisallowed),
 	}
 
 	// F.7.17 locked decision L15: default-to-claude when rawBinding.CLIKind

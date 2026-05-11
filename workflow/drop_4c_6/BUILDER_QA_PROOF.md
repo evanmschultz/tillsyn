@@ -527,3 +527,134 @@ D3a's load-bearing contract — ship a skeleton `cmd/till/init_cmd.go` with `new
 ### Hylla Feedback
 
 None — Hylla answered everything needed. Verification used `Read` against the four production files + the worklog + the W2 plan, plus `mage test-pkg ./cmd/till` for the build gate. Hylla wasn't queried because every artifact under review is a freshly-landed change in this drop, which `Read` answers directly without staleness risk. The builder's worklog already documented two Hylla misses against snapshot 5 (the generic `run` keyword + the `TestRunInitDevConfigCreatesDebugConfig` test name lookup) — those are recorded in worklog lines 1046-1092 and need no duplication here.
+
+---
+
+## Droplet 4c.6.W3.D1 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent, build-QA-proof axis).
+**Date:** 2026-05-10.
+**Droplet:** `4c.6.W3.D1 — Plumb SystemPromptTemplatePath through BindingResolved + ResolveBinding`.
+**Parent kind:** `build` (atomic droplet; `Irreducible: true`).
+**Artifact under review:** uncommitted edits on `main` covering `internal/app/dispatcher/cli_adapter.go`, `internal/app/dispatcher/cli_adapter_test.go`, `internal/app/dispatcher/binding_resolved.go`, `internal/app/dispatcher/binding_resolved_test.go`.
+**Spec sources:** `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md` lines 62-91 (W3.D1 row); `workflow/drop_4c_6/SKETCH.md` § 26.W3; `workflow/drop_4c_6/RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § D.1; `internal/templates/schema.go:573` source-field declaration; `workflow/drop_4c_6/BUILDER_WORKLOG.md` § Droplet 4c.6.W3.D1 — Round 1.
+
+### Findings
+
+None. All six verification passes (A–F) clear without finding.
+
+### Missing Evidence
+
+None. Every claim in the round-1 worklog is backed by direct file reads + mage gate runs cited below.
+
+### Verification trace
+
+**Pass A — field added to struct correctly.**
+`internal/app/dispatcher/cli_adapter.go:131` declares `SystemPromptTemplatePath string` between `AgentName` (line 106) and `CLIKind` (line 136). Field ordering matches both (a) the spawn-prompt directive ("between `AgentName` and `CLIKind`") and (b) the struct-layout convention codified at the struct doc-comment lines 96-101 ("AgentName, Tools, ToolsAllowed, ToolsDisallowed, Env, and CLIKind use value/slice types because their zero values ... ARE the identity element"). The builder's design decision to override the KindPayload `line 178+` recommendation in favor of the convention-preserving placement is well-justified and consistent with the Acceptance + ContextBlocks bullets that explicitly cite "adjacent to the existing string-typed `AgentName` field for shape symmetry."
+
+The 22-line doc-comment (lines 108-130) cites every required reference:
+- **Source field:** "Mirrored verbatim from `templates.AgentBinding.SystemPromptTemplatePath` at ResolveBinding time" (lines 110-111). Verified — `internal/templates/schema.go:573` declares `SystemPromptTemplatePath string \`toml:"system_prompt_template_path"\``.
+- **Empty-string sentinel:** "Empty string is the 'use embedded default' sentinel — distinct from Model / Effort / CommitAgent (which are *string for absent vs explicit-zero discrimination) because there IS no meaningful 'explicit-empty' path semantic here" (lines 117-120).
+- **`till-<group>/<name>.md` format + W3-FF5 LOCKED rule:** "Format when non-empty: `till-<group>/<name>.md` per the W3-FF5 LOCKED rule on the render-time `<group>` derivation (the render layer takes `path.Dir` of this path to pick the embedded-FS group; empty defaults the group to `till-go` for the dogfood case)" (lines 121-126).
+- **Consumer site (`render.assembleAgentFileBody`):** "Consumed by render.assembleAgentFileBody at the second + third tiers of its 3-tier ladder" (lines 127-128).
+- **Cross-group fallback (W3-FF7):** "embedded `builtin/agents/till-<group>/<name>.md` (with cross-group fallback to `till-gen` for shared agents per W3-FF7 LOCKED)" (lines 129-130).
+
+Type is non-pointer `string` per W3-FF5 LOCKED rule (line 131) — verified.
+
+**Pass B — resolver populates field verbatim.**
+`internal/app/dispatcher/binding_resolved.go:121` reads literally `SystemPromptTemplatePath: rawBinding.SystemPromptTemplatePath,` inside the `resolved := BindingResolved{...}` literal. No predicate, no transformation, no validation — the verbatim copy contract is satisfied. The surrounding doc-comment at lines 104-107 explicitly documents: "String-typed fields (AgentName, SystemPromptTemplatePath): copy verbatim from rawBinding (template-controlled; empty string is the 'use embedded default' sentinel consumed at render time — no dispatcher-layer validation or substitution)." Pure-function purity preserved per the resolver's existing contract at line 84.
+
+**Pass C — tests assert plumbing.**
+- `TestBindingResolvedSystemPromptTemplatePath` (cli_adapter_test.go:264-290) covers all three required cases: (i) zero-value asserts empty (lines 268-271); (ii) populated value round-trips via `"till-go/go-builder-agent.md"` (lines 273-277); (iii) field-type guard asserts `reflect.String` (non-pointer) at lines 283-289. Doc-comment (lines 258-263) cites W3-FF5 LOCKED format + empty-as-sentinel rationale.
+- `TestResolveBindingSystemPromptTemplatePathEmpty` (binding_resolved_test.go:287-298) asserts `rawBinding.SystemPromptTemplatePath = ""` → `resolved.SystemPromptTemplatePath = ""` verbatim pass-through. Doc-comment notes resolver does NOT validate (deferred to D2's render-time resolver).
+- `TestResolveBindingSystemPromptTemplatePathPopulated` (binding_resolved_test.go:304-315) asserts non-empty source (`"till-go/go-builder-agent.md"`) passes through verbatim.
+- `TestBindingResolvedZeroValueIsAllAbsent` extended at cli_adapter_test.go:229-231 with a `SystemPromptTemplatePath` zero-value check carrying a W3.D1-specific failure message.
+
+The builder's "dedicated tests, not fixture extension" design decision is correctly justified — the existing `rawBindingFixture()` carries an "every scalar non-zero" invariant per its own doc-comment (line 25), and adding a non-zero `SystemPromptTemplatePath` would silently leak into the 12 pre-existing resolver tests without strengthening their assertions.
+
+**Pass D — mage gate.**
+- `mage test-pkg ./internal/app/dispatcher` → **GREEN** (361/361 pass, 1.73s, including the four new W3.D1 tests).
+- `mage test-func ./internal/app/dispatcher TestBindingResolvedSystemPromptTemplatePath` → **GREEN** (1/1, 1.32s, `-race -count=1`).
+- `mage test-func ./internal/app/dispatcher TestResolveBindingSystemPromptTemplatePathEmpty` → **GREEN** (1/1, 1.25s).
+- `mage test-func ./internal/app/dispatcher TestResolveBindingSystemPromptTemplatePathPopulated` → **GREEN** (1/1, 1.26s).
+- `mage test-func ./internal/app/dispatcher TestBindingResolvedZeroValueIsAllAbsent` → **GREEN** (1/1, 1.26s — extended assertion holds).
+
+All four spawn-prompt-named test gates green. The whole-package gate proves no regression of the 357 sibling tests in the dispatcher package.
+
+**Pass E — state flip.**
+`workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md:64` reads `**State:** done` for the W3.D1 row.
+
+**Pass F — scope discipline.**
+`git diff --stat HEAD` confirms only six tracked files are modified for this droplet: `internal/app/dispatcher/cli_adapter.go` (+25), `internal/app/dispatcher/cli_adapter_test.go` (+37), `internal/app/dispatcher/binding_resolved.go` (+19/-9 — alignment re-tab per worklog), `internal/app/dispatcher/binding_resolved_test.go` (+34), plus the two workflow MDs (`PLAN.md` state flip, `BUILDER_WORKLOG.md` append). Out-of-scope dispatcher surfaces `internal/app/dispatcher/cli_claude/render/render.go` and `internal/app/dispatcher/cli_claude/env.go` are UNTOUCHED (verified — empty git diff). The `cmd/till/help.go`, `cmd/till/main.go`, `cmd/till/install_cmd.go`, `cmd/till/install_cmd_test.go` edits visible in `git status` belong to droplet W2.D7.5 (worklog line 1257+) — they are sibling work-in-progress, not a W3.D1 scope creep.
+
+### Summary
+
+**Verdict:** `PASS`.
+
+W3.D1's load-bearing contract — plumb `SystemPromptTemplatePath` through `BindingResolved` (struct field with doc-comment citing source field, empty-string sentinel, `till-<group>/<name>.md` format with W3-FF5 LOCKED derivation, consumer site, W3-FF7 cross-group fallback) and `ResolveBinding` (verbatim copy from raw `templates.AgentBinding`), with tests asserting zero-value + populated round-trip + non-pointer-string field-type guard — is fully satisfied. Field placement choice (between `AgentName` and `CLIKind`) is well-justified against the struct-layout convention codified at lines 96-101 of the existing doc-comment, and the builder's TDD red→green narrative is consistent with the file evidence. The verbatim-copy contract is honored byte-for-byte at the resolver site, and the resolver retains its pure-function purity (no I/O, no validation). Every spawn-prompt-named mage gate is GREEN; no regression of the 357 sibling dispatcher tests. Scope discipline is strict — `render.go` and `env.go` are untouched, leaving D2/D3/D5/D6 (render-package serial chain) and D4 (env-package parallel) unblocked on a clean foundation.
+
+The droplet is ready for the build-qa-falsification sibling to attempt counterexample construction. D2 unblocks on this droplet's done state per the wave's serial chain `D1 → D2 → D3 → D5 → D6`.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. Verification used `Read` against the four production/test files + the W3 PLAN.md + the worklog + the source-field declaration at `internal/templates/schema.go:530-620`, plus four `mage` invocations for the build gates. Hylla wasn't queried because every artifact under review is freshly-landed uncommitted code (not in the index), which `Read` answers directly without staleness risk. The builder's worklog already documented one Hylla availability miss against the in-flight snapshot ("enrichment still running") at worklog lines 1230-1253 — recorded there and needs no duplication here. The structural ergonomic point the builder raised (surface partial-availability hints instead of binary "available/not") is the only Hylla-side actionable signal from this droplet.
+
+---
+
+## Droplet 4c.6.W2.D7.5 — Round 1
+
+**QA reviewer:** go-qa-proof-agent (subagent, sonnet).
+**Date:** 2026-05-10.
+**Droplet:** `4c.6.W2.D7.5 — till install CLI command (NEW — OQ#3 disposition)`.
+
+### Scope
+
+Build-QA-PROOF for D7.5: a verbatim port of `runInitDevConfig` body into a new `runInstall` function under a new `till install` cobra command, with help-spec entry. Files inspected: `cmd/till/install_cmd.go` (NEW, 111 LOC), `cmd/till/install_cmd_test.go` (NEW, 129 LOC), `cmd/till/main.go` (+2 LOC at the AddCommand site), `cmd/till/help.go` (+15 LOC entry).
+
+### Contract verification A–G
+
+- **A. TEST-NAME shape (W2-FF2 + W2-FF9).** PASS. Both functions are `TestRunInstall_CreatesDebugConfig` (line 22) and `TestRunInstall_UpdatesExistingConfig` (line 74) — underscore after `TestRunInstall` confirmed by direct read at `cmd/till/install_cmd_test.go:22,74`. Matches the locked underscore-form D8 pre-flight will hard-code.
+- **B. CONSUMER-TIE form (W2-FF3).** PASS. Both tests invoke `run(context.Background(), []string{"--app", "tillsyn-init", "install"}, &out, io.Discard)` end-to-end — `install_cmd_test.go:43` (creates) and `:106` (updates). No direct `runInstall(...)` calls; cobra dispatch + `installCmd.RunE` are exercised on every test run.
+- **C. LASLIG TITLE byte-for-byte (W2-FF5).** PASS. `runInstall` writes `writeCLIKV(stdout, "Dev Config", [][2]string{...})` at `install_cmd.go:106` — string literal `"Dev Config"` matches `runInitDevConfig`'s `main.go:2092` byte-for-byte. Both test bodies assert `"Dev Config"` substring in the success-output wantlist (`install_cmd_test.go:51` + `:109`) and pass GREEN — proving the title flows through the live cobra path unchanged.
+- **D. Verbatim port semantics.** PASS. Line-by-line comparison `install_cmd.go:57-111` ↔ `main.go:2042-2097` is byte-equivalent modulo the function name: identical nil-stdout guard, identical `platform.DefaultPathsWithOptions{AppName, DevMode: true, HomeDir}` call, identical `os.MkdirAll(filepath.Dir(configPath), 0o755)`, identical `os.Stat` + `errors.Is(err, os.ErrNotExist)` + `config.DefaultTemplate()` + `os.WriteFile(configPath, templateBytes, 0o644)` create-if-missing block, identical `os.ReadFile` + `ensureLoggingSectionDebug` + conditional `os.WriteFile` rewrite, identical `msg := "dev config already exists"` / `"created dev config"` switch, identical `writeCLIKV(stdout, "Dev Config", [][2]string{{"status", msg}, {"config path", shellEscapePath(configPath)}, {"logging level", "debug"}})` Laslig call. Error-wrap strings identical (`"resolve dev paths: %w"`, `"create dev config directory: %w"`, `"stat dev config: %w"`, `"write dev config: %w"`, `"read dev config: %w"`, `"write updated dev config: %w"`).
+- **E. mage gate.** PASS.
+  - `mage test-func ./cmd/till "TestRunInstall_CreatesDebugConfig|TestRunInstall_UpdatesExistingConfig"` → tests: 2, passed: 2, failed: 0 (1.91s, race-on).
+  - `mage test-func ./cmd/till "TestRunInitDevConfigCreatesDebugConfig|TestRunInitDevConfigUpdatesExistingConfig"` → tests: 2, passed: 2, failed: 0 — legacy tests still GREEN (D8 removal hasn't fired; both vocabularies co-exist as designed).
+  - `mage test-pkg ./cmd/till` → tests: 257, passed: 257, failed: 0 (7.82s). Count matches the appendix's predicted 253 baseline + 2 D3a + 2 D7.5 = 257 exactly.
+- **F. State flip + scope discipline.** PASS. `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md:207` reads `**State:** done` (diff confirms `todo → done` transition). Scope: `git diff cmd/till/main.go` is 14 lines (~2 substantive lines) inserting the `installCmd := newInstallCommand(stdout, &rootOpts)` declaration and extending the `rootCmd.AddCommand(...)` argument list — the `runInitDevConfig` block at `main.go:2042-2097` is untouched (D8's territory). `git diff cmd/till/help.go` adds a single 15-line `"till install"` entry positioned after `"till init-dev-config"` (no other entries mutated).
+- **G. Pointer signature.** PASS. `newInstallCommand(stdout io.Writer, rootOpts *rootCommandOptions) *cobra.Command` at `install_cmd.go:27` correctly takes a pointer; the RunE closure dereferences at call time (`runInstall(stdout, *rootOpts)` at `install_cmd.go:47`) so cobra's flag-parse mutations on `&rootOpts.appName` / `&rootOpts.homeDir` (set up at `main.go:510-511`) are visible. The pointer is captured by the closure but not mutated by `runInstall` itself (the function takes `rootCommandOptions` by value — `install_cmd.go:57`) — no race surface, no aliasing footgun. The caller-side `&rootOpts` at `main.go:1906` is the single instance cobra's PersistentFlags bind to, so there's no second copy to drift.
+
+### Detailed file evidence
+
+- `install_cmd.go:1-14` — imports (`errors`, `fmt`, `io`, `os`, `path/filepath`, `strings`, `internal/config`, `internal/platform`, `github.com/spf13/cobra`) match the verbatim port's surface area exactly.
+- `install_cmd.go:16-26` — extensive doc-comment on `newInstallCommand` explains the D7.5 lift-and-rename rationale (D7.5 adds, D8 removes), file-lock-graph preservation, and the pointer-rationale tied to `main.go:508-513` flag binding.
+- `install_cmd.go:27-50` — cobra command literal: `Use: "install"`, NoArgs, `Short` text, `Long` `strings.TrimSpace(...)` block, `Example` `strings.Join` block with 3 examples mirroring init-dev-config shape. `RunE` closure calls `runInstall(stdout, *rootOpts)`.
+- `install_cmd.go:52-56` — doc-comment on `runInstall` explicitly cites verbatim-lift origin and the byte-for-byte `"Dev Config"` title preservation.
+- `install_cmd.go:57-111` — body byte-equivalent to source.
+- `install_cmd_test.go:14-21` — first test's doc-comment cites both contracts (TEST-NAME W2-FF2 + W2-FF9, CONSUMER-TIE W2-FF3). Underscore in the function name is intentional and documented.
+- `install_cmd_test.go:22-68` — first test creates tmpdir, sets HOME/XDG envs, writes go.mod + config.example.toml, calls `run(ctx, []string{"--app", "tillsyn-init", "install"}, &out, io.Discard)`, asserts the 6-substring success wantlist including `"Dev Config"`, asserts single `[logging]` section + `level = "debug"`.
+- `install_cmd_test.go:70-73` — second test's doc-comment same contract citations.
+- `install_cmd_test.go:74-129` — second test seeds an existing config with `level = 'info'` + `[identity]` section, runs install, asserts the rewrite preserved `[identity]`, single `[logging]`, debug level, and the wantlist contains the `"dev config already exists"` status.
+- `main.go:1906-1907` (diff) — `installCmd := newInstallCommand(stdout, &rootOpts)` then extended `AddCommand(..., installCmd)` at the end of the argument list.
+- `help.go:407-421` — `"till install"` entry with Long text describing per-machine setup + cross-reference to `till init` + 3 examples.
+
+### Findings
+
+None — all A-G checks PASS.
+
+### Routed Unknowns
+
+- **U1 [info, scope/orchestrator] — `newInitCommand` value-capture twin bug.** The builder routed a sibling note (`BUILDER_WORKLOG.md` D7.5 § "Unknowns routed to orchestrator") that `cmd/till/init_cmd.go:16`'s `newInitCommand(stdout, rootOpts rootCommandOptions)` carries the same by-value capture pattern D7.5 first-pass had. D7.5's tests fire the bug; D3a's tests (bare-invocation + JSON-stub stub-error paths) don't exercise `--app` / `--home` so the latent bug is invisible there. D4 / D5 will need the same `*rootCommandOptions` signature change in `newInitCommand` when they wire `runInitTUI` + the file-copy pipeline. Not a D7.5 finding — out of scope — but the orchestrator should ensure the D4 / D5 builder prompts include this as a known shape-fix.
+- **U2 [info, ergonomic] — Bash sandbox `grep` denials.** The builder's worklog flags repeated denials of `grep -n` invocations on in-tree files (multiple shapes tried). Same QA-side observation: my own `grep` Bash invocations were denied during this review, forcing fallback to `git diff` filters + direct `Read`. Not a D7.5 build finding; tooling-policy artifact for orchestrator note-keeping (worklog already records it under W6.D5 Round 2 + here).
+
+### Summary verdict
+
+**PASS.**
+
+All seven A-G contracts (TEST-NAME shape, CONSUMER-TIE form, LASLIG TITLE byte-for-byte, verbatim port semantics, mage gates GREEN with predicted 257-count match, state flip + scope discipline, pointer signature correctness) verified directly against file evidence and live mage output. Verbatim port semantics confirmed line-by-line against the source at `main.go:2042-2097`. No findings. Two routed Unknowns (U1 sibling value-capture in `newInitCommand`, U2 sandbox `grep` ergonomic) are out-of-scope for D7.5 but flagged for orchestrator visibility on D4 / D5 spawn-prompt drafting.
+
+The droplet is ready for the build-qa-falsification sibling to attempt counterexample construction. D8 unblocks on this droplet's `done` state per the W2 chain.
+
+### Hylla Feedback
+
+N/A — Hylla today indexes only committed Go code; D7.5's production + test files are all freshly-landed uncommitted code, and the source files I diffed against (`cmd/till/main.go`, `cmd/till/main_test.go`) are HEAD-tracked but the relevant sections (`runInitDevConfig` body at 2042-2097, the `TestRunInitDevConfig*` pair at 2906/2955) are stable so direct `Read` answered without staleness risk. The single Hylla query I tried (`hylla_search_keyword` for `newInstallCommand` and `installCmd AddCommand`) returned empty — expected: the symbols are uncommitted. The fallback `Read` chain (production files + worklog + plan + git diff) covered the proof surface with zero ambiguity.

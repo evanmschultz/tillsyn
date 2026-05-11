@@ -280,6 +280,40 @@ func TestResolveBindingPointerOverridesPreservedAsCopy(t *testing.T) {
 	}
 }
 
+// TestResolveBindingSystemPromptTemplatePathEmpty — W3.D1: rawBinding with
+// empty SystemPromptTemplatePath passes through verbatim. Empty is the
+// "use embedded default" sentinel consumed by D2's 3-tier render-time
+// resolver; the resolver here does NOT validate or substitute.
+func TestResolveBindingSystemPromptTemplatePathEmpty(t *testing.T) {
+	t.Parallel()
+
+	raw := rawBindingFixture()
+	raw.SystemPromptTemplatePath = ""
+
+	got := ResolveBinding(raw)
+
+	if got.SystemPromptTemplatePath != "" {
+		t.Fatalf("SystemPromptTemplatePath = %q; want empty (empty source must pass through verbatim — D2's resolver handles the empty sentinel)", got.SystemPromptTemplatePath)
+	}
+}
+
+// TestResolveBindingSystemPromptTemplatePathPopulated — W3.D1: rawBinding
+// with a non-empty SystemPromptTemplatePath passes through verbatim. The
+// resolver does NO validation — D2's render-time resolver enforces the
+// 3-tier ladder including the project-tier path-traversal defense.
+func TestResolveBindingSystemPromptTemplatePathPopulated(t *testing.T) {
+	t.Parallel()
+
+	raw := rawBindingFixture()
+	raw.SystemPromptTemplatePath = "till-go/go-builder-agent.md"
+
+	got := ResolveBinding(raw)
+
+	if got, want := got.SystemPromptTemplatePath, "till-go/go-builder-agent.md"; got != want {
+		t.Fatalf("SystemPromptTemplatePath = %q; want %q (non-empty source must pass through verbatim)", got, want)
+	}
+}
+
 // TestResolveBindingDurationOverride — exercises the time.Duration pointer
 // path explicitly. rawBinding has 30s; override sets 5m → resolved is 5m.
 func TestResolveBindingDurationOverride(t *testing.T) {
