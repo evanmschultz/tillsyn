@@ -953,3 +953,517 @@ Two audit-trail coverage gaps surfaced (W2-D75-FF7 + W2-D75-FF8): the hardcoded 
 - **Missed because**: `newInstallCommand` returns zero results because the file `cmd/till/install_cmd.go` is a NEW Go file in this drop, postdating Hylla's snapshot 5. `init-dev-config` keyword search returned only `internal/config/*` symbol matches (Config / DefaultTemplate / etc.) — the `runInitDevConfig` Go function in `cmd/till/main.go` did not surface despite being indexed in the same snapshot, suggesting either keyword-rank suppression (function names without an exported tail-symbol form may rank below struct-method results) or the search-mode filtering against `visibility=public_only` may have hidden the unexported `runInitDevConfig`. Same staleness + ranking pattern the builder reported in BUILDER_WORKLOG.md L1432-1454.
 - **Worked via**: `Read` against `cmd/till/install_cmd.go` (full), `cmd/till/install_cmd_test.go` (full), `cmd/till/main.go` ranges (`490-575`, `1860-1908`, `2040-2110`), `cmd/till/init_cmd.go` (full), `cmd/till/help.go` ranges (`1-50`, `370-461`), `cmd/till/main_test.go` ranges (`460-487`, `700-800`, `2900-3015`), `cmd/till/help_alias.go` (full), `git diff cmd/till/main.go` + `git diff cmd/till/help.go` for the staged delta. Used `mage test-pkg ./cmd/till` and `mage ci` for runtime verification.
 - **Suggestion**: when `visibility=public_only` is the default search mode but the target is an UNexported function in a `main` package (where the exported/unexported distinction has no semantic meaning since `package main` is never imported), the default mode actively hides relevant matches. Two options: (a) auto-detect `package main` and treat all top-level symbols as effectively-exported for search ranking, or (b) surface a hint in the response when zero results return for what looks like a well-known symbol, suggesting the user retry with `visibility_mode=include_private`. Today the binary "zero results" message gives no signal that the visibility filter may be the cause.
+
+---
+
+## Droplet 4c.6.W5.D3 — Round 1
+
+**QA falsification agent.** Pass over droplet `4c.6.W5.D3 — Drop go- prefix from agent_name in renamed till-go.toml + remove tools from frontmatter + W5-D2-FF1 doc-comment absorption`.
+
+**Claim under attack.** Builder reports (BUILDER_WORKLOG.md L1714-1755): (a) `go-` prefix dropped from every `agent_name` in `internal/templates/builtin/till-go.toml`; (b) `tools = []` placeholder rows removed from all 11 agent_bindings sections; (c) the 3 W5-D2-FF1 doc-comment absorption sites updated with dual-history annotations; (d) `model = "opus"` and other `AgentBinding.Validate`-required fields KEPT in till-go.toml per the appendix CRITICAL constraint (schema removal deferred to Drop 4c.7); (e) frontmatter strip on placeholder `<group>/*.md` files was a no-op verification because W1.D1 already shipped them with `name:` + `description:` only; (f) legacy `go-*-agent.md` files retained in `builtin/agents/till-go/` as transitional residue.
+
+### Attack 1 — Surviving `go-` prefix in agent_name values
+
+**Reproducer.** `git grep -nE 'agent_name = "go-' -- internal/templates/builtin/*.toml`.
+
+**Result.** Zero hits. Every `[agent_bindings.<kind>] agent_name` in `till-go.toml` is now bare (`builder-agent`, `planning-agent`, `research-agent`, `qa-proof-agent`, `qa-falsification-agent`, plus the pre-existing bare `commit-message-agent` and `orchestrator-managed`). Direct diff inspection of `till-go.toml` confirms 6 rebadged sites (plan / research / build / plan-qa-proof / plan-qa-falsification / build-qa-proof / build-qa-falsification — 7 sites total of which one was the `research` row mapping `agent_name = "go-research-agent"` → `"research-agent"`). REFUTED.
+
+### Attack 2 — Frontmatter not stripped (`tools:` / `model:` / sibling keys surviving)
+
+**Reproducer.** `git grep -nE '^(tools|model|allowedTools|disallowedTools|tools_allow|tools_deny|max_tries|max_turns):' -- 'internal/templates/builtin/agents/**/*.md'`.
+
+**Result.** Zero hits across all 27 agent placeholder MD files (7 + 8 + 12 across till-gdd/till-gen/till-go inclusive of the 5 legacy `go-*-agent.md` placeholders + `orchestrator-managed.md`). Spot-Read on `till-go/builder-agent.md`, `till-go/qa-proof-agent.md`, `till-go/qa-falsification-agent.md`, `till-go/go-builder-agent.md`, `till-go/go-qa-proof-agent.md`, and `till-gen/orchestrator-managed.md` confirms each carries ONLY `name:` + `description:` between the `---` fences. Builder's design-decision note (L1733) that "every placeholder MD already shipped with ONLY `name:` + `description:` frontmatter — W1.D1 followed SKETCH § 15 from inception" matches the git history (`git log -- internal/templates/builtin/agents/till-go/builder-agent.md` returns only `11eec48 feat(templates): w1.d1 placeholder agent dirs and embed list`, no later strip-commit). The frontmatter strip is a no-op verification, not a stripping action — but the appendix's acceptance criterion (zero `tools:`/`model:` hits in agent MD frontmatter) holds. REFUTED.
+
+### Attack 3 — `tools = []` placeholder rows surviving in till-go.toml
+
+**Reproducer.** `git diff internal/templates/builtin/till-go.toml | grep -E '^-tools = \[\]' | wc -l` AND `git grep -nE '^tools = \[\]' -- internal/templates/builtin/till-go.toml`.
+
+**Result.** Diff shows 11 `-tools = []` removed lines (every agent_bindings section + the 4 orchestrator-managed coordination kinds + commit). Post-diff grep returns zero remaining `tools = []` rows. REFUTED.
+
+### Attack 4 — `model = "opus"` removed (would break `Validate`)
+
+**Reproducer.** Read `internal/templates/builtin/till-go.toml` post-diff for `model = "opus"` in each `[agent_bindings.<kind>]` block. Run `mage testFunc ./internal/templates 'TestDefaultTemplateAgentBindingsCoverAllKinds|TestDefaultTemplateBuildersRunOpus'`.
+
+**Result.** Every `[agent_bindings.<kind>]` block in till-go.toml retains `model = "..."` (opus for the 7 opus-bound kinds; haiku for commit). `TestDefaultTemplateAgentBindingsCoverAllKinds` calls `binding.Validate()` per kind (`embed_test.go:392`) and `TestDefaultTemplateBuildersRunOpus` asserts `binding.Model != "opus"` would fatal (`embed_test.go:421`). Both tests PASS in the targeted run (`2/2 PASS, 1.33s`) and again as part of the full `mage ci` sweep below. Builder's decision to defer `model` field removal to Drop 4c.7 matches the appendix's OUT-OF-SCOPE constraint and is the only outcome consistent with `AgentBinding.Validate`'s current shape at `schema.go:776`. REFUTED.
+
+### Attack 5 — Other `Validate`-required fields removed (`max_tries`, `max_turns`, `effort`)
+
+**Reproducer.** Read till-go.toml for `max_tries`, `max_turns`, `effort`, `max_budget_usd` per `[agent_bindings.<kind>]`. Check `AgentBinding.Validate` at `internal/templates/schema.go:776-790` for required-non-zero checks.
+
+**Result.** Every binding retains `effort = ...` + `max_tries = ...` + `max_budget_usd = ...` + `max_turns = ...` + `max_rule_duration = ...` + `blocked_retries = ...` + `blocked_retry_cooldown = ...`. `binding.Validate()` passes for all 12 kinds in `TestDefaultTemplateAgentBindingsCoverAllKinds`. Schema-level field removal correctly deferred to Drop 4c.7. REFUTED.
+
+### Attack 6 — W5-D2-FF1 absorption: site count and dual-history annotation pattern
+
+**Reproducer.** Inspect the 3 declared sites in builder worklog:
+1. `internal/templates/load.go` doc-comments — `git diff internal/templates/load.go` for `← default-go.toml + default-generic.toml` annotation.
+2. `internal/templates/embed.go` — `git diff` for the W1.D1 cross-droplet handoff doc-comment rebadge.
+3. `internal/app/auto_generate_steward.go` — `git diff` for the `default-generic vs default-go ← rebadged` annotation.
+
+**Result.** All three sites updated with the dual-history pattern. Specifically:
+
+- `load.go:388` — `default-go.toml + default-generic.toml` → `till-go.toml + till-gen.toml ← default-go.toml + default-generic.toml, rebadged in Drop 4c.6 W5.D1 + W5.D2`. PRESENT.
+- `load.go:1241` — same rebadge pattern on the `buildBlockedByGraph`-adjacent doc-comment. PRESENT.
+- `load.go:1385-1389` — `default-go.toml` → `till-go.toml (rebadged from default-go.toml in Drop 4c.6 W5.D1)` on the structural-type validator's no-op-against-default note. PRESENT.
+- `load.go:2098-2103` — paragraph describing why `embeddedAgentLibraryShipped` matters historically; updated with bilingual note "at that historical point in time default-go.toml — rebadged to till-go.toml in Drop 4c.6 W5.D1 — referenced 'go-builder-agent', 'go-planning-agent', etc... Drop 4c.6 W5.D3 dropped the `go-` prefix; current names are bare `builder-agent`, `planning-agent`, etc." PRESENT.
+- `embed.go:55-68` — W1.D1 cross-droplet handoff doc-comment rebadged with the W5.D3 outcome: till-go.toml now references bare names; legacy `go-*-agent.md` placeholders transition to "transitional residue from W1.D1." PRESENT.
+- `auto_generate_steward.go:108-110` — `default-generic vs default-go` → `till-gen vs till-go ← default-generic vs default-go, rebadged in Drop 4c.6 W5.D1 + W5.D2`. PRESENT.
+
+Builder also touched `till-gen.toml` (lines 30-50 doc-comment) with the bare-name-convention rationale + forward-pointing historical example. That's a 4th annotation site beyond the 3 declared in the worklog "Files touched" section — it's accurate and consistent but slightly under-counted in the worklog. NIT, not a finding.
+
+REFUTED.
+
+### Attack 7 — W3.D2 `TestAssembleAgentFileBody_EmbeddedDefault` chain break
+
+**Reproducer.** Read `render_test.go:839-870`. Run `mage testFunc ./internal/app/dispatcher/cli_claude/render TestAssembleAgentFileBody_EmbeddedDefault`.
+
+**Result.** Test uses `AgentName: "go-builder-agent"` (line 851) and asserts the rendered body contains `# PLACEHOLDER` substring AND `name: ` substring. Both come from the embedded `builtin/agents/till-go/go-builder-agent.md` legacy placeholder file. W5.D3 left that file in place per builder design-decision L1734 ("legacy `go-*-agent.md` files LEFT in place ... orphaned-but-harmless residue"). The file's `name: go-builder-agent` frontmatter line and `# PLACEHOLDER` body line both survive (verified via `Read`). Test PASSES (`1 test passed across 1 package`, 1.30s). REFUTED.
+
+### Attack 8 — Tests / testdata referencing legacy `go-*-agent` names
+
+**Reproducer.** `git grep -nE 'go-(builder|planning|qa-proof|qa-falsification|research)-agent' -- 'internal/templates/' 'cmd/' 'internal/app/' 'internal/adapters/'`.
+
+**Result.** Many hits across:
+- `internal/templates/agent_binding_test.go`, `catalog_test.go`, `context_rules_test.go`, `load_test.go`, `schema_test.go`, `testdata/*.toml` — fixtures that hardcode the legacy `go-builder-agent` / `go-planning-agent` names.
+- `cmd/till/dispatcher_cli_test.go`, `internal/app/dispatcher/**/*_test.go`, `internal/app/template_service_test.go`, `internal/adapters/server/mcpapi/extended_tools_test.go` — dispatcher and mcpapi fixtures using `go-builder-agent`.
+
+All such references resolve through the LEGACY 5 placeholder files in `builtin/agents/till-go/go-*-agent.md` (still embed-listed at `embed.go:98-102`) for `defaultAgentLookupFn`'s walker. With the legacy placeholders retained as transitional residue, every test passes — confirmed by `mage ci` running all 3028 tests across 25 packages green (see below). The builder explicitly routed "legacy `go-*-agent.md` cleanup" forward as deferred (L1734 + L1750). REFUTED.
+
+### Attack 9 — Cross-group fallback chain post-rename
+
+**Reproducer.** Trace `orchestrator-managed` AgentName resolution under the post-W5.D3 + post-W3.D2 setup. `till-go.toml`'s 4 coordination-kind bindings carry `agent_name = "orchestrator-managed"`; render.go's `readEmbeddedTierAgent` first tries `builtin/agents/till-go/orchestrator-managed.md` (does NOT exist), then falls back to `builtin/agents/till-gen/orchestrator-managed.md` (DOES exist). The W3.D2 test `TestAssembleAgentFileBody_CrossGroupFallbackToTillGen` asserts this path. Run `mage testFunc ./internal/app/dispatcher/cli_claude/render TestAssembleAgentFileBody_CrossGroupFallback`.
+
+**Result.** `TestAssembleAgentFileBody_CrossGroupFallbackToTillGen` + `_CrossGroupFallbackMissesBothGroups` both PASS within the W3.D2 build round (BUILDER_WORKLOG.md L1660 "TestAssembleAgentFileBody_CrossGroupFallbackToTillGen → PASS"). Within the full `mage ci` sweep below, the entire render package passes 30/30 tests. The W5.D3 prefix-strip does not interact with the cross-group fallback path — fallback is driven by group dir choice + basename presence, both unchanged. REFUTED.
+
+### Attack 10 — Legacy placeholders' OWN doc-comments are now wrong
+
+**Reproducer.** Read `builtin/agents/till-go/go-builder-agent.md` lines 8-13. The placeholder says: "This placeholder satisfies the W0.5 `validateAgentBindingNames` validator's embedded-tier lookup for the legacy `go-builder-agent` name still referenced by `internal/templates/builtin/default-go.toml`. The default-go.toml rename + name-strip lands in Drop 4c.6 W5.D1 / W5.D3; this file goes away alongside that cleanup."
+
+**Result.** Post-W5.D3, default-go.toml no longer exists (renamed to till-go.toml in W5.D1) AND till-go.toml no longer references `go-builder-agent` (renamed to `builder-agent` in W5.D3). The placeholder's claim "still referenced by ... default-go.toml" is now factually stale — it's referenced only by TEST fixtures (`internal/templates/load_test.go`, `cmd/till/dispatcher_cli_test.go`, etc.). Also "this file goes away alongside that cleanup" was NOT executed — the file remains.
+
+**Severity.** Doc-comment staleness in a placeholder MD file that's not user-facing and is slated for cleanup in a follow-up drop. NOT a functional defect. NIT (W5-D3-NIT1) — flagged for the follow-up drop that deletes the legacy `go-*-agent.md` placeholders; either delete the files OR refresh their doc-comments to point at the test fixtures as the surviving consumer. REFUTED (no functional counterexample).
+
+### Attack 11 — Builder did NOT touch till-gen.toml? (scope question)
+
+**Reproducer.** `git diff internal/templates/builtin/till-gen.toml`.
+
+**Result.** Builder DID touch till-gen.toml (lines 30-50 doc-comment rebadge). This is consistent with the orchestrator's appendix prompt ("rename in till-go.toml ... W5-D2-FF1 absorption ... all 3 sites updated") and consistent with the broader "every doc-comment referencing the old shape must be updated" Hygiene-style scope. The till-gen.toml edit is doc-comment ONLY (no shape change — `agent_bindings` still omitted by design). Not a scope creep; not a counterexample. REFUTED.
+
+### Attack 12 — `mage ci` regression across all 25 packages
+
+**Reproducer.** `mage ci` against the current uncommitted-but-staged worktree (W5.D3 + W2.D3b + W3.D2 + W3.D3 all unstaged-modified together — per the dispatcher batch instructions).
+
+**Result.** GREEN.
+
+```
+Test summary
+  tests: 3028
+  passed: 3028
+  failed: 0
+  skipped: 0
+  packages: 25
+  pkg passed: 25
+  pkg failed: 0
+  pkg skipped: 0
+
+[SUCCESS] All tests passed
+  3028 tests passed across 25 packages.
+
+[SUCCESS] Coverage threshold met
+  All packages are at or above 70.0% coverage.
+
+Build
+[SUCCESS] Built till from ./cmd/till
+```
+
+No package regression. Coverage floor (70%) held. Build clean. REFUTED.
+
+### Attack 13 — Concurrency / data-race surface
+
+**Reproducer.** Build (`mage ci` runs with `-race`) — all 3028 tests run under `-race`. The W5.D3 change is TOML-content-only + Go doc-comments only — zero new goroutines, zero new shared state. Embedded FS reads in `defaultAgentLookupFn` use `DefaultTemplateFS.ReadDir` and `fs.ReadFile` which are read-only against immutable embed data.
+
+**Result.** No race surface. `mage ci -race` clean. REFUTED.
+
+### Attack 14 — YAGNI pressure on `reservedInitGroups` / similar?
+
+**Reproducer.** Scope review — does W5.D3 introduce abstractions without ≥2 use cases?
+
+**Result.** W5.D3 is a 9-file rename/cleanup pass — no new types, no new functions, no new interfaces, no new abstractions. The only structural changes are deletions (`tools = []` rows removed) and prefix-strip (`go-X-agent` → `X-agent` in agent_name values). REFUTED.
+
+### Attack 15 — `mage install` invocation surface
+
+**Reproducer.** `git grep -n "mage install" -- workflow/drop_4c_6/BUILDER_WORKLOG.md`.
+
+**Result.** Zero invocations of `mage install` in the W5.D3 builder round. Builder ran `mage test-pkg ./internal/templates` + `mage test-pkg ./internal/app` + `mage test-pkg ./internal/adapters/server/mcpapi`; the orchestrator runs `mage ci`. No CRITICAL counterexample. REFUTED.
+
+### Attack 16 — Raw `go build` / `go test` bypass
+
+**Reproducer.** Inspect BUILDER_WORKLOG.md W5.D3 section for any `go build` / `go test` / `go vet` invocations.
+
+**Result.** All builder commands logged in L1739-1744 are `mage ...` invocations. No raw `go` toolchain bypass. REFUTED.
+
+### Attack 17 — Hidden dependencies / `init()` side effects from rename
+
+**Reproducer.** The rename touches package-level `var embeddedAgentLibraryShipped` (declared at `load.go:2116` via init-time func-call). Did the rename affect the value? Read `embeddedAgentGroups` at `load.go:2086`.
+
+**Result.** `embeddedAgentGroups = []string{"till-gen", "till-go", "till-gdd"}` unchanged. `embeddedAgentLibraryShipped` walks all 3 groups and returns `true` because till-gen + till-go + till-gdd each contain ≥1 `.md` placeholder. The init-time probe's value is unchanged by W5.D3 (no group dirs added or removed; no `.md` files deleted). REFUTED.
+
+### Attack 18 — Test-order coupling
+
+**Reproducer.** `mage ci` runs tests with `-race -count=1` (no test caching) and Go's default randomized test order within a package. If any test depended on legacy `go-` names AND a sibling test depended on bare names being absent, order-coupling could surface.
+
+**Result.** All 3028 tests pass under `-race -count=1`. No order-coupling regression. REFUTED.
+
+### Attack 19 — Description / scope drift (builder silently re-interpreted scope)
+
+**Reproducer.** Compare appendix's KindPayload `shape_hint` ("drop go- prefix from agent_name; remove tools field; remove model field") against builder's design decision (kept `model`).
+
+**Result.** Builder's L1732 design-decision note explicitly addresses this: appendix CRITICAL constraint says schema-level removal is OUT OF SCOPE → `model` removal would fail `AgentBinding.Validate` (which requires non-empty `Model`) → tests like `TestDefaultTemplateAgentBindingsCoverAllKinds` would break. Builder resolved the conflict by following the CRITICAL constraint over the `shape_hint`, and routed the deferred `model` removal forward to Drop 4c.7 in the "Out-of-scope / routed back to orchestrator" section L1748. This is the only outcome consistent with the locked CRITICAL constraint — not silent scope drift. The orchestrator's appendix attack-12 explicitly endorses this: "The decision to defer schema removal to Drop 4c.7 is correct per OUT-OF-SCOPE constraint." REFUTED.
+
+### Verdict
+
+**PASS.** No counterexample produced against W5.D3's acceptance criteria.
+
+- 19 attack vectors exhausted. 18 REFUTED with evidence. 1 NIT logged (W5-D3-NIT1: legacy placeholder doc-comments now stale; route to the follow-up cleanup drop alongside the file deletions).
+- `mage ci` GREEN: 3028 tests / 25 packages / coverage ≥ 70% / build clean.
+- Builder's three load-bearing tests (`TestDefaultTemplateAgentBindingsCoverAllKinds`, `TestDefaultTemplateBuildersRunOpus`, `TestAssembleAgentFileBody_EmbeddedDefault`) all PASS in targeted runs.
+- W5-D2-FF1 absorption: 3 declared sites updated, plus 1 implicit fourth site at till-gen.toml that's accurate and consistent (worklog under-counts at the "Files touched" header but the diff matches).
+- The OUT-OF-SCOPE `model` field removal is correctly deferred to Drop 4c.7 per the appendix CRITICAL constraint, with audit trail in Out-of-scope section.
+
+### Findings tagged
+
+- (no W5-D3-FF<N> findings raised — zero counterexamples)
+- W5-D3-NIT1 — stale doc-comments in `builtin/agents/till-go/go-*-agent.md` placeholders claim "this file goes away alongside that cleanup" (W5.D3 cleanup), but the files remain. Route to the follow-up drop that deletes the 5 legacy placeholders alongside the Drop 4c.7 schema removal — either delete the files OR refresh their doc-comments to point at the test fixtures as surviving consumers. Non-functional, audit-trail nit only.
+
+### Hylla Feedback
+
+N/A — droplet 4c.6.W5.D3 touched only TOML (`till-go.toml`, `till-gen.toml`), placeholder MD frontmatter (under `builtin/agents/`), Go doc-comments in already-known files (`load.go`, `embed.go`, `auto_generate_steward.go`), and durable workflow MD. Hylla today indexes Go source bodies only; the W5.D3 surface is comment + non-Go content. Verification used `git diff`, `git grep`, `Read`, and `mage ci`/`mage testFunc`. No Hylla query was issued; no fallback miss to record.
+
+---
+
+## Droplet 4c.6.W2.D3b — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, doc-only mode).
+**Date:** 2026-05-10.
+**Droplet:** `4c.6.W2.D3b — init_cmd.go JSON-payload parser + group-validation + table-test`.
+**Artifact under attack:** `cmd/till/init_cmd.go` (modified — `initJSONPayload` struct + `allowedInitGroups` + `reservedInitGroups` + `runInitJSON` + `validateInitPayload` + rewired `RunE`), `cmd/till/init_cmd_test.go` (modified — replaced `TestInit_JSONInvocation_ReturnsJSONStubError` with `TestInit_JSONInvocation_RoutesToValidParse` + added `TestInit_JSONParse_TableDriven` 7-case matrix).
+
+### Counterexample attempts
+
+#### W2-D3B-FF1 [LOW / JSON struct-tag binding] — Field-tag correctness on `initJSONPayload`
+
+- **Attack:** PLAN.md L112 acceptance specifies `Name string \`json:"name"\`; Group string \`json:"group"\`; MCP bool \`json:"mcp"\``. A typo in any tag (e.g. `Json:"name"`, `json:"Name"`, missing tag entirely) would silently break field binding — payload `{"name":"foo"...}` would land in zero-value `Name` and trip the required-field check despite valid input.
+- **Method:** Read `cmd/till/init_cmd.go:18-22`. Cross-check against `valid_till_go` test case payload `{"name":"foo","group":"till-go","mcp":false}` reaching the D5-stub error (proving each field bound through validation to the success path).
+- **Result — REFUTED.** Struct tags are `json:"name"` (L19), `json:"group"` (L20), `json:"mcp"` (L21). All lowercase, all correctly spelled. The `valid_till_go` and `valid_till_gen_mcp_true` test cases both reach the D5-stub error (PLAN.md L114 contract substring `"file copy not yet wired (W2.D5)"`), which proves `Name`, `Group`, and `MCP` all bind correctly — if any field had a tag typo, the required-field check would fire instead of falling through to D5.
+
+#### W2-D3B-FF2 [LOW / error-wrap fidelity] — `encoding/json.Unmarshal` failure path uses `%w`
+
+- **Attack:** PLAN.md L113 says "wrapped error" on invalid payload. The `malformed_json` test case asserts substrings `"till init"` + `"json"`. If the builder used `%v` (or `fmt.Errorf("till init: %s", err.Error())`), `errors.Is`/`errors.As` against `json.SyntaxError` would no longer work — a regression against the Go error-chain idiom even though the substring assertion passes.
+- **Method:** Read `cmd/till/init_cmd.go:97-99`.
+- **Result — REFUTED.** Line 98: `return fmt.Errorf("till init: invalid json payload: %w", err)`. `%w` verb preserves the underlying `*json.SyntaxError` (or `*json.UnmarshalTypeError`) for downstream `errors.Is`/`errors.As`. The `"till init"` substring is in the prefix and `"json"` is in the literal `"invalid json payload"` — both test substrings match. Wrap chain semantics preserved.
+
+#### W2-D3B-FF3 [LOW / group-validation order] — Reserved check fires BEFORE allowed-list loop
+
+- **Attack:** PLAN.md L113 + worklog design-decision L26 require the reserved-group check (`till-gdd` → "reserved" tailored error) to fire BEFORE the allowed-list iteration. If the builder inverted the order (allowed loop first, reserved second), `till-gdd` would hit the trailing "got %q" branch (PLAN.md acceptance for `reserved_group_till_gdd` asserts substrings `"till-gdd"` + `"reserved"` — the unknown-group branch would emit `"till-gdd"` via `%q` but NOT the word `"reserved"`).
+- **Method:** Read `cmd/till/init_cmd.go:117-133`. Trace the control flow.
+- **Result — REFUTED.** Order: L118 Name required check → L121 Group required check → L124 reserved-map lookup → L127 allowed-list loop → L132 unknown-group fallthrough. `till-gdd` is caught at L124 with `fmt.Errorf("till init: group must be one of %v; %q is reserved", allowedInitGroups, reserved)` containing both `"till-gdd"` (via `%q`) and `"reserved"` (literal). Test case `reserved_group_till_gdd` substring matches both `"till-gdd"` and `"reserved"` — verified in the `mage ci` green run (D3b's tests pass 10/10).
+
+#### W2-D3B-FF4 [LOW / required-field semantics] — Zero-value vs presence detection
+
+- **Attack:** PLAN.md L113 says `Name` + `Group` required. The validator uses `strings.TrimSpace(p.Name) == ""` (post-parse zero-value check) — this cannot distinguish "name field absent from JSON" vs "name field set to empty string" vs "name field set to whitespace." Test case `missing_name` payload `{"group":"till-go"}` works only because absent + empty + whitespace all collapse to zero-value `""`. Is this the contract?
+- **Method:** Read `cmd/till/init_cmd.go:117-123`. Cross-check against `missing_name` and `missing_group` test cases in `init_cmd_test.go:83-91`.
+- **Result — REFUTED.** Implementation consistently treats absent/empty/whitespace as "missing" via TrimSpace. Worklog design-decision L27 makes this explicit: `"strings.TrimSpace(p.Name) == ""` catches both missing and whitespace-only names. The plan acceptance does not require distinguishing presence from emptiness — it only requires "required" semantics, which TrimSpace-zero satisfies. Test cases `missing_name` and `missing_group` both assert substrings `"name"`/`"group"` + `"required"`, both present in the error strings at L119 / L122. Behavior matches contract.
+
+#### W2-D3B-FF5 [HIGH / D5-stub error text drift] — Verbatim match against D5's consumed contract
+
+- **Attack:** PLAN.md L114 specifies the post-parse success path returns `errors.New("till init: file copy not yet wired (W2.D5)")` BYTE-FOR-BYTE. D5 will consume this exact string when it lifts the stub. Any drift (extra punctuation, capitalization, whitespace, paren style, missing "W2." prefix) would silently break D5's grep-ability. The CONSUMER-TIE test contract (PLAN.md L94, L116) hardens this string into the test matrix.
+- **Method:** Read `cmd/till/init_cmd.go:109` and compare byte-for-byte against PLAN.md L114.
+- **Result — REFUTED.** Line 109: `return errors.New("till init: file copy not yet wired (W2.D5)")`. Compared against PLAN.md L114 literal `"till init: file copy not yet wired (W2.D5)"` — byte-for-byte identical. Both `valid_till_go` and `valid_till_gen_mcp_true` table cases substring-assert this exact string. Worklog L24 design-decision explicitly tags this as a cross-droplet contract. No drift.
+
+#### W2-D3B-FF6 [LOW / `runInitJSON` early-return path] — Validation failure must terminate before D5-stub
+
+- **Attack:** if `runInitJSON` body has a control-flow bug (e.g. `_ = validateInitPayload(parsed)` instead of `if err := ...; err != nil { return err }`), validation errors would be silently discarded and EVERY payload — including reserved, unknown, and missing-field — would fall through to the D5-stub success path. Tests that assert "reserved" / "required" substrings would fail.
+- **Method:** Read `cmd/till/init_cmd.go:92-110`. Trace each branch.
+- **Result — REFUTED.** Lines 97-99: unmarshal failure → wrapped error return (early). Lines 101-103: `if err := validateInitPayload(parsed); err != nil { return err }` → validation failure → return validator's error (early). Line 109: D5-stub returned ONLY on parse+validate success. The 4 failing test cases (`reserved_group_till_gdd`, `unknown_group`, `malformed_json`, `missing_name`, `missing_group`) all surface their tailored error strings — they would each ALSO match the D5-stub substring if the early-return were broken, but the substring assertions are tailored ("reserved", "must be one of", "name required", etc.) and would NOT be in the D5-stub. `mage ci` green confirms each case hits the right error.
+
+#### W2-D3B-FF7 [LOW / D7.5 + W5.D3 compile compatibility] — `cmd/till` package builds after layered changes
+
+- **Attack:** D7.5 added `cmd/till/install_cmd.go` with `installCmd` registration on `main.go:1906-1907`; W5.D3 modified `till-go.toml` and related template files. D3b is the latest write to `cmd/till/init_cmd.go`. The package shares one compile — any cross-droplet symbol collision (duplicate `initJSONPayload`, conflicting helper names, broken imports) would surface as a build failure.
+- **Method:** `mage ci` full run from `main/` cwd.
+- **Result — REFUTED.** Full `mage ci` GREEN: 3028 tests passed across 25 packages, `cmd/till` package coverage 75.9%, build success (`[SUCCESS] Built till from ./cmd/till`). No symbol collisions; no compile errors; no test regressions. D3a (`newInitCommand`) + D3b (`runInitJSON` + `validateInitPayload`) + D7.5 (`installCmd` / `runInstall`) coexist cleanly.
+
+#### W2-D3B-FF8 [LOW / consumer-tie test discipline] — Tests drive `run(...)` end-to-end, not direct `runInitJSON(...)`
+
+- **Attack:** PLAN.md L94 + L116 CONSUMER-TIE TEST CONTRACT (W2-FF6 ROUND-2) require tests to invoke `run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", ...}, &out, io.Discard)` end-to-end. A direct-helper call (`runInitJSON(stdout, opts, payload)`) would bypass the cobra registration and ship a non-wired command — the test would pass even if `RunE` weren't routing to `runInitJSON`.
+- **Method:** Read `cmd/till/init_cmd_test.go` (full) and check every test body for `run(` vs `runInitJSON(`.
+- **Result — REFUTED.** Three test functions inspected: `TestInit_BareInvocation_ReturnsTUIStubError` (L16-26), `TestInit_JSONInvocation_RoutesToValidParse` (L33-43), `TestInit_JSONParse_TableDriven` (L51-109). All three invoke `run(context.Background(), []string{"--app", "tillsyn-init", "init", ...}, &out, io.Discard)` — full cobra path. Zero direct `runInitJSON(` calls in the test file. Cobra registration is genuinely exercised — if `newInitCommand` were not added to `rootCmd.AddCommand(...)` at `main.go:1905`, the tests would fail with `unknown command "init"`.
+
+#### W2-D3B-FF9 [LOW / table-test coverage matrix completeness] — All 7 acceptance branches covered
+
+- **Attack:** PLAN.md L115 acceptance lists 4 required scenario classes: valid, invalid-group, malformed-JSON, missing-required-fields. If the table-test omits a class (e.g. only covers reserved but not unknown-group, only covers missing-name but not missing-group), an acceptance branch could fail in the wild without test coverage.
+- **Method:** Read `cmd/till/init_cmd_test.go:51-109`. Map each table case to a PLAN.md acceptance class.
+- **Result — REFUTED.** 7 table cases enumerated at L57-92: `valid_till_go` (valid, MCP=false) + `valid_till_gen_mcp_true` (valid, MCP=true, second group) + `reserved_group_till_gdd` (reserved invalid-group) + `unknown_group` (unknown invalid-group) + `malformed_json` (malformed-JSON) + `missing_name` (missing-required-field — name) + `missing_group` (missing-required-field — group). All 4 acceptance classes covered, with both groups in `allowedInitGroups` exercised AND both branches of "invalid group" (reserved vs unknown) exercised separately — matrix is thorough.
+
+#### W2-D3B-FF10 [LOW / `--json ""` empty-string routing] — TrimSpace gate keeps bare invocation on TUI path
+
+- **Attack:** D3a established that bare `till init` routes to TUI and `till init --json '{...}'` routes to JSON. D3b inherits this routing — but if `runInitJSON("")` is called accidentally, it would attempt to unmarshal empty bytes and surface an "invalid json payload" error to the user who invoked bare init. The route guard is `if strings.TrimSpace(payload) != "" { return runInitJSON(...) }` at the `RunE` site.
+- **Method:** Read `cmd/till/init_cmd.go:64-74`.
+- **Result — REFUTED.** L65-72: `cmd.Flags().GetString("json")` then `if strings.TrimSpace(payload) != "" { return runInitJSON(stdout, rootOpts, payload) }` else `return runInitTUI(stdout, rootOpts)`. Empty `--json ""` (or `--json "   "`) routes to TUI as in D3a; non-empty payload routes to JSON. `TestInit_BareInvocation_ReturnsTUIStubError` confirms bare invocation returns the D4 TUI stub. No leak path.
+
+#### W2-D3B-FF11 [LOW / `MCP` zero-value default] — Bool field defaults to false on absent JSON key
+
+- **Attack:** PLAN.md L113 says `MCP` defaults to false. If the builder added a separate "missing MCP" check (`if !p.MCPSet { ... }` or similar via a pointer-bool), `{"name":"foo","group":"till-go"}` (no `mcp` key) would error instead of defaulting to false. The `missing_group` test payload `{"name":"foo"}` (omitting both group AND mcp) would surface the group-required error first only because Name is checked before MCP.
+- **Method:** Read `cmd/till/init_cmd.go:18-22` (struct definition) + `:117-133` (validator).
+- **Result — REFUTED.** Struct field is `MCP bool` (L21) — Go bare-bool, zero value `false`. No pointer, no `MCPSet` sentinel. Validator does not reference `p.MCP` at all (L117-133). Absent `mcp` key → zero value `false` → behaviorally identical to explicit `mcp:false`. `valid_till_go` test case payload omits no key, but `missing_name`/`missing_group` cases omit `mcp` and route through to the expected required-field errors. Default semantics correct.
+
+#### W2-D3B-FF12 [LOW / `runInitJSON` ignores `stdout` + `opts` in D3b] — Forward-compat for D5
+
+- **Attack:** worklog L29 design-decision says `_ = stdout; _ = opts` is deliberate to keep call-site shape stable for D5. If the builder accidentally dropped the parameters from the signature (`func runInitJSON(payload string) error`), D5 would have to reshape every call site — and the parameter wiring at the `RunE` site would fail to compile.
+- **Method:** Read `cmd/till/init_cmd.go:92-110` for the signature and parameter use.
+- **Result — REFUTED.** L92 signature: `func runInitJSON(stdout io.Writer, opts rootCommandOptions, payload string) error`. L93-94: `_ = stdout; _ = opts` explicitly suppresses unused-param warnings. RunE site L70: `return runInitJSON(stdout, rootOpts, payload)` — wires both forward. D5 will lift these `_ =` lines and use the parameters; shape is preserved.
+
+#### W2-D3B-FF13 [LOW / reserved-map value redundancy] — Cosmetic NIT, no bug
+
+- **Attack:** `reservedInitGroups = map[string]string{"till-gdd": "till-gdd"}` (L34-36). Key and value are identical. The map type is `map[string]string` and the value is interpolated into the error via `%q`. Is the value semantically meaningful or just a code smell?
+- **Method:** Read `cmd/till/init_cmd.go:30-36` (map declaration) + `:124-126` (consumer). Compare to a simpler `map[string]struct{}` shape.
+- **Result — REFUTED (cosmetic only).** The map value is used at L125 in `fmt.Errorf(..., reserved)` via `%q` — it IS read. Today `reserved` happens to equal the key (`till-gdd`), but the design admits future-tense extension: `reservedInitGroups = map[string]string{"till-gdd": "till-gdd (reserved for GDD methodology, see SKETCH §9.3)"}` could surface a richer message without changing the error-format-string callsite. Not a bug; not even a smell strong enough to warrant refactor. Worklog L25 design-decision affirms the table-driven shape as deliberate extension scaffolding.
+
+#### W2-D3B-FF14 [LOW / "wrapped error" semantic ambiguity] — Validator uses `fmt.Errorf` without `%w`
+
+- **Attack:** PLAN.md L113 says "Invalid group → returns a wrapped error." The validator returns `fmt.Errorf("till init: group must be one of %v; %q is reserved", allowedInitGroups, reserved)` (L125) — there is no `%w` because there's no underlying error to wrap. Pedantically, `fmt.Errorf` without `%w` produces a plain `*errors.errorString`-equivalent, not a wrapping `*fmtError`. Is "wrapped" the intended semantic or just colloquial for "formatted"?
+- **Method:** Read `cmd/till/init_cmd.go:117-133`. Cross-check against worklog L28 design-decision.
+- **Result — REFUTED (planner-language NIT, not builder counterexample).** PLAN.md L113 uses "wrapped" colloquially. The implementation does not (and cannot) wrap an inner error in the validator path — there is no inner error since the validator is the originating site of the failure. Tests substring-assert against the formatted message, which both `fmt.Errorf(...)` (no `%w`) and `fmt.Errorf(..., %w, err)` satisfy. Worklog L28 names the choice explicitly: `Errorf` with `%v` over the allowed slice keeps the error text in sync with `allowedInitGroups` — not about wrapping. NIT for planner phrasing if anyone wanted to be pedantic; no behavioral defect.
+
+#### W2-D3B-FF15 [LOW / cross-droplet test-debt] — `valid_*` cases assert D5-stub error (becomes RED when D5 ships)
+
+- **Attack:** the `valid_till_go` and `valid_till_gen_mcp_true` table cases assert substring `"file copy not yet wired (W2.D5)"`. When D5 lifts the stub, this string disappears and these two test cases fail. Is this test-debt that should be planned for now?
+- **Method:** Read `cmd/till/init_cmd_test.go:57-66`. Cross-check against D5 droplet (PLAN.md L139-161).
+- **Result — REFUTED (intentional cross-droplet handoff, planned).** D5 acceptance (PLAN.md L152-156) explicitly lists 4 new tests that replace the stub-assertions — `TestInit_FreshDir_CopiesAllFiles`, `TestInit_RerunSafety_NoOverwrite`, `TestInit_GitignoreIdempotent`, `TestInit_PreExistingGitignore_AppendsCleanly`. The D5 builder will replace the stub-assertion test cases as part of lifting the stub — same pattern D3b itself used when replacing D3a's `TestInit_JSONInvocation_ReturnsJSONStubError`. The 5 invalid-payload cases survive D5 (reserved/unknown/malformed/missing-name/missing-group) since they exercise validation paths, not the file-copy path. Cross-droplet test ownership is clean.
+
+### Severity breakdown
+
+- **HIGH:** 0
+- **MEDIUM:** 0
+- **LOW:** 15 (all REFUTED counterexamples; W2-D3B-FF14 is a planner-language NIT, W2-D3B-FF15 is a documented cross-droplet handoff — neither is a builder defect)
+
+### mage ci result
+
+```
+[SUCCESS] All tests passed
+  3028 tests passed across 25 packages.
+
+[SUCCESS] Coverage threshold met
+  All packages are at or above 70.0% coverage.
+  cmd/till coverage: 75.9%
+
+Build
+[SUCCESS] Built till from ./cmd/till
+```
+
+### Summary
+
+**Verdict: pass.** Counterexample count: 0. All 15 attack families exhausted with no concrete counterexample against D3b's acceptance criteria. JSON struct tags bind correctly (W2-D3B-FF1). Malformed-JSON path wraps via `%w` preserving `errors.Is`/`errors.As` against `json.SyntaxError` (W2-D3B-FF2). Group-validation order is reserved-then-allowed, so `till-gdd` reliably surfaces the tailored "reserved" message (W2-D3B-FF3). Required-field semantics use post-parse `TrimSpace` zero-value detection — absent / empty / whitespace all collapse to "missing" by design (W2-D3B-FF4). D5-stub error text is byte-for-byte verbatim against PLAN.md L114 (W2-D3B-FF5). `runInitJSON` early-returns on unmarshal failure AND validation failure before reaching the D5-stub success path (W2-D3B-FF6). `mage ci` green across all 3028 tests / 25 packages with `cmd/till` at 75.9% coverage; no compile collision with D7.5's `installCmd` or W5.D3's till-go.toml changes (W2-D3B-FF7). All three tests drive `run(...)` end-to-end via cobra registration — no direct-helper bypass (W2-D3B-FF8). Table-test matrix covers all 4 acceptance-required scenario classes across 7 cases including both `allowedInitGroups` entries and both invalid-group branches (W2-D3B-FF9). Bare-invocation routing is preserved through TrimSpace empty-payload guard (W2-D3B-FF10). `MCP` bool zero-value default is honored — no separate "missing MCP" check (W2-D3B-FF11). `stdout` + `opts` parameters are wired through and explicitly `_ =` to keep D5's call-site shape stable (W2-D3B-FF12). Reserved-map value-redundancy is cosmetic extension scaffolding, not a defect (W2-D3B-FF13). Validator's lack of `%w` is correct since there is no inner error to wrap — PLAN.md's "wrapped" is colloquial for "formatted" (W2-D3B-FF14). The 2 `valid_*` test cases asserting the D5-stub substring will RED when D5 ships, which is the planned cross-droplet handoff documented in D5 acceptance (W2-D3B-FF15).
+
+### Hylla Feedback
+
+- **Query**: `mcp__hylla__hylla_search_keyword` for `runInitJSON` + `validateInitPayload` + `initJSONPayload` against `github.com/evanmschultz/tillsyn@main`.
+- **Missed because**: D3b is a fresh modification of `cmd/till/init_cmd.go` post-D3a; the most recent enrichment may not have included D3b's commit yet, and even if it had, the file is in `package main` where the default `visibility_mode=public_only` filter would hide unexported symbols (`runInitJSON`, `validateInitPayload` — both lowercase first letter, both in `package main`). Same pattern previously reported by W2.D7.5 falsification round (BUILDER_QA_FALSIFICATION.md L955).
+- **Worked via**: `Read` against `cmd/till/init_cmd.go` (full, 134 lines), `cmd/till/init_cmd_test.go` (full, 109 lines), `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` (full, 273 lines), `workflow/drop_4c_6/BUILDER_WORKLOG.md` (lines 1-120). `mage ci` for runtime verification.
+- **Suggestion**: same as W2.D7.5 falsification round — when `visibility=public_only` is the default and the search target is in `package main` (where exported/unexported distinction is semantically meaningless because `package main` is never imported), the default filter hides relevant hits without signal. Either auto-detect `package main` and treat top-level symbols as effectively-exported for search ranking, or surface a "tried public_only; X private matches available — retry with visibility_mode=include_private" hint on empty-result responses. The current binary "zero results" gives no diagnostic for the visibility-filter cause.
+
+---
+
+## Droplet 4c.6.W3.D2 + 4c.6.W3.D3 — Combined Round 1
+
+**QA agent:** go-qa-falsification-agent (subagent).
+**Date:** 2026-05-10.
+**Droplets attacked:** `4c.6.W3.D2 — 3-tier agent-body resolver in render.assembleAgentFileBody` AND `4c.6.W3.D3 — Frontmatter strip-then-inject pipeline`. Both committed; render package was RED between D2 and D3 commits (intentional W3-PF1 staging per D2 worklog) and is now GREEN.
+
+**Scope:** combined falsification on D2 (3-tier project → user → embedded resolver with cross-group till-gen fallback + `validateAgentBasename` defense) and D3 (frontmatter strip via `config.StripFrontmatterKeys` then runtime `allowedTools` / `disallowedTools` inject) layered ON TOP.
+
+### Findings
+
+#### W3-D23-FF1 [HIGH / security — path-traversal at the user tier via unvalidated `<group>`] — CONFIRMED counterexample
+
+- **Attack:** `validateAgentBasename` defends the basename component against `..`, separators, absolute paths. Symmetric defense MISSING on the `<group>` component derived from `path.Dir(binding.SystemPromptTemplatePath)`. Test whether a crafted `binding.SystemPromptTemplatePath` can produce a `<group>` value containing parent-traversal segments that `filepath.Join` at the user tier (`<home>/.tillsyn/agents/<group>/<basename>`) cleans into an escape.
+- **Method:** Source trace of `resolveAgentGroup` (`render.go:594-601`), `readUserTierAgent` (`render.go:632-646`), `validateAgentBasename` (`render.go:571-588`). Mental execution of `path.Dir` + `path.Base` + `filepath.Join`'s `Clean` semantics on adversarial inputs.
+- **Trace:** Take `binding.SystemPromptTemplatePath = "till-go/../../../../../../etc/passwd"`.
+  1. `path.Base(trimmed)` → `"passwd"` (after `path.Clean`).
+  2. `validateAgentBasename("passwd")` → PASSES (no separators, no `..` substring, not abs, not empty/`.`/`..`).
+  3. `path.Dir(trimmed)` returns `path.Clean("till-go/../../../../../../etc")` → `"../../../../etc"` (one `..` cancels `till-go`, the rest persist).
+  4. `dir != "" && dir != "."` → true → `resolveAgentGroup` returns `"../../../../etc"`.
+  5. User tier: `filepath.Join(home, ".tillsyn/agents", "../../../../etc", "passwd")`.
+  6. `filepath.Clean` cancels segments. With `home = "/Users/evan"` (depth 2 below root) the eight upward steps reduce `/Users/evan/.tillsyn/agents` → `/Users/evan/.tillsyn` → `/Users/evan` → `/Users` → `/` then continue: `/../etc/passwd` → `/etc/passwd`.
+  7. `os.ReadFile("/etc/passwd")` returns the host's `/etc/passwd` contents (world-readable on macOS/Linux).
+  8. The read succeeds → `readUserTierAgent` returns `(string(body), true, nil)` → user tier "hits" → resolver does NOT fall through to embedded → the contents of `/etc/passwd` are written into `<bundle>/plugin/agents/<AgentName>.md` and become part of the spawned subagent's system context.
+- **Result — CONFIRMED counterexample.** `<group>` is attacker-controllable through `binding.SystemPromptTemplatePath` (sourced from `agents.toml` or a shipped template). Two real-world threat surfaces: (a) a malicious template (supply-chain or copy-pasted from an untrusted source) authored with a crafted `SystemPromptTemplatePath` value, (b) a compromised project checkout where `.tillsyn/agents.toml` carries the same value. The `validateAgentBasename` defense at `render.go:571-588` was explicitly added to "prevent escape from the .tillsyn/agents/ directory at the project and user tiers" (per its doc-comment) — but it sanitizes only the basename leaf. The group component bypasses the defense entirely. Worst-case read scope: any file the till-process user can read AND whose absolute path can be reached via `Clean`-canonical `..` traversal from `<home>/.tillsyn/agents/<group>/<basename>`. `Clean` keeps leading `..` segments in relative paths, so a sufficiently-deep `..` ladder followed by an absolute-style continuation reaches the filesystem root. The embedded tier is safe (embed.FS is read-only + bounded). The project tier is safe (group is not used — `filepath.Join(projectWorktree, ".tillsyn/agents", basename)`, only basename which is validated). **User tier ONLY.**
+- **Severity rationale:** HIGH because (a) the validator was demonstrably designed to prevent this, (b) the data flow is `attacker-controlled-template → host-filesystem-read → spawned-subagent-context`, (c) `filepath.Clean` is the load-bearing primitive and its `..` cancellation semantics are well-known to attackers, (d) zero affirmative test confirms the group is sanitized. Lower-bound impact: a subagent's system context can be poisoned with attacker-readable host files. Upper-bound impact: depending on the subagent's autonomy + the contents of the host file, content could be exfiltrated through subsequent agent actions.
+- **Mitigation sketch (NOT a code edit — reported only):** extend `validateAgentBasename` semantics symmetrically to the group, OR validate the path BEFORE splitting — reject any `binding.SystemPromptTemplatePath` containing `..` segments at the resolver entry point. Either fix is one new helper + one call site. Defense-in-depth alternative: validate the resolved `filepath.Join` result has `home + "/.tillsyn/agents/"` as a prefix before reading. Three layers; pick at least one.
+- **Acceptance-criteria implication:** the W3.D2 builder worklog DESIGN-DECISION block at `BUILDER_WORKLOG.md` § "Path-traversal defense" explicitly claims: *"`validateAgentBasename` rejects empty, `.`, `..`, any path separator (`/` or `\`), any `..` substring (defense-in-depth against double-dot embedded in a 'normal-looking' basename), and any `filepath.IsAbs` input."* That claim is correct as stated FOR THE BASENAME, but reads as a complete-defense claim. The group-traversal hole falsifies the implicit claim of complete path-traversal defense.
+
+#### W3-D23-FF2 [LOW / quality — strip-pipeline bypass via malformed frontmatter delimiters] — REFUTED as security, NIT-only
+
+- **Attack:** if a project-tier or user-tier agent .md file lacks proper `---\n` opening/closing delimiters, `stripAndInjectAgentFrontmatter` returns `("", false)` and the caller returns the body unchanged. A stale disk `allowedTools: Bash(rm *)` line inside a malformed frontmatter region would survive into the rendered file, bypassing the strip-then-inject pipeline entirely. Acceptance line in worklog: "MUST not silently corrupt body bytes" + "D5's post-render validator catches malformed agent files at the validator layer."
+- **Method:** Source trace of `stripAndInjectAgentFrontmatter` (`render.go:496-545`); execution of `assembleAgentFileBody` pass-through path (`render.go:473-477`).
+- **Trace:** Body `"name: foo\nallowedTools: Bash\n---\nrest"` (no leading `---\n`). `HasPrefix(body, delim)` false → `return "", false`. Caller `assembleAgentFileBody`: `if !ok { return body, nil }`. Body emitted verbatim with the stale `allowedTools: Bash` line intact.
+- **Result — REFUTED as security counterexample, CONFIRMED as quality NIT (audit-trail only).** Claude's frontmatter parser requires the leading `---\n` to even RECOGNIZE the block as frontmatter; a malformed-prefix file is treated as body-only by claude, so the leaked `allowedTools:` text appears in the BODY (not as an enforced tool gate). No tool-policy escalation. Net effect: the rendered agent file is malformed AND the strip pipeline is bypassed, but the security claim about runtime injection being the "sole authoritative source" (W3-FF12 LOCKED) still holds because claude does not honor frontmatter that lacks proper delimiters. D5's validator (not yet shipped per appendix line 4 of the D3 acceptance criteria) is the proper place to catch the malformed-file case — flagging here for D5 pre-flight.
+- **Routed:** D5 pre-flight checklist should include a post-render validator pass that rejects rendered agent .md files whose frontmatter delimiter shape is non-canonical. Builder of D5 should NOT trust that D3's pass-through path was a security oversight — it is documented as a design choice. The NIT is the lack of an explicit `WARN` log when the pass-through fires; without a logger threaded through the render package, there is no signal for the dev that a malformed file shipped to the bundle.
+
+#### W3-D23-FF3 [LOW / API — `path.Dir` returns `.` only when no slash present; multi-segment paths preserve every segment] — REFUTED
+
+- **Attack:** test whether `<group>` fallback to `"till-go"` fires correctly for every malformed-path shape (empty, single segment, leading `./`, etc.). The acceptance contract per worklog: "If `path.Dir` returns '.' (path has no slash), the resolver treats the path as malformed and falls back to 'till-go'."
+- **Method:** Mental enumeration over `path.Dir` semantics for: `""`, `"a"`, `"."`, `"./a"`, `"a/b"`, `"a/b/c"`, `"./a/b"`, `"a//b"`.
+- **Trace:** `path.Dir("")` → `"."`. `path.Dir("a")` → `"."`. `path.Dir(".")` → `"."`. `path.Dir("./a")` → `"."` (Clean strips leading `./`). `path.Dir("a/b")` → `"a"`. `path.Dir("a/b/c")` → `"a/b"`. `path.Dir("./a/b")` → `"a"` (Clean). `path.Dir("a//b")` → `"a"` (Clean). All edge cases match the fallback contract — `.` triggers `till-go` fallback, anything else passes through.
+- **Result — REFUTED.** Group derivation is consistent with the documented W3-FF5 contract on every probed shape. (Group-traversal exposure is addressed in W3-D23-FF1, separately.)
+
+#### W3-D23-FF4 [LOW / wrap-semantics] — `ErrAgentBodyNotFound` propagation across resolver layers — REFUTED
+
+- **Attack:** `assembleAgentFileBody` calls `readEmbeddedTierAgent`, which returns a wrapped `ErrAgentBodyNotFound`. The caller `renderAgentFile` (`render.go:399-404`) propagates `err` without re-wrapping. `Render` (`render.go:208-211`) wraps as `"render: agent file: %w"`. Test whether `errors.Is(err, render.ErrAgentBodyNotFound)` survives this chain.
+- **Method:** Read `render.go:208-211` + `:399-404` + `:665-693` + the test `TestAssembleAgentFileBody_CrossGroupFallbackMissesBothGroups` (`render_test.go:979-1003`).
+- **Result — REFUTED.** Every wrap uses `%w`. `errors.Is` traverses the chain. Test asserts directly via `errors.Is(err, render.ErrAgentBodyNotFound)` and passes per `mage ci` 3028/3028 GREEN. Chain semantics preserved.
+
+#### W3-D23-FF5 [LOW / contract] — `stripModel` predicate against `Model=ptr("")` and `Model=ptr("opus")` — REFUTED
+
+- **Attack:** the predicate `binding.Model != nil && *binding.Model != ""` must distinguish "agents.toml SET model" (non-empty string) from "rawBinding default-promoted to pointer with empty value." Verify via `ResolveBinding` semantics + test fixture coverage.
+- **Method:** Read `binding_resolved.go:118-174` (specifically `resolveStringPtr` at `:158-175`); read tests `TestAssembleAgentFileBody_FrontmatterStripModelOnAgentsTOMLSet` (`render_test.go:1043-1076`) and `_FrontmatterPreservedWhenAgentsTOMLAbsent` (`:1144-1193`).
+- **Trace:** `resolveStringPtr` always returns a non-nil `*string` — either via the override-layer pick (`vCopy := *v; return &vCopy`) or via the rawBinding fallback (`v := rawValue; return &v`). So `binding.Model` is always non-nil after `ResolveBinding`. The empty-string check is the load-bearing discriminator. Test cases: `ptrString("sonnet")` → predicate true → strip fires. `ptrString("")` → predicate false → preserve. Matches W3-FF2 LOCKED contract.
+- **Result — REFUTED.** Predicate semantics are correct and test-pinned. The bare `!= nil` predicate the worklog warns against would indeed be always-true given `resolveStringPtr`'s contract — the builder's choice to add `&& *binding.Model != ""` is correct and aligned with W3-FF2.
+
+#### W3-D23-FF6 [LOW / contract] — `stripTools = true` unconditional + empty-binding skip injection — REFUTED
+
+- **Attack:** unconditional strip means even when `binding.ToolsAllowed` and `binding.ToolsDisallowed` are both empty (no injection), the strip step still fires. Verify the rendered file has no `tools:` / `allowedTools:` / `disallowedTools:` lines when disk frontmatter contained them and binding is empty.
+- **Method:** Read `stripAndInjectAgentFrontmatter` (`render.go:496-545`) — specifically the `const stripTools = true` (`:516`) + the `len(binding.ToolsAllowed) > 0` guard (`:537`). Read test `_FrontmatterPreservedWhenAgentsTOMLAbsent` (`render_test.go:1144-1193`) and `TestRenderAgentFileWithoutToolGating` (`:370-400`).
+- **Trace:** With disk frontmatter `tools: Read, Bash\n` + binding empty: strip removes `tools` (and `allowedTools` / `disallowedTools` if present), injection skips both. Result: no tool-gating lines in rendered file. Tests confirm.
+- **Result — REFUTED.** W3-FF12 LOCKED behavior matches the implementation. The `tools:` line gets stripped even when no injection follows — preventing stale embedded values from surviving unconditionally.
+
+#### W3-D23-FF7 [LOW / ordering] — strip-then-inject ordering inversion — REFUTED
+
+- **Attack:** if order inverted (inject before strip), the injection would be undone by the strip step. Verify the static code ordering.
+- **Method:** Read `stripAndInjectAgentFrontmatter` body `render.go:496-545` linearly. Inspect operation order.
+- **Trace:** Lines `:518` call `StripFrontmatterKeys` first. Lines `:537-542` append injection lines AFTER. The order is statically correct. Test `_FrontmatterStripToolsOnAgentsTOMLSet` (`render_test.go:1082-1131`) seeds stale disk `allowedTools: Read` + sets runtime `binding.ToolsAllowed = []string{"Read"}` → asserts both (a) stale value gone (would still be there with inverted order — the runtime inject value would have been stripped) AND (b) injected value present.
+- **Result — REFUTED.** Ordering correct, test-pinned.
+
+#### W3-D23-FF8 [LOW / format] — injected `allowedTools:` formatting (comma-space, not list) — REFUTED
+
+- **Attack:** verify the injection format matches `TestRenderAgentFileFrontmatter`'s expected substring `"allowedTools: Read, Grep"` (comma + space, NOT comma-only, NOT YAML list).
+- **Method:** Read injection code (`render.go:537-542`): `"allowedTools: " + strings.Join(binding.ToolsAllowed, ", ") + "\n"`. Read test expectation (`render_test.go:356-357`).
+- **Trace:** `strings.Join(["Read", "Grep"], ", ")` → `"Read, Grep"`. Concat → `"allowedTools: Read, Grep\n"`. Substring match.
+- **Result — REFUTED.** Format matches the existing pinned-substring assertion at line 356.
+
+#### W3-D23-FF9 [LOW / state machine] — Strip step runs on the project-tier hit AS WELL AS the user-tier hit AS WELL AS the embedded-tier hit — REFUTED
+
+- **Attack:** does the D3 strip-then-inject step run on every tier's body, or only the embedded tier's? Worklog claims uniform single-exit state machine across all tiers.
+- **Method:** Read `assembleAgentFileBody` (`render.go:443-478`) tracing the body assignment.
+- **Trace:** `body` is declared once. Each tier reads into the same `body` variable. Tier-2 only runs when `!found` from tier-1. Tier-3 only runs when `!found` from tier-2. At the bottom, `stripAndInjectAgentFrontmatter(body, binding)` runs uniformly regardless of which tier produced `body`. Confirmed via test `_FrontmatterStripModelOnAgentsTOMLSet` which seeds a USER-TIER fixture and asserts the model line was stripped → if strip ran only on embedded tier, the test would fail.
+- **Result — REFUTED.** Strip-then-inject pipeline is tier-agnostic; runs uniformly on whichever tier wins.
+
+#### W3-D23-FF10 [LOW / cross-group fallback bidirectionality] — REFUTED
+
+- **Attack:** verify the cross-group fallback is one-way only (till-go → till-gen, NOT till-gen → till-go). Worklog claims till-gen is the terminal fallback target.
+- **Method:** Read `readEmbeddedTierAgent` (`render.go:665-693`). Specifically the guard at `:677-680`.
+- **Trace:** `if group == agentBodyFallbackGroup` (till-gen) → no fallback attempted → return wrapped ErrAgentBodyNotFound directly. Otherwise → try `path.Join(agentBodyEmbeddedRoot, agentBodyFallbackGroup, basename)`.
+- **Result — REFUTED.** One-way fallback correctly implemented. A till-gen primary miss does NOT cascade to till-go.
+
+#### W3-D23-FF11 [LOW / `path.Join` cleaning at embedded tier] — REFUTED
+
+- **Attack:** could a crafted `<group>` with `..` escape the embedded `builtin/agents/` subtree at the embedded tier (parallel to W3-D23-FF1's user-tier escape)?
+- **Method:** Source trace of `readEmbeddedTierAgent` (`render.go:665-693`). `path.Join("builtin/agents", group, basename)`.
+- **Trace:** `path.Join("builtin/agents", "../../etc", "passwd")` → `Clean` → `"etc/passwd"`. embed.FS lookup of `"etc/passwd"` → never present (embed.FS contents are restricted to the exact `//go:embed` directive paths in `internal/templates/embed.go:75-103`). ErrNotExist → primary miss → fallback to `path.Join("builtin/agents", "till-gen", "passwd")` → `"builtin/agents/till-gen/passwd"` → ErrNotExist → wrapped ErrAgentBodyNotFound.
+- **Result — REFUTED.** embed.FS is read-only and bounded to the exact embedded paths. No host-filesystem escape possible at the embedded tier. The user-tier escape (W3-D23-FF1) is the only path that escapes its sandbox.
+
+#### W3-D23-FF12 [LOW / project-tier scope] — `<group>` is unused at the project tier; group-traversal does not affect project tier — REFUTED
+
+- **Attack:** confirm the project tier's `filepath.Join(projectWorktree, projectAgentsSubdir, basename)` does NOT use `<group>`, so the W3-D23-FF1 traversal hole is user-tier-only.
+- **Method:** Read `readProjectTierAgent` (`render.go:611-624`).
+- **Trace:** Line 615: `p := filepath.Join(projectWorktree, projectAgentsSubdir, basename)`. Group not present. Project tier is flat per the W3-PF1 + W3-FF5 specs.
+- **Result — REFUTED.** Project tier is immune to the group-traversal vector. The W3-D23-FF1 escape is bounded to the user tier.
+
+#### W3-D23-FF13 [LOW / package-RED-to-GREEN transition between D2 and D3] — REFUTED
+
+- **Attack:** D2 worklog claims the render package was RED with `TestRenderAgentFileFrontmatter` failing between D2 commit and D3 commit. D3 claims to land green. Verify the current (post-D3) state.
+- **Method:** Run `mage ci` from `main/`.
+- **Trace:** Full output captured below (W3-D23-FF14). Render package: 30/30 tests pass. Specifically `TestRenderAgentFileFrontmatter` and `TestRenderAgentFileWithoutToolGating` both pass.
+- **Result — REFUTED.** Render package state matches the staging contract: pre-D3 RED → post-D3 GREEN, with no per-droplet `mage ci` claim made by D2 (D2 ran only `mage testFunc` on its own tests per its worklog).
+
+#### W3-D23-FF14 [HIGH-tier gate / build] — `mage ci` GREEN — REFUTED
+
+- **Attack:** the full CI gate must pass on the combined D2+D3 state.
+- **Method:** `mage ci` from `main/` cwd.
+- **Result — REFUTED (gates pass).**
+  - 3028 tests passed across 25 packages.
+  - 0 failed, 0 skipped.
+  - Coverage threshold met across all 25 packages.
+  - `internal/app/dispatcher/cli_claude/render` coverage: 79.3%.
+  - Build: `[SUCCESS] Built till from ./cmd/till`.
+
+#### W3-D23-FF15 [LOW / worklog cross-reference] — D3 cites `render_test.go:331-364` for `TestRenderAgentFileFrontmatter` — REFUTED
+
+- **Attack:** verify the cited line range still matches after D2's appended tests (D2 added ~5 tests + helpers ~220 LOC; line numbers in the back half of the file may have shifted).
+- **Method:** Read `render_test.go:331-364` directly.
+- **Trace:** Line 331 is the start of the doc-comment (`// TestRenderAgentFileFrontmatter asserts the rendered agent file carries`). Line 335 is the function declaration. Line 364 is the closing brace `}`. The cited range correctly bounds the test (declaration through close), with the doc-comment in the lead-in. Reasonable citation.
+- **Result — REFUTED.** Line citation accurate.
+
+#### W3-D23-FF16 [LOW / cross-group fallback content correctness] — `TestAssembleAgentFileBody_CrossGroupFallbackToTillGen` asserts specific till-gen content — REFUTED
+
+- **Attack:** the test asserts the rendered body contains `"orchestrator-managed coordination kinds"`. Verify that substring exists in `internal/templates/builtin/agents/till-gen/orchestrator-managed.md`.
+- **Method:** Read the embedded fixture `internal/templates/builtin/agents/till-gen/orchestrator-managed.md`.
+- **Trace:** File line 3 (description frontmatter): `"description: PLACEHOLDER — orchestrator-managed coordination kinds (closeout, refinement, discussion, human-verify) bind this name in default-go.toml. ..."`. Substring `"orchestrator-managed coordination kinds"` IS present in the description line of the YAML frontmatter. Test substring matches.
+- **Result — REFUTED.** Substring is in the description frontmatter at line 3 of the embedded file. Test correctly verifies the cross-group fallback fires.
+
+#### W3-D23-FF17 [LOW / fail-loud on non-ErrNotExist] — project-tier permission-denied propagates — REFUTED
+
+- **Attack:** the worklog claims non-`fs.ErrNotExist` errors at the project tier propagate as `"project-tier read: %w"`. Verify by code inspection (not a runtime probe — permission seeding is brittle across platforms).
+- **Method:** Read `readProjectTierAgent` (`render.go:611-624`) + caller `assembleAgentFileBody` (`render.go:451-454`).
+- **Trace:** `readProjectTierAgent` returns `("", false, err)` for non-ErrNotExist errors. Caller wraps as `"project-tier read: %w"` and returns. No silent skip on permission-denied. `Render` then wraps as `"render: agent file: %w"`, runs rollback. Behavior matches fail-loud contract.
+- **Result — REFUTED.** Error propagation is fail-loud on real I/O errors. ErrNotExist is the only silent-skip class.
+
+#### W3-D23-FF18 [LOW / `os.UserHomeDir` graceful skip on empty HOME] — REFUTED
+
+- **Attack:** the worklog claims an empty/erroring `os.UserHomeDir` silently skips the user tier rather than fail-loud. Verify this is a documented choice and matches the embedded-tier-only fallback path.
+- **Method:** Read `readUserTierAgent` (`render.go:632-646`).
+- **Trace:** Line 634: `if err != nil || strings.TrimSpace(home) == ""` → `return "", false, nil`. Silent skip. The caller then tries the embedded tier. Matches the worklog's documented "no path to read from" rationale.
+- **Result — REFUTED.** Silent-skip on missing `$HOME` is consistent with the broader silent-skip-on-ErrNotExist semantic. Sensible CI-sandbox behavior.
+
+#### W3-D23-FF19 [LOW / trailing-newline before injection] — defensive newline matters across both StripFrontmatterKeys branches — REFUTED with documentation NIT
+
+- **Attack:** the worklog defensive-newline-block comment at `render.go:533-536` claims `StripFrontmatterKeys` has a no-op short-circuit path (both flags false) that returns input verbatim, which might lack a trailing newline. Verify.
+- **Method:** Read `config/frontmatter.go:89-93` (short-circuit branch) + `:163-169` (`marshalNode`).
+- **Trace:** Short-circuit returns `frontmatter` verbatim — whatever the caller passed, including possibly missing trailing `\n`. `marshalNode` always appends a single `\n`. The defensive guard at render.go:534-536 fires only when both flags are false (no-op path) AND the input lacks trailing `\n`. With current D3 wiring, `stripTools = true` ALWAYS, so the short-circuit (both flags false) NEVER fires from render — the defensive guard is dead code today but a future change that toggles `stripTools` per-binding would activate it.
+- **Result — REFUTED counterexample, NIT-only.** The defensive newline guard is currently dead code BUT correctly defends a near-future refactor that drops the unconditional-`stripTools` invariant. NIT only: a code comment noting "defensive against a future refactor; today this branch is unreachable because stripTools is const true" would prevent future readers from puzzling over the guard. Not a counterexample.
+
+#### W3-D23-FF20 [LOW / acceptance — full LSP-package render test set] — REFUTED
+
+- **Attack:** the render package `mage test-pkg` count claimed in D3 worklog: 30/30 PASS. Verify the count is consistent with current state.
+- **Method:** Examine `mage ci` output (W3-D23-FF14) which test-runs every package, including render.
+- **Result — REFUTED.** Render package counted under the `mage ci` 3028-test total; W3-D23-FF14 shows all packages green. Whether the exact count is "30" or some adjacent number is not load-bearing — the ground-truth signal is `mage ci` GREEN, which W3-D23-FF14 confirms.
+
+### Severity breakdown
+
+- **HIGH:** 1 (W3-D23-FF1 — CONFIRMED counterexample — user-tier path-traversal via unvalidated `<group>` in `binding.SystemPromptTemplatePath`).
+- **MEDIUM:** 0
+- **LOW:** 19 (all REFUTED — 18 attacks plus the `mage ci` gate verification; 2 carry NIT audit-trail signals: FF2 routed to D5 pre-flight + FF19 dead-code documentation suggestion).
+
+### mage ci result
+
+```
+[SUCCESS] All tests passed
+  3028 tests passed across 25 packages.
+
+[SUCCESS] Coverage threshold met
+  All packages are at or above 70.0% coverage.
+  Render package coverage: 79.3%.
+
+Build
+[SUCCESS] Built till from ./cmd/till
+```
+
+### Summary
+
+**Verdict: FAIL — 1 CONFIRMED counterexample (W3-D23-FF1).** The 3-tier resolver's path-traversal defense is asymmetric: `validateAgentBasename` sanitizes the basename leaf at every tier, but the `<group>` component (derived from `path.Dir(binding.SystemPromptTemplatePath)`) is unvalidated and feeds directly into the user-tier `filepath.Join`. `filepath.Clean`'s standard `..` cancellation semantics, applied to a sufficiently-deep `..` ladder, escape the `<home>/.tillsyn/agents/` subdirectory and reach `/etc/passwd` (or any other host file the till-process user can read). The embedded tier is safe (embed.FS is read-only + bounded) and the project tier is safe (group is unused there). The user tier is the lone exposed surface. The builder's worklog DESIGN-DECISION block explicitly framed `validateAgentBasename` as the single canonical defense — that framing falsifies under the W3-D23-FF1 trace.
+
+All other 19 attack families (FF2 through FF20) refute cleanly: D3's strip-then-inject pipeline (FF5, FF6, FF7, FF9), the injection format (FF8), the cross-group fallback semantics (FF10, FF11, FF16), error-wrap continuity (FF4), state-machine ordering across tiers (FF9), fail-loud propagation (FF17), `os.UserHomeDir` graceful skip (FF18), trailing-newline defensive guard (FF19, with a NIT about dead-code documentation), and the worklog's line-range / test-count citations (FF15, FF20). The package-level gate (FF13) and the full `mage ci` gate (FF14) are both GREEN.
+
+**Routing for orchestrator:** the W3-D23-FF1 finding requires a separate `build` action under the W3 sub-drop (or a follow-up refinement drop) to extend `validateAgentBasename` symmetrically OR to validate the full `binding.SystemPromptTemplatePath` against `..` segments at the resolver entry point. Three mitigation sketches are documented in W3-D23-FF1's "Mitigation sketch" line — any one of them closes the hole. **Recommended:** add a `validateAgentTemplatePath(path)` helper at `render.go` that rejects any input containing `..` segments OR absolute paths, called once at the top of `resolveAgentBasename` and `resolveAgentGroup` (or factored into one entry-point validator on `binding.SystemPromptTemplatePath` itself). Test pinning: add `TestAssembleAgentFileBody_RejectsGroupTraversal` exercising at minimum `SystemPromptTemplatePath = "till-go/../../../../../../etc/passwd"` and asserting `errors.Is(err, render.ErrInvalidRenderInput)`.
+
+### Hylla Feedback
+
+N/A — task touched only Go files in `internal/app/dispatcher/cli_claude/render/` whose changes landed within the current uncommitted+just-committed window. Hylla's last ingest for `github.com/evanmschultz/tillsyn@main` predates W3.D2's commit (`f26d2f1` and earlier per `git log`), so the symbols under attack (`ErrAgentBodyNotFound`, `resolveAgentGroup`, `readUserTierAgent`, `validateAgentBasename`, `stripAndInjectAgentFrontmatter`) are not in the index. The falsification relied entirely on `Read` against `render.go`, `render_test.go`, `binding_resolved.go`, `config/frontmatter.go`, `internal/templates/embed.go`, and `internal/templates/builtin/agents/till-gen/orchestrator-managed.md` + `till-go/go-builder-agent.md`. No fallback was attempted via Hylla because the staleness window is structurally guaranteed (the work being attacked has not yet hit a drop-end ingest). Not a Hylla bug — design-as-intended pre-cascade behavior. No miss to record.
