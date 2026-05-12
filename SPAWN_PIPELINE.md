@@ -21,12 +21,18 @@ Action item promoted to in_progress
 9. On dead spawn: orphan-scan reaps PID + posts attention item
 ```
 
-## Two Plugin Paths
+## Plugin Paths and Isolation
 
-Tillsyn distinguishes two ways CLI-side plugins are loaded. They are not interchangeable:
+Claude Code's plugin loader supports two loading paths. Under Tillsyn's argv, `--bare` collapses isolation to a single path:
 
 - **Path A — Per-spawn bundle plugin (`--plugin-dir <bundle>/plugin`).** Tillsyn writes a fresh plugin directory per spawn (`plugin.json`, `agents/<name>.md`, `.mcp.json`, `settings.json`). Pure local file I/O. No network. Bundle deletes on terminal-state. ~2ms file overhead per spawn. This is the integration surface Tillsyn owns.
 - **Path B — System-installed plugins (`claude plugin install <name>`).** Persistent install at `~/.claude/plugins/cache/...`. Dev runs `claude plugin install` once per machine. Tillsyn never installs/uninstalls — only pre-flight-checks via `claude plugin list --json` against project-declared `tillsyn.requires_plugins`.
+
+**`--bare` collapses isolation.** Tillsyn always spawns with `--bare --plugin-dir <bundle>/plugin --setting-sources "" --strict-mcp-config --settings <bundle>/plugin/settings.json --mcp-config <bundle>/plugin/.mcp.json`. Under `--bare`, Claude Code skips plugin auto-discovery, agent auto-discovery, CLAUDE.md (project + user), skills, hooks, and auto-memory — only explicitly passed flags take effect (Anthropic headless docs). User and project settings are excluded by `--setting-sources ""` in the same argv. Path B (system-installed plugins) is therefore **disabled by Claude Code itself** whenever Tillsyn spawns. The bundle (Path A) is the SOLE source for agents, settings, and MCP.
+
+The path-B framing is informational for non-bare callers and for tooling that builds on top of Claude Code without `--bare`. Tillsyn's spawn pipeline never ships without `--bare`.
+
+**What Drop 4c.6 W3 actually closes.** The isolation gap was NOT that Path B was silently winning — `--bare` already blocked it. The gap was that the bundle's `plugin/agents/<name>.md` body was a one-liner stub (`"Behavior loaded from the canonical ... template at the system-installed plugin path."`), so the agent had frontmatter but no role definition, tool discipline, or Section 0 scaffold. W3 replaces the stub with full embedded-default agent content. The bundle body is now the operative agent definition.
 
 There is no Path C (per-spawn install/uninstall).
 

@@ -194,6 +194,31 @@ Future CLIs may use different permission-denial event shapes. The `TerminalRepor
 
 The Tillsyn `permission_grants` SQLite table includes a `cli_kind` column so a grant authored against one adapter does NOT apply to a different adapter's spawn (rule-syntax may differ between CLIs).
 
+## Isolation Discipline for New Adapters
+
+**`--bare`-collapsed isolation is a load-bearing contract, not a nicety.** Every adapter that wraps a Claude Code-compatible CLI MUST emit flags that enforce isolation equivalent to Tillsyn's `claude` adapter. The correct minimal shape:
+
+```
+<cli-binary>
+  --bare
+  --plugin-dir <bundle>/plugin
+  --setting-sources ""
+  --strict-mcp-config
+  --settings  <bundle>/plugin/settings.json
+  --mcp-config <bundle>/plugin/.mcp.json
+```
+
+**Why these four flags together:**
+
+- `--bare` — skips all auto-discovery: plugins, agents, CLAUDE.md (project + user), skills, hooks, auto-memory. Under bare mode only explicitly passed flags take effect (Anthropic headless docs). Path B (system-installed plugins, `~/.claude/agents/`, `~/.claude/plugins/cache/`) is disabled entirely by this one flag.
+- `--plugin-dir <bundle>/plugin` — opts the per-spawn bundle's plugin back in as the SOLE plugin source. Under `--bare`, this is the only plugin Claude Code loads.
+- `--setting-sources ""` — excludes all three standard settings layers (user / project / local). Combined with `--settings <bundle>/plugin/settings.json`, the bundle is the sole permissions source.
+- `--strict-mcp-config` — restricts MCP to `--mcp-config` argument only, ignoring project `.mcp.json` and user `~/.claude.json`.
+
+**Common mistake for Drop 4d (codex) and beyond:** do NOT rely on agent-file priority tables to "win" over user-installed definitions. The priority table (managed settings → `--agents` flag → `.claude/agents/` → `~/.claude/agents/` → plugin) applies in non-bare mode. Under `--bare`, entries 3 and 4 are never consulted. Ship `--bare` and the bundle plugin; do not rely on priority-table ordering to enforce isolation.
+
+**Bundle body must be substantive.** The bundle's `plugin/agents/<name>.md` is the ONLY agent definition Claude Code sees under `--bare`. If the body is empty or a one-liner stub, the agent runs with frontmatter only — no role definition, no tool discipline, no output format. Drop 4c.6 W3 wires embedded-default full agent content into every rendered bundle body and adds a post-render validator that rejects thin bodies at build time. Future adapters must apply equivalent logic: the bundle body is not a stub redirect, it IS the agent.
+
 ## Adapter Authoring Checklist
 
 - [ ] Package created at `internal/app/dispatcher/cli_<name>/`.

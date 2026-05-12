@@ -311,7 +311,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W6.D4 — Update `SPAWN_PIPELINE.md` + `CLI_ADAPTER_AUTHORING.md` for `--bare`-collapsed isolation
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; doc-only — `Irreducible: true`)
 - **Paths:** `SPAWN_PIPELINE.md` (existing), `CLI_ADAPTER_AUTHORING.md` (existing).
 - **Packages:** none.
