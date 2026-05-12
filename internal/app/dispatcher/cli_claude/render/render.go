@@ -581,7 +581,8 @@ func renderPluginManifest(bundle dispatcher.Bundle) error {
 //
 //  1. Drop 4c F.7.2 landed the `templates.AgentBinding.SystemPromptTemplatePath`
 //     schema field at `internal/templates/schema.go:573` with validator
-//     at `internal/templates/load.go:1031-1055`.
+//     at `internal/templates/load.go:1642 + 1687-1706` (call site +
+//     function body).
 //  2. Drop 4c.6 W3.D1 wired the field through
 //     `dispatcher.BindingResolved.SystemPromptTemplatePath` in
 //     `cli_adapter.go` plus the populator in `binding_resolved.go`.
