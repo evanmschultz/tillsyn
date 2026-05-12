@@ -2217,3 +2217,227 @@ W2.D4 `**State:**` flipped `todo → in_progress` at round start, then `in_progr
   - **Worked via:** `git grep -n 'tea.NewProgram\|os.Getwd' cmd/till/main.go` returned the exact line numbers I needed (`main.go:52` for `tea.NewProgram` and `main.go:4085` for `os.Getwd`). I then `Read`-windowed both call sites to confirm the `programFactory` seam and `os.Getwd` error handling pattern. The bubbletea v2 / bubbles v2 API surface I reconstructed from a single `Read` of `internal/tui/model_teatest_test.go:1-50` + targeted `git grep`s in `internal/tui/model.go` for `tea.NewView`, `tea.KeyEnter`, `m.searchInput.Update(msg)`.
   - **Suggestion:** the "enrichment still running" error pattern recurs across drops — same finding the D3b builder flagged. Ergonomic ask: expose the last-fully-ingested snapshot ID + "partial index available" hint so callers can fall back to a prior good snapshot rather than to non-Hylla tools. Not blocking.
 - **Ergonomic note:** the `bubbles/v2` textinput API (`textinput.New()`, `SetValue`, `Update`) is not yet covered by Hylla because it's a third-party charm.land module. Falling back to `Read` of the actual `bubbles/v2@v2.0.0-rc.1/textinput/` module directory was blocked by sandbox (permission denied on `/Users/evanschultz/go/pkg/mod/...`). I reconstructed the surface from in-repo usages (`file_picker_core.go:72-80`) + matching call patterns (`model.go:10200`). This is fine for D4's small textinput usage, but a Hylla-style "module-aware" index for third-party Go modules would be a clear quality-of-life win for future similar tasks. Suggestion: out-of-scope for Tillsyn's Hylla today; mention to the dev as something the Hylla project might consider for v-next.
+
+---
+
+## Droplet 4c.6.W3.D6 — Round 1
+
+**Builder:** go-builder-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W3.D6 — Doc-comment correction at render.go:307-319`.
+
+### Files touched
+
+- `internal/app/dispatcher/cli_claude/render/render.go` — rewrote the `renderAgentFile` function doc-comment block (lines 520-558 pre-D6; lines shifted post-D2/D3/D5 from the PLAN.md-cited "307-319 pre-W3.D2"). Doc-comment-ONLY change: every diff line begins with `//`; no `func`, `var`, `const`, `type`, `return`, or other Go semantic tokens added/removed. Verified via `git diff render.go` showing exactly +46 / -9 comment lines plus one unchanged context line (`func renderAgentFile(bundle dispatcher.Bundle, project domain.Project, binding dispatcher.BindingResolved) error {`).
+- `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md` — flipped W3.D6 `**State:**` `todo → in_progress → done`.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### Rewritten doc-comment block (verbatim, post-D6)
+
+```go
+// renderAgentFile writes <plugin>/agents/<name>.md — the SOLE agent file
+// Claude Code consults for the spawned subagent under the argv Tillsyn
+// emits. Per RESEARCH/ISOLATION_ENFORCEMENT_FIX.md § A.9 + § C.5, Tillsyn's
+// argv ships `--bare`, which collapses the general Claude Code "two paths"
+// plugin loader model: Path B (system-installed plugins at
+// `~/.claude/plugins/cache/...` plus the priority-table fallback to
+// `~/.claude/agents/<name>.md` / `<cwd>/.claude/agents/<name>.md`) is
+// disabled by Claude Code itself under `--bare`. Path A (the per-spawn
+// bundle plugin opted in via `--plugin-dir <bundle>/plugin`) is the only
+// surviving source. The pre-W3 F.7.3b stub claim that
+// "Behavior loaded from the canonical ... template at the system-installed
+// plugin path" — verbatim in the body sentence the stub used to emit at
+// disk-write time — was FACTUALLY WRONG under the actual argv and is
+// removed by W3.D2. This doc-comment records the post-W3 truth so the
+// next reader cannot regress on it.
+//
+// The body content comes from the W3.D2 3-tier resolver (see
+// `assembleAgentFileBody` for the resolver itself, and for the W3.D3
+// strip-then-inject pipeline that layers ON TOP of the resolved body
+// before disk write). The `project` parameter feeds the project tier of
+// the resolver (`<project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>`).
+// Per the W3-FF5 + W3-FF7 LOCKED contracts the resolver walks the tiers in
+// this priority order:
+//
+//  1. project tier — `<project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>`
+//  2. user tier    — `<user-home>/.tillsyn/agents/<group>/<basename>`
+//  3. embedded tier — `templates.DefaultTemplateFS` via
+//     `builtin/agents/<group>/<basename>` with cross-group fallback to
+//     `builtin/agents/till-gen/<basename>` on fs.ErrNotExist.
+//
+// The tier-1 / tier-2 override paths are deliberately Tillsyn-owned
+// (`.tillsyn/agents/...`), NOT `~/.claude/agents/...`. The latter is what
+// `--bare` collapses; the former lives under the per-spawn bundle's
+// resolver scope and is the only path the rendered bundle reads from.
+//
+// `<group>` derivation (W3-FF5 LOCKED):
+//
+//   - `<group> = path.Dir(binding.SystemPromptTemplatePath)` when non-empty
+//     (slash-aware `path.Dir`, NOT OS-aware `filepath.Dir`, because
+//     embed.FS paths are always slash-separated).
+//   - `<group> = "till-go"` (dogfood default) when empty.
+//   - If `path.Dir` returns "." (path has no slash), the resolver treats
+//     the path as malformed and falls back to "till-go".
+//
+// `<basename>` derivation:
+//
+//   - `<basename> = path.Base(binding.SystemPromptTemplatePath)` when
+//     non-empty.
+//   - `<basename> = binding.AgentName + ".md"` when empty.
+//
+// On any tier returning an error other than fs.ErrNotExist (e.g.
+// permission denied on the project tier), the resolver propagates the
+// error wrapped with the failing tier's identity — fail-loud rather than
+// silently skipping to the next tier.
+//
+// On a 3-tier exhaustion the resolver returns ErrAgentBodyNotFound wrapped
+// with the failing AgentName + group + basename context.
+//
+// Future evolution — historical-breadcrumb (W3-FF11 LOCKED 3-landing
+// enumeration; retained as architectural-history breadcrumb until the
+// next refactor):
+//
+//  1. Drop 4c F.7.2 landed the `templates.AgentBinding.SystemPromptTemplatePath`
+//     schema field at `internal/templates/schema.go:573` with validator
+//     at `internal/templates/load.go:1031-1055`.
+//  2. Drop 4c.6 W3.D1 wired the field through
+//     `dispatcher.BindingResolved.SystemPromptTemplatePath` in
+//     `cli_adapter.go` plus the populator in `binding_resolved.go`.
+//  3. Drop 4c.6 W3.D2 implemented the 3-tier render-time resolver in
+//     `assembleAgentFileBody` consuming `templates.DefaultTemplateFS`
+//     with cross-group till-gen fallback.
+//
+// The collapsed round-2 form ("F.7.2 + 4c.6 W3.D2 landed the field-and-
+// resolver-wired version") elided the W3.D1 plumbing step; the expanded
+// 3-landing form keeps the historical sequence diagnosable from the
+// doc-comment alone.
+```
+
+### Design decisions
+
+- **Doc-only droplet — zero production-code-and-test mutation.** The acceptance contract explicitly forbids: (a) `assembleAgentFileBody`'s function-doc-comment (D2's territory; D2 already updated it in lockstep), (b) the body string at the pre-W3 line 360 ("Tillsyn-spawned subagent stub..." — D2's territory), (c) `SPAWN_PIPELINE.md:24-31` rewrite (HF3: W6.D4's sole-owner contract). The `git diff` semantic-token check is the gate: ONLY lines starting with `//` (or unchanged context) appear in the diff. Verified: +46 / -9 comment lines, one unchanged `func` declaration as Read context — every changed line begins with `//`.
+- **Line-number drift handled by Read-before-Edit.** PLAN.md cites "lines 307-319 pre-W3.D2" with the explicit note "line numbers SHIFTED post-D2/D3/D5; verify via Read." The post-D5 file (which D6 starts from) carries the `renderAgentFile` doc-comment at lines 520-558, with the function declaration at line 559. The pre-W3 numeric range no longer exists — D2's rewrite + D3's strip-then-inject addition + D5's validator insertion all shifted the file. I located the post-D5 block by `Read` of lines 520-558, confirmed the doc-comment scope by the surrounding `// renderAgentFile writes ...` opening and the `func renderAgentFile(...)` declaration closing it, and rewrote the block in place.
+- **`--bare collapses Path B` framing per § A.9 + § C.5 + § D.5.** The research deliverable's § A.9 lists every `~/.claude/...` path Claude Code does NOT load under Tillsyn's argv (`~/.claude/CLAUDE.md`, `~/.claude/agents/...`, `~/.claude/skills/`, `~/.claude/settings.json`, `~/.claude/plugins/cache/...`, `~/.claude/.mcp.json`, `~/.claude/hooks/`). § C.5 calls the pre-W3 doc-comment FACTUALLY WRONG. § D.5 prescribes the replacement wording: "Bundle agent file is the SOLE source under `--bare`. Body is sourced from embedded default + per-project override at `<project>/.tillsyn/agents/<name>.md`." I expanded that into a paragraph naming the "two paths" model the research uses (Path A = bundle plugin opted in via `--plugin-dir`; Path B = system-installed plugins + the priority-table fallback to `~/.claude/agents/...`) so a future reader can correlate the doc-comment directly with `SPAWN_PIPELINE.md`'s two-paths section without needing to chase research-doc cross-references.
+- **F.7.3b's wrong sentence quoted verbatim then explicitly removed.** The acceptance contract requires "Replace F.7.3b's now-FACTUALLY-WRONG 'Behavior loaded from the canonical ... template at the system-installed plugin path' sentence." The pre-W3 body sentence at the old line 360 was already replaced by D2's stub-replacement (D2 owns line 360 body-string mutation). What D6 owns is the META-claim about that sentence in `renderAgentFile`'s doc-comment: I quote the wrong sentence in the new doc-comment ("...verbatim in the body sentence the stub used to emit at disk-write time..."), label it FACTUALLY WRONG, attribute the fix to W3.D2, and explicitly state "This doc-comment records the post-W3 truth so the next reader cannot regress on it." The next-reader-guard framing is load-bearing because the original cause of dev confusion (per § C.5: "Misleading doc-comments are the original cause of the dev's confusion") is precisely a misleading comment surviving a behavior fix.
+- **W3-FF11 LOCKED 3-landing Future-evolution breadcrumb.** Three discrete commits:
+  - (1) Drop 4c F.7.2 — `templates.AgentBinding.SystemPromptTemplatePath` schema field at `internal/templates/schema.go:573` (verified via Read; PLAN.md cited line 556 from a stale revision, the current file places the field declaration at 573 with the validator-cross-reference doc-comment running lines 555-572). Validator at `internal/templates/load.go:1031-1055` per `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § D.1.b + AGENT_ARCHITECTURE_TRUTH.md § 2.3.
+  - (2) Drop 4c.6 W3.D1 — `dispatcher.BindingResolved.SystemPromptTemplatePath` field plumbing in `cli_adapter.go` + the `ResolveBinding` populator in `binding_resolved.go`. Per the W3.D1 droplet entry in the PLAN.md, D1 added the field at the end of the `BindingResolved` struct and populated it from the source `templates.AgentBinding.SystemPromptTemplatePath` verbatim.
+  - (3) Drop 4c.6 W3.D2 — 3-tier render-time resolver in `assembleAgentFileBody` consuming `templates.DefaultTemplateFS` with cross-group till-gen fallback. The 3-tier ladder + W3-FF7 cross-group fallback are already documented in `assembleAgentFileBody`'s function-doc-comment (D2's territory); the W3.D6 breadcrumb refers reader to it.
+- **Why expanded (3-landing) not collapsed.** Round-2 collapsed form ("F.7.2 + 4c.6 W3.D2 landed the field-and-resolver-wired version") elided the W3.D1 plumbing step. The W3-FF11 LOCKED contract requires the 3-landing form so the historical commit sequence stays diagnosable from the doc-comment alone — a future reader doing git-blame on `renderAgentFile` should be able to trace each landing without cross-referencing PLAN.md / SKETCH.md. The expanded form costs ~6 doc-comment lines (cheap) and pays back the first time a refactor wants to know "which commit added the SystemPromptTemplatePath field?" without grepping git history.
+- **PRESERVED: tier-1 / tier-2 / tier-3 ladder body, `<group>` derivation rules, `<basename>` derivation rules, fail-loud-on-non-ErrNotExist error semantics, ErrAgentBodyNotFound exhaustion semantics.** These came from D2's rewrite of the doc-comment and remain factually accurate post-W3.D3 + post-W3.D5. The W3.D6 rewrite preserves them verbatim with one cosmetic re-flow ("Per the W3-FF5 + W3-FF7 LOCKED contracts the resolver walks the tiers in this priority order:" line gained a soft-wrap to fit alongside the new strip-then-inject prose). No semantic change to any preserved bullet.
+- **NEW: explicit "tier-1 / tier-2 paths are Tillsyn-owned (`.tillsyn/agents/...`), NOT `~/.claude/agents/...`" paragraph.** This is the next-reader-guard for the OTHER half of the confusion that motivated the doc-comment fix: a future reader could easily conflate "user tier" with `~/.claude/agents/<name>.md` (the priority-table fallback `--bare` collapses) versus `~/.tillsyn/agents/<group>/<basename>` (the Tillsyn-owned override path under the bundle's resolver scope). The new paragraph names both paths and disambiguates them.
+- **NEW: strip-then-inject pipeline reference.** PLAN.md's acceptance bullet says "PRESERVE the two-layer-tool-gating prose at lines 316-319 (frontmatter `disallowedTools` mirrors `binding.ToolsDisallowed` per memory §5; settings.json permissions are the authoritative gate)." That prose existed in the pre-W3 doc-comment at lines 316-319 of the pre-W3.D2 file. Post-D3, the equivalent information lives in `assembleAgentFileBody`'s function-doc-comment as the 4-step strip-then-inject pipeline. D6's `renderAgentFile` doc-comment references it via the cross-pointer "see `assembleAgentFileBody` for the resolver itself, and for the W3.D3 strip-then-inject pipeline that layers ON TOP of the resolved body before disk write." This honors the spirit of "preserve the two-layer-tool-gating prose" without duplicating it — the actual prose remained on `assembleAgentFileBody` per D2/D3's ownership boundary; the doc-comment that USED to need to repeat it now points to the canonical location.
+
+### `git diff` semantic-token verification
+
+```
+git diff internal/app/dispatcher/cli_claude/render/render.go
+```
+
+Output summary: +46 -9 lines, ALL changed lines begin with `//`. The only non-comment lines in the diff hunks are unchanged context (`func renderPluginManifest(bundle dispatcher.Bundle) error {` opener, blank lines, `func renderAgentFile(bundle dispatcher.Bundle, project domain.Project, binding dispatcher.BindingResolved) error {` closer). No `func`, `var`, `const`, `type`, `return`, `if`, `for`, `switch`, `import`, or `package` declaration added or removed. Doc-only verified.
+
+### 3-landing breadcrumb confirmation
+
+The Future-evolution block in the rewritten doc-comment enumerates the three discrete landings:
+1. Drop 4c F.7.2 — `internal/templates/schema.go:573` schema field + `internal/templates/load.go:1031-1055` validator.
+2. Drop 4c.6 W3.D1 — `dispatcher.BindingResolved.SystemPromptTemplatePath` plumbing in `cli_adapter.go` + populator in `binding_resolved.go`.
+3. Drop 4c.6 W3.D2 — 3-tier render-time resolver in `assembleAgentFileBody` consuming `templates.DefaultTemplateFS` with cross-group till-gen fallback.
+
+Round-2 collapsed-form elision of W3.D1 is explicitly called out in the breadcrumb's closing paragraph ("The collapsed round-2 form ... elided the W3.D1 plumbing step; the expanded 3-landing form keeps the historical sequence diagnosable from the doc-comment alone."), satisfying the W3-FF11 LOCKED contract.
+
+### PLAN.md state-flip confirmation
+
+W3.D6 `**State:**` flipped `todo → in_progress` at round start (PLAN.md line 267 within `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md`), then `in_progress → done` at round end.
+
+### Validation
+
+- `mage test-pkg ./internal/app/dispatcher/cli_claude/render` — NOT re-run per droplet constraint (doc-only change; `mage ci` green by transitivity from W3.D5's test pass — no production code or test changes between the green W3.D5 baseline and this droplet's edit).
+- `mage ci` — NOT run per droplet constraint (drop-orch runs `mage ci` at drop end).
+- `mage install` — NOT run per project constraint reiterated in spawn prompt.
+
+### Constraint compliance summary
+
+- ONLY `render.go` doc-comment edited (lines covering the `renderAgentFile` function-doc-comment block, post-D5 line range 520-558 → post-D6 line range 520-595). Diff is doc-only per `git diff` semantic-token check.
+- `SPAWN_PIPELINE.md` NOT touched (HF3: W6.D4 sole owner).
+- `assembleAgentFileBody` function-doc-comment NOT touched (D2's territory; verified by reading the surrounding lines and confining the Edit's `old_string` / `new_string` to the `renderAgentFile` block only).
+- Body string at the pre-W3 line 360 NOT touched (D2 already replaced it during the F.7.3b stub-removal).
+- No production code or test file changed besides the doc-comment block.
+- No commit authored (drop-orch's responsibility).
+
+### Hylla Feedback
+
+N/A — task touched non-Go-semantic content only. The single Go file edited (`internal/app/dispatcher/cli_claude/render/render.go`) received a doc-comment-only change with no symbol references requiring Hylla resolution. The two cross-references in the new doc-comment (`internal/templates/schema.go:573` for `SystemPromptTemplatePath` and `internal/templates/load.go:1031-1055` for the validator) were verified via `Read` of `schema.go` lines 555-573 — the field declaration sits at line 573, confirmed by direct file inspection. PLAN.md cited line 556 from a stale revision; the current file places the doc-comment for the field at 555-572 with the declaration at 573. No Hylla query was issued because the field's location was anchored to a Read-verified line number rather than a symbol resolution, and Hylla's prior misses on `SystemPromptTemplatePath` (per `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § Hylla Feedback bullet 1: "Hylla appears not to index `templates/schema.go` field declarations under the keyword search path used here") would have repeated the same fallback. The doc-comment edit itself touches no Go symbols.
+
+---
+
+## Droplet 4c.6.W2.D5 — Round 1
+
+**Date:** 2026-05-11
+**Builder:** go-builder-agent (sonnet)
+**State:** done
+
+(Worklog originally written to `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/BUILDER_WORKLOG.md` by builder; relocated here by orchestrator to consolidate at the drop-level shared worklog per WORKFLOW.md convention.)
+
+### Scope landed
+
+- `copyAgentFiles(destDir, group string) (int, int, error)` reads embedded `internal/templates/builtin/agents/<group>/*.md` via `templates.DefaultTemplateFS` and writes each entry to `<destDir>/.tillsyn/agents/*.md` FLAT (no group prefix). Each write uses `fsatomic.WriteFile(path, data, 0o644)`. Existing destination files are SKIPPED (re-run safety) via `os.Stat` + `errors.Is(err, fs.ErrNotExist)` pre-check. Returns `(added, skippedExisting, err)`.
+- `copyAgentsTOML(destDir string) (int, int, error)` copies embedded `internal/templates/builtin/agents.example.toml` → `<destDir>/agents.toml` atomically via `fsatomic.WriteFile`. Skip on existing target.
+- `ensureGitignore(destDir string) error` ensures `<destDir>/.gitignore` contains a trim-equal line equal to `agents.local.toml`. Implementation uses LINE-ITERATION via `bufio.Scanner` over file content (W2-FF10 round-2 LOCKED fix) — NOT raw `bytes.Contains([]byte("\nagents.local.toml\n"))`. Handles trailing-newline shapes + absent-file case. Atomic write via `fsatomic.WriteFile`.
+- Shared `runInitPipeline(stdout, opts, payload)` invoked by both `runInitTUI` and `runInitJSON`. After successful pipeline, returns `errors.New("till init: .mcp.json registration not yet wired (W2.D6)")` — the D6 stub literal.
+
+### Tests + verification
+
+- 4 mandatory D5 tests landed: `TestInit_FreshDir_CopiesAllFiles`, `_RerunSafety_NoOverwrite`, `_GitignoreIdempotent`, `_PreExistingGitignore_AppendsCleanly` (2 subcases — trailing_newline + no_trailing_newline).
+- `mage test-func ./cmd/till "TestInit_|TestRunInitTUI_"` 16/16 GREEN.
+- Re-run safety verified via `filepath.WalkDir` + byte-snapshot compare.
+- ensureGitignore line-iteration handles first-line-only case correctly.
+- All 3 production writes use `fsatomic.WriteFile(path, data, agentFileInitPerm)` where `agentFileInitPerm == 0o644`; zero raw `os.WriteFile`.
+
+### Files touched
+
+- `cmd/till/init_cmd.go` +175/-10 (+165 net): added `runInitPipeline` + 3 helpers + 3 stdlib imports + 2 internal package imports; replaced two D5-stub returns with `runInitPipeline` calls.
+- `cmd/till/init_cmd_test.go` +250/-10 (+240 net): added 4 mandatory tests + 3 helpers; added `bufio`+`io/fs` imports; updated 3 pre-existing tests to assert D6 stub + `t.Chdir(t.TempDir())`.
+
+### Hylla Feedback
+
+Three `hylla_search_keyword` queries (`rootCommandOptions`, `scriptedProgram`, `programFactory`) returned `enrichment still running for github.com/evanmschultz/tillsyn@main`. Worked via `/usr/bin/grep` + targeted `Read`. Suggestion: expose enrichment-fraction + ETA so callers can decide wait vs fallback; `--allow-partial` flag would let keyword search hit raw content without full embedding.
+
+---
+
+## Droplet 4c.6.W2.D8 — Round 1
+
+**Date:** 2026-05-11
+**Builder:** go-builder-agent (sonnet)
+**State:** done
+
+(Worklog originally written to `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/BUILDER_WORKLOG.md` by builder; relocated here by orchestrator to consolidate at the drop-level shared worklog per WORKFLOW.md convention.)
+
+### Scope landed
+
+Pure deletion droplet — removes `init-dev-config` CLI command surface now that D7.5 has ported the dev-config-creation behavior into `till install`. Three production files:
+
+- `cmd/till/main.go`: REMOVED `initDevConfigCmd` cobra block, its `AddCommand` arg, and the `runInitDevConfig` function (-77 LOC).
+- `cmd/till/help.go`: REMOVED `"till init-dev-config"` map entry from `commandHelpSpecs` (-14 LOC).
+- `cmd/till/main_test.go`: REMOVED `"init-dev-config"` from registered-commands slice; REMOVED rich-help table-test row (4 lines); REMOVED `TestRunInitDevConfigCreatesDebugConfig` + `TestRunInitDevConfigUpdatesExistingConfig` (-105 LOC); UPDATED `TestShellEscapePath` doc-comment to generic phrasing per W2-PF1 carryforward pin.
+
+### Pre-flight verification
+
+`TestRunInstall_CreatesDebugConfig` + `TestRunInstall_UpdatesExistingConfig` both PRESENT in `install_cmd_test.go` with the contracted underscore (W2-FF2/W2-FF9). D7.5 port coverage gate satisfied.
+
+### Post-delete verification
+
+- `git grep -n init-dev-config cmd/till/`: 3 residual matches, ALL in D7.5-owned `install_cmd.go:18-19` + `install_cmd_test.go:18` historical doc-comments (out of D8's declared paths per spawn constraint).
+- `git grep -n runInitDevConfig cmd/till/ internal/`: 1 residual match in `install_cmd.go:53` historical doc-comment (same out-of-scope rationale).
+- **Routing note for orchestrator:** if literal-zero `init-dev-config` matches required, a tiny follow-up edit to `install_cmd.go` + `install_cmd_test.go` scrubs the historical-prose back-references. Substantively, zero CLI/wiring/test-assertion references remain.
+
+### mage test-pkg result
+
+`mage test-pkg ./cmd/till` final: **271/271 passing, 0 failures**. Count delta: 268 (pre-flight) − 2 (D8 deletions) + 5 (D5 concurrent landings) = 271. Math reconciles.
+
+### Mid-session race observation (informational)
+
+5 transient `TestInit_*` failures appeared mid-session when D5 builder's `init_cmd_test.go` updates landed (D6-stub expectation strings). NOT caused by D8 edits (D8 touches no `init_cmd*` files). Final clean-green confirms.
+
+### Hylla Feedback
+
+None — pure deletion task; `git grep -n` + `Read` were the right tools (line-numbered output for exact-anchor deletion).

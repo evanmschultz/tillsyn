@@ -264,7 +264,7 @@ Tests are co-located with each droplet's production file. D1 appends to `cli_ada
 
 ### Droplet 4c.6.W3.D6 — Doc-comment correction at `render.go:307-319`
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/app/dispatcher/cli_claude/render/render.go` (MODIFY — rewrite the doc-comment block at lines 307-319 ONLY; the block currently describes the F.7.3b stub-design + claims `~/.claude/agents/<name>.md` is the source of truth via Path B; under `--bare` Path B is collapsed per `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § A.9 — the doc-comment must reflect the post-D2-D3 reality).
 - **Packages:** `internal/app/dispatcher/cli_claude/render`.

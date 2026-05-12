@@ -142,7 +142,7 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 ### Droplet 4c.6.W2.D5 — File-copy pipeline + `.gitignore` ensure (uses fsatomic)
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `cmd/till/init_cmd.go` (modify: implement the file-copy pipeline that both `runInitTUI` and `runInitJSON` call)
   - `cmd/till/init_cmd_test.go` (modify: add file-copy + re-run-safety + `.gitignore`-idempotent tests against `t.TempDir()`)
@@ -235,7 +235,7 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 ### Droplet 4c.6.W2.D8 — Remove `init-dev-config` from `main.go` + `help.go` + `main_test.go`
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `cmd/till/main.go` (modify: REMOVE `initDevConfigCmd := &cobra.Command{...}` block at lines 1884-1903; REMOVE `initDevConfigCmd` from the `rootCmd.AddCommand(...)` call at line 1904; REMOVE the `runInitDevConfig` function definition at lines 2039-2094)
   - `cmd/till/help.go` (modify: REMOVE the `"till init-dev-config"` entry at lines 377-390 from the `commandHelpSpecs` map)
