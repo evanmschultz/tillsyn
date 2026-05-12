@@ -13,11 +13,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newInstallCommand returns the `till install` cobra command. D7.5 introduces
-// the command as the new home for the dev-config-creation behavior that
-// previously lived under `till init-dev-config`. D8 later removes the legacy
-// `init-dev-config` registration; D7.5 lifts-and-renames without deleting so
-// the file-lock graph stays clean (D7.5 adds, D8 removes).
+// newInstallCommand returns the `till install` cobra command, which bootstraps
+// the local Tillsyn dev environment by creating the dev config and enforcing
+// debug logging.
 //
 // rootOpts is passed by pointer so the RunE closure reads the live values
 // cobra wrote into &rootOpts.appName / &rootOpts.homeDir during flag parse —
@@ -50,10 +48,8 @@ setup command — see till init for per-project setup.
 }
 
 // runInstall creates the dev config file and enforces debug logging level.
-// Body lifted verbatim from runInitDevConfig in main.go (D7.5 lift-and-rename
-// per OQ#3 disposition; D8 removes the original). Laslig table title is
-// "Dev Config" byte-for-byte to keep the verbatim port mechanical — same
-// substring the inherited test bodies assert.
+// The Laslig table title is "Dev Config" byte-for-byte — test bodies assert
+// this substring (install_cmd_test.go:51 + :109); do NOT rename.
 func runInstall(stdout io.Writer, opts rootCommandOptions) error {
 	if stdout == nil {
 		stdout = io.Discard

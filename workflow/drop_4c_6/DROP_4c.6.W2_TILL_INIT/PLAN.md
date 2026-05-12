@@ -265,7 +265,7 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 **ROUND-3 NEW (W2-D8-FF1 disposition, dev-approved Option B 2026-05-11):** D8's `git grep -n init-dev-config cmd/till/` acceptance left 4 residual references in `install_cmd.go` + `install_cmd_test.go` doc-comments (the D7.5 lift-and-rename narrative). 3 of 4 residuals also reference DELETED symbols (`runInitDevConfig`, `TestRunInitDevConfigCreatesDebugConfig`, `TestRunInitDevConfigUpdatesExistingConfig`) — broken cross-refs in committed code. D9 strips the historical narrative while keeping the technical pins (pointer-receiver rationale, Laslig title byte-for-byte contract, CONSUMER-TIE TEST CONTRACT). Pure doc-comment edits, no code logic changes.
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `cmd/till/install_cmd.go` (modify: rewrite `newInstallCommand` + `runInstall` doc-comments to drop D7.5/D8/`init-dev-config`/`runInitDevConfig` historical narrative; keep technical pins)
   - `cmd/till/install_cmd_test.go` (modify: rewrite `TestRunInstall_CreatesDebugConfig` + `TestRunInstall_UpdatesExistingConfig` doc-comments similarly)

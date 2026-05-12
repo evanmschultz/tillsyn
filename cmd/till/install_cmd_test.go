@@ -12,13 +12,11 @@ import (
 )
 
 // TestRunInstall_CreatesDebugConfig verifies `till install` creates the dev
-// config and enforces debug logging. Ported verbatim from the
-// TestRunInitDevConfigCreatesDebugConfig body in main_test.go (D7.5 lifts
-// the behavior into a new `install` cobra command; D8 later removes the
-// `init-dev-config` original). The new test name introduces an underscore
-// between `TestRunInstall` and the rest — TEST-NAME CONTRACT (W2-FF2 +
-// W2-FF9 ROUND-2). Tests invoke `run(...)` end-to-end (NOT runInstall
-// directly) — CONSUMER-TIE TEST CONTRACT (W2-FF3 ROUND-2).
+// config and enforces debug logging. The underscore in `_CreatesDebugConfig`
+// is intentional Go-test-name shape — do NOT remove on refactor without
+// checking that test discovery patterns still match (W2-FF2 + W2-FF9).
+// Tests invoke `run(...)` end-to-end (NOT runInstall directly) —
+// CONSUMER-TIE TEST CONTRACT (W2-FF3).
 func TestRunInstall_CreatesDebugConfig(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -68,9 +66,8 @@ level = "info"
 }
 
 // TestRunInstall_UpdatesExistingConfig verifies `till install` rewrites an
-// existing logging section to debug. Ported verbatim from the
-// TestRunInitDevConfigUpdatesExistingConfig body in main_test.go. Name
-// underscore + end-to-end invocation per contracts noted above.
+// existing logging section to debug. Name underscore + end-to-end invocation
+// per contracts noted above (W2-FF2 + W2-FF3).
 func TestRunInstall_UpdatesExistingConfig(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

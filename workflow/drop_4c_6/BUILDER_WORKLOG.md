@@ -2698,3 +2698,42 @@ Changed the `registerMCPJSON` function doc-comment phrasing from "preserved verb
 ### Hylla Feedback
 
 N/A — round-3 touched only uncommitted Go files in `cmd/till/` (package main, post-ingest). All evidence came from direct `Read` of `init_cmd.go` and `init_cmd_test.go`. No Hylla query attempted or needed.
+
+---
+
+## 4c.6.W2.D9 — Round 1 — Doc-comment scrub (init-dev-config historical narrative)
+
+**Agent:** go-builder-agent (sonnet)
+**Date:** 2026-05-11
+**Round:** 1
+
+### What was done
+
+Pure doc-comment scrub. Removed historical D7.5/D8 temporal narrative from 4 sites in `install_cmd.go` + `install_cmd_test.go`. All three deleted-symbol references removed (`runInitDevConfig`, `TestRunInitDevConfigCreatesDebugConfig`, `TestRunInitDevConfigUpdatesExistingConfig`, `init-dev-config`). Technical pins retained:
+
+- `newInstallCommand`: pointer-receiver rationale + `main.go:508-513` PersistentFlags cite.
+- `runInstall`: Laslig title `"Dev Config"` byte-for-byte rationale with test-line cites.
+- `TestRunInstall_CreatesDebugConfig`: underscore shape rationale + CONSUMER-TIE TEST CONTRACT (W2-FF2 + W2-FF3).
+- `TestRunInstall_UpdatesExistingConfig`: condensed underscore + contract reference.
+
+No code logic, function signatures, or test bodies changed.
+
+### Files touched
+
+- `cmd/till/install_cmd.go` — rewrote `newInstallCommand` + `runInstall` doc-comments (2 sites).
+- `cmd/till/install_cmd_test.go` — rewrote `TestRunInstall_CreatesDebugConfig` + `TestRunInstall_UpdatesExistingConfig` doc-comments (2 sites).
+- `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` — flipped W2.D9 state `todo → done`.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### Gate checks
+
+- `git grep -n init-dev-config cmd/till/` → ZERO MATCHES.
+- `git grep -n runInitDevConfig cmd/till/ internal/` → ZERO MATCHES.
+- `git grep -n TestRunInitDevConfig cmd/till/` → ZERO MATCHES.
+- `mage test-pkg ./cmd/till` → 279/279 PASS.
+- `mage ci` → 3089 tests, 26 packages, all ≥ 70.0% coverage. `cmd/till` at 75.9%. Build SUCCESS.
+- W2.D9 PLAN.md state: `todo → done`.
+
+### Hylla Feedback
+
+N/A — task touched only uncommitted Go files in `cmd/till/` (package main, post-ingest). Evidence came from direct `Read` of `install_cmd.go` and `install_cmd_test.go`. No Hylla query attempted or needed.
