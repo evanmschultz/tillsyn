@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -366,11 +367,12 @@ func TestEnvNotInheritedFromOSEnviron(t *testing.T) {
 	}
 
 	// Expected size: every baseline name (each set above so all emit) + 1
-	// binding-only name.
-	wantSize := len(closedBaselineEnvNames) + 1
+	// binding-only name + every defense-in-depth literal (D4 — unconditionally
+	// emitted regardless of os.LookupEnv).
+	wantSize := len(closedBaselineEnvNames) + len(defenseInDepthEnvLiterals) + 1
 	if got := len(cmd.Env); got != wantSize {
-		t.Fatalf("cmd.Env size = %d; want %d (baseline %d + binding 1). Env=%v",
-			got, wantSize, len(closedBaselineEnvNames), cmd.Env)
+		t.Fatalf("cmd.Env size = %d; want %d (baseline %d + defenseInDepth %d + binding 1). Env=%v",
+			got, wantSize, len(closedBaselineEnvNames), len(defenseInDepthEnvLiterals), cmd.Env)
 	}
 
 	// And specifically the outsider must not be present.
@@ -689,6 +691,96 @@ func TestRecordedFixtureRoundTrip(t *testing.T) {
 	}
 	if got := report.Denials[0].ToolName; got != "Bash" {
 		t.Errorf("Denials[0].ToolName = %q; want %q", got, "Bash")
+	}
+}
+
+// TestEnvCarriesDefenseInDepthEnvVars asserts the four W3.D4 defense-in-depth
+// env literals (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1, CLAUDE_CODE_FORK_SUBAGENT=0,
+// DISABLE_AUTOUPDATER=1, DISABLE_TELEMETRY=1) appear in cmd.Env unconditionally
+// after BuildCommand runs — per RESEARCH/ISOLATION_ENFORCEMENT_FIX.md § D.3
+// these are defense-in-depth literals, NOT pass-through from operator env, so
+// they MUST be present even when os.LookupEnv would return ("", false) for
+// every one of them in the orchestrator process.
+func TestEnvCarriesDefenseInDepthEnvVars(t *testing.T) {
+	// NOT t.Parallel() — we mutate process env via Unsetenv to prove the
+	// literals are NOT sourced from os.LookupEnv.
+
+	for _, name := range []string{
+		"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+		"CLAUDE_CODE_FORK_SUBAGENT",
+		"DISABLE_AUTOUPDATER",
+		"DISABLE_TELEMETRY",
+	} {
+		prev, hadPrev := os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("os.Unsetenv(%q): %v", name, err)
+		}
+		t.Cleanup(func() {
+			if hadPrev {
+				_ = os.Setenv(name, prev)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		})
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), minimalBinding(t), minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	expected := []string{
+		"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1",
+		"CLAUDE_CODE_FORK_SUBAGENT=0",
+		"DISABLE_AUTOUPDATER=1",
+		"DISABLE_TELEMETRY=1",
+	}
+	for _, want := range expected {
+		if !slices.Contains(cmd.Env, want) {
+			t.Errorf("cmd.Env missing defense-in-depth literal %q; env=%v", want, cmd.Env)
+		}
+	}
+}
+
+// TestEnvDefenseInDepthOverridableByBindingEnv asserts the W3.D4 precedence
+// rule: binding.Env wins over the defense-in-depth literals. Per
+// RESEARCH/ISOLATION_ENFORCEMENT_FIX.md § D.3 RISK clause, a binding that
+// names one of the four defense-in-depth env vars MUST override the literal
+// — mirroring the existing binding > closed-baseline precedence at env.go:108-111.
+func TestEnvDefenseInDepthOverridableByBindingEnv(t *testing.T) {
+	// NOT t.Parallel() — we mutate process env via t.Setenv.
+
+	t.Setenv("DISABLE_TELEMETRY", "0")
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "go-builder-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+		Env:       []string{"DISABLE_TELEMETRY"},
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	if !slices.Contains(cmd.Env, "DISABLE_TELEMETRY=0") {
+		t.Errorf("binding override missing: cmd.Env should carry DISABLE_TELEMETRY=0 (binding > defense-in-depth); env=%v", cmd.Env)
+	}
+	if slices.Contains(cmd.Env, "DISABLE_TELEMETRY=1") {
+		t.Errorf("defense-in-depth literal %q leaked alongside binding override; binding must WIN", "DISABLE_TELEMETRY=1")
+	}
+	// The other three defense-in-depth literals MUST still emit at their
+	// default literal values since the binding didn't override them.
+	for _, want := range []string{
+		"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1",
+		"CLAUDE_CODE_FORK_SUBAGENT=0",
+		"DISABLE_AUTOUPDATER=1",
+	} {
+		if !slices.Contains(cmd.Env, want) {
+			t.Errorf("non-overridden defense-in-depth literal %q missing; env=%v", want, cmd.Env)
+		}
 	}
 }
 
