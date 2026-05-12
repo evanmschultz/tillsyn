@@ -42,7 +42,7 @@ The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd
 
 **ROUND-3 PIVOT (W2.D1 local-implement, dev-approved 2026-05-11):** round-2 plan vendored `fsatomic` from `ta` upstream. Dev call: `ta` is not yet at MVP and the atomic-write pattern is small enough (~30–50 LOC) to own locally in Tillsyn. Pivot from "vendor from `ta`" → "implement locally at `internal/fsatomic/`." No upstream provenance, no `VENDOR_SOURCE.md`, no `internal/vendor/` directory, no "DO NOT EDIT — re-vendor from upstream" header rule. Future migration to `hylla-shared` post-MVP is unaffected by where the package originates.
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `internal/fsatomic/atomic.go` (NEW)
   - `internal/fsatomic/atomic_test.go` (NEW)
@@ -125,7 +125,7 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 ### Droplet 4c.6.W2.D4 — `runInitTUI` — bubbletea walk for project name + group picker
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `cmd/till/init_cmd.go` (modify: replace `runInitTUI` stub with real implementation)
   - `cmd/till/init_cmd_test.go` (modify: add tea-test for the walk — using `teatest_v2` since that's the in-repo test substrate per `go.mod:11` replace directive)

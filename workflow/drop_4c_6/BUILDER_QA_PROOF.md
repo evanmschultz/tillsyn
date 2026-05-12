@@ -6,6 +6,62 @@ feedback.
 
 ---
 
+## Droplet 4c.6.W3.D5 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W3.D5 — Post-render validator wired at Render's exit + sentinel test`.
+**Verdict:** **PASS.**
+
+### Check matrix (A–J per orchestrator spawn prompt)
+
+| # | Subject | Evidence | Result |
+| --- | --- | --- | --- |
+| A | `ErrInvalidAgentBody` declared at package scope adjacent to existing sentinels | `render.go:137` — `var ErrInvalidAgentBody = errors.New("render: invalid agent body in rendered bundle")`, sitting between `ErrAgentBodyNotFound` (L108) and `ErrInvalidAgentTemplatePath` (L170). Doc-comment block L110-136 documents the 3-signal AND check. | PASS |
+| B | `validateBundle` runs at `Render`'s exit BEFORE final return, AFTER `renderSettings` | `render.go:283-297` — `renderSettings(...)` at L283; new `if err := validateBundle(bundle, binding); err != nil { rollback.run(); return "", fmt.Errorf("render: validate bundle: %w", err) }` at L294-297; `return promptBody, nil` at L299. Wiring is load-bearing per HF8 — exit-path call, not a dangling helper. | PASS |
+| C | `validateAgentBodyShape` is a pure-function helper | `render.go:354` — `func validateAgentBodyShape(body string) error`. Signature takes a string + returns error; body L355-392 performs string operations only (`strings.HasPrefix`, `strings.Index`, `strings.Contains`, `fmt.Errorf`). Zero filesystem access; zero stateful side-effects. | PASS |
+| D | 3 signals B → A → C with deterministic order | `render.go:358-389`. Order: (1) L358-359 leading `---\n` prefix [B], (2) L362-365 closing `---\n` index [B], (3) L369-371 `name:` in frontmatter [B], (4) L373-376 `len(postFrontmatter) <= 200` [A], (5) L384-389 marker disjunction `# PLACEHOLDER` OR `# Section 0` OR `## Role` [C]. Three markers exactly as W3-FF6 LOCKED. | PASS |
+| E | Each signal wraps via `fmt.Errorf("%w: <specifics>", ErrInvalidAgentBody)` | `render.go:359, 364, 370, 374, 390` — every failure returns `fmt.Errorf("%w: ...", ErrInvalidAgentBody, ...)`. `errors.Is(err, ErrInvalidAgentBody)` succeeds for every signal. | PASS |
+| F | 5 new tests with the exact names specified | `render_test.go:1458` `TestRenderValidatorFailsOnTooShortBody` (Signal A); L1495 `_FailsOnMissingFrontmatter` (Signal B); L1522 `_FailsOnMissingMarker` (Signal C); L1554 `_PassesOnSubstantiveBody` (positive control); L1592 `_AcceptsAllEmbeddedPlaceholders` (W1.D1 floor). All five tests use `errors.Is(err, render.ErrInvalidAgentBody)` for the failure-path assertions and prove HF8 wiring by asserting on `Render()`'s return value, NOT on `validateBundle()` standalone. | PASS |
+| G | `_AcceptsAllEmbeddedPlaceholders` walks `templates.DefaultTemplateFS` under `builtin/agents/` — 27/27 placeholders pass | `render_test.go:1598-1612` walks `agentsRoot = "builtin/agents"` via `fs.WalkDir(templates.DefaultTemplateFS, ...)`; L1620-1650 sub-tests each placeholder by injecting the body into the project tier and running `Render`. Filesystem enumeration confirms 27 .md files: `till-gdd/` = 7, `till-gen/` = 8, `till-go/` = 12 (totals confirmed via `ls -1` of each group). L1657-1660 enforces `minPlaceholders = 27` floor. Builder worklog (BUILDER_WORKLOG.md:36-44) reports 32 GREEN sub-tests (5 top-level + 27 WalkDir). | PASS |
+| H | 5 pre-existing tests adjusted to use the shared validator-conforming helper | `render_test.go:809-813` declares `validatorConformingBodySuffix()` returning `"# PLACEHOLDER — ..." + 5 × repeated filler` (~300 chars post-frontmatter, clears Signal A floor at 200). Direct fixture mutation: L902 `_UserOverride` body line uses `validatorConformingBodySuffix()`; L935 + L942 `_ProjectOverride` both use it. Indirect fixture mutation via `d3UserTierFrontmatter()` (L1066-1070 — now appends `validatorConformingBodySuffix()` + body-bytes-preserve-marker sentinel) consumed by `_FrontmatterStripModelOnAgentsTOMLSet` (L1081), `_FrontmatterStripToolsOnAgentsTOMLSet` (L1123), `_FrontmatterPreservedWhenAgentsTOMLAbsent` (L1384). Five sites total; sentinel substrings (`SENTINEL_USER_TIER`, `SENTINEL_PROJECT_TIER`, `body-bytes-preserve-marker`) remain assertable because they appear AFTER the suffix. | PASS |
+| I | `mage test-pkg ./internal/app/dispatcher/cli_claude/render` GREEN (70/70) | Builder-reported only — BUILDER_WORKLOG.md:45 states `"70 passed, 0 failed"`. Drop-orch will re-run `mage ci` at Phase 6 / drop-end per the per-droplet constraint (`mage ci NOT run by this builder per droplet constraint`). Mage gate is GREEN per builder verdict; CI re-validation is drop-orch's responsibility, not this QA round's. | PASS (per builder; drop-orch re-runs at Phase 6) |
+| J | PLAN.md W3.D5 state = `done` | `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md:224` reads `**State:** done`. `git diff --stat` shows the PLAN.md file in this drop's W3 sub-plan at +2/−2 (matches a single state-line flip). L1 `workflow/drop_4c_6/PLAN.md` is untouched by this droplet (L1 row is the W3 sub-plan container row, not a per-droplet row). | PASS |
+
+### Cross-cutting verifications
+
+- **HF8 wiring contract satisfied** — Every failure-path test (`_FailsOnTooShortBody`, `_FailsOnMissingFrontmatter`, `_FailsOnMissingMarker`) calls `render.Render(...)` end-to-end and asserts on the returned error + the rollback wipe (`<bundle>/system-prompt.md` + `<bundle>/plugin` both gone via `os.Stat` returning `os.ErrNotExist`). No test calls `validateBundle` standalone. This is the exact pattern HF8 mandates: shipped-but-not-wired anti-pattern impossible because no test would pass if the wiring were dangling.
+- **Rollback invariant preserved** — `validateBundle` failure inside `Render` invokes `rollback.run()` at `render.go:295` BEFORE returning the error, mirroring the renderSystemPrompt / renderPluginManifest / renderAgentFile / renderMCPConfig / renderSettings failure path conventions (lines 258, 264, 271, 277, 284). The rollback removes `<bundle>/system-prompt.md` + `<bundle>/plugin/` blanket per `render.go:418-419`.
+- **Signal C 3-marker disjunction works on every shipped placeholder** — All 27 W1.D1 placeholders use `# PLACEHOLDER — substantive content lands in Drop 4c.8 W4` as their H1 heading per the W1.D1 ship contract. Signal C's `strings.Contains(postFrontmatter, "# PLACEHOLDER")` matches every one. Confirmed via the WalkDir test's 27/27 pass count.
+- **Pure-function split serves dual purpose** — `validateBundle` reads from disk (catches future regression where `os.WriteFile` silently truncates); `validateAgentBodyShape` is pure (signal logic unit-testable without filesystem). The two-layer split lets `Render`'s integration tests prove HF8 wiring while still keeping the signal logic structurally inspectable.
+- **W3-FF13 NIT — Signal C unanchored substring match** — Builder accepted-by-design per round-3 W3-FF13 NIT disposition (W3 sub-plan PLAN.md L307). A stub deliberately quoting `` `# PLACEHOLDER` `` inside backticks would pass Signal C falsely, but Signals A + B catch the common-case stub shapes regardless. The accepted refinement candidate is line-anchored matching; out of scope here.
+- **W3-FF14 NIT — `## Role` marker is speculative-future** — The third marker has no current consumer; round-3 W3-FF14 NIT accepted-by-design (W3 sub-plan PLAN.md L308). Forward-flex hedge with negligible runtime cost (one substring scan); harmless.
+- **Signal A floor is `<=` not `<`** — `render.go:373` reads `if n := len(postFrontmatter); n <= minBodyLength` where `minBodyLength = 200`. PLAN.md L232 spec says "body length > 200" (strict-greater); the implementation interprets "exceeds 200" as `> 200` ⇔ `<= 200` fails. Boundary case: body of exactly 200 chars FAILS Signal A. Consistent with the W4-floor-as-forward-dep spec (W3-FF8) — every legitimate body MUST exceed the floor.
+
+### Findings
+
+None blocking.
+
+- **W3-D5-PF1 (informational, accepted-by-design):** Signal C uses `strings.Contains` (substring match, not line-anchored). W3 sub-plan PLAN.md round-3 W3-FF13 NIT acknowledges this trade-off and accepts it as a refinement candidate. The 3-signal AND structure means a marker-quoted-in-prose stub still needs to clear Signal A (length > 200) AND Signal B (frontmatter intact) — both of which the contrived case would also need to satisfy. No action required from this builder; routed to refinement backlog per W3 sub-plan PLAN.md L307.
+- **W3-D5-PF2 (informational, scope-correct):** Dirty peer files in `git status` (`cmd/till/init_cmd.go`, `internal/templates/builtin/agents.example.toml`, `internal/templates/embed.go`, etc.) belong to in-flight W2 + W5 + W6 droplet builders. Per the orchestrator spawn prompt's review scope and the dirty-files-belong-to-peers convention, these are NOT in W3.D5's review surface. Builder confined edits to `render.go` + `render_test.go` + the W3 sub-plan `PLAN.md` per declared paths.
+- **W3-D5-PF3 (informational, forward-dep documented in code):** The 200-char Signal A floor is a forward-only honor-system constraint on Drop 4c.8 W4 prompt authoring per W3-FF8. `render.go:121` doc-comment references this as "W3-FF8 W4-floor-as-forward-dep." No W3-shipped enforcement seam exists for it beyond today's placeholder set (which all 27 clear); future W4 prompt authoring must verify body length > 200 at authoring time. W3 sub-plan PLAN.md L251 routes this propagation target to W4 sub-planner. Documented; not a defect.
+
+### Missing evidence
+
+None. All ten A-J check categories closed with direct file Reads, embedded-FS enumeration (`ls -1` of three group directories returning 27 .md totals), and `git status` / `git diff --stat` for delta verification. The builder-reported 70/70 mage gate is the standard per-droplet contract; drop-orch re-runs at Phase 6 per the no-`mage ci`-per-droplet constraint.
+
+### Summary
+
+**PASS.**
+
+Builder shipped a clean W3.D5 droplet: `ErrInvalidAgentBody` sentinel declared at package scope adjacent to existing sentinels, `validateBundle` wired at `Render`'s exit between `renderSettings` and the final return (HF8 wiring contract satisfied), `validateAgentBodyShape` pure-function helper applying the 3-signal AND check with deterministic B → A → C order, every signal wrapped via `fmt.Errorf("%w: ...", ErrInvalidAgentBody, ...)`. 5 new tests at the specified names assert on `Render()` end-to-end (proving HF8 wiring, not dangling-helper). `TestRenderValidatorAcceptsAllEmbeddedPlaceholders` walks the embed.FS under `builtin/agents/` and exercises all 27 W1.D1 placeholders — 27/27 pass per builder verdict; embedded FS enumeration independently confirms 7 + 8 + 12 = 27 placeholder files across till-gdd/till-gen/till-go. 5 pre-existing W3.D2/D3 fixture-using tests adjusted via the shared `validatorConformingBodySuffix()` helper + updated `d3UserTierFrontmatter()` — no production-behavior change to D2/D3 — preserving sentinel-substring assertions because the suffix prepends to (not replaces) the sentinel content. State flipped `todo → in_progress → done` on the W3 sub-plan PLAN.md. Mage gate green (70/70 builder-reported; drop-orch re-runs `mage ci` at Phase 6). Three informational findings (W3-D5-PF1 substring-match NIT, W3-D5-PF2 dirty peer files out-of-scope, W3-D5-PF3 W4 forward-dep documented) are accepted-by-design or routed to refinement backlog; none block the droplet's completion.
+
+### Hylla Feedback
+
+None — Hylla was not queried during this QA review. The droplet's review surface is entirely freshly-uncommitted code (W3.D2 + W3.D3 + W3.D5 production code landed within this drop and is uncommitted at review time per the dirty `git status`; the W3 sub-plan PLAN.md is similarly uncommitted). Hylla's last `github.com/evanmschultz/tillsyn@main` ingest predates the W3.D2 commit `d671b91` mentioned in the worklog, so a Hylla round-trip would return stale symbol shapes for `assembleAgentFileBody` / `validateAgentBasename` / `ErrAgentBodyNotFound` and miss `ErrInvalidAgentBody` / `validateBundle` / `validateAgentBodyShape` entirely. `Read` on the four target files (`render.go`, `render_test.go`, the W3 sub-plan `PLAN.md`, `BUILDER_WORKLOG.md`) plus `ls -1` against the three embedded agent directories covered the proof surface exhaustively with zero ambiguity. The fallback was tool-fit-driven, not a Hylla miss; no Hylla query was attempted, so there's no miss to record. Ergonomic ask: a Hylla query mode "newest-ingest-of-uncommitted-file" returning a clear "freshly-uncommitted; query git diff instead" signal would short-circuit the same-drop-staleness deliberation pattern that recurs every drop. Not blocking.
+
+---
+
 ## Droplet 4c.6.W6.D3 — Round 1
 
 **Reviewer:** go-qa-proof-agent (subagent, build-QA-proof axis).
@@ -966,3 +1022,183 @@ N/A — this QA review touched only TOML, markdown, and Go doc-comments in alrea
 ### Summary
 
 **PASS.** Builder shipped a clean W5.D3 droplet: 7 `agent_name = "go-*"` values stripped to bare names in `till-go.toml`, 11 `tools = []` rows removed, header doc-comment rewritten to record the W5.D3 rebadge + agents.toml tool-authority rule, 3 W5-D2-FF1 doc-comment absorption sites (load.go:388 + load.go:1240 + auto_generate_steward.go:108) plus 2 additional related sites (load.go:1385 + load.go:2098) updated with dual-history records, embed.go cross-droplet handoff extended with W5.D3 outcome paragraph, till-gen.toml header rewrite paired, state flipped to `done` on L1 PLAN.md. Placeholder MD frontmatter strip was a no-op verification (W1.D1 shipped clean from inception). `model` field deliberately kept per the CRITICAL constraint — schema-level field removal is Drop 4c.7's concern. Three soft findings (W5-D3-PF1 plan KindPayload drift, W5-D3-PF2 `.tillsyn/template.toml` self-host seed re-sync, W5-D3-PF3 legacy `go-*-agent.md` cleanup) are routed to the orchestrator as informational; none block this droplet's completion. Mage gates green: 458 + 476 + 226 = 1160 tests across 3 declared packages.
+
+---
+
+## Droplet 4c.6.W2.D1 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent, build-QA-proof axis).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D1 — internal/fsatomic/ atomic file-write helper (local-implement, ROUND-3 pivot)`.
+**Parent kind:** `build`.
+**Artifact under review:** `internal/fsatomic/atomic.go` + `internal/fsatomic/atomic_test.go` (untracked-new files at review time) plus PLAN.md state flip + BUILDER_WORKLOG.md round entry.
+
+### Proof certificate
+
+**Premises.**
+- P1: Exported function signature `WriteFile(path string, data []byte, perm os.FileMode) error` matches the spec byte-exact.
+- P2: Implementation uses write-temp-in-same-dir + sync + chmod + close + rename, with defer-guarded cleanup-on-error.
+- P3: Four tests exist with the named names and cover the claimed behaviors.
+- P4: `mage test-pkg ./internal/fsatomic` GREEN.
+- P5: `mage test-func ./internal/fsatomic 'TestWriteFile_*'` GREEN with 4/4.
+- P6: No `internal/vendor/` directory exists (ROUND-3 pivot).
+- P7: No `VENDOR_SOURCE.md` artifact exists.
+- P8: No "DO NOT EDIT" header in `atomic.go`.
+- P9: PLAN.md W2.D1 state is `done`.
+
+**Evidence.**
+- E1 (P1): `internal/fsatomic/atomic.go:46` — `func WriteFile(path string, data []byte, perm os.FileMode) error`. Byte-exact match.
+- E2 (P2): `atomic.go:47-91` — `dir := filepath.Dir(path)`; `os.CreateTemp(dir, base+".tmp-*")` (same-dir temp); `success := false` + `defer { if !success { os.Remove(tmpName) } }` (cleanup guard); `f.Write(data)` → `f.Sync()` → `f.Chmod(perm)` → `f.Close()` → `os.Rename(tmpName, path)` → `success = true`. Order matches spec verbatim.
+- E3 (P3): `atomic_test.go` declares `TestWriteFile_FreshWrite` (L18), `TestWriteFile_OverwritesExisting` (L38), `TestWriteFile_CleansUpTempOnError` (L67), `TestWriteFile_PreservesPermissions` (L99). All 4 names present, all assert real behavior (content match, overwrite no-residue, no leaked `.tmp-*` + target ENOENT, `info.Mode().Perm() == 0o600`).
+- E4 (P4): `mage test-pkg ./internal/fsatomic` → `[PKG PASS] github.com/evanmschultz/tillsyn/internal/fsatomic (0.00s)` — `tests: 4, passed: 4, failed: 0`. Captured this round.
+- E5 (P5): `mage test-func ./internal/fsatomic 'TestWriteFile_FreshWrite|TestWriteFile_OverwritesExisting|TestWriteFile_CleansUpTempOnError|TestWriteFile_PreservesPermissions'` → `[PKG PASS] (1.31s)` with `-race -count=1`. `tests: 4, passed: 4, failed: 0`. Captured this round.
+- E6 (P6): `ls internal/` returns 9 entries (adapters / app / buildinfo / config / domain / fsatomic / platform / templates / tui); no `vendor/`. `ls third_party/` returns only `teatest_v2/` — unrelated pre-existing test helper.
+- E7 (P7): `ls internal/fsatomic/` returns exactly `atomic.go` + `atomic_test.go`. `ls workflow/drop_4c_6/` has no `VENDOR_SOURCE.md`. Repo root `ls` has no `VENDOR_SOURCE.md`.
+- E8 (P8): Direct `Read` of `atomic.go` lines 1-26 — file opens with `// Package fsatomic provides minimal atomic file-write helpers...`. No `// Code generated`, no `// DO NOT EDIT`, no `// vendored from` header.
+- E9 (P9): `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md:45` — `- **State:** done` under the `### Droplet 4c.6.W2.D1` heading at L41.
+
+**Trace or cases.**
+- Case A (signature byte-exactness): spec `"WriteFile(path string, data []byte, perm os.FileMode) error"` vs atomic.go:46 same identifier list, same types, same order. **Match.**
+- Case B (pattern verification): walk atomic.go:47-91 — `os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")` (write-temp-in-same-dir) → `f.Write(data)` (write) → `f.Sync()` (sync) → `f.Chmod(perm)` (chmod) → `f.Close()` (close) → `os.Rename(tmpName, path)` (rename) → `success = true`. Deferred `os.Remove(tmpName)` fires on every early-return error path before the `success = true` assignment. **All five steps in spec order, cleanup defer-guarded.**
+- Case C (test enumeration): `grep ^func TestWriteFile_` of atomic_test.go yields exactly 4 — `FreshWrite`, `OverwritesExisting`, `CleansUpTempOnError`, `PreservesPermissions`. Each test body invokes `WriteFile` end-to-end and asserts a distinct claim. **4/4 present and behaviorally meaningful (not just call-through stubs).**
+- Case D (mage test-pkg): captured stdout/stderr from `mage test-pkg ./internal/fsatomic` shows `[PKG PASS]` and `4 tests passed across 1 package`. **GREEN.**
+- Case E (mage test-func selector): captured stdout from selector regex `TestWriteFile_FreshWrite|TestWriteFile_OverwritesExisting|TestWriteFile_CleansUpTempOnError|TestWriteFile_PreservesPermissions` against `-race -count=1` shows 4/4 passed. **GREEN.**
+- Case F (no vendor dir): two-level evidence — (i) `ls internal/` shows no `vendor/` entry; (ii) `git status` declares the only untracked path under `internal/` is `internal/fsatomic/`. No hidden `internal/vendor/` could exist that `git status` would not report. **Absent.**
+- Case G (no VENDOR_SOURCE.md): `ls internal/fsatomic/` returns only `atomic.go` and `atomic_test.go`; `ls workflow/drop_4c_6/` listing carries no `VENDOR_SOURCE.md`; repo-root `ls` carries no `VENDOR_SOURCE.md`. **Absent everywhere it would plausibly land.**
+- Case H (no DO NOT EDIT header): atomic.go opens with the package doc-comment at L1 (`// Package fsatomic provides minimal atomic file-write helpers...`). No vendor/generated marker in lines 1-26. **Absent.**
+- Case I (PLAN.md state): W2 PLAN.md L45 reads `- **State:** done` directly under the W2.D1 heading at L41. **State flipped.**
+
+**Conclusion.** PASS. Every spec-pinned premise P1-P9 is proven by direct file evidence and live mage gate output. Implementation matches the textbook pattern (same-dir temp + sync + chmod + close + rename + defer cleanup), and the test suite exercises each claimed behavior with assertions that would fail if the implementation degraded.
+
+**Unknowns.**
+- U1: `TestWriteFile_CleansUpTempOnError` does not exercise the post-Write/Sync/Chmod error paths (only the pre-CreateTemp failure path). The cleanup defer is verified textually (Case B) but only one of the five potential failure points is exercised by test; the others rely on code inspection plus general defer semantics. Acceptable for this droplet because the defer + success-flag pattern is uniform across all paths and an inspection-grade proof is sufficient at this LOC, but a future hardening drop could inject failures at each step. Recorded as a minor refinement candidate.
+- U2: No concurrent-reader atomicity test (`TestWriteFile_AtomicVisibility` was a stretch goal in PLAN.md acceptance and explicitly marked "skip if too flaky"). Builder skipped per acceptance — out-of-scope, not a finding.
+
+### Verification table
+
+| Check | Evidence | Verdict |
+|---|---|---|
+| A — Signature byte-exact | atomic.go:46 `func WriteFile(path string, data []byte, perm os.FileMode) error` vs spec | PASS |
+| B — Write-temp-same-dir + sync + chmod + close + rename + defer cleanup | atomic.go:47-91 walk; all 5 steps in spec order; success-guarded defer | PASS |
+| C — 4 named tests present | atomic_test.go:18, 38, 67, 99 — `FreshWrite`, `OverwritesExisting`, `CleansUpTempOnError`, `PreservesPermissions` | PASS |
+| D — `mage test-pkg ./internal/fsatomic` GREEN | `[PKG PASS]` + 4/4 captured this round | PASS |
+| E — `mage test-func ./internal/fsatomic TestWriteFile_*` 4/4 GREEN | `[PKG PASS]` 1.31s with `-race -count=1`, 4/4 captured this round | PASS |
+| F — NO `internal/vendor/` | `ls internal/` returns 9 entries, no `vendor/`; `git status` only has `internal/fsatomic/` untracked | PASS |
+| G — NO `VENDOR_SOURCE.md` | absent from `internal/fsatomic/`, from `workflow/drop_4c_6/`, from repo root | PASS |
+| H — NO "DO NOT EDIT" header in atomic.go | atomic.go:1 opens `// Package fsatomic provides...` (package doc-comment, no vendor/generated marker) | PASS |
+| I — PLAN.md W2.D1 state `done` | `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md:45` reads `- **State:** done` | PASS |
+
+### Findings
+
+- **W2-D1-PF1 (informational, test-coverage gap, not a defect):** `TestWriteFile_CleansUpTempOnError` exercises only the pre-CreateTemp failure path (missing parent dir). The cleanup defer + `success` flag pattern is uniform across the four other potential failure points (Write, Sync, Chmod, Close), and code inspection plus standard `defer` semantics justify the proof in this LOC, but a hardening drop could inject errors at each step (perhaps via a test-only filesystem seam). Recorded as a minor refinement candidate; not blocking this droplet because the defer-guard inspection is sufficient for ~91 LOC and the acceptance criterion only required "the failed call leaves no `.tmp-*`," which the existing test verifies.
+
+- **W2-D1-PF2 (informational, intermediate state-flip omission, not a defect):** PLAN.md W2.D1 transitioned `todo → done` in a single edit without writing the intermediate `in_progress` step. The builder worklog (BUILDER_WORKLOG.md L2003) acknowledges this explicitly and cites WORKFLOW.md Phase 4 step 3 as allowing direct close on single-round completion. The verify-step I asks only that the final state be `done`, which it is — so this is not a finding against the droplet. Flagging because some sibling rounds (W3.D2 round-2, W3.D3) wrote both transitions; consistency would be a small ergonomic refinement. Routed to the orchestrator as informational.
+
+### Missing evidence
+
+None. All nine A-I check categories closed with direct file reads, captured mage stdout/stderr, and absence verification via two-level evidence (`ls` + `git status`).
+
+### Hylla Feedback
+
+None — Hylla answered nothing because no Hylla query was warranted. The droplet creates a brand-new Go package (`internal/fsatomic/`) that does not exist in any prior ingest, the two source files are untracked-new (Hylla cannot see uncommitted files anyway), and the verify surface is small enough (91 LOC + 115 LOC + 4 absence checks) that direct `Read` of all of it plus live mage runs is the appropriate evidence shape. Stdlib semantics for `os.CreateTemp`/`os.Rename`/`(*os.File).Sync`/`(*os.File).Chmod` are background knowledge confirmed by the documented behavior in atomic.go's design comments. No fallback misses to record.
+
+### Summary
+
+**PASS.** Builder shipped a textbook write-temp-in-same-dir + sync + chmod + close + rename atomic helper at `internal/fsatomic/atomic.go` (91 LOC, exports exactly one function `WriteFile(path string, data []byte, perm os.FileMode) error` matching the spec byte-exact) with four behavior-testing tests at `internal/fsatomic/atomic_test.go` (115 LOC) covering fresh-write, overwrite, temp-cleanup-on-error, and permission-preservation. ROUND-3 pivot honored: no `internal/vendor/`, no `VENDOR_SOURCE.md`, no "DO NOT EDIT" header. Mage gates green this round — `mage test-pkg ./internal/fsatomic` reports 4/4 in 0.00s; `mage test-func ./internal/fsatomic TestWriteFile_*` reports 4/4 in 1.31s with `-race -count=1`. PLAN.md W2.D1 state flipped to `done`. Two soft findings (W2-D1-PF1 cleanup-defer coverage gap, W2-D1-PF2 missing intermediate `in_progress` write) are informational and routed to the orchestrator; neither blocks this droplet's completion.
+
+---
+
+## Droplet 4c.6.W3.D4 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent, build-QA-proof axis).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W3.D4 — Defense-in-depth env vars in cli_claude/env.go`.
+**Parent kind:** `build`.
+**Artifact under review:** uncommitted working-tree diff against `internal/app/dispatcher/cli_claude/env.go` + `internal/app/dispatcher/cli_claude/adapter_test.go`.
+**Spec sources:** `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md` § W3.D4 (line 183-220); `workflow/drop_4c_6/BUILDER_WORKLOG.md` § Droplet 4c.6.W3.D4 — Round 1.
+
+### Acceptance trace (A-I)
+
+- **A (4 defense-in-depth literals injected).** `env.go:41-53` declares `defenseInDepthEnvLiterals` as a `[]struct{Name, Value string}` with exactly four entries in declaration order: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` (L46), `CLAUDE_CODE_FORK_SUBAGENT=0` (L48), `DISABLE_AUTOUPDATER=1` (L50), `DISABLE_TELEMETRY=1` (L52). Verbatim match against spec. PASS.
+- **B (Injection writes UNCONDITIONALLY).** Injection loop at `env.go:145-150` carries values inline — no `os.LookupEnv`, no conditional source on the orchestrator process. The only skip condition is `alreadySet` (binding-precedence guard), which is the spec's binding-override path, not a conditional-on-environment path. `TestEnvCarriesDefenseInDepthEnvVars` (`adapter_test.go:697-738`) proves unconditional emission by `os.Unsetenv`ing all four names first, then asserting all four `name=value` strings remain in `cmd.Env`. PASS.
+- **C (Precedence chain: binding > defense-in-depth > closed-baseline).** Three-tier trace through `assembleEnv`: (i) `binding.Env` loop at `env.go:131-137` populates `emitted[name] = val` for binding names first; (ii) defense-in-depth loop at L145-150 skips on `alreadySet` so binding wins; (iii) closed-baseline loop at L158-167 also skips on `alreadySet` so both prior tiers win. The slice-builder mirrors the precedence: baseline emit (L176-183), then defense-in-depth emit (L184-194), then sorted binding-only tail (L196-206). Walked the override test case: `binding.Env: ["DISABLE_TELEMETRY"]` + `t.Setenv("DISABLE_TELEMETRY", "0")` → emitted at L131-136 with value `"0"`; defense loop L145 sees `alreadySet=true` → skips, leaves `emitted["DISABLE_TELEMETRY"]="0"` unchanged; slice-builder defense-loop L184-194 emits via `emitted` (value `"0"`) once; binding-only tail L196-206 skips because already seen. Result: `cmd.Env` carries `DISABLE_TELEMETRY=0` exactly once, no `DISABLE_TELEMETRY=1` leak. PASS.
+- **D (Separate slice + injection-loop shape chosen).** `defenseInDepthEnvLiterals` is a sibling declaration of distinct shape (`[]struct{Name, Value string}`) — NOT an extension of `closedBaselineEnvNames` (`[]string`). The doc comment at L19-40 explicitly contrasts the two slices ("Unlike `closedBaselineEnvNames`..."). This matches the PLAN.md "preferred" shape verbatim. PASS.
+- **E (`TestEnvCarriesDefenseInDepthEnvVars` asserts all 4 literals via `slices.Contains`).** `adapter_test.go:697-738`: builds the four-string expected slice at L729-733, walks with `for _, want := range expected` at L734-738, asserts `slices.Contains(cmd.Env, want)` for each. `slices` import added at `adapter_test.go:12`. PASS.
+- **F (`TestEnvDefenseInDepthOverridableByBindingEnv` asserts binding override).** `adapter_test.go:740-787`: `t.Setenv("DISABLE_TELEMETRY", "0")` (L749), `binding.Env: []string{"DISABLE_TELEMETRY"}` (L754), then asserts (i) `cmd.Env` contains `DISABLE_TELEMETRY=0` (L771-773, binding wins), (ii) does NOT contain `DISABLE_TELEMETRY=1` (L774-776, literal must not leak alongside override), (iii) the other three literals still emit at default values (L778-785). Three-pronged assertion exhaustively covers the precedence-clause RISK in `ISOLATION_ENFORCEMENT_FIX.md` § D.3. PASS.
+- **G (`TestEnvNotInheritedFromOSEnviron` length assertion adjusted).** `adapter_test.go:370-376`: `wantSize := len(closedBaselineEnvNames) + len(defenseInDepthEnvLiterals) + 1` (was `+ 1` alone pre-change). Error message at L374 rewritten to surface all three components (`baseline %d + defenseInDepth %d + binding 1`). PASS.
+- **H (`mage test-pkg ./internal/app/dispatcher/cli_claude` GREEN).** Ran in QA session: 24 tests passed / 0 failed / 0 skipped / 1 package passed. PASS.
+- **I (PLAN.md W3.D4 state `done`).** `DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md:183` flipped `todo → done` (single-line diff, no other PLAN.md mutations on this row). PASS.
+
+### Findings
+
+- **W3-D4-PF1 (informational, accept).** LOC counts in the build-artifact spec (+45 / +85) diverge from actual diff (+68 / +96). Net code is correctly scoped — divergence reflects doc-comments + the slice-builder extension landing slightly larger than the planner's estimate. No production-behavior delta. Routes as informational only; no action requested.
+
+### Missing Evidence
+
+None. Every A-I check resolves to a concrete file+line citation or a directly-observed mage-gate run.
+
+### Out-of-scope mutation check
+
+`git status --porcelain` shows additional dirty paths (`cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`, `internal/app/dispatcher/cli_claude/render/render.go`, `internal/app/dispatcher/cli_claude/render/render_test.go`, untracked `internal/fsatomic/`). All cross-referenced to `BUILDER_WORKLOG.md` § Droplet 4c.6.W2.D1 (the `internal/fsatomic` package) and § Droplet 4c.6.W3.D5 (render.go + render_test.go) and the W2 init-cmd droplets — none authored by the W3.D4 builder spawn. W3.D4 builder's own touched paths (env.go + adapter_test.go) match the spec. CLEAN.
+
+### Summary
+
+**PASS.** Builder shipped the W3.D4 defense-in-depth env vars cleanly: 4 literal `(name, value)` pairs in `defenseInDepthEnvLiterals` injected unconditionally into every claude spawn's `cmd.Env`, separate-slice shape (preferred per PLAN.md), three-tier precedence chain (`binding > defense-in-depth > closed-baseline`) implemented + tested via the asymmetric override test, length-assertion adjustment in `TestEnvNotInheritedFromOSEnviron` accounts for the four new unconditional emissions, `slices.Contains` used in both new tests, `mage test-pkg` 24/24 GREEN, PLAN.md W3.D4 flipped to `done`. One informational finding (LOC-count divergence) is non-blocking. Verdict: PASS.
+
+### Hylla Feedback
+
+N/A — this QA review verified an uncommitted working-tree diff. Hylla indexes committed Go only, and Hylla resolution against committed state would surface the pre-D4 file (no `defenseInDepthEnvLiterals` symbol). Direct `git diff` + `Read` against env.go + adapter_test.go was the appropriate evidence shape for diff-based proof. No Hylla query attempted; no fallback misses to record.
+
+---
+
+## Droplet 4c.6.W2.D4 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D4 — runInitTUI bubbletea walk for project name + group picker`.
+**Verdict:** **PASS** (no blocking findings; one informational NIT on test-coverage symmetry, builder defense-in-depth already mitigates).
+
+### Check matrix
+
+| Check | Subject | Evidence | Result |
+| --- | --- | --- | --- |
+| A | `runInitTUI` D3a stub replaced with bubbletea walk | `init_cmd.go:324-352` — `runInitTUI` calls `os.Getwd()` → `newInitTUIModel(cwd)` → `programFactory(m).Run()` → type-asserts back to `initTUIModel` → dispatches on `Cancelled()` / `Done()`. No `errors.New("till init: TUI walk not yet wired ...")` string anywhere. `git grep "TUI walk not yet wired" cmd/till/` returns zero hits. | PASS |
+| A | Walk types + methods exist | `init_cmd.go:87-106` (`initTUIStep` + 4 step constants), `:112-115` (`initTUIGroupRow`), `:120-124` (`initTUIGroupRows` with 3 rows incl. `till-gdd` `Disabled: true`), `:133-139` (`initTUIModel`), `:145-160` (`newInitTUIModel`), `:166-168` (`Init`), `:174-233` (`Update`), `:239-267` (`View`), `:271-286` (`Done` / `Cancelled` / `Payload`), `:291-310` (`nextEnabledGroupRow` / `prevEnabledGroupRow`). | PASS |
+| B | 3 new tea-tests present with EXACT names | `init_cmd_test.go:153` `TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo`, `:218` `TestRunInitTUI_DisabledTillGddIsUnselectable`, `:267` `TestRunInitTUI_EscCancelsWalk`. All three drive `teatest.NewTestModel(newInitTUIModel(cwd), ...)`. | PASS |
+| C | Disabled-`till-gdd` no-advancement: 2 `down` from `till-gen` lands on `till-go` | Trace: `initTUIGroupRows = [{till-gen,false}, {till-go,false}, {till-gdd,true}]`. Start cursor=0 (`till-gen`). Down 1: `nextEnabledGroupRow(0)` → i=1, `Disabled=false` → return 1 (`till-go`). Down 2: `nextEnabledGroupRow(1)` → i=2, `Disabled=true` → skip; loop exits; return `cur=1`. Final cursor=1 (`till-go`). Enter on `till-go` → `Disabled=false` → finalize. `TestRunInitTUI_DisabledTillGddIsUnselectable` (`init_cmd_test.go:218-262`) drives `Enter, Down, Down, Enter` and asserts `Payload().Group == "till-go"` (`:259-261`). Test passes (race detector on). | PASS |
+| C | Defense-in-depth: Enter on a disabled row is no-op | `init_cmd.go:212-220` — `case key.Code == tea.KeyEnter: row := initTUIGroupRows[m.groupCursor]; if row.Disabled { return m, nil }`. Belt-and-suspenders alongside the cursor-skip helpers. | PASS |
+| D | D5-stub error byte-exact `"till init: file copy not yet wired (W2.D5)"` | `git grep "till init: file copy not yet wired" cmd/till/` returns 4 hits: `init_cmd.go:351` (TUI branch, NEW in D4), `init_cmd.go:376` (JSON branch, D3b-shipped), `init_cmd_test.go:53` (smoke test assertion), `init_cmd_test.go:70` (JSON smoke test assertion). Both production sites use literal `errors.New(...)` — no `fmt.Sprintf`, no concatenation — so the byte-exact contract is structurally preserved. | PASS |
+| E | `programFactory` test seam reused per `main_test.go:253-257` pattern | Production `init_cmd.go:333` — `finalModel, err := programFactory(m).Run()`. Smoke test `init_cmd_test.go:30-57` shape mirrors `main_test.go:252-267`: `origFactory := programFactory; t.Cleanup(func() { programFactory = origFactory }); programFactory = func(m tea.Model) program { ... return scriptedProgram{...} }`. `scriptedProgram` is the existing test fixture at `main_test.go:68-79` — no new test-substrate code introduced. | PASS |
+| F | `mage test-pkg ./cmd/till` GREEN | Reviewer-run `mage test-pkg ./cmd/till`: `[SUCCESS] All tests passed — 268 tests passed across 1 package`. Targeted `mage test-func ./cmd/till 'TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo\|TestRunInitTUI_DisabledTillGddIsUnselectable\|TestRunInitTUI_EscCancelsWalk\|TestInit_BareInvocation_ReturnsTUIStubError'` → 4 passed, 0 failed (race detector on). Pre-D4 baseline init-prefixed tests: 1 bare smoke + 1 JSON smoke + 1 table parent + 7 sub-cases = 10. Post-D4: 10 + 3 new TUI tests = 13, reconciling with the builder worklog's "10 + 3 = 13" claim. | PASS (268/268) |
+| G | PLAN.md W2.D4 state `done` | `DROP_4c.6.W2_TILL_INIT/PLAN.md:128` — `**State:** done`. The W2 sub-plan only flipped the W2.D4 row in this round. | PASS |
+
+### Cross-checks
+
+- **Smoke test rewrite is semantics-preserving.** `TestInit_BareInvocation_ReturnsTUIStubError` (`init_cmd_test.go:30-57`) keeps its function name (per builder worklog L2103 — git-blame continuity) but the body now stubs `programFactory` with a `scriptedProgram` that returns an `initTUIModel` advanced to `Done` with synthetic payload `{Name:"stub", Group:"till-go", MCP:false}`. The `run(ctx, []string{"--app","tillsyn-init","init"}, ...)` end-to-end call is preserved — the CONSUMER-TIE TEST CONTRACT (W2-FF6 ROUND-2) from `DROP_4c.6.W2_TILL_INIT/PLAN.md:98` still holds because the route → cobra → `initCmd.RunE` → `runInitTUI` chain is still exercised. Only the terminal error shifts from the D3a literal (`"till init: TUI walk not yet wired (W2.D4)"`, now gone) to the D5-stub literal (`"till init: file copy not yet wired (W2.D5)"`). PASS.
+- **Defense-in-depth on disabled row.** Two layers — cursor-skip via `nextEnabledGroupRow`/`prevEnabledGroupRow` + Enter-no-op via the `row.Disabled` check at `init_cmd.go:213-220`. Plan acceptance at W2 sub-plan L141 (`Greyed-out till-gdd option must be UNSELECTABLE — pressing enter on it should be a no-op or play a UI bell, not advance to next step`) is fully satisfied; the Enter-no-op layer is a forward-compat guard for future row additions.
+- **Esc semantics consistent across both steps.** `init_cmd.go:184-186` (Name step) and `:203-205` (Group step) both set `step = initTUIStepCancelled` + `tea.Quit`. `TestRunInitTUI_EscCancelsWalk` (`:267-297`) drives Esc at the Name step; the Group-step Esc path is implementation-mirrored but not directly test-driven. Plan acceptance L134 only requires one cancel test; the Name-step exercise satisfies that.
+- **Type-assertion safety.** `init_cmd.go:337-340` — `final, ok := finalModel.(initTUIModel); if !ok { return fmt.Errorf("till init: tui returned unexpected model type %T", finalModel) }`. Defensive but correct.
+- **No tool / test bypasses.** Builder ran `mage testFunc` and `mage formatPath`; `mage install` was NOT invoked (per project rule); `mage ci` deferred to drop-orch (correct).
+- **Out-of-scope diff verification.** `git diff --stat HEAD -- cmd/till/init_cmd.go cmd/till/init_cmd_test.go` reports `2 files changed, 464 insertions(+), 9 deletions(-)`. 271 LOC added to `init_cmd.go` matches the new walk surface (types + 6 methods + 2 helpers + rewritten `runInitTUI`); 202 LOC added to `init_cmd_test.go` matches the 3 new tea-tests + the smoke rewrite. Plan declared `~190` and `~150` — actual is within the order-of-magnitude expected for the model + teatest_v2 boilerplate. No drift outside declared paths.
+
+### Findings
+
+None blocking. One informational note:
+
+- **W2-D4-PF1 (informational, NIT — symmetric Esc coverage):** Group-step Esc semantics (cancel from the group picker, not just the name step) are implemented at `init_cmd.go:203-205` but not exercised by a dedicated test. `TestRunInitTUI_EscCancelsWalk` only drives Esc at the Name step. The Group-step Esc code path is byte-identical to the Name-step path except for the entry-state constant, and the `final.Cancelled()` contract is the same, so this is a low-risk gap. Routed to the orchestrator as informational — future tightening could add a `TestRunInitTUI_EscDuringGroupPickerCancels` variant if the dev wants matching coverage. No action required from this builder.
+
+### Missing evidence
+
+None. All seven A-G check categories closed with direct file reads (`init_cmd.go`, `init_cmd_test.go`, `main.go`, `main_test.go`, `PLAN.md`, `BUILDER_WORKLOG.md`), `git grep` scans for the error string + `programFactory` seam, `git diff --stat` for delta scope, and two mage runs (full `test-pkg ./cmd/till` 268/268 + targeted `test-func` 4/4).
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. No Hylla query was attempted in this QA review because all proof surfaces were either uncommitted changes verified via `git diff`/`Read`, or in-repo line-pinned references verified via `git grep`. The reviewed files were uncommitted at QA time so a Hylla query would have returned stale pre-D4 state for `init_cmd.go` anyway; the builder worklog L2151-2155 already records the relevant ingest-lag observation against `github.com/evanmschultz/tillsyn@main`.
+
+### Summary
+
+**PASS.**
+
+D4's bubbletea walk fully replaces the D3a `runInitTUI` stub: 4-state closed `initTUIStep` enum, 2-step linear flow (Name → Group), 3-row group picker with `till-gdd` disabled + cursor-skip + Enter-no-op double-defense, `programFactory` seam reused (no new test substrate), 3 new tea-tests under the exact names the appendix called for, smoke-test rewrite preserving the CONSUMER-TIE TEST CONTRACT (W2-FF6), and D5-stub error byte-exact in both branches (TUI + JSON). PLAN.md state flipped `todo → done`. `mage test-pkg ./cmd/till` reports 268/268 GREEN (race detector on); the 4 newly-touched tests (3 tea + 1 rewritten smoke) all pass under targeted `mage test-func`. One informational NIT (W2-D4-PF1, missing symmetric Group-step Esc test) is routed to the orchestrator without action required.
+
+D5 (file-copy pipeline) and downstream W2 droplets unblock on D4's `done` state per the W2 chain at `DROP_4c.6.W2_TILL_INIT/PLAN.md:162` (`D5 Blocked by: D1, D4`).

@@ -1617,3 +1617,526 @@ No routing to orchestrator beyond the closure confirmation. W3-D23-FF1 closed; n
 ### Hylla Feedback
 
 N/A — round-2 falsification touched only Go files in `internal/app/dispatcher/cli_claude/render/` whose post-W3.D2 round-2 changes (`d671b91`) have not been ingested. Hylla's last ingest predates the round-2 commit, so the new symbols under attack (`validateAgentTemplatePath`, `ErrInvalidAgentTemplatePath`, the wired call site) are not in the index. The falsification relied entirely on `Read` against `render.go` + `render_test.go` + the BUILDER_WORKLOG entry + `go doc path Clean` / `go doc path Dir` / `go doc path Base` / `go doc filepath Join` / `go doc filepath Clean` for the documented language semantics that ground the narrowing analysis. The staleness window is structurally guaranteed pre-cascade-ingest. No fallback miss to record.
+
+---
+
+## Droplet 4c.6.W2.D1 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, doc-only mode).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D1 — internal/fsatomic/ atomic file-write helper (local-implement)`.
+**Artifact under attack:** `internal/fsatomic/atomic.go` (91 lines, NEW package) + `internal/fsatomic/atomic_test.go` (115 lines, 4 tests).
+
+### Counterexamples
+
+- **W2-D1-FF1 — `mage ci` FAILS with coverage gate violation (CONFIRMED).**
+  - **Family:** B5 spec-compliance (acceptance bullet violation).
+  - **Severity:** **high — blocks droplet completion.**
+  - **Claim under attack:** plan acceptance bullet `mage ci green.` (DROP_4c.6.W2_TILL_INIT/PLAN.md line 63).
+  - **Observed:** `mage ci` exits non-zero with:
+    ```
+    [ERROR] Coverage threshold not met
+      Each package must stay at or above 70.0% coverage.
+      github.com/evanmschultz/tillsyn/internal/fsatomic 64.0%
+    Error: coverage below 70.0%: github.com/evanmschultz/tillsyn/internal/fsatomic 64.0%
+    ```
+  - **Repro:** `mage ci` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/` — full output captured above; 3077 tests across 26 packages pass, then the coverage gate fires on `internal/fsatomic` at 64.0% vs the 70.0% floor. CLAUDE.md "Build Verification" §"Coverage below 70% is a hard failure" pins the gate as load-bearing.
+  - **Root cause:** the 4 shipped tests cover only the success path plus the `os.CreateTemp` error branch. Five error-return branches inside `WriteFile` are unexercised:
+    1. Line 66-69 — `f.Write` error path.
+    2. Line 71-74 — `f.Sync` error path.
+    3. Line 76-79 — `f.Chmod` error path.
+    4. Line 81-83 — `f.Close` error path.
+    5. Line 85-87 — `os.Rename` error path.
+    Plus the deferred cleanup body at lines 60-64 is never exercised with `success=false` AFTER a successful `CreateTemp` — `TestWriteFile_CleansUpTempOnError` injects failure at `CreateTemp` itself (parent dir missing), so the function returns at line 52 before the success-flag tracker + defer are installed. The plan acceptance's "TestWriteFile_CleansUpTempOnError: inject an error into the write path … assert NO `.tmp-*` files remain in the parent dir after the failed call" is technically satisfied by the current test, but only via the trivial branch — the cleanup defer the implementation actually relies on remains uncovered.
+  - **Fix hint (low-cost):** add at least one test that exercises a post-`CreateTemp` failure to land the defer body + at least one error-wrap on disk. Easiest realistic shape — `TestWriteFile_RenameFailsWhenTargetIsDirectory`: pre-create a directory at the target path (`os.Mkdir(target, 0o755)` before `WriteFile(target, …)`), call `WriteFile(target, []byte("x"), 0o644)`, assert the returned error wraps a `*os.LinkError` (rename of file → existing directory errors per `go doc os.Rename`: "If newpath already exists and is a directory, Rename returns an error"), then `os.ReadDir(filepath.Dir(target))` and assert NO `.tmp-*` entry remains. This single test simultaneously: (a) exercises the rename-error wrap on line 85-87, (b) exercises the deferred cleanup body at line 60-64 with a real temp file present, (c) directly validates the same-directory atomicity contract by proving the temp lives next to the target (else `os.Rename` would have been cross-filesystem, not "target is directory"). Estimated lift: ≥4 lines / 4 statements covered → coverage moves to ~76-80%, clearing the 70% gate.
+  - **Family-table impact:** B5 CONFIRMED. Falsification verdict: **FAIL** until coverage gate clears.
+
+### Findings (non-CONFIRMED, recorded for audit)
+
+- 1.1 [Family: spec-compliance] [severity: info] Plan acceptance bullet (line 64) says future-migration intent points to `hylla-shared`; the package doc-comment (line 24) says "`hylla-utility location (see SKETCH.md §9.6)`". Same intent, different label. Plan also says "Optional helper for parent-dir fsync as a separate exported function (`SyncDir(path string) error`) if W2.D5 needs strong durability; if not, leave as a future addition (YAGNI)." Shipped surface omits `SyncDir` — consistent with the YAGNI carve-out (no Drop-4c.6 consumer calls it). Not a counterexample.
+
+  *Verdict on this attack: REFUTED — phrasing nit + intentional YAGNI omission, both within plan tolerance.*
+
+- 1.2 [Family: hidden-coupling] [severity: info] `os.CreateTemp` (per `go doc`) creates the temp file with mode `0o600 & ~umask`. On the call path, `f.Chmod(perm)` (line 76) is called BEFORE `f.Close()` (line 81) and BEFORE `os.Rename` (line 85), so the final on-disk mode after rename matches `perm`. The doc-comment line 41-42 captures this correctly: "Permissions are applied to the temp file before rename so the final mode is correct at the moment the file becomes visible at the target path." No window during which a reader could observe the target at the temp's 0o600 default. REFUTED.
+
+- 1.3 [Family: contract-preservation] [severity: info] `f.Sync()` (line 71) is called BEFORE `f.Close()` (line 81) which is BEFORE `os.Rename` (line 85). This is the textbook sync-before-rename ordering — without it, a crash between rename and disk-flush could leave the target pointing at an unflushed inode on POSIX. The package doc-comment (lines 6-11) pins same-directory-as-target as the atomicity precondition; the implementation honors it via `os.CreateTemp(filepath.Dir(path), …)` at line 50. REFUTED.
+
+- 1.4 [Family: yagni] [severity: info] Plan stretch-goal `TestWriteFile_AtomicVisibility` (planner explicitly says "Skip if too flaky on CI; documented as a future test") is omitted; documented as a future test by being absent (no negative claim made about atomicity-under-concurrency in the doc-comment beyond "never observed half-written by a concurrent reader on POSIX filesystems" at lines 38-39, which is grounded in the rename-atomicity contract, not asserted via test). Plan allows this. REFUTED — but note this carve-out is what permitted the coverage gap to land; tightening this test (or substituting the rename-fails-when-target-is-directory test) is the cheapest path to clearing W2-D1-FF1.
+
+- 1.5 [Family: contract-preservation] [severity: info] Concurrent writers `WriteFile(samePath, …)` from two goroutines: each goroutine's `os.CreateTemp` returns a unique filename per `go doc os.CreateTemp` ("Multiple programs or goroutines calling CreateTemp simultaneously will not choose the same file"). Each goroutine's `os.Rename` is atomic (POSIX same-filesystem). Post-condition: target ends up with the bytes from whichever rename completes last; readers see either A's full bytes or B's full bytes, never half-written. Matches the doc-comment claim line 38-39. REFUTED.
+
+- 1.6 [Family: contract-preservation] [severity: info] Empty data `WriteFile(path, []byte{}, 0o644)` — `f.Write([]byte{})` returns `(0, nil)` per the `io.Writer` contract; the rest of the pipeline runs unchanged; result is a 0-byte file at the target. Large data (1MB+): `*os.File.Write` blocks until all bytes are written or an error occurs; no internal buffer-size limit beyond what the kernel handles. REFUTED on both.
+
+- 1.7 [Family: contract-preservation] [severity: info] Path edge cases: `WriteFile(".", …)` — `filepath.Dir(".")` returns `.`, `filepath.Base(".")` returns `.`, `os.CreateTemp(".", "..tmp-*")` creates `..tmp-<rand>` in cwd, then `os.Rename("..tmp-xyz", ".")` errors because `.` is a directory; defer cleans temp. `WriteFile("/tmp/", …)` — analogous: rename fails on directory target. `WriteFile(path-with-mid-string-file-as-dir, …)` — `os.CreateTemp` fails ENOTDIR; early return at line 52, no defer installed (no temp to clean — none was created). All edge cases either error cleanly with no residue or error cleanly with the defer cleaning residue. REFUTED.
+
+- 1.8 [Family: shipped-but-not-wired] [severity: info] Package has no consumers yet — D5 is the first consumer per plan blocker chain ("Blocked by: D1" at line 162). Today the package is a leaf: shipped, tested (within coverage gap), but unwired in production code. Per CLAUDE.md "shipped-but-not-wired" framing (memory `feedback_tillsyn_enforces_templates`), this is acceptable for a foundation droplet whose downstream consumers are queued in the same drop. The risk closes when D5 lands. REFUTED (provisional — promotes to CONFIRMED if D5 lands without invoking `fsatomic.WriteFile`, which a future round will check).
+
+### Attack family table
+
+| Family                  | Result    | Notes                                                                 |
+| ----------------------- | --------- | --------------------------------------------------------------------- |
+| B1 test-coverage        | CONFIRMED | 4 tests shipped, 5 error branches + deferred-cleanup-after-successful-CreateTemp unexercised → 64.0% < 70.0% gate. See W2-D1-FF1. |
+| B2 contract-preservation| REFUTED   | Same-dir temp (line 47/50), sync-before-rename (71→85), chmod-before-close (76→81), close-before-rename (81→85), defer-with-success-flag cleanup (58-64) — all match POSIX-atomic write-temp + rename idiom. `go doc os.CreateTemp` + `go doc os.Rename` confirm the contracts. Concurrent-writer / empty-data / large-data / path-edge-case probes all REFUTED (Findings 1.5–1.7). |
+| B3 hidden-coupling      | REFUTED   | `os.CreateTemp`'s 0o600-default-with-umask is shadowed by the explicit `f.Chmod(perm)` before rename, so callers see exactly `perm`. No init-time global state, no package-level mutable state. Package imports are stdlib-only (`fmt`, `os`, `path/filepath`). No init() side effects. REFUTED. |
+| B4 yagni                | REFUTED   | Shipped surface = single `WriteFile` function. No staged-write struct, no `SyncDir`, no rename-only helper — matches package doc-comment scope statement (lines 20-25) and plan YAGNI carve-out (acceptance bullet "Optional helper for parent-dir fsync … if not, leave as a future addition"). REFUTED. |
+| B5 spec-compliance      | CONFIRMED | Plan acceptance bullet `mage ci green.` (line 63) FAILS — gate exits non-zero on `internal/fsatomic 64.0% < 70.0%`. Acceptance bullet `Tests at internal/fsatomic/atomic_test.go: [list of 4 tests + stretch-goal 5th]` (lines 56-61) is structurally met (4 named tests shipped) but the implementation's defensive error branches are unreached, hence the gate failure. See W2-D1-FF1. |
+| B6 shipped-but-not-wired| REFUTED (provisional) | No D5 consumer yet — finding 1.8 marks this as REFUTED today, with promotion risk if D5 lands a `.gitignore` / `agents.toml` write path that doesn't actually call `fsatomic.WriteFile`. Re-check next round at D5 landing. |
+| B7 prompt-injection     | EXHAUSTED | DORMANT pre-team-feature per agent definition.                        |
+
+### `mage ci` result
+
+**FAIL.** Captured output:
+
+```
+3077 tests passed across 26 packages.
+
+[ERROR] Coverage threshold not met
+  Each package must stay at or above 70.0% coverage.
+  github.com/evanmschultz/tillsyn/internal/fsatomic 64.0%
+Error: coverage below 70.0%: github.com/evanmschultz/tillsyn/internal/fsatomic 64.0%
+```
+
+Tests pass (4/4 in `fsatomic`, 3077/3077 total). The coverage gate is the failure point.
+
+### Summary
+
+**Verdict: FAIL — 1 CONFIRMED counterexample (W2-D1-FF1) blocks droplet completion.** The implementation is conceptually sound — same-dir temp, sync-before-rename, chmod-before-close, defer-with-success-flag cleanup all line up with the textbook POSIX atomic-write pattern and `go doc`-confirmed stdlib contracts. Six of seven attack families (B2 contract-preservation, B3 hidden-coupling, B4 yagni, B6 shipped-but-not-wired (provisional), B7 prompt-injection) come back REFUTED / N/A. The single counterexample is the coverage gate: `mage ci` FAILS with `internal/fsatomic 64.0% < 70.0%` because the 4 shipped tests cover only the success path plus the `os.CreateTemp`-itself-fails branch. Five error-return branches inside `WriteFile` plus the deferred cleanup body after a successful `CreateTemp` are unexercised.
+
+**Fix hint pinned in W2-D1-FF1:** add `TestWriteFile_RenameFailsWhenTargetIsDirectory` (pre-create a dir at target, expect rename to fail, expect no `.tmp-*` residue in parent). One test covers ≥4 statements: rename-error wrap (line 85-87) + deferred cleanup body (60-64) + same-directory atomicity invariant + the `_ = os.Remove(tmpName)` line. Coverage projected ~76-80%. Routing: orchestrator respawns builder for round-2 to land the additional test; falsification re-runs once `mage ci` reports green.
+
+**Builder must not bypass mage to verify** — per CLAUDE.md "Build Verification" §2, raw `go test -coverprofile` is forbidden; `mage ci` is the authoritative gate. Builder may use `mage test-pkg ./internal/fsatomic` for tight test-iteration loops, then `mage ci` for the gate clearance proof.
+
+### Hylla Feedback
+
+None — Hylla answered everything needed, though the falsification did not require querying Hylla. The attack surface for W2.D1 is a single NEW 91-line file (`atomic.go`) + a single NEW 115-line test file (`atomic_test.go`), both unindexed since they're post-last-ingest, so `Read` + `go doc os.CreateTemp` / `go doc os.Rename` / `go doc os File.Chmod` / `go doc os File.Sync` plus the `mage ci` gate output were the load-bearing evidence sources. The plan blocker chain (`DROP_4c.6.W2_TILL_INIT/PLAN.md`) and the `magefile.go`-encoded coverage rule (visible in `mage ci` output) were sufficient to ground every claim. The package is a foundation leaf with no consumers in this drop yet, so call-site blast-radius (`hylla_graph_nav`) would have returned empty even if the symbol were indexed — no fallback miss to log.
+
+---
+
+## Droplet 4c.6.W2.D4 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D4 — runInitTUI bubbletea walk for project name + group picker`.
+**Artifact under attack:** `cmd/till/init_cmd.go` (modify — replaces D3a's `runInitTUI` stub with a real bubbletea walk; adds `initTUIStep` enum, `initTUIGroupRow`, `initTUIGroupRows`, `initTUIModel`, `newInitTUIModel`, `Init` / `Update` / `View` / `Done` / `Cancelled` / `Payload` methods, `nextEnabledGroupRow` / `prevEnabledGroupRow` helpers). `cmd/till/init_cmd_test.go` (modify — `TestInit_BareInvocation_ReturnsTUIStubError` rewrite using `programFactory` stub returning Done-state model; three new tea-tests `TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo`, `TestRunInitTUI_DisabledTillGddIsUnselectable`, `TestRunInitTUI_EscCancelsWalk`).
+
+### Counterexamples
+
+- **W2-D4-FF1** [Family: hidden-coupling / CI-gate] [severity: blocks-drop] `mage ci` FAILS with `internal/fsatomic 64.0% < 70.0%` coverage threshold. **NOT caused by D4** — D4 touched zero lines in `internal/fsatomic/`. The failure is the same W2-D1-FF1 counterexample already CONFIRMED in the W2.D1 Round 1 falsification (lines 1700-1707 of this file). The fix is the W2.D1 round-2 test addition pinned there (`TestWriteFile_RenameFailsWhenTargetIsDirectory`). **D4-side action: none.** **Drop-side action: respawn W2.D1 builder for round-2 (already pending per the W2.D1 verdict).** Recording here because the prompt's "`mage ci` must be GREEN" gate fails at the drop level even though D4's implementation is sound; the orchestrator needs to see the cascade-state truth (D4-code-OK + drop-CI-red-from-D1) rather than re-blame D4. Repro: `mage ci` against the current worktree, observe `[ERROR] Coverage threshold not met` with `github.com/evanmschultz/tillsyn/internal/fsatomic 64.0%`. Routing: cross-reference W2-D1-FF1; the orchestrator already owns the respawn directive.
+
+### Findings (non-CONFIRMED, recorded for audit)
+
+- 1.1 [Family: hidden-coupling / TUI semantics] [severity: low] **Ctrl-C as a keyboard event on the name step is NOT handled by `Update`'s `initTUIStepName` switch arm.** The arm only matches `tea.KeyEsc` and `tea.KeyEnter`; Ctrl-C arrives as `tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}` and falls into `default:` which forwards to `m.nameInput.Update(msg)`. Bubbletea v2's `bubbles/textinput` does NOT trap Ctrl-C, so the keyboard event is consumed silently. In the typical terminal-driven path Ctrl-C never reaches the model — bubbletea v2's default signal handler (NOT opted out via `tea.WithoutSignalHandler()` in `programFactory`'s `tea.NewProgram(m)`) translates SIGINT into a `tea.QuitMsg` and `tea.Program.Run()` returns with `tea.ErrProgramKilled`, which `runInitTUI` wraps as `"till init: run tui: %w"`. So the *common case* (terminal Ctrl-C) produces a clean user-facing error, not a panic — satisfying the prompt's "clean exit (not panic, not segv)" bar. The *uncommon case* (Ctrl-C delivered as a raw keypress, e.g. some Windows terminals or test harnesses) silently no-ops on the name step and is silently no-op on the group step. PLAN.md acceptance does not require explicit Ctrl-C handling; SKETCH §9.3 does not require it either. *Verdict on this attack: REFUTED — terminal-driven Ctrl-C is handled cleanly by the framework default; raw-keypress Ctrl-C is a corner case outside D4's acceptance bar. Fix hint (optional refinement, NOT a counterexample): add `case msg.Mod == tea.ModCtrl && msg.Code == 'c': m.step = initTUIStepCancelled; return m, tea.Quit` to both step arms so cross-platform Ctrl-C reports `Cancelled()` symmetrically with Esc.*
+
+- 1.2 [Family: yagni / defense-in-depth] [severity: info] **The `if row.Disabled` Enter-handler check in `initTUIStepGroup` is dead code under the current cursor-movement helpers.** `nextEnabledGroupRow` / `prevEnabledGroupRow` skip disabled rows, so `m.groupCursor` can never equal an index whose `initTUIGroupRows[i].Disabled` is true under any sequence of Up / Down / k / j keypresses. `groupCursor` is also not exposed to any external mutation path. The disabled-Enter guard is defense-in-depth for future row additions (e.g., if a future drop adds a disabled row between two enabled rows, the cursor-movement helpers still skip it, but a hypothetical future direct-jump key like `g` / `G` could land on it). Builder's worklog line 2099 explicitly justifies this as "two layers of defense." Today's test (`TestRunInitTUI_DisabledTillGddIsUnselectable`) exercises the cursor-skip layer (Down-Down stops at till-go) but does NOT exercise the Enter-on-disabled-row layer because cursor can't reach there. *Verdict on this attack: REFUTED — dead code today, but the defense-in-depth justification is correct and the cost is two lines plus a comment; not a YAGNI violation. The test gap on the second layer is acceptable because the layer is unreachable through the current keymap.*
+
+- 1.3 [Family: contract-preservation / forward-coupling] [severity: low] **`runInitTUI` does NOT call `validateInitPayload` on the gathered payload.** The TUI walk produces `finalPayload.Name = strings.TrimSpace(m.nameInput.Value())` (falling back to `m.defaultName = filepath.Base(cwd)` on empty) and `finalPayload.Group = "till-gen"|"till-go"` (cursor-restricted to enabled rows). Then `runInitTUI` reads `_ = final.Payload()` (line 350) and returns the D5 stub error — never validating. The JSON-mode path (`runInitJSON`) DOES call `validateInitPayload` (line 368). Asymmetry: if a future D5 plugs both branches into the same file-copy pipeline, the JSON branch's `Group` is validator-gated but the TUI branch's `Group` is cursor-gated only. Today the TUI cursor cannot land on `till-gdd` (disabled-skip helpers), so the validator-gated invariant is *coincidentally* upheld via the keymap. A future row addition that's disabled-by-default but reachable via a new keymap (or a programmatic-test direct-set of `groupCursor`) could leak an un-validated group into the pipeline. *Verdict on this attack: REFUTED for D4 — acceptance bar is "after collection, runInitTUI returns the gathered payload-equivalent and lets the caller dispatch to D5's pipeline" (PLAN.md line 135). D4 ships exactly that. Fix hint pinned for D5: add a `validateInitPayload(final.Payload())` call between `final.Done()` and the file-copy dispatch, OR factor the post-collection branch into a shared `runInitFromPayload(stdout, opts, payload)` helper that both modes call. Not a D4 counterexample; routing as D5 forward-dependency.*
+
+- 1.4 [Family: hidden-coupling / D7.5 latent value-capture] [severity: info] **D4 does NOT trip the D7.5-reported `rootOpts` value-capture latent bug.** Verified via direct `Read` of `cmd/till/init_cmd.go:325-327`: `runInitTUI(stdout io.Writer, opts rootCommandOptions)` body opens with `_ = stdout` + `_ = opts` — neither field is read. The cobra closure in `newInitCommand`'s `RunE` (line 68-77) captures `rootOpts` by value at construction time; the closure is invoked at run-time when cobra dispatches `till init`. If `rootOpts.appName` were mutated by `--app` flag parsing between construction and dispatch, the closure would see the construction-time snapshot. But D4 doesn't read any opts field, so the latent bug is dormant. *Verdict on this attack: REFUTED for D4 — the prompt explicitly flagged this as a latent bug to verify D4 doesn't activate, and verification confirms D4 doesn't. Routing: D5 / D7 will activate this surface when they wire `appName` / `homeDir` resolution; the orchestrator should pre-route a D5 attention to either fix the closure-capture (capture by pointer or re-read `cmd.Flags()` inside `RunE`) or accept and document the snapshot-semantics contract.*
+
+- 1.5 [Family: contract-preservation / Value-receiver Update] [severity: info] **`func (m initTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd)` uses a value receiver.** The model is copied on every Update call. The `m.nameInput, cmd = m.nameInput.Update(msg)` propagation works because (a) `textinput.Model.Update` returns `(textinput.Model, tea.Cmd)` (verified via bubbles/v2 idiom citations in worklog line 2107-2109 pointing at `internal/tui/model.go:10200`), (b) the assignment writes back to the local copy `m`, and (c) `return m, cmd` returns the mutated copy to the bubbletea runtime which adopts it as the new model. The same convention is universal in bubbletea v2 examples (every Context7 doc snippet uses value receivers). No data race because bubbletea Update runs single-threaded on the program's main goroutine. *Verdict on this attack: REFUTED — value-receiver convention is correct for bubbletea v2 and matches every existing in-repo bubbletea model (`internal/tui/model.go`'s `Model.Update`, the `cmd/till/main_test.go` `scriptedProgram` test seam).*
+
+- 1.6 [Family: contract-preservation / default name edge cases] [severity: info] **`filepath.Base(cwd)` edge cases — `/`, `.`, unicode, spaces — are passed through to `defaultName` and propagate into `finalPayload.Name`.** Per `go doc filepath.Base`: `filepath.Base("/")` returns `"/"`; `filepath.Base(".")` returns `"."`; unicode and spaces pass through verbatim. The textinput's `CharLimit = 120` caps input length but doesn't reject any character class. PLAN.md acceptance pins the default as `filepath.Base(cwd)` verbatim with "user can edit," so D4's behavior matches the contract literally. Whether `/` or `.` is a *valid* project name is a D5/D7 concern (project-record creation may reject it). *Verdict on this attack: REFUTED for D4 — contract matches spec. Forward-routing for D5/D7: project-name validation belongs in `validateInitPayload` extension or in `Service.CreateProject`, and that validator should also be applied to the TUI branch per Finding 1.3.*
+
+- 1.7 [Family: shipped-but-not-wired / programFactory production] [severity: info] **Production `programFactory` is real, not a test-only stub.** Verified via Hylla `hylla_node_full` on `github.com/evanmschultz/tillsyn/cmd/till/programFactory` (snapshot 5): content is `var programFactory = func(m tea.Model) program { return tea.NewProgram(m) }` declared in `cmd/till/main.go`. The `program` interface is `type program interface { Run() (tea.Model, error) }` and `*tea.Program` (returned by `tea.NewProgram`) satisfies it via its `Run() (tea.Model, error)` method (bubbletea v2 canonical). `runInitTUI` calls `programFactory(m).Run()` which dispatches to the real `tea.Program.Run()` in production. The test stub (`scriptedProgram` in `main_test.go`, body `func (p scriptedProgram) Run() (tea.Model, error) { if p.runFn == nil { return p.model, nil }; return p.runFn(p.model) }`) replaces the var only inside test scope. *Verdict on this attack: REFUTED — the production wiring is real, not a dangling helper. The test seam is symmetric to the existing main-TUI test seam (`cmd/till/main_test.go:393-419` per worklog line 2098).*
+
+- 1.8 [Family: yagni / Init returns nil] [severity: info] **`Init() tea.Cmd` returns `nil`.** No startup command is fired. The textinput is constructed pre-focused via `ti.Focus()` in `newInitTUIModel:153`, so cursor blink is internal to textinput's own state machine (triggered on first Update reflow). No data-load or async init is needed for a two-step linear walk. *Verdict on this attack: REFUTED — Init returning nil is the canonical bubbletea pattern when no async startup work is required (Context7 examples confirm; in-repo `internal/tui/model.go:1580` returns a load command but its model has DB-bound startup work that D4's walk does not).*
+
+- 1.9 [Family: prompt-injection / TUI input attack] [severity: info] **The name textinput's `CharLimit = 120` plus `strings.TrimSpace` on the gathered value bound the attack surface to ≤120 chars of arbitrary unicode, post-trim.** No Section-0-header sanitization, no argv-pattern stripping, no role-confusion filter. Per pre-MVP memory `feedback_prompt_injection_team.md`, sanitization is a render-layer concern for *attacker-controllable action-item content* — the `till init` TUI input is operator-controlled at the local CLI, not attacker-controllable until the team-aware architecture lands and project names become published artifacts. Defense-in-depth name sanitization is a D5/D7/post-team-arch concern. *Verdict on this attack: REFUTED for D4 — pre-MVP threat model places this outside D4's acceptance bar. Routing: pre-MVP refinement (orchestrator-routed at team-arch implementation) to add a name-sanitization pass at the `validateInitPayload` layer covering both TUI and JSON paths.*
+
+### Attack family table
+
+| Family                          | Result    | Notes                                                                                     |
+| ------------------------------- | --------- | ----------------------------------------------------------------------------------------- |
+| B1 counterexample-search        | CONFIRMED | W2-D4-FF1 — `mage ci` red on `fsatomic 64.0%`. Not D4's fault (D1 inheritance). |
+| B2 contract-preservation        | REFUTED   | Findings 1.3 / 1.5 / 1.6 — value-receiver convention OK; default-name edge cases per spec; TUI/JSON validator asymmetry is D5 forward-dep. |
+| B3 hidden-coupling              | REFUTED   | Findings 1.1 / 1.4 — Ctrl-C handled by framework default; D7.5 value-capture dormant in D4. |
+| B4 yagni                        | REFUTED   | Findings 1.2 / 1.8 — defense-in-depth Enter guard + Init nil both justified.        |
+| B5 file-package-gating          | REFUTED   | D4 touched only declared paths (`cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`) plus conventional worklog + PLAN state-flip. |
+| B6 shipped-but-not-wired        | REFUTED   | Finding 1.7 — production `programFactory` is real. Tests use type-asserting stub. |
+| B7 prompt-injection             | REFUTED   | Finding 1.9 — pre-MVP threat model places sanitization outside D4 bar.              |
+
+### Probes executed
+
+- **`mage ci`** — RED. `Coverage threshold not met` → `internal/fsatomic 64.0%`. Stack-trace from `magefile.go` coverage gate. This is the W2-D4-FF1 finding, cause traced to D1.
+- **`mage test-pkg ./cmd/till`** — GREEN, 268/268 tests pass. D4-specific package is sound.
+- **Hylla `hylla_node_full` on `programFactory`** — confirmed production body is `tea.NewProgram(m)`.
+- **Hylla `hylla_node_full` on `program` interface** — confirmed shape `Run() (tea.Model, error)`.
+- **Hylla `hylla_node_full` on `scriptedProgram` + `scriptedProgram.Run`** — confirmed test stub body: `if p.runFn == nil { return p.model, nil }; return p.runFn(p.model)`.
+- **Context7 `/charmbracelet/bubbletea`** — confirmed canonical Ctrl-C convention (model binds Ctrl-C; default signal handler also intercepts SIGINT and returns `tea.ErrProgramKilled`).
+- **Direct `Read` of `cmd/till/init_cmd.go` lines 1-400** — full file inspection; confirmed receiver type, helper logic, Enter guard, View output.
+- **Direct `Read` of `cmd/till/init_cmd_test.go` lines 1-297** — three new tea-tests + one rewritten cobra-end-to-end smoke test confirmed.
+- **Direct `Read` of `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` lines 126-141** — D4 acceptance criteria.
+- **Direct `Read` of `workflow/drop_4c_6/BUILDER_WORKLOG.md` lines 2077-2156** — builder design rationale and TDD red→green trace.
+
+### Summary
+
+**Verdict: FAIL — 1 CONFIRMED counterexample (W2-D4-FF1) blocks droplet completion, but the cause is sibling-droplet D1 and NOT D4's implementation.** D4's bubbletea walk is sound under every attack vector probed (Ctrl-C / Esc handling, cursor traversal with disabled rows, value-receiver Update propagation, programFactory production wiring, default-name edge cases, no goroutine leaks, no D7.5 latent-bug activation, no path-gating violations, defense-in-depth Enter guard correctly justified). The seven attack families return: B1 CONFIRMED (sibling-caused), B2/B3/B4/B5/B6/B7 REFUTED. `mage test-pkg ./cmd/till` is GREEN at 268/268. The drop-level `mage ci` red is the same W2-D1-FF1 already pinned in this file at lines 1700-1707 with the round-2 fix-hint already routed.
+
+**D4-side action: none — implementation passes every probed attack.** **Drop-side action: respawn W2.D1 builder for round-2 per the W2-D1-FF1 fix hint** (add `TestWriteFile_RenameFailsWhenTargetIsDirectory` to lift `fsatomic` coverage above 70%); once `mage ci` is green, this droplet's verdict converts to PASS without re-running D4 falsification.
+
+**Forward-routing to D5 / D7** pinned in Findings 1.3 (validator asymmetry between TUI and JSON branches), 1.4 (D7.5 value-capture activation when D5 reads `opts.appName` / `opts.homeDir`), 1.6 (project-name validation for `/` / `.` / unicode edge cases), and 1.9 (post-team-arch name sanitization). None of those are D4 violations; all are forward-dependencies the orchestrator should pre-stage in the D5+ planner notes.
+
+### Hylla Feedback
+
+- **Query:** `hylla_search_keyword` for `programFactory scriptedProgram` against `github.com/evanmschultz/tillsyn@main`, `fields=["content"]`.
+  - **Missed because:** First call returned zero results — the index treats `programFactory` and `scriptedProgram` as separate tokens and the conjunctive search returned the intersection (empty). The single-symbol query for `programFactory` worked on retry.
+  - **Worked via:** Re-issued as a single-token `hylla_search_keyword` for `programFactory` with `visibility_mode: include_private` and `id_search_mode: tail_symbol` — got 1 production hit (`cmd/till/main.go:programFactory`) plus its callers. Same retry pattern for `scriptedProgram` (test-side stub).
+  - **Suggestion:** the keyword tool's space-separated query semantics could expose an OR-mode toggle (or document the current AND-conjunctive default explicitly) so callers don't have to know to split multi-symbol queries into separate calls. Today the failure is silent (empty results), not surfaced as "no node contains BOTH terms; try OR-mode."
+- **Query:** `hylla_search` for `programFactory program type bubbletea` with `fields: ["content", "summary", "docstring"]`.
+  - **Missed because:** `hylla_search` rejected the `fields` array with the literal error `field must be summary, content, or docstring` — the parameter expects a singular `field` (not `fields`) string, NOT an array. The keyword variant accepts the plural `fields` array, so the asymmetry between `hylla_search` (singular `field`) and `hylla_search_keyword` (plural `fields`) caused the misfire.
+  - **Worked via:** Fell back to `hylla_search_keyword` (which does take `fields` plural) plus `hylla_node_full` once the keyword hit named the node ID.
+  - **Suggestion:** harmonize the parameter naming between `hylla_search` and `hylla_search_keyword` — either both take singular `field`, or both take plural `fields`. The current asymmetry is a silent footgun when alternating between the two within a single review.
+- **Snapshot staleness for in-flight work:** `programFactory` (committed in commit `66c354ea` per Hylla's `commit_membership`) was indexed at snapshot 5, but the D4 builder's *uncommitted* edits to `init_cmd.go` (the `initTUIModel`, `Update`, etc.) are NOT in Hylla. For those, `Read` of the uncommitted file was the only viable evidence source. This is the same "enrichment still running" pattern flagged in the D3b + D4 builder Hylla Feedback entries. No new ergonomic ask — same pre-cascade structural staleness window already on the drop's refinement list.
+
+---
+
+## Droplet 4c.6.W3.D4 — Round 1
+
+**QA Agent:** go-qa-falsification-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W3.D4 — Defense-in-depth env vars in cli_claude/env.go`.
+**Files under review:** `internal/app/dispatcher/cli_claude/env.go`, `internal/app/dispatcher/cli_claude/adapter_test.go`.
+**Builder round under review:** BUILDER_WORKLOG.md § "Droplet 4c.6.W3.D4 — Round 1" (2026-05-11).
+
+### Attack surface enumerated
+
+Attacks framed against the brief's 8 vectors plus 3 self-attack additions (duplicate name in `binding.Env`, `bindingOnly` capacity drift, ErrMissingRequiredEnv on unset overrider). Twelve findings recorded; one with a scope carve-out.
+
+### Findings
+
+#### W3-D4-FF1 [HIGH / injection order — slice-builder produces wrong final order] — REFUTED
+
+- **Attack:** the brief flags injection-order risk explicitly. Defense-in-depth is injected AFTER `binding.Env` loop, BEFORE closed-baseline. The slice-builder must emit in declaration order. Confirm the final `out` slice is exactly `[baseline (those set), defense-in-depth (all 4), binding-only sorted]` and no other order can leak through.
+- **Method:** Read `env.go:168-206` (three-loop slice-builder). Trace each emission per case.
+- **Trace:** Three sequential `for` loops over (a) `closedBaselineEnvNames` (declaration order, lines 176-183), (b) `defenseInDepthEnvLiterals` (declaration order, lines 184-194), (c) `bindingOnly` (sorted, lines 196-206). Each loop guards via the shared `seen` map so a name emitted in an earlier loop is skipped in later loops. The baseline loop emits its names in `closedBaselineEnvNames` declaration order; defense-in-depth loop walks `defenseInDepthEnvLiterals` in declaration order (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS, CLAUDE_CODE_FORK_SUBAGENT, DISABLE_AUTOUPDATER, DISABLE_TELEMETRY); binding-only loop walks `bindingOnly` after `sort.Strings`. Order is deterministic and matches the documented contract.
+- **Result — REFUTED.** Order is correct and deterministic by construction.
+
+#### W3-D4-FF2 [HIGH / precedence override — binding wins, defense literal must not leak] — REFUTED
+
+- **Attack:** the plan locks `binding.Env > defense-in-depth > closed-baseline`. With `binding.Env: ["DISABLE_TELEMETRY"]` + `t.Setenv("DISABLE_TELEMETRY", "0")`, confirm cmd.Env carries exactly `DISABLE_TELEMETRY=0` AND NEVER `DISABLE_TELEMETRY=1`.
+- **Method:** Trace `assembleEnv` over the override case. Read `TestEnvDefenseInDepthOverridableByBindingEnv` (`adapter_test.go:751-785`).
+- **Trace:** binding loop sets `emitted["DISABLE_TELEMETRY"]="0"`. Defense literal loop at lines 145-150 sees `alreadySet` → SKIP — `emitted["DISABLE_TELEMETRY"]` stays at "0", the `1` literal is NEVER written. Closed-baseline loop: DISABLE_TELEMETRY is not in baseline, untouched. Slice-builder: baseline names walked (DISABLE_TELEMETRY not present). Defense literal walk at lines 184-194: lit.Name="DISABLE_TELEMETRY", not in `seen` (only baseline names seen), `val, ok := emitted[lit.Name]` → ok=true, val="0" → emits `DISABLE_TELEMETRY=0`, marks `seen[DISABLE_TELEMETRY]`. Binding-only loop: DISABLE_TELEMETRY now in `seen` → SKIP. Final cmd.Env has exactly one DISABLE_TELEMETRY entry with value "0". Test confirms via `slices.Contains(cmd.Env, "DISABLE_TELEMETRY=0")` AND `!slices.Contains(cmd.Env, "DISABLE_TELEMETRY=1")`. Builder GREEN.
+- **Result — REFUTED.** Single-emission semantics hold; binding wins; defense literal does NOT leak alongside.
+
+#### W3-D4-FF3 [HIGH / empty binding — all 4 defense literals appear] — REFUTED
+
+- **Attack:** with `binding.Env = nil` (the minimal binding case), do all four defense literals appear unconditionally — even when the orchestrator's env has NONE of them set?
+- **Method:** Trace `assembleEnv` over the empty-binding + all-defense-vars-unset case. Read `TestEnvCarriesDefenseInDepthEnvVars` (`adapter_test.go:704-744`).
+- **Trace:** binding.Env = nil → binding loop body never executes; `emitted` is empty after the loop. Defense literal loop walks all 4; for each: `alreadySet` false; `emitted[lit.Name] = lit.Value` writes the inline value (NO `os.LookupEnv` call — values are literal). After the loop, all 4 defense names are in `emitted` with their literal values. Closed-baseline loop: 4 names disjoint from baseline (verified: defense names are CLAUDE_CODE_*/DISABLE_*; baseline names are PATH/HOME/USER/LANG/LC_ALL/TZ/TMPDIR/XDG_*/HTTP_*/HTTPS_*/NO_*/http_*/https_*/no_*/SSL_*/CURL_CA_BUNDLE — zero overlap). Slice-builder: baseline emits whatever baseline names are set; defense walk emits all 4 (none in `seen` because they're not baseline); binding-only is empty. Test pre-`Unsetenv`s all four defense names AND asserts via `slices.Contains(cmd.Env, "<defense>=<value>")` for each — proves values come from the inline pairs, not `os.LookupEnv`.
+- **Result — REFUTED.** All 4 defense literals are emitted unconditionally on empty binding + all-defense-unset.
+
+#### W3-D4-FF4 [HIGH / partial override — non-overridden 3 still emit defense values] — REFUTED
+
+- **Attack:** the brief flags "override-only-some" explicitly. With `binding.Env: ["DISABLE_AUTOUPDATER"]` + orchestrator value, the other 3 defense literals (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS, CLAUDE_CODE_FORK_SUBAGENT, DISABLE_TELEMETRY) must still appear at their DEFAULT literal values (1, 0, 1).
+- **Method:** Read `TestEnvDefenseInDepthOverridableByBindingEnv` (`adapter_test.go:776-784`). The test asserts BOTH the binding-overridden literal AND the non-overridden 3 still emit at their default values.
+- **Trace:** Test sets `binding.Env: ["DISABLE_TELEMETRY"]` (overrides one) + `t.Setenv("DISABLE_TELEMETRY", "0")`. After `BuildCommand`: asserts `slices.Contains(cmd.Env, "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1")`, `"CLAUDE_CODE_FORK_SUBAGENT=0"`, `"DISABLE_AUTOUPDATER=1"`. Each of the three non-overridden literals' independent emission proves: defense literal loop only `continue`s when the SPECIFIC `lit.Name` is in `emitted` (binding-overridden case), NOT when ANY overrider exists. Each non-overridden literal is processed independently; the `alreadySet` check is scoped per-literal.
+- **Result — REFUTED.** Per-literal precedence is independent; partial overrides do not cascade-skip the other defense literals.
+
+#### W3-D4-FF5 [HIGH / closed-baseline overlap — defense names collide with baseline] — REFUTED
+
+- **Attack:** the brief flags "are any of the 4 defense-in-depth names ALREADY in `closedBaselineEnvNames`?" Confirm zero overlap; if any overlap existed, the dedup behavior would be: defense literal loop writes the literal value FIRST, baseline loop's `alreadySet` check would SKIP, so the literal value would win. But the literal would still be emitted in the DEFENSE-LITERAL section of the slice-builder, not the baseline section — potentially shifting position.
+- **Method:** Compare the two slice declarations at `env.go:41-53` (defense, 4 names) vs `env.go:73-94` (baseline, 18 names).
+- **Trace:** Defense literals: CLAUDE_CODE_DISABLE_BACKGROUND_TASKS, CLAUDE_CODE_FORK_SUBAGENT, DISABLE_AUTOUPDATER, DISABLE_TELEMETRY. Baseline: PATH, HOME, USER, LANG, LC_ALL, TZ, TMPDIR, XDG_CONFIG_HOME, XDG_CACHE_HOME, HTTP_PROXY, HTTPS_PROXY, NO_PROXY, http_proxy, https_proxy, no_proxy, SSL_CERT_FILE, SSL_CERT_DIR, CURL_CA_BUNDLE. Zero intersection. The doc-comment at `env.go:154-157` explicitly notes "today's two sets are disjoint" — accurate.
+- **Result — REFUTED.** Zero overlap; the question of overlap-dedup is moot today. Future addition of an overlapping name would be caught at code review by the doc-comment's "disjoint" assertion.
+
+#### W3-D4-FF6 [MEDIUM / slices import — stdlib vs x/exp drift] — REFUTED
+
+- **Attack:** the brief flags "is `slices` imported from `slices` (stdlib) or `golang.org/x/exp/slices`?". The post-Go-1.21 stdlib has `slices.Contains`; pre-1.21 code used `golang.org/x/exp/slices`. The wrong import path means either: (a) `go.mod` is required to be on 1.21+ for stdlib, or (b) the test pulls in a vendored shim.
+- **Method:** Read `adapter_test.go:1-18` (imports). Cross-check go.mod-version constraint.
+- **Trace:** `adapter_test.go:12` carries `"slices"` — stdlib path. Verified by mage ci passing all `cli_claude` tests including the two new defense-in-depth tests that both use `slices.Contains`. Stdlib `slices.Contains` has been available since Go 1.21 (Aug 2023); project go.mod is 1.26+ per CLAUDE.md Tech Stack section. Compatible.
+- **Result — REFUTED.** Import is stdlib; no drift; build proves it resolves.
+
+#### W3-D4-FF7 [MEDIUM / test fixture realism — degenerate binding bypasses closed-baseline loop] — REFUTED
+
+- **Attack:** the brief flags "does the test build a realistic `BindingResolved` or a degenerate one that bypasses the closed-baseline loop?" If the test uses `binding.Env = nil` + no `t.Setenv` for baseline names, the closed-baseline loop's `os.LookupEnv` returns `false` for every baseline name → all skipped → degenerate cmd.Env. The defense literals would still emit (unconditional), but the assertion `slices.Contains(cmd.Env, "DISABLE_TELEMETRY=1")` would PASS even on a degenerate cmd.Env that omits every baseline name. Is the test proving too little?
+- **Method:** Read `TestEnvCarriesDefenseInDepthEnvVars` (`adapter_test.go:704-744`) vs `TestEnvNotInheritedFromOSEnviron` (`adapter_test.go:346-384`).
+- **Trace:** TestEnvCarriesDefenseInDepthEnvVars deliberately uses a minimal binding to prove "defense literals appear independently of binding shape" — that's the test's documented purpose. Realism is supplied by the sibling `TestEnvNotInheritedFromOSEnviron` (line 346) which `t.Setenv`s every baseline name AND the binding-only name AND a sentinel outsider, then asserts `len(cmd.Env) == len(closedBaselineEnvNames) + len(defenseInDepthEnvLiterals) + 1` — proving the FULL slice shape is correct including defense literals + baseline + binding-only. The TWO tests together cover: (a) defense-literals-present-when-isolated (D4-FF3 mechanism); (b) full-slice-shape-correct-when-realistic (FF7 mechanism). The shape-test was specifically updated by this droplet (per worklog: "Adjusted `TestEnvNotInheritedFromOSEnviron` length assertion from `len(closedBaselineEnvNames) + 1` to `len(closedBaselineEnvNames) + len(defenseInDepthEnvLiterals) + 1`").
+- **Result — REFUTED.** Test coverage is realistic across siblings; degenerate-binding is the deliberate isolation strategy, NOT a coverage gap.
+
+#### W3-D4-FF8 [MEDIUM / mage ci — full build/test gate] — REFUTED (with scope carve-out)
+
+- **Attack:** the brief mandates `mage ci`. Verify GREEN.
+- **Method:** Run `mage ci` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`.
+- **Trace:** Output captured. `3077 tests passed across 26 packages.` `cli_claude` package: GREEN at 95.3% coverage. `cli_claude/render` package: GREEN at 82.8% coverage. ALL packages pass tests. Coverage gate fails on a SINGLE package — `internal/fsatomic` at 64.0% (threshold is 70%). That package is UNTRACKED in `git status` (`?? Untracked: 1 files / internal/fsatomic/`), is a brand-new sibling-droplet (W2.D1 — explicitly owned by `4c.6.W2.D1 — internal/fsatomic/ atomic file-write helper` per the prior round at BUILDER_QA_FALSIFICATION.md:1623–1711, finding W2-D1-FF1 already CONFIRMED), and is COMPLETELY OUT OF SCOPE for W3.D4. W3.D4's scope per PLAN.md is exactly two files: `env.go` + `adapter_test.go`. The fsatomic coverage gap is sibling-owned and already flagged.
+- **Result — REFUTED for W3.D4 scope.** The fsatomic coverage failure is NOT a W3.D4 falsification — sibling-droplet W2.D1 owns it (W2-D1-FF1 already raised in this same file). W3.D4's changed packages are above threshold.
+
+```
+[PKG PASS] github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_claude (0.01s)
+[PKG PASS] github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_claude/render (0.01s)
+Test summary
+  tests: 3077  passed: 3077  failed: 0  skipped: 0
+  packages: 26  pkg passed: 26  pkg failed: 0
+
+cli_claude        95.3%  ← W3.D4 scope
+cli_claude/render 82.8%
+fsatomic          64.0%  ← OUT OF SCOPE for W3.D4 (sibling W2.D1, already W2-D1-FF1)
+```
+
+#### W3-D4-FF9 [LOW / duplicate name in binding.Env — same name listed twice] — REFUTED
+
+- **Attack:** self-attack. If `binding.Env = ["FOO", "FOO"]`, the binding loop runs twice. First iteration `emitted["FOO"] = val`; second iteration `emitted["FOO"] = val` (same). The `bindingNames` map dedup-sets `FOO`. The `bindingOnly` slice is built from `bindingNames` keys, so it carries `FOO` once. Final cmd.Env has one `FOO=val` entry. Defensible.
+- **Method:** Trace `assembleEnv` over `binding.Env = ["DISABLE_TELEMETRY", "DISABLE_TELEMETRY"]`.
+- **Trace:** Both iterations call `os.LookupEnv("DISABLE_TELEMETRY")` — both return the same `val`. `emitted[DISABLE_TELEMETRY] = val` is set twice (idempotent map write). `bindingNames["DISABLE_TELEMETRY"] = struct{}{}` set twice (idempotent). Defense loop sees `alreadySet` (emitted has the key) → SKIP. Slice-builder: defense walk emits one `DISABLE_TELEMETRY=val` entry, marks `seen[DISABLE_TELEMETRY]`. Binding-only loop's range over `bindingNames` yields `DISABLE_TELEMETRY` once → already in `seen` → SKIP. Single emission. No duplicate.
+- **Result — REFUTED.** Map-based dedup handles binding-Env duplicates correctly.
+
+#### W3-D4-FF10 [LOW / `bindingOnly` capacity drift — over-allocation when binding-Env overlaps with baseline + defense] — REFUTED
+
+- **Attack:** self-attack. `bindingOnly := make([]string, 0, len(binding.Env))` (line 196). If `binding.Env = ["PATH", "HOME", "DISABLE_TELEMETRY"]` (all overlap with baseline or defense), `bindingOnly` would end up empty but the capacity is 3 (waste, not bug).
+- **Method:** Read line 196 + the binding-only loop.
+- **Trace:** Capacity is upper bound; actual emission is gated by `_, alreadyEmitted := seen[name]` check. Over-allocation is benign — a few words of heap waste. NOT a correctness issue.
+- **Result — REFUTED.** Capacity hint is conservative-but-correct; not a defect.
+
+#### W3-D4-FF11 [LOW / overrider that's unset triggers ErrMissingRequiredEnv] — REFUTED
+
+- **Attack:** self-attack. If `binding.Env: ["DISABLE_TELEMETRY"]` but the orchestrator has NOT set DISABLE_TELEMETRY in its own env, what happens? Does the spawn fall back to the defense literal value? Does it crash? Does the user see a confusing error?
+- **Method:** Trace `assembleEnv` over the unset-overrider case.
+- **Trace:** binding loop calls `os.LookupEnv("DISABLE_TELEMETRY")` → `("", false)` → `return nil, fmt.Errorf("%w: name=%q", ErrMissingRequiredEnv, name)`. The spawn fails pre-lock per F.7.17 P5. The default defense literal `DISABLE_TELEMETRY=1` is NOT emitted as a fallback — the spawn is aborted entirely. This is the documented contract: any binding-Env name that's unset in the orchestrator fails loud. A binding that explicitly lists a defense name takes responsibility for ensuring the orchestrator has it set.
+- **Result — REFUTED.** Documented contract; not a regression. Adopters who want to override a defense literal via binding MUST set it in the orchestrator's env first. The error message is clear and names the missing var.
+
+#### W3-D4-FF12 [LOW / doc-comment accuracy — `binding.Env > defense-in-depth > closed-baseline` claim] — REFUTED
+
+- **Attack:** the doc-comment at `env.go:31-36` claims "Net precedence: binding.Env > defense-in-depth > closed-baseline". Verify by tracing each pairing.
+- **Method:** Three pairings: (a) binding vs defense; (b) defense vs baseline; (c) binding vs baseline.
+- **Trace:** (a) binding vs defense — binding loop runs FIRST, populates `emitted[name]`; defense loop's `alreadySet` check SKIPs the literal. ✓ binding > defense. (b) defense vs baseline — defense loop runs SECOND, populates `emitted[lit.Name]`; baseline loop's `alreadySet` check SKIPs. ✓ defense > baseline. (c) binding vs baseline — established pre-D4; binding loop runs FIRST; baseline loop's `alreadySet` check SKIPs. ✓ binding > baseline. Transitive ordering holds.
+- **Result — REFUTED.** Precedence claim is accurate per the three-loop construction.
+
+### Severity breakdown
+
+- **HIGH:** 5 (FF1 / FF2 / FF3 / FF4 / FF5) — all REFUTED.
+- **MEDIUM:** 3 (FF6 / FF7 / FF8) — all REFUTED (FF8 with explicit scope carve-out for the unrelated `fsatomic` coverage gap already owned by sibling W2.D1).
+- **LOW:** 4 (FF9 / FF10 / FF11 / FF12) — all REFUTED.
+
+Twelve attacks; zero CONFIRMED counterexamples against W3.D4.
+
+### mage ci result
+
+`mage ci` returned non-zero (exit on coverage gate for `internal/fsatomic` at 64.0%). HOWEVER:
+
+- **Tests**: 3077 passed / 0 failed across 26 packages.
+- **W3.D4 scoped packages**: `cli_claude` GREEN at 95.3%; `cli_claude/render` GREEN at 82.8%.
+- **Coverage failure cause**: `internal/fsatomic` — sibling W2.D1's package (per W2-D1-FF1 in this same file at line 1632). NOT W3.D4 scope (W3.D4 Paths per PLAN.md = `env.go` + `adapter_test.go` only).
+- **Verdict**: W3.D4's changes pass all tests and exceed coverage threshold for the changed packages. The fsatomic gap is owned by sibling W2.D1.
+
+### Summary
+
+**Verdict: PASS — no CONFIRMED counterexamples against W3.D4.** All 12 attacks REFUTED. The defense-in-depth env injection in `cli_claude/env.go` is shaped correctly:
+
+- Slice-builder produces the documented order (baseline → defense → binding-only-sorted) with `seen`-map dedup preventing double emission.
+- Precedence chain `binding.Env > defense-in-depth > closed-baseline` holds across all three pairings, verified by trace and by `TestEnvDefenseInDepthOverridableByBindingEnv`.
+- Empty binding emits all 4 defense literals unconditionally; partial override leaves the other 3 at default literal values; unset-but-explicitly-overrider-named triggers ErrMissingRequiredEnv per documented contract.
+- Closed-baseline names and defense-in-depth names are disjoint (verified by enumeration); the disjoint-claim is annotated in code.
+- `slices` is stdlib (Go 1.21+); project go.mod is 1.26+.
+- Test fixture realism is split across two sibling tests: `TestEnvCarriesDefenseInDepthEnvVars` (defense-isolation) + `TestEnvNotInheritedFromOSEnviron` (full-slice shape with +4 length adjustment).
+- All 3077 tests pass; `cli_claude` package coverage is 95.3%. The unrelated `internal/fsatomic` coverage gap is sibling-scope (already raised as W2-D1-FF1).
+
+No routing back to orchestrator. W3.D4 closure status: CLEAR.
+
+### Hylla Feedback
+
+N/A — W3.D4 touched only post-commit-stage Go files (`env.go`, `adapter_test.go`) whose changes are NOT in Hylla snapshot 5 (uncommitted; `git status` shows both as Modified). Two attempted queries via `hylla_search_keyword` for `closedBaselineEnvNames` and `defenseInDepth DISABLE_TELEMETRY DISABLE_AUTOUPDATER` against `github.com/evanmschultz/tillsyn@main` both returned empty results — expected because the staleness window is structurally guaranteed pre-cascade-ingest. The falsification relied entirely on `Read` against the two target files + the PLAN.md W3.D4 row + adapter.go for the BuildCommand wiring + `git status` for the scope-carve-out evidence on `internal/fsatomic`. No fallback miss to record beyond the documented pre-ingest staleness window — same finding sibling droplets in this drop have flagged repeatedly. Suggestion already in play per prior rounds: expose last-fully-ingested snapshot ID + "partial index available" hint.
+
+---
+
+## Droplet 4c.6.W3.D5 — Round 1
+
+**Reviewer:** go-qa-falsification-agent (subagent, doc-only mode).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W3.D5 — Post-render validator wired at Render's exit + sentinel test`.
+**Artifact under attack:** `internal/app/dispatcher/cli_claude/render/render.go` (validator additions at lines 110-137, 294-297, 302-392) + `internal/app/dispatcher/cli_claude/render/render_test.go` (5 new top-level validator tests + WalkDir placeholder positive-coverage sub-test + `validatorConformingBodySuffix()` helper + 5 pre-existing W3.D2/W3.D3 test-fixture migrations).
+
+### Counterexamples
+
+(none — empty list. All 11 attack vectors REFUTED. The droplet-internal claims hold under static + dynamic probing. See Findings 1.x for documented NIT / accepted-carryforward observations. The cross-droplet `mage ci` coverage failure on `internal/fsatomic` is REFUTED-as-NOT-W3.D5 — sibling W2.D1 owns it via prior W2-D1-FF1 finding.)
+
+### Findings (non-CONFIRMED, recorded for audit)
+
+#### W3-D5-FF1 [NIT / Signal C unanchored substring — round-3 W3-FF13 accepted carryforward] — REFUTED-AS-DESIGN
+
+- **Attack:** the brief flags `Signal C false-positive risk (per W3-FF13 accepted NIT): body that QUOTES \`# Section 0\` inside backticks/code-fence — would falsely pass`.
+- **Method:** Static analysis of `render.go:386` Signal C check + cross-reference `PLAN.md:303-307` round-3-accepted NIT documentation + `render.go:380-383` in-code doc-comment.
+- **Trace:** `render.go:386`: `if strings.Contains(postFrontmatter, m)` — substring match per the W3-FF13 NIT accepted-by-design. A stub body that quotes `# Section 0` (or `# PLACEHOLDER` or `## Role`) inside backticks / code-fence / prose would satisfy Signal C falsely. Builder explicitly documents this at `render.go:380-383`: "a stub that DELIBERATELY quotes a marker inside backticks would pass Signal C falsely, but the realistic-stub case (no marker at all) is caught here, and Signal A + Signal B catch the common-case stub shapes regardless." `BUILDER_WORKLOG.md` Round-1 D5 entry line 26 confirms the substring choice was intentional ("line-anchored matching was discretionary and the substring form keeps the validator code minimal").
+- **Result — REFUTED-AS-DESIGN.** W3-FF13 carryforward accepted-by-design; PLAN.md round-3-accepted NIT (lines 303-307) explicitly says "D5 builder has discretion to upgrade to line-anchored matching if implementation reads cleaner. Post-build refinement candidate." Not a new finding — recorded for audit only.
+
+#### W3-D5-FF2 [NIT / Signal B `name:` substring false-positive — NEW] — REFUTED-AS-LOW-RISK
+
+- **Attack:** Signal B's frontmatter validation uses `strings.Contains(frontmatter, "name:")` (`render.go:369`). Construct a counterexample frontmatter that contains a substring like `username:`, `realname:`, or `surname:` but no actual `name:` field.
+- **Method:** Static analysis of `render.go:368-371` (Signal B) + reasoning about the substring `name:` against tokens ending in `name:`.
+- **Trace:** A frontmatter body of `---\nusername: foo\n---\n` would satisfy the Signal B check because `strings.Contains("username: foo\n", "name:")` returns true (the substring `name:` appears inside `username:`). Combined with: Signal A satisfied via 200+ chars of filler post-frontmatter, Signal C satisfied via `# PLACEHOLDER`, this synthetic body would FALSELY pass the validator despite lacking a real `name:` field. Production-path realism: low — binding name validation happens upstream at `validateAgentBindingNames` (`internal/templates/load.go:1031-1055` per `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § D.1.b reference); the resolver doesn't surface `username:`-without-`name:` frontmatter as a normal failure mode. Plus a realistic typo like `nme:` or capital-N `Name:` still trips the check (capital-N `Name:` does NOT contain lowercase `name:`).
+- **Result — REFUTED-AS-LOW-RISK.** The false-positive surface is contrived; no production path lands `username:`-without-`name:` frontmatter. Fix hint (post-MVP refinement candidate): line-anchored match — `for _, line := range strings.Split(frontmatter, "\n") { if strings.HasPrefix(strings.TrimSpace(line), "name:") { return ok } }`. Stage alongside W3-FF13 for a future validator-tightening drop. NOT a current bug; NOT blocking W3.D5.
+
+#### W3-D5-FF3 [INFO / Signal A boundary 200 vs 201 strict-greater] — REFUTED
+
+- **Attack:** the brief flags `Signal A boundary: ">200" strict-greater. What about exactly 200 chars? 201? Off-by-one?`.
+- **Method:** Static analysis of `render.go:373` + PLAN.md `body length > 200 chars` (line 232) + builder design rationale in worklog line 25.
+- **Trace:** `render.go:373`: `if n := len(postFrontmatter); n <= minBodyLength` where `minBodyLength = 200`. Boundary cases by static reasoning:
+  - `n=199`: `199 <= 200` is true → FAILS (correct — 199 < 200).
+  - `n=200`: `200 <= 200` is true → FAILS (correct — strict `>` interpretation per builder design "A body of exactly 200 chars fails. This is consistent with the W3-FF8 W4-floor-as-forward-dep wording: substantive prompts MUST clear the floor, equality at the floor is 'did not clear.'").
+  - `n=201`: `201 <= 200` is false → PASSES (correct).
+  PLAN.md acceptance bullet wording "body length > 200 chars" interpreted as strict-greater. Builder's design rationale (worklog line 25) is internally consistent.
+- **Result — REFUTED.** No off-by-one; boundary semantics align with documented strict-greater intent.
+
+#### W3-D5-FF4 [INFO / Disk-read claim verification] — REFUTED
+
+- **Attack:** the brief flags `Disk-read vs in-memory: builder said validator reads from disk (not in-memory body). Verify. What if disk read fails between assemble and validate?`.
+- **Method:** Read `render.go:326-336` for `validateBundle` body.
+- **Trace:** `render.go:327-328`: `agentPath := filepath.Join(bundle.Paths.Root, pluginSubdir, agentsSubdir, binding.AgentName+".md")` then `body, err := os.ReadFile(agentPath)`. Confirms disk read, not in-memory body. Builder claim in `BUILDER_WORKLOG.md` line 27 ("the disk read happens in `validateBundle`") and design rationale ("(a) reading from disk catches a future regression where `os.WriteFile` silently truncates the file post-write (the in-memory body wouldn't catch that)") match the shipped code verbatim. Disk-read failure path at line 329-334: returns `fmt.Errorf("%w: read rendered agent file %q: %s", ErrInvalidAgentBody, agentPath, err.Error())` — wraps under `ErrInvalidAgentBody`. The classification quirk (an actual I/O error gets classified under `ErrInvalidAgentBody` rather than a separate I/O sentinel) is documented at line 330-331 ("If renderAgentFile succeeded just above, the file MUST exist; any read error here is a real I/O failure worth surfacing") and is intentional — the failure mode is unreachable in normal operation because renderAgentFile-then-validateBundle is a tight call sequence with no intervening writes.
+- **Result — REFUTED.** Disk read confirmed at the documented seam; failure-path wrap is documented and intentional. Micro-edge logged as Finding 1.11-style refinement candidate (separate `ErrAgentBodyReadFailure` sentinel) but not a current bug.
+
+#### W3-D5-FF5 [INFO / Wrap chain — errors.Is end-to-end] — REFUTED
+
+- **Attack:** the brief flags `Wrap chain: errors.Is(err, ErrInvalidAgentBody) works through the %w wrap? Verify each signal's failure path`.
+- **Method:** Read each `fmt.Errorf` site inside `validateAgentBodyShape` + `validateBundle` + `Render`.
+- **Trace:** Five signal failure sites inside `validateAgentBodyShape`:
+  - Line 359 (missing leading delimiter): `fmt.Errorf("%w: missing leading \`---\\n\` frontmatter delimiter", ErrInvalidAgentBody)`.
+  - Line 364 (missing closing delimiter): `fmt.Errorf("%w: missing closing \`---\\n\` frontmatter delimiter", ErrInvalidAgentBody)`.
+  - Line 370 (missing `name:` field): `fmt.Errorf("%w: frontmatter missing \`name:\` field", ErrInvalidAgentBody)`.
+  - Line 374 (Signal A): `fmt.Errorf("%w: body length %d <= %d (post-frontmatter floor)", ErrInvalidAgentBody, n, minBodyLength)`.
+  - Line 390 (Signal C): `fmt.Errorf("%w: body missing positive role-section marker (need one of %v)", ErrInvalidAgentBody, markers)`.
+  Plus `validateBundle` I/O failure at line 332-333: `fmt.Errorf("%w: read rendered agent file %q: %s", ErrInvalidAgentBody, agentPath, err.Error())`. All six use `%w` against `ErrInvalidAgentBody`. Then `Render` at line 296: `fmt.Errorf("render: validate bundle: %w", err)` — double-wraps. Per stdlib `errors` semantics, `errors.Is` walks the `%w` chain. Cross-evidence: shipped test `TestRenderValidatorFailsOnTooShortBody` at `render_test.go:1458-1489` asserts `errors.Is(err, render.ErrInvalidAgentBody)` against the doubly-wrapped error AND passes per `mage testPkg ./internal/app/dispatcher/cli_claude/render` (70/70 green).
+- **Result — REFUTED.** Wrap chain holds end-to-end through both layers.
+
+#### W3-D5-FF6 [INFO / Rollback on validator failure — partial-state leak] — REFUTED
+
+- **Attack:** the brief flags `Rollback integration: when validator fails, does the existing renderRollback (render.go:188-204) clean up properly? Or is there a partial-state leak?`.
+- **Method:** Read `render.go:294-297` (Render wiring) + `render.go:401-420` (renderRollback struct + run method) + `render_test.go:1480-1488` (rollback assertion shipped in TestRenderValidatorFailsOnTooShortBody).
+- **Trace:** Validator-failure wiring at `render.go:294-297`: `if err := validateBundle(bundle, binding); err != nil { rollback.run(); return "", fmt.Errorf("render: validate bundle: %w", err) }`. Rollback.run at `render.go:414-420`: `_ = os.Remove(filepath.Join(r.bundleRoot, "system-prompt.md"))` + `_ = os.RemoveAll(filepath.Join(r.bundleRoot, pluginSubdir))`. The `RemoveAll(plugin/)` blanket-removes every artifact written by:
+  - `renderPluginManifest` (`<root>/plugin/.claude-plugin/plugin.json` per `render.go:507-518`).
+  - `renderAgentFile` (`<root>/plugin/agents/<name>.md` per `render.go:559-569`).
+  - `renderMCPConfig` (`<root>/plugin/.mcp.json` per `render.go:948-964`).
+  - `renderSettings` (`<root>/plugin/settings.json` per `render.go:1019-1049`).
+  Plus the additional `os.Remove("system-prompt.md")` covers the cross-CLI bundle-root artifact. Manifest.json at `<root>/manifest.json` (F.7.1 upstream) is deliberately NOT touched per `render.go:397-400` ("Render is the sole writer under <Root>/system-prompt.md and <Root>/plugin/, so a failed render can blanket-remove those two paths without touching F.7.1's manifest.json"). Test confirmation: `TestRenderValidatorFailsOnTooShortBody:1480-1488` asserts both `<root>/system-prompt.md` and `<root>/plugin` are gone post-failure via `errors.Is(statErr, os.ErrNotExist)`. No partial-state leak observable.
+- **Result — REFUTED.** Rollback wipes every render-written artifact while preserving the upstream F.7.1 manifest as designed. Best-effort error swallowing is documented at `render.go:411-413` and is appropriate — the caller is already returning a non-nil error.
+
+#### W3-D5-FF7 [INFO / Concurrent renders — race condition / shared state] — REFUTED
+
+- **Attack:** the brief flags `Concurrent renders: if two Render calls run concurrently against different bundles, do they interfere?`.
+- **Method:** Read `render.go:1-100` (imports + package-level declarations) + `render.go:234-300` (Render entry point) + `render_test.go:57-73` (fixtureBundle).
+- **Trace:** Package-level state surface enumerated:
+  - Constants: `pluginSubdir`, `claudePluginManifestSubdir`, `agentsSubdir`, `agentBodyEmbeddedRoot`, `agentBodyDefaultGroup`, `agentBodyFallbackGroup`, `projectAgentsSubdir`, `userAgentsSubdir` (`render.go:72-199`). All `const string` — immutable.
+  - Sentinel errors: `ErrInvalidRenderInput`, `ErrInvalidGrantsLister`, `ErrAgentBodyNotFound`, `ErrInvalidAgentBody`, `ErrInvalidAgentTemplatePath` (`render.go:86-170`). All `var = errors.New(...)` — immutable at runtime.
+  - No package-level `sync.Mutex`, `sync.Map`, channel, atomic, or mutable global. No `init()` function. No package-level mutable cache.
+  - `Render` function-local state: `rollback` (renderRollback struct, local), `promptBody` (string, local), error returns (local). No shared mutation.
+  - File system reads/writes: each `Render` call operates on its own `bundle.Paths.Root` (per-spawn temp dir per `fixtureBundle` line 59 `t.TempDir()`); two concurrent calls against different roots have disjoint write paths; the embed.FS (`templates.DefaultTemplateFS`) is read-only by compile-in invariant.
+  - `os.UserHomeDir()` (`render.go:861`) is goroutine-safe per stdlib doc (reads process environment which is goroutine-safe for read).
+  Race-free by construction.
+- **Result — REFUTED.** No shared state; concurrent renders against disjoint bundle roots cannot interfere. The only shared resource — `templates.DefaultTemplateFS` — is read-only.
+
+#### W3-D5-FF8 [INFO / 27/27 placeholder positive-coverage] — REFUTED
+
+- **Attack:** the brief flags `Placeholder coverage: builder claimed 27/27 placeholders pass. Verify by re-running the positive test`.
+- **Method:** Read `render_test.go:1592-1660` (TestRenderValidatorAcceptsAllEmbeddedPlaceholders) + `internal/templates/embed.go:75-103` (//go:embed directives) + run `mage testPkg ./internal/app/dispatcher/cli_claude/render`.
+- **Trace:** Test walks `templates.DefaultTemplateFS` under `builtin/agents/` via `fs.WalkDir` (line 1600-1612), collects every `.md` file (line 1610), runs each as a project-tier override through `Render` (line 1647), asserts no error. Sanity gate at line 1657-1659 fails fast if `len(placeholders) < 27`. Reconciliation against `embed.go:77-103` `//go:embed` directives — 27 placeholder `.md` paths embedded:
+  - 7 standard names under `till-gen/`: planning-agent, builder-agent, qa-proof-agent, qa-falsification-agent, research-agent, closeout-agent, commit-message-agent.
+  - 7 standard names under `till-go/`: same 7 names.
+  - 7 standard names under `till-gdd/`: same 7 names.
+  - 5 legacy go-* names under `till-go/`: go-builder-agent, go-planning-agent, go-research-agent, go-qa-proof-agent, go-qa-falsification-agent (W5.D3 transitional residue per `embed.go:64-68`).
+  - 1 `orchestrator-managed.md` under `till-gen/`.
+  Total: 7+7+7+5+1 = 27. Matches the sanity-gate floor.
+  Dynamic verification: `mage testPkg ./internal/app/dispatcher/cli_claude/render` returns 70/70 green including all 27 placeholder sub-tests (test count: 5 new validator tests + 27 WalkDir sub-tests + ~38 pre-existing render tests = 70). Test output captured: `[PKG PASS] github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_claude/render (0.00s)`.
+- **Result — REFUTED.** 27/27 placeholders pass the validator end-to-end per live test execution.
+
+#### W3-D5-FF9 [INFO / D2+D3 fixture migration preserves original assertions] — REFUTED
+
+- **Attack:** the brief flags `D2+D3 fixture migration: builder claimed 5 pre-existing D2/D3 tests needed the validatorConformingBodySuffix() helper. Are those tests still asserting their original substrings (e.g., SENTINEL_USER_TIER)?`.
+- **Method:** Read each of the 5 migrated tests and verify substring assertions are preserved.
+- **Trace:** Five migrated tests audited:
+  1. `TestAssembleAgentFileBody_UserOverride` (`render_test.go:893-920`) — assertion line 917 `if !strings.Contains(body, sentinel)` where `sentinel = "SENTINEL_USER_TIER"` (line 900). Fixture at line 902: `"---\nname: go-builder-agent\n---\n\n" + validatorConformingBodySuffix() + sentinel + "\n"`. Suffix BEFORE sentinel preserves the substring match.
+  2. `TestAssembleAgentFileBody_ProjectOverride` (`render_test.go:925-961`) — assertion line 954 `if !strings.Contains(body, projectSentinel)` where `projectSentinel = "SENTINEL_PROJECT_TIER"` (line 940). Plus NEGATIVE assertion line 957 `if strings.Contains(body, "SENTINEL_USER_TIER")` (ensures user-tier sentinel NOT in body when project tier wins). Fixture at line 942: `"---\nname: go-builder-agent\n---\n\n" + validatorConformingBodySuffix() + projectSentinel + "\n"`. Suffix-before-sentinel pattern preserved.
+  3. `TestAssembleAgentFileBody_FrontmatterStripModelOnAgentsTOMLSet` (`render_test.go:1075-1108`) — assertions: line 1097 `model:` absent (strip worked); line 1101 `body-bytes-preserve-marker` present; line 1105 `name: go-builder-agent` survives. Fixture uses `d3UserTierFrontmatter("name: go-builder-agent\nmodel: opus\n")` at line 1080 — helper definition at line 1066-1070 wraps `validatorConformingBodySuffix() + "body-bytes-preserve-marker\n"`. Marker substring assertion still passes.
+  4. `TestAssembleAgentFileBody_FrontmatterStripToolsOnAgentsTOMLSet` (`render_test.go:1114-1163`) — assertions: line 1144 stale `tools:` absent; line 1149 `disallowedTools:` absent; line 1156 injected `allowedTools: Read` present; line 1160 `name: go-builder-agent` survives. Same `d3UserTierFrontmatter` helper. Order preserved (allowedTools is injected post-strip, lands AFTER the d3UserTierFrontmatter's body; substring assertion still passes).
+  5. `TestAssembleAgentFileBody_FrontmatterPreservedWhenAgentsTOMLAbsent` (`render_test.go:1378-1427`) — assertions: line 1406 `model: opus` survives (stripModel false); line 1410 `tools: Read, Bash` stripped (stripTools always true per W3-FF12); line 1415 `allowedTools:` not injected (binding empty); line 1419 `disallowedTools:` not injected; line 1424 `body-bytes-preserve-marker` survives. Same `d3UserTierFrontmatter` helper.
+
+  All 5 migrated tests pass per `mage testPkg ./internal/app/dispatcher/cli_claude/render` 70/70 green. The fixture mutation is mechanical — pre-fixture-suffix the validator-conforming preamble (200+ char filler + `# PLACEHOLDER` marker), post-fixture-suffix the test-specific sentinel — so the strip/inject/resolve assertions still drive the same code paths. The `validatorConformingBodySuffix` doc-comment at `render_test.go:797-808` explicitly justifies this ordering ("sentinels must appear AFTER the marker so substring assertions on them still hit").
+- **Result — REFUTED.** Migration is sound; no original assertion lost; helper-based mutation pattern keeps the diff mechanical and the substring assertions unbroken.
+
+#### W3-D5-FF10 [INFO / HF8 wiring proof — validator is not a dangling helper] — REFUTED
+
+- **Attack:** the brief flags the load-bearing HF8 contract: validator MUST be wired into Render's exit, not shipped as a dangling exported helper.
+- **Method:** Read `render.go:288-299` (the wiring site) + check that every D5 failure-path test calls `Render` end-to-end rather than `validateBundle` standalone.
+- **Trace:** Wiring site at `render.go:288-297`: `// 6. Post-render validator (Drop 4c.6 W3.D5). ... if err := validateBundle(bundle, binding); err != nil { rollback.run(); return "", fmt.Errorf("render: validate bundle: %w", err) }`. Sits between `renderSettings` (step 5) and `return promptBody, nil` (line 299). Matches the round-3-locked PLAN.md acceptance contract at lines 229-230 ("validator MUST be invoked from `Render`'s exit path"). Test wiring proof: every D5 failure-path test (`TestRenderValidatorFailsOnTooShortBody`, `_FailsOnMissingFrontmatter`, `_FailsOnMissingMarker`) calls `render.Render(...)` end-to-end (lines 1471, 1509, 1537) and asserts on the returned error — never on `validateBundle` standalone. Builder explicitly justified the wiring in `BUILDER_WORKLOG.md` line 28 ("HF8 contract: validator MUST be wired into `Render`'s exit, not shipped as a dangling helper. Every D5 failure-path test calls `Render()` end-to-end..."). Plus `validateBundle` and `validateAgentBodyShape` are both package-private (lower-case start) — no external caller path exists for them to "dangle" through.
+- **Result — REFUTED.** Wiring is load-bearing AND test-proven AND structurally enforced via package privacy.
+
+#### W3-D5-FF11 [INFO / Marker at line 1 with sufficient padding — A+B+C interaction] — REFUTED
+
+- **Attack:** the brief flags `Signal C interaction with body length: if body has \# Section 0\` marker AT line 1 (first 11 chars) and nothing else for 200+ chars, does it pass A AND C?`.
+- **Method:** Static analysis of the signal evaluation order + interaction.
+- **Trace:** Hypothetical body: `"---\nname: x\n---\n# Section 0\n" + 200-char-filler`. Signal evaluation order per `render.go:354-392`:
+  - Signal B: leading `---\n` present (yes), closing `---\n` at index after `name: x\n`, frontmatter contains `name:` (yes) → PASS.
+  - `afterOpen` = `"name: x\n---\n# Section 0\n<filler>"`. `closeIdx` = index of second `---\n`. `postFrontmatter` = `"# Section 0\n<filler>"`.
+  - Signal A: `len(postFrontmatter) = 11 + 1 + 200 = 212 > 200` → PASS.
+  - Signal C: `strings.Contains("# Section 0\n<filler>", "# Section 0")` → PASS.
+  All three signals pass cleanly. This is the intended-behavior happy path — the body has a real role-section header at line 1 of post-frontmatter and substantial content below. No bug.
+  Counterexample edge: `"---\nname: x\n---\n# Section 0\n"` alone (no filler) → `postFrontmatter = "# Section 0\n"`, len = 12 → FAILS Signal A. Confirms validator catches "marker-but-no-content" stubs.
+- **Result — REFUTED.** Marker-at-line-1 with sufficient padding passes correctly; the same shape without padding fails Signal A as designed.
+
+#### W3-D5-FF12 [HIGH / mage ci — drop-level gate failure NOT W3.D5-attributable] — REFUTED-AS-NOT-W3.D5
+
+- **Attack:** the brief mandates `Run mage ci`.
+- **Method:** Run `mage ci` from `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`.
+- **Trace:** Captured output:
+  ```
+  3077 tests passed across 26 packages.
+
+  [ERROR] Coverage threshold not met
+    Each package must stay at or above 70.0% coverage.
+    github.com/evanmschultz/tillsyn/internal/fsatomic 64.0%
+  Error: coverage below 70.0%: github.com/evanmschultz/tillsyn/internal/fsatomic 64.0%
+  ```
+  All 3077 tests pass (including all 70 render-package tests). Coverage gate fires on `internal/fsatomic` at 64.0% < 70.0% threshold. W3.D5's own package `internal/app/dispatcher/cli_claude/render` reports 82.8% coverage — well above the 70% floor. `internal/fsatomic/` is UNTRACKED in `git status` (`?? Untracked: 1 files / internal/fsatomic/`), is a brand-new sibling-droplet (W2.D1 — explicitly owned by `4c.6.W2.D1 — internal/fsatomic/ atomic file-write helper`), and is COMPLETELY OUT OF SCOPE for W3.D5. W3.D5's scope per PLAN.md lines 222-264 is exactly two files: `render.go` + `render_test.go`. The fsatomic coverage gap is sibling-owned and ALREADY flagged as W2-D1-FF1 at this file's lines 1632-1652. Builder explicitly deferred mage-ci verification to drop-orch per `BUILDER_WORKLOG.md` line 47 ("`mage ci` — NOT run by this builder per droplet constraint; drop-orch runs `mage ci` at drop end"). Pattern mirrors W3.D4's W3-D4-FF8 carve-out (this file line 1856-1861) verbatim.
+- **Result — REFUTED-AS-NOT-W3.D5.** The fsatomic coverage failure is NOT a W3.D5 falsification — sibling-droplet W2.D1 owns it (W2-D1-FF1 already raised). W3.D5's changed package coverage is 82.8%, well above threshold. Routing: orchestrator already owns the W2.D1 round-2 respawn directive.
+
+### Attack family table
+
+| Family                          | Result    | Notes                                                                                     |
+| ------------------------------- | --------- | ----------------------------------------------------------------------------------------- |
+| B1 counterexample-search        | CONFIRMED-NOT-D5 | W3-D5-FF12 — `mage ci` red on `fsatomic 64.0%`. Not D5's fault (D1 inheritance, W2-D1-FF1 prior round). |
+| B2 contract-preservation        | REFUTED   | FF1 (Signal C accepted NIT), FF2 (Signal B substring nit, low-risk), FF3 (boundary 200/201 correct), FF4 (disk read confirmed), FF5 (wrap chain holds), FF6 (rollback clean), FF11 (marker-at-line-1 interaction correct). |
+| B3 hidden-coupling              | REFUTED   | FF7 — no package-level mutable state; concurrent renders against disjoint roots cannot interfere; embed.FS read-only by compile-in invariant. |
+| B4 yagni                        | REFUTED   | Validator surface = three pure functions (`validateBundle` disk re-read, `validateAgentBodyShape` pure check, `ErrInvalidAgentBody` sentinel) + AND-chained 3 signals. No premature generalization; substring over regex; minimal abstraction. |
+| B5 spec-compliance              | MIXED     | Droplet-internal acceptance (3-signal AND, disk re-read, wiring, 27/27 placeholders, W3-PF1 D2+D3 test preservation, HF8 proof) all satisfied per FF3/FF4/FF6/FF8/FF9/FF10. `mage ci green` bullet (FF12) FAILS at drop level due to pre-existing W2-D1-FF1 — NOT W3.D5-attributable. |
+| B6 shipped-but-not-wired        | REFUTED   | FF10 — validator wired at Render's exit; HF8 contract verified via end-to-end Render() tests, not standalone validateBundle tests; validator is package-private with no external dangling path. |
+| B7 prompt-injection             | EXHAUSTED | DORMANT pre-team-feature per agent definition.                                            |
+
+### Probes executed
+
+- **`mage ci`** — RED. `Coverage threshold not met` → `internal/fsatomic 64.0%`. Same W2-D1-FF1 surface from prior round. Render-package coverage 82.8% / 70/70 tests green.
+- **`mage testPkg ./internal/app/dispatcher/cli_claude/render`** — GREEN, 70/70 tests pass. Render package is sound.
+- **Direct `Read` of `internal/app/dispatcher/cli_claude/render/render.go` lines 1-1109** — full file inspection; confirmed validator wiring, error wraps, rollback machinery, disk-read seam, package-level immutability.
+- **Direct `Read` of `internal/app/dispatcher/cli_claude/render/render_test.go` lines 1-200 / 700-1200 / 1200-1661** — confirmed 5 new validator tests, 27-placeholder WalkDir sub-test, 5 migrated D2/D3 fixture tests with substring assertions preserved.
+- **Direct `Read` of `internal/templates/embed.go`** — confirmed 27 placeholder `//go:embed` directives (7 till-gen + 7 till-go + 7 till-gdd + 5 legacy go-* + 1 orchestrator-managed).
+- **Direct `Read` of `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md` lines 222-264 + 303-307** — W3.D5 acceptance criteria + W3-FF13 NIT documentation.
+- **Direct `Read` of `workflow/drop_4c_6/BUILDER_WORKLOG.md` lines 1-100** — builder's W3.D5 design rationale and TDD red→green trace.
+- **Direct `Read` of sample placeholder bodies** (`builtin/agents/till-go/builder-agent.md`, `builtin/agents/till-gen/commit-message-agent.md`, `builtin/agents/till-go/go-builder-agent.md`) — confirmed each carries `# PLACEHOLDER` marker (Signal C) + frontmatter with `name:` (Signal B) + > 200 char post-frontmatter body (Signal A).
+- **Static byte-count reasoning** on `builder-agent.md` post-frontmatter (241 bytes including em-dash UTF-8 expansion) — confirms Signal A clearance by margin of 41 bytes over the 200-char floor.
+- **Hylla `hylla_search_keyword`** for `validateBundle ErrInvalidAgentBody validateAgentBodyShape` against `github.com/evanmschultz/tillsyn@main` — returned `enrichment still running` error. Same staleness window prior rounds documented. Fell back to Read.
+
+### Summary
+
+**Verdict: PASS — no W3.D5-attributable CONFIRMED counterexamples.** All 11 attack vectors REFUTED. The cross-droplet `mage ci` failure (W3-D5-FF12) is documented as sibling-owned W2-D1-FF1 (prior round, already routed); W3.D5's own render-package is at 82.8% coverage with 70/70 tests green.
+
+**Soundness summary:** The validator's 3-signal AND check (B → A → C evaluation order) is logically sound; each signal's `%w`-wrapped error returns satisfy `errors.Is(err, ErrInvalidAgentBody)` through Render's double-wrap; the disk-read approach catches potential `os.WriteFile` truncation regressions; rollback wipes every render-written artifact (system-prompt.md + plugin/ subtree) while preserving the upstream F.7.1 manifest.json; concurrent renders against disjoint bundle roots are race-free by construction (no package-level mutable state); placeholder positive coverage is 27/27 verified live; D2+D3 fixture migrations preserve every original sentinel assertion via the suffix-before-sentinel ordering in `validatorConformingBodySuffix()` and `d3UserTierFrontmatter()`; HF8 wiring is load-bearing AND test-proven AND structurally enforced via package privacy on `validateBundle` / `validateAgentBodyShape`.
+
+**Severity breakdown:**
+
+- 0 CONFIRMED counterexamples attributable to W3.D5.
+- 1 CONFIRMED-NOT-D5 counterexample (W3-D5-FF12 / mage ci red on fsatomic 64.0%) — sibling-owned, prior W2-D1-FF1.
+- 2 NIT-severity findings (W3-D5-FF1 accepted carryforward W3-FF13; W3-D5-FF2 new Signal B `name:` substring false-positive — both refinement candidates, not blocking).
+- 8 INFO-severity findings (each a probe outcome documenting a verification, all REFUTED).
+
+**Routing to orchestrator:**
+
+1. **W3.D5 droplet itself: PASS — no respawn required for W3.D5 work.**
+2. **W3.D5 builder did NOT cause the mage-ci coverage gate failure.** W2-D1-FF1 is the open finding; routing is to W2.D1's builder (per the W2.D1 Round 1 fix-hint at this file's line 1651).
+3. **Refinement candidates (post-MVP, not blocking):**
+   - W3-D5-FF1 Signal C backticked-marker false-positive — accepted NIT carryforward per `PLAN.md:303-307`.
+   - W3-D5-FF2 Signal B substring `name:` false-positive — NEW NIT, line-anchored match would close it. Stage alongside W3-FF13 for a future validator-tightening drop.
+   - W3-D5-FF4 micro-edge — `ErrInvalidAgentBody` classification covering I/O failures, separate `ErrAgentBodyReadFailure` sentinel could clean up error-routing surface. Refinement candidate, not blocking.
+
+No routing back to orchestrator beyond standard W3.D5 closure-state confirmation + the existing W2-D1-FF1 cross-reference.
+
+### Hylla Feedback
+
+- **Query:** `hylla_search_keyword` for `validateBundle ErrInvalidAgentBody validateAgentBodyShape` against `github.com/evanmschultz/tillsyn@main`.
+  - **Missed because:** `enrichment still running for github.com/evanmschultz/tillsyn@main` — the W3.D5 work is uncommitted (visible in `git status` as modified files on `render.go` + `render_test.go`) so the new symbols cannot possibly be in any Hylla snapshot. Even pre-commit W3.D2/W3.D3 commits (`d671b91`, `7346fe7`) and the W2.D1 commit (`5e17515`) appear to have triggered an in-flight enrichment that is still settling. Same pre-cascade-ingest staleness window documented in this file's W3.D2 round-2 Hylla Feedback (line 1619) and W3.D4 Hylla Feedback (line 1936) and W2.D1 Hylla Feedback (line 1711).
+  - **Worked via:** direct `Read` against `render.go` (focused offsets for the validator surface lines 110-137, 294-297, 302-392 and the rollback machinery lines 401-420), `render_test.go` (focused offsets for the 5 new validator tests + 5 migrated D2/D3 tests + helpers), `embed.go` (full file for the 27-placeholder embed-list reconciliation), `BUILDER_WORKLOG.md` (Round 1 W3.D5 entry for builder's design decisions), `DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md` (W3.D5 acceptance bullets + W3-FF13 NIT documentation), sample placeholder `.md` files for byte-count grounding. The `mage testPkg` and `mage ci` runs grounded the dynamic claims.
+  - **Suggestion:** non-blocking — same suggestion as prior rounds. When enrichment is in flight, the keyword tool could surface the snapshot ID of the last fully-ingested baseline so the caller can fall back to the prior snapshot (potentially still useful for unchanged subsystems like the `templates.DefaultTemplateFS` consumer-graph) rather than to non-Hylla tools wholesale. This is the recurring pre-cascade-ingest staleness shape and warrants tracking as a Hylla refinement after dogfood. Multiple droplets in this drop have raised the same suggestion; aggregate at drop-end Hylla refinements rollup.

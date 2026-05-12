@@ -183,7 +183,7 @@ Tests are co-located with each droplet's production file. D1 appends to `cli_ada
 
 ### Droplet 4c.6.W3.D4 — Defense-in-depth env vars in `cli_claude/env.go`
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/app/dispatcher/cli_claude/env.go` (MODIFY — extend `closedBaselineEnvNames` slice at lines 37-58 with a new alongside data structure, `defenseInDepthEnvLiterals`, that carries `(name, value)` pairs and is unconditionally written into the assembled `cmd.Env` regardless of `os.LookupEnv` result; OR add a new `assembleDefenseInDepthEnv()` helper called inside `assembleEnv` that injects the four pairs into `emitted` map after the `binding.Env` resolution loop and before the closed-baseline resolution loop, per `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § D.3 — sub-planner picks the cleaner shape; preferred: separate slice + injection-loop right after the `binding.Env` loop at line 95-101 so the four literals are part of the closed-baseline universe but distinguishable in code review), `internal/app/dispatcher/cli_claude/adapter_test.go` (MODIFY — append `TestEnvCarriesDefenseInDepthEnvVars` asserting `cmd.Env` carries `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, `CLAUDE_CODE_FORK_SUBAGENT=0`, `DISABLE_AUTOUPDATER=1`, `DISABLE_TELEMETRY=1` after `BuildCommand` runs).
 - **Packages:** `internal/app/dispatcher/cli_claude`.
@@ -221,7 +221,7 @@ Tests are co-located with each droplet's production file. D1 appends to `cli_ada
 
 ### Droplet 4c.6.W3.D5 — Post-render validator wired at `Render`'s exit + sentinel test
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/app/dispatcher/cli_claude/render/render.go` (MODIFY — add `validateBundle(bundle dispatcher.Bundle, item domain.ActionItem, binding dispatcher.BindingResolved) error` package-private function; **call it from `Render` BEFORE `return promptBody, nil` at line 178** — this is the LOAD-BEARING wiring contract per ROUND-2 HF8; `Render` returns the validator's wrapped error if it fails, with rollback running first via the existing `rollback.run()` pattern at lines 144-176), `internal/app/dispatcher/cli_claude/render/render_test.go` (MODIFY — append `TestRenderValidatorFailsOnEmptyAgentBody`, `TestRenderValidatorFailsOnStubShapeAgentBody`, `TestRenderValidatorFailsOnMissingFrontmatterDelimiters`, `TestRenderValidatorPassesOnSubstantiveBody` exercising the 3-signal stub-detection signature; PLUS the minimal "bundle body length > stub-threshold" sentinel-style assertion — combined with the other two signals — per the L1 plan's "Minimal sentinel-style integration test" acceptance bullet).
 - **Packages:** `internal/app/dispatcher/cli_claude/render`.
