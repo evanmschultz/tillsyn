@@ -52,7 +52,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W0 — sub-plan container
 
-- **State:** planning
+- **State:** done
 - **Kind:** `plan` (sub-plan container; spawns its own L2 planner)
 - **Directory:** `workflow/drop_4c_6/DROP_4c.6.W0_AGENTS_TOML_SCHEMA/` (created when sub-planner spawns)
 - **Scope:** Land `internal/config/agents.go` with the `[agents]` defaults struct + per-kind override merge per `SKETCH.md` § 4 + § 5 + § 26.W0. New types: `AgentRuntime` (effective per-kind config), `AgentsRegistry` (loaded `agents.toml`), `Preset` (the `[agents]` block), per-kind `Override` partial-shape struct. Field-level inheritance: per-kind block overrides only fields it sets; absent fields fall through to `[agents]`. Map fields (`env_set` / `env_from_shell`) merge per-key. List fields (`cli_args` / `tools_allow` / `tools_deny` / `claude_md_addons`) full-replace. `agents.local.toml` deep-merge over the resolved `agents.toml`; `tools_deny` user-override REJECTED with structured error. TOML position-tracking errors via `pelletier/go-toml/v2` (existing dep — do NOT add a competing TOML lib per `SKETCH.md` § 26.W0 ContextBlocks). Render-time frontmatter `model:` / `tools:` strip helper exposed for W3 to call into.
@@ -70,7 +70,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W0.5 — sub-plan container
 
-- **State:** planning
+- **State:** done
 - **Kind:** `plan` (sub-plan container; spawns its own L2 planner)
 - **Directory:** `workflow/drop_4c_6/DROP_4c.6.W0.5_TEMPLATE_VALIDATORS/`
 - **Scope:** Add six load-time validators to `internal/templates/load.go` (alongside the existing `validateMapKeys` + `validateAgentBindingFiles` + `validateRequiredChildRules` + `validateChildRuleReachability` + `validateKindStructuralCoherence` chain landed in Drop 4c.5 F.5.1+F.5.2). Each new validator emits a closed sentinel error with TOML-line pointer + structured message "this template is broken because X; cannot ingest." Per `SKETCH.md` § 26.W0.5: (1) `[[child_rules]]` cycle detector (graph walk); (2) `blocked_by` acyclicity at load time (Drop 4a Wave 1.7 enforces at runtime — this duplicates the check at template-load, NOT at action-item-create); (3) `agent_name` existence across the 3-tier resolution priority (project `.tillsyn/agents/` → user `~/.tillsyn/agents/<group>/` → embedded); (4) kind closed-12-enum membership for every `[agents.<kind>]` and `[agent_bindings.<kind>]` block; (5) `[[child_rules]]` recursion-depth bound (default 5); (6) claim-vs-impl coherence (every claimed `[[child_rules]]` output kind matches the cascade-tree-shape rules in `CLAUDE.md` § Cascade Tree Structure). Each validator gets a malformed-template fixture + a passing-fixture per test.
@@ -115,7 +115,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W2 — sub-plan container
 
-- **State:** planning
+- **State:** done
 - **Kind:** `plan` (sub-plan container; spawns its own L2 planner)
 - **Directory:** `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/`
 - **Scope:** Land `till init` per `SKETCH.md` § 9 + § 26.W2 — TUI walk (project name + group picker), copy embedded `internal/templates/builtin/agents/<group>/*.md` → `<project>/.tillsyn/agents/*.md` FLAT, copy `agents.example.toml` → `<project>/agents.toml`, ensure `agents.local.toml` in `.gitignore`, optional `.mcp.json` registration, project-DB record creation, Laslig success message, JSON mode (`--json '{...}'`) with identical behavior, re-run safety (never overwrites). Plus: vendor `fsatomic` (52 LOC, zero deps) + `configmerge` (~12kB + tests, one dep already in Tillsyn) from `ta` to `internal/vendor/` with `VENDOR_SOURCE.md` provenance per `SKETCH.md` § 9.6. Plus: REMOVE `till init-dev-config` command from `cmd/till/main.go` (lines 1885-1901, 2039-2040+ per `git grep` confirmation 2026-05-09) — fold install-time config setup into `till install`. JSON-mode + TUI behaviors must be IDENTICAL apart from input source.
@@ -135,7 +135,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W3 — sub-plan container
 
-- **State:** planning
+- **State:** done
 - **Kind:** `plan` (sub-plan container; spawns its own L2 planner)
 - **Directory:** `workflow/drop_4c_6/DROP_4c.6.W3_BUNDLE_AND_ISOLATION/`
 - **Scope:** Land the five ISOLATION_ENFORCEMENT_FIX changes D.1-D.5 per `SKETCH.md` § 18 / § 26.W3, plus the cross-cutting `SystemPromptTemplatePath` end-to-end plumbing. (D.1) ship full agent body via `//go:embed` + 3-tier resolution priority (`<project>/.tillsyn/agents/<name>.md` → `~/.tillsyn/agents/<group>/<name>.md` → embedded `till-<group>/<name>.md`) — replaces today's stub at `render.go:assembleAgentFileBody` (lines 340-364 per current file inspection). (D.2) frontmatter `model:` + `tools:` render-time strip when `agents.toml` has them set, per `SKETCH.md` § 4.4. (D.3) inject defense-in-depth env vars `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, `CLAUDE_CODE_FORK_SUBAGENT=0`, `DISABLE_AUTOUPDATER=1`, `DISABLE_TELEMETRY=1` in `internal/app/dispatcher/cli_claude/env.go`. (D.4) post-render validator wired into the render path (NOT shipped as an unwired helper — see Acceptance bullet) — fails loud on empty / stub-shaped / missing-required-frontmatter bundle agent body. (D.5) doc-comment corrections at `render.go:307-319` (the `renderAgentFile` + `assembleAgentFileBody` block currently describing the stub design) ONLY; **`SPAWN_PIPELINE.md:24-31` rewrite is W6.D4's sole responsibility** (ROUND-2 HF3). Plus: propagate `SystemPromptTemplatePath` through `BindingResolved` (struct definition site is `internal/app/dispatcher/cli_adapter.go:102`, NOT `binding_resolved.go` — ROUND-2 HF4 verified; W3 paths therefore include `cli_adapter.go` + `cli_adapter_test.go`). Sentinel-injection integration test scaffolding lives here too (real sentinel tests get fleshed out by Drop 4c.8 W4-D, but a minimal "bundle body is non-empty after render" assertion ships in this wave).
