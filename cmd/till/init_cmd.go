@@ -1,17 +1,23 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
+
+	"github.com/evanmschultz/tillsyn/internal/fsatomic"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
 // initJSONPayload is the schema for `till init --json '{...}'` headless
@@ -344,11 +350,10 @@ func runInitTUI(stdout io.Writer, opts rootCommandOptions) error {
 	if !final.Done() {
 		return errors.New("till init: tui terminated before completing walk")
 	}
-	// D5 wires the actual file-copy pipeline. Until then, having successfully
-	// completed the TUI walk we surface the same D5-stub error JSON-mode
-	// surfaces, so D5 can lift either branch into a real pipeline.
-	_ = final.Payload()
-	return errors.New("till init: file copy not yet wired (W2.D5)")
+	// Hand off the gathered payload to the shared file-copy pipeline both
+	// runInitTUI and runInitJSON invoke. Behavior is IDENTICAL apart from
+	// input source (TUI walk vs --json payload) per SKETCH §26.W2 RiskNote.
+	return runInitPipeline(stdout, opts, final.Payload())
 }
 
 // runInitJSON parses the headless `--json` payload, validates required
@@ -369,11 +374,205 @@ func runInitJSON(stdout io.Writer, opts rootCommandOptions, payload string) erro
 		return err
 	}
 
-	// D5 wires the actual file-copy pipeline. Until then a successful
-	// parse + validate surfaces this stub so callers (and tests) can
-	// confirm the parser ran without short-circuiting on a malformed
-	// payload.
-	return errors.New("till init: file copy not yet wired (W2.D5)")
+	// JSON-mode and TUI-mode call the same downstream pipeline — only the
+	// input source differs (parsed --json payload vs gathered TUI walk).
+	// Per D5 acceptance + SKETCH §26.W2 RiskNote.
+	return runInitPipeline(stdout, opts, parsed)
+}
+
+// runInitPipeline is the shared post-input file-copy pipeline both
+// runInitTUI and runInitJSON invoke. It resolves the destination
+// directory (cwd), runs the three idempotent copy steps in order, and
+// hands forward to the D6 `.mcp.json` registration stub. Re-run safety
+// is mandatory: every file write is gated by an `os.Stat` pre-check so
+// existing files are SKIPPED, never overwritten.
+//
+// `destDir` is derived from `os.Getwd()` (NOT from `opts.appName` /
+// `opts.homeDir`) — D7.5's pointer-vs-value fix on rootCommandOptions
+// does not surface in D5 because the destination is cwd-relative. The
+// project-DB record creation in D7 uses path resolution via
+// `platform.DefaultPathsWithOptions(opts)` and so depends on the D7.5
+// fix; D5 is decoupled from it.
+func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSONPayload) error {
+	_ = stdout
+	_ = opts
+
+	destDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("till init: resolve cwd: %w", err)
+	}
+
+	if _, _, err := copyAgentFiles(destDir, payload.Group); err != nil {
+		return fmt.Errorf("till init: copy agent files: %w", err)
+	}
+	if _, _, err := copyAgentsTOML(destDir); err != nil {
+		return fmt.Errorf("till init: copy agents.toml: %w", err)
+	}
+	if err := ensureGitignore(destDir); err != nil {
+		return fmt.Errorf("till init: ensure .gitignore: %w", err)
+	}
+
+	// D6 wires the actual `.mcp.json` registration. Until then a
+	// successful D5 file-copy hands forward to this stub so callers
+	// (and tests) can confirm the pipeline ran through to the D6 seam
+	// without short-circuiting earlier.
+	return errors.New("till init: .mcp.json registration not yet wired (W2.D6)")
+}
+
+// agentFileInitPerm is the permission applied to every freshly copied
+// agent .md, agents.toml, and .gitignore write. Matches the conventional
+// 0o644 (user rw, group r, other r) the embedded fixtures themselves
+// ship with under git.
+const agentFileInitPerm os.FileMode = 0o644
+
+// copyAgentFiles reads the embedded `internal/templates/builtin/agents/<group>/*.md`
+// set via `templates.DefaultTemplateFS` and writes each entry to
+// `<destDir>/.tillsyn/agents/*.md` FLAT (no group prefix). Each write
+// uses `fsatomic.WriteFile` (write-temp-in-same-dir + rename). Existing
+// destination files are SKIPPED, never overwritten — re-run safety.
+//
+// Returns `(added, skippedExisting, err)`. `added` counts files newly
+// created; `skippedExisting` counts files that already existed at the
+// destination and were left untouched. On error the partial-progress
+// counts so far are returned alongside the wrapped error.
+func copyAgentFiles(destDir, group string) (int, int, error) {
+	if strings.TrimSpace(group) == "" {
+		return 0, 0, errors.New("copyAgentFiles: group required")
+	}
+
+	srcDir := path.Join("builtin", "agents", group)
+	entries, err := fs.ReadDir(templates.DefaultTemplateFS, srcDir)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read embedded %q: %w", srcDir, err)
+	}
+
+	agentsDir := filepath.Join(destDir, ".tillsyn", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		return 0, 0, fmt.Errorf("mkdir %q: %w", agentsDir, err)
+	}
+
+	added, skipped := 0, 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		// FLAT copy: drop the group prefix. The destination basename is
+		// the source basename, dropped directly under `.tillsyn/agents/`.
+		target := filepath.Join(agentsDir, entry.Name())
+		if _, statErr := os.Stat(target); statErr == nil {
+			skipped++
+			continue
+		} else if !errors.Is(statErr, fs.ErrNotExist) {
+			return added, skipped, fmt.Errorf("stat %q: %w", target, statErr)
+		}
+
+		srcPath := path.Join(srcDir, entry.Name())
+		data, readErr := fs.ReadFile(templates.DefaultTemplateFS, srcPath)
+		if readErr != nil {
+			return added, skipped, fmt.Errorf("read embedded %q: %w", srcPath, readErr)
+		}
+		if err := fsatomic.WriteFile(target, data, agentFileInitPerm); err != nil {
+			return added, skipped, fmt.Errorf("write %q: %w", target, err)
+		}
+		added++
+	}
+	return added, skipped, nil
+}
+
+// copyAgentsTOML copies the embedded `internal/templates/builtin/agents.example.toml`
+// fixture to `<destDir>/agents.toml` atomically via `fsatomic.WriteFile`.
+// If `<destDir>/agents.toml` already exists, the copy is SKIPPED — re-run
+// safety.
+//
+// Returns `(added, skippedExisting, err)`. `added` is either 0 (target
+// already existed) or 1 (target created).
+func copyAgentsTOML(destDir string) (int, int, error) {
+	target := filepath.Join(destDir, "agents.toml")
+	if _, statErr := os.Stat(target); statErr == nil {
+		return 0, 1, nil
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		return 0, 0, fmt.Errorf("stat %q: %w", target, statErr)
+	}
+
+	const srcPath = "builtin/agents.example.toml"
+	data, err := fs.ReadFile(templates.DefaultTemplateFS, srcPath)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read embedded %q: %w", srcPath, err)
+	}
+	if err := fsatomic.WriteFile(target, data, agentFileInitPerm); err != nil {
+		return 0, 0, fmt.Errorf("write %q: %w", target, err)
+	}
+	return 1, 0, nil
+}
+
+// gitignoreAgentsLocalLine is the literal line `ensureGitignore` adds to
+// `<destDir>/.gitignore` when it is not already present. Match is
+// line-exact (trim-equal) per W2-FF10 round-2 LOCKED line-iteration fix.
+const gitignoreAgentsLocalLine = "agents.local.toml"
+
+// ensureGitignore guarantees `<destDir>/.gitignore` contains a line whose
+// trimmed value equals `agents.local.toml`. If `.gitignore` is absent the
+// file is created with just that line. If it exists, the body is
+// line-iterated (NOT raw bytes.Contains) and the line is appended only
+// when not already present.
+//
+// W2-FF10 round-2 LOCKED rationale: a raw `bytes.Contains(data,
+// []byte("\nagents.local.toml\n"))` form requires a leading `\n` and
+// misses the first-line-only case (file consists solely of
+// `agents.local.toml\n` from a prior run with no preceding entries).
+// Line-iteration via `bufio.Scanner` against the file content handles
+// both the first-line-only case AND trailing-whitespace-on-line variants
+// uniformly.
+//
+// Trailing-newline handling: if an existing file does NOT end with `\n`,
+// the appended block starts with `\n` so the new line lands on its own
+// line and the final file still ends with `\n`.
+//
+// Every write goes through `fsatomic.WriteFile` so the file is either
+// fully present with the new contents or untouched — never observed
+// half-written by a concurrent reader on POSIX.
+func ensureGitignore(destDir string) error {
+	target := filepath.Join(destDir, ".gitignore")
+
+	data, err := os.ReadFile(target)
+	switch {
+	case err == nil:
+		// File exists — line-iterate to check presence.
+		if gitignoreLinePresent(data, gitignoreAgentsLocalLine) {
+			return nil
+		}
+		body := data
+		if len(body) > 0 && body[len(body)-1] != '\n' {
+			body = append(body, '\n')
+		}
+		body = append(body, []byte(gitignoreAgentsLocalLine+"\n")...)
+		if err := fsatomic.WriteFile(target, body, agentFileInitPerm); err != nil {
+			return fmt.Errorf("write %q: %w", target, err)
+		}
+		return nil
+	case errors.Is(err, fs.ErrNotExist):
+		// File absent — create with just the line.
+		body := []byte(gitignoreAgentsLocalLine + "\n")
+		if err := fsatomic.WriteFile(target, body, agentFileInitPerm); err != nil {
+			return fmt.Errorf("write %q: %w", target, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("read %q: %w", target, err)
+	}
+}
+
+// gitignoreLinePresent reports whether `data` contains a line whose
+// trimmed value equals `want`. Implements the W2-FF10 round-2 LOCKED
+// line-iteration fix — see `ensureGitignore` for the rationale.
+func gitignoreLinePresent(data []byte, want string) bool {
+	sc := bufio.NewScanner(strings.NewReader(string(data)))
+	for sc.Scan() {
+		if strings.TrimSpace(sc.Text()) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // validateInitPayload checks required fields and the group selection on
