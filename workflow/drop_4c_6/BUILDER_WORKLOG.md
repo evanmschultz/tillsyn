@@ -2441,3 +2441,41 @@ Pure deletion droplet — removes `init-dev-config` CLI command surface now that
 ### Hylla Feedback
 
 None — pure deletion task; `git grep -n` + `Read` were the right tools (line-numbered output for exact-anchor deletion).
+
+---
+
+## Droplet 4c.6.W3.D6 — Round 2 (W3-D6-FF1 cite fix)
+
+**Date:** 2026-05-11
+**Builder:** go-builder-agent (sonnet)
+**Droplet:** `4c.6.W3.D6 — Doc-comment correction at render.go:307-319` (round-2 rework — state stays `done`).
+
+### Scope landed
+
+Single-line doc-comment cite fix in the W3-FF11 3-landing breadcrumb inside `renderAgentFile`'s function-doc-comment block. Round-1 cited the SystemPromptTemplatePath validator at `internal/templates/load.go:1031-1055`, but that range is actually `validateChildRuleRecursionDepth` (an UNRELATED validator). Falsification W3-D6-FF1 CONFIRMED the real `validateSystemPromptTemplatePath` body lives at `load.go:1687-1706` with its call site at `load.go:1642`.
+
+Replaced the cite with `internal/templates/load.go:1642 + 1687-1706` (call site + function body) — anchoring both because the call site provides quick reader navigation from the binding-walk loop into the validator body without forcing a separate symbol search.
+
+### Verification
+
+- **Read `load.go:1687-1706` before edit** — confirmed the function declaration at line 1687 is `func validateSystemPromptTemplatePath(kind domain.Kind, path string) error` with the body checking `path == ""` short-circuit, absolute-path rejection, `pathContainsTraversal`, and `systemPromptShellMetacharRunes` scan. Function returns at line 1706.
+- **Read `load.go:1642`** — confirmed the call site: `if err := validateSystemPromptTemplatePath(kind, binding.SystemPromptTemplatePath); err != nil {` inside the `for kind, binding := range tpl.AgentBindings` loop at line 1635.
+- **`git diff render.go`** — verified single doc-comment line changed (line 584 split across two `// ` lines after edit; both prefixed `//`; +2 / -1 net per `git diff --stat`).
+- No production code touched. No test touched. No other doc-comment block touched.
+
+### Files touched
+
+- `internal/app/dispatcher/cli_claude/render/render.go` — single doc-comment cite swap in the 3-landing breadcrumb (was-line `at internal/templates/load.go:1031-1055.` → new lines `at internal/templates/load.go:1642 + 1687-1706 (call site +` / `function body).`). Soft-wrap onto two lines keeps each within the surrounding block's column budget.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### Constraint compliance summary
+
+- Doc-only droplet: every changed line starts with `//`.
+- ONLY the cite-range token changed; surrounding breadcrumb prose (3-landing structure, W3-FF11 reference, round-2 elision callout) untouched.
+- PLAN.md untouched per round-2 rework convention — W3.D6 state stays `done`.
+- No additional agents spawned. No commit authored. `mage install` / `mage ci` not run.
+- Section 0 reasoning kept out of durable artifacts (lives in orchestrator-facing response only).
+
+### Hylla Feedback
+
+None — Hylla answered everything needed (no Hylla query was issued this round; the cite verification was direct file Reads at specific line ranges supplied by the falsification verdict, which is the right tool for line-anchored cite correction).

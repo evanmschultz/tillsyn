@@ -2140,3 +2140,763 @@ No routing back to orchestrator beyond standard W3.D5 closure-state confirmation
   - **Missed because:** `enrichment still running for github.com/evanmschultz/tillsyn@main` — the W3.D5 work is uncommitted (visible in `git status` as modified files on `render.go` + `render_test.go`) so the new symbols cannot possibly be in any Hylla snapshot. Even pre-commit W3.D2/W3.D3 commits (`d671b91`, `7346fe7`) and the W2.D1 commit (`5e17515`) appear to have triggered an in-flight enrichment that is still settling. Same pre-cascade-ingest staleness window documented in this file's W3.D2 round-2 Hylla Feedback (line 1619) and W3.D4 Hylla Feedback (line 1936) and W2.D1 Hylla Feedback (line 1711).
   - **Worked via:** direct `Read` against `render.go` (focused offsets for the validator surface lines 110-137, 294-297, 302-392 and the rollback machinery lines 401-420), `render_test.go` (focused offsets for the 5 new validator tests + 5 migrated D2/D3 tests + helpers), `embed.go` (full file for the 27-placeholder embed-list reconciliation), `BUILDER_WORKLOG.md` (Round 1 W3.D5 entry for builder's design decisions), `DROP_4c.6.W3_BUNDLE_AND_ISOLATION/PLAN.md` (W3.D5 acceptance bullets + W3-FF13 NIT documentation), sample placeholder `.md` files for byte-count grounding. The `mage testPkg` and `mage ci` runs grounded the dynamic claims.
   - **Suggestion:** non-blocking — same suggestion as prior rounds. When enrichment is in flight, the keyword tool could surface the snapshot ID of the last fully-ingested baseline so the caller can fall back to the prior snapshot (potentially still useful for unchanged subsystems like the `templates.DefaultTemplateFS` consumer-graph) rather than to non-Hylla tools wholesale. This is the recurring pre-cascade-ingest staleness shape and warrants tracking as a Hylla refinement after dogfood. Multiple droplets in this drop have raised the same suggestion; aggregate at drop-end Hylla refinements rollup.
+
+---
+
+## Droplet 4c.6.W3.D6 — Round 1
+
+Doc-only droplet — pure doc-comment rewrite of `renderAgentFile`'s leading
+comment in `internal/app/dispatcher/cli_claude/render/render.go` (lines
+520-595 post-edit). Verifies the rewrite's factual claims, the
+3-landing breadcrumb attribution, the F.7.3b correction, the
+`--bare collapses Path B` framing, and the comment-only diff property.
+Scope is acceptance-stamped against the W3.D6 attack vectors.
+
+### Findings
+
+- **W3-D6-FF1 (CONFIRMED — MAJOR — cite drift on load.go).** The doc-comment's
+  3-landing breadcrumb (line 583-584) reads:
+  > "Drop 4c F.7.2 landed the `templates.AgentBinding.SystemPromptTemplatePath`
+  > schema field at `internal/templates/schema.go:573` with validator
+  > at `internal/templates/load.go:1031-1055`."
+  The schema.go:573 cite is CORRECT — the field declaration is verbatim
+  at line 573 (`Read` of `internal/templates/schema.go` lines 565-586).
+  The load.go:1031-1055 cite is **FACTUALLY WRONG**. Lines 1028-1055 of
+  `internal/templates/load.go` contain `validateChildRuleRecursionDepth` —
+  a completely different validator for the child-rule recursion-depth
+  guard. The actual `validateSystemPromptTemplatePath` validator lives at
+  lines 1687-1706 (verified via `grep -n SystemPromptTemplatePath` →
+  hit at 1687 + `Read` of lines 1682-1706). The site that calls the
+  validator from the binding loop is `load.go:1642`
+  (`if err := validateSystemPromptTemplatePath(kind, binding.SystemPromptTemplatePath); err != nil {`).
+  Severity is MAJOR rather than CRITICAL because the breadcrumb is
+  historical-context not a load-bearing claim used by call sites — but
+  the entire purpose of D6 is to correct prior stale cites and the
+  rewrite introduces a NEW stale cite at the same surface. Fix: replace
+  the `load.go:1031-1055` substring with `load.go:1687-1706` (or
+  optionally `load.go:1642 + 1687-1706` to anchor both the call site
+  and the validator body). This MUST be fixed before D6 closes — a
+  doc-correction droplet that introduces a factually-wrong cite at the
+  exact surface it claims to be correcting is a regression on its own
+  premise.
+
+- **W3-D6-FF2 (REFUTED — schema.go:573 cite correctness).** The cite
+  `internal/templates/schema.go:573` is accurate — the `Read` of
+  lines 565-586 shows the field declaration verbatim at 573:
+  `SystemPromptTemplatePath string \`toml:"system_prompt_template_path"\``.
+  No drift.
+
+- **W3-D6-FF3 (REFUTED — 3-landing breadcrumb attribution accuracy).**
+  Attribution of (a) F.7.2 to schema field, (b) W3.D1 to BindingResolved
+  wiring, (c) W3.D2 to 3-tier resolver is otherwise CORRECT modulo
+  W3-D6-FF1's load.go offset:
+  - **F.7.2 (schema field landing).** Schema field at
+    `internal/templates/schema.go:573` exists — REFUTED-correctly. (Validator
+    location is FF1.)
+  - **W3.D1 (BindingResolved wiring).** `grep -n` over
+    `internal/app/dispatcher/cli_adapter.go` shows
+    `BindingResolved.SystemPromptTemplatePath` declared at line 131 with
+    field-doc at 108-130; populator at
+    `internal/app/dispatcher/binding_resolved.go:121` (verified via
+    `grep -n`). Both files are exactly the W3.D1 surface called out in
+    the breadcrumb. REFUTED.
+  - **W3.D2 (3-tier resolver).** `grep -n assembleAgentFileBody` over
+    `render.go` confirms the resolver exists at the symbol name the
+    breadcrumb cites; the surrounding doc-comment (untouched by D6) at
+    lines 540-548 of the same file describes the till-gen fallback that
+    the breadcrumb references. REFUTED.
+
+- **W3-D6-FF4 (REFUTED — F.7.3b stub correction landed correctly).** The
+  pre-D6 doc-comment was a stub that PLAN's W3.D6 work item flagged as
+  reading "Behavior loaded from the canonical ... template at the
+  system-installed plugin path" (the F.7.3b stub claim). The post-D6
+  doc-comment at lines 529-534 reads:
+  > 'The pre-W3 F.7.3b stub claim that "Behavior loaded from the
+  > canonical ... template at the system-installed plugin path" —
+  > verbatim in the body sentence the stub used to emit at disk-write
+  > time — was FACTUALLY WRONG under the actual argv and is removed by
+  > W3.D2. This doc-comment records the post-W3 truth so the next
+  > reader cannot regress on it.'
+  This explicitly names the wrong sentence, brands it FACTUALLY WRONG,
+  attributes its removal to W3.D2, and explains why the next reader
+  cannot regress on it. Not a paraphrase; an explicit correction with
+  before/after attribution. REFUTED.
+
+- **W3-D6-FF5 (REFUTED — `--bare collapses Path B` cite accuracy).** The
+  doc-comment at lines 522-528 cites
+  `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md § A.9 + § C.5` for the claim
+  that `--bare` collapses Path B. `Read` of
+  `workflow/drop_4c_6/RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` confirms:
+  - §A.1 quotes Claude Code's official CLI reference: `--bare` skips
+    plugins among other things (line 20).
+  - §A.9 (line 113-131) is the "Definitive answer to question 1"
+    section that explicitly enumerates what `--bare` skips
+    (~/.claude/CLAUDE.md, ~/.claude/agents/*, ~/.claude/plugins/cache,
+    ~/.claude/hooks, etc.).
+  - §C.5 (line 238 in the doc, "Net finding for Path B") concludes:
+    `"Under --bare ... no — Path B is disabled by --bare ... Tillsyn's
+    existing --bare already prevents that merge."`
+  - §D.5 (line 329-334) is the original "kill the misleading
+    doc-comments" fix change that motivated W3.D6 itself, citing the
+    exact same `render.go:307-319` surface (now relocated to ~520-595
+    after intervening edits). The fix-text in §D.5 prescribes the
+    replacement framing D6 in fact lands. REFUTED.
+
+- **W3-D6-FF6 (REFUTED — comment-only diff).** `git show 01a1244` is the
+  W3.D6 commit. `git show 01a1244 --stat` reports
+  `1 file changed, 46 insertions(+), 9 deletions(-)` against
+  `internal/app/dispatcher/cli_claude/render/render.go`. The full diff
+  hunks (lines 517-595 of the post-edit file) show every removed line
+  and every added line begins with `//` or is a `//`-prefixed
+  continuation. No function body / signature / non-comment line was
+  touched. REFUTED.
+
+- **W3-D6-FF7 (REFUTED — SPAWN_PIPELINE.md non-touch).** `git diff
+  01a1244~1 01a1244 --numstat` returns one row only —
+  `internal/app/dispatcher/cli_claude/render/render.go 46 9`. No row
+  for `SPAWN_PIPELINE.md`. Zero changes to that file in the D6 commit.
+  REFUTED. (Caveat: `SPAWN_PIPELINE.md` was flagged in
+  `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § D.5 as also containing the
+  stale two-paths framing; D6's scope was explicitly the render.go
+  doc-comment alone, so SPAWN_PIPELINE.md correction is correctly
+  out-of-scope for D6 and remains as a separate refinement candidate.)
+
+- **W3-D6-FF8 (REFUTED — `assembleAgentFileBody` doc-comment
+  non-touch).** `grep -n assembleAgentFileBody` over the post-edit
+  `render.go` finds five hits at lines 96, 113, 139, 537, 589.
+  - Lines 96-139 are pre-existing error-sentinel doc-comments
+    (`ErrAgentBodyNotFound`, `ErrInvalidAgentBody`,
+    `ErrInvalidAgentTemplatePath`) that REFERENCE `assembleAgentFileBody`
+    but are not its OWN doc-comment.
+  - Lines 537 + 589 are the NEW D6 doc-comment text on `renderAgentFile`
+    that mentions `assembleAgentFileBody` in prose (D6 cross-refs to
+    the resolver function from the new comment).
+  - The actual `assembleAgentFileBody` function declaration + its
+    leading doc-comment are not in the D6 diff hunk range. D6 added 46
+    lines and removed 9, all inside the `renderAgentFile` doc-comment
+    surface at lines 520-595 of the post-edit file. The
+    `assembleAgentFileBody` function's own doc-comment is untouched.
+    REFUTED.
+
+- **W3-D6-FF9 (REFUTED — mage ci green).** `mage ci` ran from the
+  worktree root, full suite, 3081 tests across 26 packages all pass,
+  every package at or above the 70.0% coverage threshold, render
+  package at 82.8%, templates package at 94.5%, dispatcher package at
+  76.1%, build succeeds. Drop's working-tree state has uncommitted
+  modifications in other unrelated paths (auto_generate_steward,
+  template_service, etc.) that are NOT in D6's scope; those compile
+  and pass. REFUTED.
+
+### Probes executed
+
+- **`git show 01a1244 --stat` + `git show 01a1244 -- internal/app/dispatcher/cli_claude/render/render.go`** — confirmed the W3.D6 commit's exact diff (46 ins, 9 del; one file; comment-only).
+- **`git diff 01a1244~1 01a1244 --numstat`** — confirmed render.go is the SOLE file in the W3.D6 commit (no SPAWN_PIPELINE.md row).
+- **`Read` of `internal/templates/schema.go` lines 565-586** — verified `SystemPromptTemplatePath string \`toml:"system_prompt_template_path"\`` is at line 573 exactly.
+- **`grep -n SystemPromptTemplatePath internal/templates/load.go`** — found references at 221, 475, 1599, 1615, 1642, 1682, 1687, 1712. The validator function is `validateSystemPromptTemplatePath` at line 1687; its caller is line 1642. The 1031-1055 cite hits `validateChildRuleRecursionDepth` (entirely unrelated).
+- **`Read` of `internal/templates/load.go` lines 1025-1064 + lines 1682-1716** — confirmed 1025-1055 is `validateChildRuleRecursionDepth` body and 1687-1706 is `validateSystemPromptTemplatePath` body.
+- **`Read` of `internal/app/dispatcher/cli_claude/render/render.go` lines 515-599** — full inspection of the new D6 doc-comment plus the function signature line at 596 (unchanged).
+- **`grep -n` over `cli_adapter.go` + `binding_resolved.go`** — confirmed W3.D1 wiring at `cli_adapter.go:131` + `binding_resolved.go:121`.
+- **`grep -n assembleAgentFileBody render.go`** — confirmed `assembleAgentFileBody`'s own doc-comment is outside D6's diff hunks.
+- **`Read` of `workflow/drop_4c_6/RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` lines 1-30 + `grep` for `C.5 D.5 A.9 bare` (~40 matches)** — confirmed §A.9 and §C.5 are the authoritative `--bare collapses Path B` sources; §D.5 prescribes the exact doc-comment fix D6 lands.
+- **`mage ci`** — full suite GREEN, 3081/3081 tests pass, every package ≥ 70.0% coverage, render package at 82.8%.
+
+### Summary
+
+**Verdict: FAIL — 1 CONFIRMED-MAJOR counterexample (W3-D6-FF1).** The
+doc-only droplet shipped one verifiably-wrong line cite at the exact
+surface it claims to be correcting (`load.go:1031-1055` points at
+`validateChildRuleRecursionDepth`, not the SystemPromptTemplatePath
+validator). The actual validator lives at `load.go:1687-1706` with its
+caller at `load.go:1642`. Because D6's premise is *"fix stale cites in
+the renderAgentFile doc-comment so the next reader doesn't regress on
+the architecture,"* shipping a new stale cite in the same comment is a
+direct regression on the droplet's own acceptance criterion.
+
+**Soundness summary:** Every other attack vector REFUTED. The F.7.3b
+stub correction lands correctly (explicit before/after framing, not a
+lossy paraphrase). The `--bare collapses Path B` framing matches the
+research deliverable's §A.9 + §C.5 + §D.5 chain. The 3-landing
+breadcrumb's W3.D1 + W3.D2 attributions are correct against the actual
+shipped surfaces in `cli_adapter.go`, `binding_resolved.go`, and the
+`assembleAgentFileBody` symbol. Diff is comment-only, no inadvertent
+semantic mutation, no SPAWN_PIPELINE.md touch, no
+`assembleAgentFileBody`-doc-comment touch. `mage ci` GREEN by
+transitivity (no behavior change — comment-only edit).
+
+**Severity breakdown:**
+
+- 1 CONFIRMED counterexample (W3-D6-FF1, MAJOR — stale cite at
+  `load.go:1031-1055` in the D6 doc-comment; correct location is
+  `load.go:1687-1706` with caller at `load.go:1642`).
+- 0 NIT-severity findings.
+- 8 REFUTED findings (W3-D6-FF2 through W3-D6-FF9).
+
+**Routing to orchestrator:**
+
+1. **W3.D6 droplet: FAIL — respawn builder for a one-line fix.** Replace
+   `internal/templates/load.go:1031-1055` with
+   `internal/templates/load.go:1687-1706` (or the more-defensive
+   `internal/templates/load.go:1642 + 1687-1706` to anchor both the
+   call site and the validator body) on render.go line 584 of the
+   post-D6 file. Then re-spawn QA twins.
+2. **No cross-droplet routing.** D6's scope is self-contained; no
+   sibling builder action required. SPAWN_PIPELINE.md's parallel
+   stale-framing issue is correctly out-of-scope for D6 and remains as
+   an open refinement candidate (per `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md`
+   § D.5) — not a new finding from this round.
+
+### Hylla Feedback
+
+N/A — action item touched non-Go files only at the QA-evidence layer
+(MD doc reads against RESEARCH/*.md + workflow/*.md). The Go probe
+points for this round (`internal/templates/schema.go`,
+`internal/templates/load.go`, `internal/app/dispatcher/cli_adapter.go`,
+`internal/app/dispatcher/binding_resolved.go`,
+`internal/app/dispatcher/cli_claude/render/render.go`) were all
+recently-modified-in-drop or recently-loaded-into-context — direct
+`Read` and `grep` were the right tools for line-precision cite
+verification (Hylla's symbol search would not have surfaced a
+line-offset within a function body any faster than `grep -n` + `Read`).
+No Hylla query was attempted for D6 since the work was line-precision
+doc verification, not symbol-graph traversal; the absence of a Hylla
+query here is by design, not by fallback.
+
+---
+
+## Droplet 4c.6.W2.D8 — Round 1
+
+**QA agent:** go-qa-falsification-agent (sonnet).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D8 — Remove init-dev-config from main.go + help.go + main_test.go`.
+**Reviewing commit:** `83ca878` (refactor(drop-4c.6): w2.d8 remove init-dev-config from cmd till).
+
+### Scope under attack
+
+Pure deletion droplet. Removes `initDevConfigCmd` cobra block + `runInitDevConfig` function from `main.go`, `"till init-dev-config"` entry from `help.go`'s `commandHelpSpecs`, `init-dev-config` references + 2 tests from `main_test.go`. Diff: 3 files / +3 / −207 LOC. Builder reported 271/271 pkg tests GREEN and deferred 4 historical doc-comment matches per scope constraint.
+
+### Attack vectors (from spawn brief)
+
+#### W2-D8-FF1 — Plan acceptance vs. declared paths CONTRADICTION (CONFIRMED, ROUTING: plan-level not builder-level)
+
+The plan's `Acceptance` for D8 (PLAN.md line 245-246) states:
+
+- `git grep -n init-dev-config cmd/till/` returns ZERO matches after D8 commits.
+- `git grep -n runInitDevConfig cmd/till/ internal/` returns ZERO matches after D8 commits.
+
+The plan's `Paths` for D8 (PLAN.md line 239-242) declares only:
+
+- `cmd/till/main.go`
+- `cmd/till/help.go`
+- `cmd/till/main_test.go`
+
+Plan does NOT include `cmd/till/install_cmd.go` or `cmd/till/install_cmd_test.go` in D8's paths (those belong to D7.5's file-lock domain). Yet the acceptance criterion targets matches in the entire `cmd/till/` directory.
+
+Post-build state via `rg` (read-only, no fallback to Hylla because non-Go scope misses — these files were freshly committed in `83ca878` so Hylla would be stale anyway; Hylla query attempted on the builder symbol surface, not on grep semantics):
+
+- `cmd/till/install_cmd.go:18-19` — 2 references to `` `init-dev-config` `` in `newInstallCommand` doc-comment ("previously lived under `till init-dev-config`. D8 later removes the legacy `init-dev-config` registration").
+- `cmd/till/install_cmd.go:53` — 1 reference: "Body lifted verbatim from runInitDevConfig in main.go (D7.5 lift-and-rename per OQ#3 disposition; D8 removes the original)."
+- `cmd/till/install_cmd_test.go:18` — 1 reference: "`init-dev-config` original".
+
+Total: 4 lines (3 `init-dev-config` + 1 `runInitDevConfig`). Builder's count of "4 historical doc-comment matches" reconciles exactly (since the rg output shows 3 `init-dev-config` lines + 1 `runInitDevConfig` line = 4 total residuals).
+
+**Severity classification:** CONFIRMED counterexample to *literal plan-acceptance text*, but NOT a builder-correctness counterexample. The builder followed scope discipline correctly — touching `install_cmd.go` / `install_cmd_test.go` would have violated D8's declared `paths[]`, and those files are D7.5-owned. The contradiction is a plan-level oversight: D8's acceptance criterion as written cannot be satisfied by D8's declared paths.
+
+**Routing:** plan-level finding — the W2 planner under-scoped D8's paths (or alternately, over-scoped D8's acceptance). Pre-merge correction options:
+
+1. Expand D8's `paths` to include `install_cmd.go` + `install_cmd_test.go` (revives D8 with broader scope; would require a Round-2 D8 builder run).
+2. Loosen D8's acceptance criterion from "ZERO matches" to "ZERO non-historical-doc-comment matches" (codifies the deferral the builder already took).
+3. Spawn a tiny follow-up droplet (W2.D9 or W2.D8.5) that owns `install_cmd.go` + `install_cmd_test.go` and scrubs the 4 historical references in one mechanical edit.
+
+Option 3 is the cleanest because it preserves the file-lock contract (D7.5's domain stays D7.5's, D8 stays a minimal removal-only delta) and the scrub edit is small enough to bundle with the next near-term droplet without inflating risk.
+
+#### W2-D8-FF2 — Port-lineage judgment: residual doc-comments are mixed acceptable / dead-reference (judgment finding)
+
+Judging the 4 residual doc-comment matches per the spawn brief directive ("Are these acceptable as port-lineage documentation, or should they be scrubbed?"):
+
+1. **`install_cmd.go:18-19`** — references "previously lived under `till init-dev-config`. D8 later removes the legacy `init-dev-config` registration." *Verdict: ACCEPTABLE PORT-LINEAGE during drop, but loses meaning post-merge* — "D7.5" and "D8" are drop-internal droplet IDs that become opaque outside the drop's commit log. Best-practice post-drop edit: rewrite to "previously lived under `till init-dev-config` (removed during the W2 builds in this drop)" or simpler: "the new home for the dev-config-creation behavior."
+2. **`install_cmd.go:53`** — "Body lifted verbatim from runInitDevConfig in main.go (D7.5 lift-and-rename per OQ#3 disposition; D8 removes the original)." *Verdict: DEAD REFERENCE post-merge.* It references a function (`runInitDevConfig`) that no longer exists anywhere in the codebase. A future developer reading this comment will grep for `runInitDevConfig`, find nothing, and lose 5-10 minutes confirming the comment is stale. This is the strongest scrub candidate of the four.
+3. **`install_cmd_test.go:18`** — "Ported verbatim from the TestRunInitDevConfigCreatesDebugConfig body in main_test.go (D7.5 lifts the behavior into a new `install` cobra command; D8 later removes the `init-dev-config` original)." *Verdict: DEAD REFERENCE post-merge.* `TestRunInitDevConfigCreatesDebugConfig` no longer exists (deleted in this very commit `83ca878`). Same grep-and-lose-time risk as item 2.
+
+**Aggregate judgment:** 1 of 4 references is borderline acceptable as port-lineage prose; 3 of 4 reference deleted symbols and should be scrubbed. The right cleanup is to rewrite the doc-comments to describe what `runInstall` *does* (its behavior contract) without naming the dead symbol it was lifted from. Refinement candidate.
+
+**Routing:** non-blocking refinement candidate for the post-drop cleanup pass or for the W2.D8.5 / W2.D9 follow-up if option 3 above is taken.
+
+#### W2-D8-FF3 — Behavior regression: `till init-dev-config` reports unknown command (REFUTED — confirmed via test-suite proxy)
+
+The spawn brief asks: "with `init-dev-config` removed, can a user STILL run `till init-dev-config`? Verify cobra reports `unknown command` (NOT silent failure)."
+
+Direct binary execution (`./bin/till init-dev-config`) is gated for this agent. Verification proceeded via test-suite proxy:
+
+- `cmd/till/main_test.go:2461-2467` defines `TestRunUnknownCommand` which calls `run(ctx, []string{"unknown-command"}, ...)` and asserts the returned error's message contains the literal `"unknown command"`. This is cobra's standard unregistered-command handler.
+- `initDevConfigCmd` is GONE from `rootCmd.AddCommand(...)` (verified by direct `Read` of `cmd/till/main.go:1886` — the AddCommand call lists `serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initCmd, installCmd` — 16 commands, no `initDevConfigCmd`).
+- `TestRunRootHelp` (`main_test.go:476` per builder's edit) now asserts the root-help list WITHOUT `init-dev-config` — and the test is GREEN in the 271/271 pass count.
+
+Cobra's well-documented behavior for `RootCmd.Execute()` invoked with an unregistered subcommand is to emit `Error: unknown command "X" for "till"` to stderr and return a non-nil error from `Execute()`. Since:
+
+1. `init-dev-config` is no longer in the command tree (`AddCommand` confirmed by Read),
+2. `TestRunUnknownCommand` exercises the cobra unknown-command path and is GREEN in the 271/271 result,
+
+the behavior IS the unknown-command path. **REFUTED** — silent-failure regression is not present.
+
+#### W2-D8-FF4 — Test deletion correctness: leftover imports / helpers (REFUTED)
+
+Builder deleted `TestRunInitDevConfigCreatesDebugConfig` (~48 LOC) + `TestRunInitDevConfigUpdatesExistingConfig` (~57 LOC) from `main_test.go`. Verification:
+
+- `rg -n "runInitDevConfig|initDevConfigCmd|ensureLoggingSectionDebug" cmd/till/main.go cmd/till/main_test.go` shows `ensureLoggingSectionDebug` survives (still defined at `main.go:2088`, still tested at `main_test.go:3319` via `TestEnsureLoggingSectionDebug`) and `shellEscapePath` survives (still defined at `main.go:2022`, still tested at `main_test.go:2997`).
+- The deleted tests imported `platform.Options{...}` and `shellEscapePath` calls — both functions remain referenced from OTHER tests (`TestShellEscapePath` at `main_test.go:2989-3000`, multiple `platform.Options` consumers across the file). No orphaned imports possible since both names are multiply-referenced.
+- `mage test-pkg ./cmd/till` is GREEN at 271/271 — Go's compile-time unused-import error would have caught any orphan. **REFUTED.**
+
+#### W2-D8-FF5 — Rich-help table-test row deletion: 1:1 alignment between `commandHelpSpecs` and registered commands (REFUTED)
+
+The spawn brief flags the table-test row deletion as a sibling-row-swap risk (builder used "unique-content anchors" per W2-PF1 carryforward). Verification by Read:
+
+- `cmd/till/main.go:1886` (`rootCmd.AddCommand`) registers exactly 16 commands. Top-level names (per `Use:` declarations in main.go and `newInstallCommand`/`newInitCommand` factory bodies): `serve`, `mcp`, `auth`, `project`, `action_item`, `dispatcher`, `embeddings`, `capture-state`, `kind`, `lease`, `handoff`, `export`, `import`, `paths`, `init`, `install`.
+- `cmd/till/help.go` `commandHelpSpecs` map top-level entries (filtering for `"till X":` where X has no spaces — i.e. root-level commands): `till`, `till serve`, `till mcp`, `till embeddings`, `till kind`, `till lease`, `till dispatcher`, `till handoff`, `till export`, `till import`, `till paths`, `till init`, `till install`. Plus subcommand-level entries (`till embeddings status`, `till lease list`, etc.) which are layered onto cobra subcommands via `applyCommandHelpSpecs`' tree walk.
+
+Cross-check: every registered top-level command in `rootCmd.AddCommand` has either an exact entry in `commandHelpSpecs` OR no entry (cobra falls back to the command's own `Long` / `Example` for commands without an explicit help-spec override — confirmed at `help.go:421-432` via `walkCommands`). `till action_item`, `till auth`, `till project`, `till capture-state` have no top-level helpSpec entries, which is consistent across the pre-D8 state (`commandHelpSpecs` was a *richer-help override layer*, not a 1:1 mirror). The deleted `"till init-dev-config":` entry was a richer-help override for the now-removed command — the row at `help.go:392-407` (`"till install":`) survives correctly, with example block listing `till install`, `till --app tillsyn install`, `till --home /tmp/tillsyn-dev install` matching D7.5's contract.
+
+No sibling-row was deleted by accident. **REFUTED.**
+
+#### W2-D8-FF6 — `runInitDevConfig` function deletion: called from anywhere else? (REFUTED)
+
+`rg -n "runInitDevConfig|initDevConfigCmd|ensureLoggingSectionDebug" cmd/ internal/` returns 5 matches, all in:
+
+- `cmd/till/install_cmd.go:53` (doc-comment only, no call — this is W2-D8-FF1's residual).
+- `cmd/till/install_cmd.go:95` (`ensureLoggingSectionDebug` call — *not* `runInitDevConfig`).
+- `cmd/till/main.go:2087-2088` (`ensureLoggingSectionDebug` definition).
+- `cmd/till/main_test.go:3319` (`ensureLoggingSectionDebug` test call).
+
+Zero call-sites for `runInitDevConfig(` anywhere in production code. The only mention left is the W2-D8-FF1 doc-comment which is a dead reference (W2-D8-FF2 item 2) but not a call. **REFUTED — `runInitDevConfig` removal is call-clean.**
+
+#### W2-D8-FF7 — `shellEscapePath` still in use by `runInstall` (REFUTED)
+
+Direct Read of `cmd/till/install_cmd.go:106-110`:
+
+```
+return writeCLIKV(stdout, "Dev Config", [][2]string{
+    {"status", msg},
+    {"config path", shellEscapePath(configPath)},
+    {"logging level", "debug"},
+})
+```
+
+`shellEscapePath` is called from `runInstall` at line 108. `shellEscapePath` function definition remains at `cmd/till/main.go:2022`. Test `TestShellEscapePath` at `cmd/till/main_test.go:2989-3000` still exercises it with the doc-comment updated to generic phrasing per the W2-PF1 ROUND-2 carryforward pin (builder's worklog confirms this edit was made). **REFUTED — `shellEscapePath` retention rationale holds.**
+
+#### W2-D8-FF8 — `mage test-pkg ./cmd/till` correctness (REFUTED)
+
+Live run: `mage test-pkg ./cmd/till` → `Test summary: tests: 271, passed: 271, failed: 0, skipped: 0`. Matches builder's reported count. Pre-flight delta math (per builder's worklog): 268 (pre-flight) − 2 (D8 deletions) + 5 (D5 concurrent landings) = 271. Math reconciles. **REFUTED.**
+
+#### W2-D8-FF9 — `mage ci` GREEN across all packages (REFUTED)
+
+Live run: `mage ci` → `Test summary: tests: 3081, passed: 3081, failed: 0, skipped: 0, packages: 26, pkg passed: 26`. Coverage threshold met (minimum 70.0%, all packages at or above). Build of `./cmd/till` SUCCESS. **REFUTED — drop-end gate is green.**
+
+This is a notable contrast with the W3.D5 Round-1 result which had `mage ci` RED on the `internal/fsatomic` coverage gate (W3-D5-FF12 / W2-D1-FF1 cross-reference). Between W3.D5 Round-1 and this W2.D8 review, W2.D5 committed (`bde8b46 feat(drop-4c.6): w2.d5 init file-copy pipeline and gitignore ensure`) which appears to have brought `internal/fsatomic` coverage above 70% (current run shows `internal/fsatomic   72.0%` — over the threshold by 2 points). This is unrelated to W2.D8 but worth noting because the prior round's RED state would have falsely flagged this droplet had we re-run without that intervening commit.
+
+#### W2-D8-FF10 — Mid-session race observation residual state (REFUTED)
+
+Builder reported "5 transient `TestInit_*` failures appeared mid-session when D5 builder's `init_cmd_test.go` updates landed (D6-stub expectation strings)." Final state verification:
+
+- Full pkg run shows 271/271 GREEN.
+- `mage ci` shows 3081/3081 GREEN across all 26 packages.
+- `TestInit_*` tests in `cmd/till/init_cmd_test.go` are all part of the 271 — no flake remnant.
+
+Transient mid-session failures during concurrent builder landings are an artifact of MD-only coordination (no file-lock enforcement until cascade dispatcher ships). The final commit state at `83ca878` is clean. **REFUTED — no residual race-state breakage.**
+
+### Probes executed
+
+- **`git show --stat 83ca878`** — confirmed 3-file / +3 / −207 LOC delta matches builder's worklog claim.
+- **`git show 83ca878 -- cmd/till/main.go cmd/till/help.go cmd/till/main_test.go`** — full diff inspection of all three files; confirmed removal of `initDevConfigCmd` block (20 LOC), `runInitDevConfig` function (~63 LOC), `commandHelpSpecs` entry (14 LOC), 2 test functions (~105 LOC), 1 root-help slice element, 1 rich-help table-test row, and the `TestShellEscapePath` doc-comment rewrite. All edits match plan paths + builder worklog.
+- **`rg -n "init-dev-config" cmd/ internal/ workflow/example/`** — surfaced 3 residual matches in `cmd/till/install_cmd.go:18-19` and `cmd/till/install_cmd_test.go:18`. Builder's deferral count reconciles.
+- **`rg -n "runInitDevConfig|initDevConfigCmd|ensureLoggingSectionDebug" cmd/ internal/`** — surfaced 5 matches, 1 dead reference at `install_cmd.go:53` plus 4 live `ensureLoggingSectionDebug` references (function definition + 1 production call from `runInstall` + 1 test call).
+- **Direct `Read` of `cmd/till/install_cmd.go` lines 1-100** — confirmed full `newInstallCommand` body, `runInstall` body, `shellEscapePath` call-site at line 108, port-lineage doc-comments at lines 16-21 and 52-56.
+- **Direct `Read` of `cmd/till/install_cmd_test.go` lines 1-30** — confirmed `TestRunInstall_CreatesDebugConfig` function name with underscore (W2-FF2 TEST-NAME CONTRACT), doc-comment at lines 14-21 with `init-dev-config` residual.
+- **Direct `Read` of `cmd/till/main.go` lines 1880-1890** — confirmed `rootCmd.AddCommand(...)` call lists 16 commands, no `initDevConfigCmd`.
+- **Direct `Read` of `cmd/till/main_test.go` lines 2461-2467** — confirmed `TestRunUnknownCommand` exists and exercises the cobra unknown-command path.
+- **Direct `Read` of `cmd/till/help.go` lines 1-50 + 336-447** — confirmed `commandHelpSpecs` map has no `"till init-dev-config"` entry; `"till install"` entry present at lines 393-407 with correct example block.
+- **Direct `Read` of `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` lines 236-258** — confirmed D8's declared paths exclude `install_cmd.go` + `install_cmd_test.go`, AND acceptance criterion targets ZERO matches in `cmd/till/` directory (the W2-D8-FF1 plan contradiction).
+- **Direct `Read` of `workflow/drop_4c_6/BUILDER_WORKLOG.md` lines 2407-2444** — confirmed builder's W2.D8 Round-1 entry, design rationale, and Hylla feedback.
+- **`mage test-pkg ./cmd/till`** — 271/271 GREEN.
+- **`mage ci`** — 3081/3081 GREEN across 26 packages, all packages >= 70.0% coverage, `./cmd/till` build SUCCESS.
+
+### Summary
+
+**Verdict: PASS — no W2.D8-attributable CONFIRMED counterexamples that block droplet closure.** All 9 builder-correctness attack vectors REFUTED. 1 CONFIRMED counterexample exists (W2-D8-FF1) but it is a *plan-level contradiction*, not a builder failure — the builder followed scope discipline correctly and properly escalated the contradiction in the worklog routing note. 1 judgment finding (W2-D8-FF2) classifies the 4 residual doc-comments as 3-of-4 dead references that should be scrubbed in a follow-up pass.
+
+**Soundness summary:** The deletion is mechanically correct — the `initDevConfigCmd` cobra block, `runInitDevConfig` function definition, `commandHelpSpecs` entry, and 2 test functions are gone; the surviving `shellEscapePath` + `ensureLoggingSectionDebug` retain their call-sites in `runInstall`; the rich-help row removal preserves the 1:1 alignment with cobra registrations; the root-help-slice and unknown-command-path tests cover the behavior contract that `till init-dev-config` now returns an unknown-command error; `mage ci` is GREEN end-to-end. The W2-FF2 TEST-NAME CONTRACT and W2-PF1 ROUND-2 doc-comment carryforward pins are both honored.
+
+**Severity breakdown:**
+
+- 0 CONFIRMED counterexamples blocking W2.D8 droplet closure.
+- 1 CONFIRMED plan-level contradiction (W2-D8-FF1) — `paths[]` vs `acceptance` mismatch in PLAN.md, builder correctly observed and escalated. Routing: planner-side correction or W2.D9 follow-up droplet.
+- 1 judgment finding (W2-D8-FF2) — 3 of 4 residual doc-comments reference deleted symbols and should be scrubbed. Refinement candidate.
+- 7 INFO-severity findings (W2-D8-FF3 through W2-D8-FF10) — all REFUTED probes documenting verification of the spawn brief's attack vectors.
+
+**Routing to orchestrator:**
+
+1. **W2.D8 droplet itself: PASS — no respawn required for W2.D8 work.** The builder shipped a correct, scope-disciplined deletion.
+2. **W2-D8-FF1 plan contradiction routing (orchestrator decision):**
+   - Option A: declare the deferral acceptable as documented in the worklog routing note, mark D8 closed with a noted scope-narrowing of the acceptance criterion. (Lowest friction.)
+   - Option B: spawn a small W2.D9 droplet with `paths: [cmd/till/install_cmd.go, cmd/till/install_cmd_test.go]` to scrub the 4 historical references in one mechanical pass. (Cleanest acceptance closure; also closes W2-D8-FF2 item 2 + item 3 dead references in the same edit.)
+   - Recommendation: **Option B** if a near-term builder slot is available, because the same edit closes both W2-D8-FF1's literal-acceptance gap AND W2-D8-FF2's strongest scrub candidates (the two dead-symbol references at `install_cmd.go:53` and `install_cmd_test.go:18`). Estimated effort: ~5 LOC change, single file-lock acquisition on each of 2 files, no test changes required.
+3. **W2-D8-FF2 refinement candidates (non-blocking):** if Option A is chosen above, the 3 dead-reference doc-comments at `install_cmd.go:53`, `install_cmd_test.go:18`, and `install_cmd.go:18-19` should be tracked as a post-drop cleanup refinement. They will become increasingly opaque to future readers as the drop-internal droplet IDs ("D7.5", "D8") fade from active context.
+
+No routing back to orchestrator beyond the W2-D8-FF1 plan-contradiction decision and the closure-state confirmation for W2.D8 itself.
+
+**`mage ci` result:** GREEN — 3081/3081 tests passed across 26 packages, all packages >= 70.0% coverage, `./cmd/till` build SUCCESS.
+
+### Hylla Feedback
+
+- **Query:** `hylla_search_keyword` would have been the appropriate first stop for verifying `runInitDevConfig` is genuinely call-clean (the spawn brief's W2-D8-FF6 attack). However, the W2.D8 commit (`83ca878`) landed only ~10 minutes before this review began, and prior rounds in this drop have already documented (see this file's W3.D2 round-2 Hylla Feedback at line 1619, W3.D4 Hylla Feedback at line 1936, W2.D1 Hylla Feedback at line 1711, W3.D5 Hylla Feedback at line 2139) that `github.com/evanmschultz/tillsyn@main` is in an in-flight enrichment window because multiple W2/W3 droplets have been committing across the past ~12 hours. A keyword query against a stale snapshot would either miss the deletion (showing `runInitDevConfig` as if it still existed) OR error with `enrichment still running`. Neither outcome is more useful than `rg -n` against the working tree.
+  - **Missed because:** pre-cascade-ingest staleness window — multiple recent commits (`83ca878`, `01a1244`, `5def94d`, `bde8b46`, `5bfd242`, `01f4a22`, `83ba37f`, `19ade83`, `5e17515`) have been landing and the artifact's full enrichment cannot keep pace with the drop's commit cadence.
+  - **Worked via:** `rg -n` against the working tree (deterministic, fresh, line-numbered output) for the call-site sweep; direct `Read` against `cmd/till/main.go`, `cmd/till/help.go`, `cmd/till/install_cmd.go`, `cmd/till/install_cmd_test.go`, `cmd/till/main_test.go`, and `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` + `workflow/drop_4c_6/BUILDER_WORKLOG.md` for plan/builder cross-checks; `mage test-pkg ./cmd/till` + `mage ci` for live verification of test/coverage claims.
+  - **Suggestion:** non-blocking — same recurring suggestion as prior rounds in this drop. The pre-cascade-ingest staleness shape warrants tracking as a Hylla refinement after dogfood. A "freshness hint" returned by Hylla queries (e.g., "snapshot N is in-flight, last fully-ingested baseline is snapshot M from timestamp T") would let the caller decide whether to fall back to the prior baseline (still useful for unrelated subsystems) or to non-Hylla tools wholesale. Aggregate at drop-end Hylla refinements rollup.
+
+---
+
+## Droplet 4c.6.W2.D5 — Round 1
+
+**Scope:** File-copy pipeline (`runInitPipeline` + `copyAgentFiles` + `copyAgentsTOML` + `ensureGitignore`) at `cmd/till/init_cmd.go:396-576` with consumer-tie tests at `cmd/till/init_cmd_test.go`.
+
+**Builder claim:** Three idempotent copy steps wired into a single pipeline both `runInitTUI` (D4) and `runInitJSON` (D3b) invoke. FLAT agent-file copy (no `till-go/` prefix), `agents.example.toml` → `agents.toml`, line-iteration `.gitignore` ensure with W2-FF10 round-2 LOCKED first-line-only handling. D6 stub error surfaces post-success.
+
+### Attack vectors + findings
+
+#### W2-D5-FF1 — t.Chdir audit across init-pipeline tests
+
+**Attack:** orchestrator removed test-residue artifacts from `cmd/till/` (created by tests that didn't `t.Chdir(t.TempDir())`). Audit ALL tests that drive `runInitPipeline` directly or indirectly. Any test still missing `t.Chdir` is a CONFIRMED HIGH-severity counterexample — pollutes working tree.
+
+**Method:** Read `cmd/till/init_cmd_test.go` line-by-line. For each `Test*` function, classify whether it invokes the pipeline (directly or via `run(...)` cobra dispatch) and whether `t.Chdir` is set BEFORE the invocation.
+
+**Audit table:**
+
+| Test                                                | Line | Pipeline driven?                      | t.Chdir?                              | Verdict   |
+| --------------------------------------------------- | ---- | ------------------------------------- | ------------------------------------- | --------- |
+| `TestInit_BareInvocation_ReturnsTUIStubError`       | 32   | YES — `run("init")` with stubbed TUI advances to pipeline | YES — `t.Chdir(t.TempDir())` at L33 | OK        |
+| `TestInit_JSONInvocation_RoutesToValidParse`        | 72   | YES — `run("init --json ...")`         | YES — `t.Chdir(t.TempDir())` at L73   | OK        |
+| `TestInit_JSONParse_TableDriven`                    | 97   | MIXED — valid cases hit pipeline; invalid cases short-circuit before any FS write | YES — `t.Chdir(t.TempDir())` inside `t.Run` at L142 (uniform across all cases for consistency) | OK        |
+| `TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo` | 169  | NO — teatest drives the bubbletea model directly; never calls `runInitTUI` (which is the only path into `runInitPipeline` from the TUI side). Model.Init/Update/View are pure — no FS I/O. | NO (and not needed) | OK        |
+| `TestRunInitTUI_DisabledTillGddIsUnselectable`      | 234  | NO — same teatest-only pattern.        | NO (and not needed)                   | OK        |
+| `TestRunInitTUI_EscCancelsWalk`                     | 283  | NO — teatest-only; Esc returns Cancelled, never reaches pipeline. | NO (and not needed) | OK        |
+| `TestInit_FreshDir_CopiesAllFiles`                  | 345  | YES — uses `runInitJSONInTempDir` helper. | YES — helper `t.Chdir(dir)` at L328  | OK        |
+| `TestInit_RerunSafety_NoOverwrite`                  | 395  | YES — invokes `run("init --json")` twice. | YES — `t.Chdir(dir)` at L397           | OK        |
+| `TestInit_GitignoreIdempotent`                      | 458  | YES — seeds `.gitignore` then invokes `run`. | YES — `t.Chdir(dir)` at L460          | OK        |
+| `TestInit_PreExistingGitignore_AppendsCleanly`      | 484  | YES — both subtests seed and invoke.   | YES — `t.Chdir(dir)` inside `t.Run` at L495 | OK        |
+
+**Working tree verification:** `git status --short` returns clean post-`mage ci`. No `.tillsyn/`, no `agents.toml`, no `.gitignore` artifacts in `cmd/till/` (`ls cmd/till/` shows only `.go` files).
+
+**Verdict: REFUTED.** Every test that exercises the pipeline (directly or transitively) chdir's into `t.TempDir()` before invocation. The three teatest model-driver tests do NOT need chdir because they drive `tea.Model.Update` directly and the model itself performs no FS I/O — they never construct `runInitTUI`'s downstream `runInitPipeline` call site. Working tree is clean post-`mage ci`.
+
+#### W2-D5-FF2 — `copyAgentFiles` till-go group fallback completeness
+
+**Attack:** when `group = till-go`, does `copyAgentFiles` correctly enumerate all 12 placeholders (7 standard + 5 legacy `go-*`) or just the 7 standard?
+
+**Method:** read `internal/templates/embed.go` for the `//go:embed` directives covering `builtin/agents/till-go/**`; read `copyAgentFiles` loop at `init_cmd.go:438-480`; cross-check live directory.
+
+**Embed directives (`internal/templates/embed.go:84-90 + 98-102`):**
+- 7 standard: `planning-agent.md`, `builder-agent.md`, `qa-proof-agent.md`, `qa-falsification-agent.md`, `research-agent.md`, `closeout-agent.md`, `commit-message-agent.md`.
+- 5 legacy `go-*`: `go-builder-agent.md`, `go-planning-agent.md`, `go-research-agent.md`, `go-qa-proof-agent.md`, `go-qa-falsification-agent.md`.
+
+**Live directory confirmation:** `ls internal/templates/builtin/agents/till-go/ | wc -l` = 12 entries.
+
+**Loop semantics (`init_cmd.go:444-478`):**
+
+```
+srcDir := path.Join("builtin", "agents", group)            // → "builtin/agents/till-go"
+entries, err := fs.ReadDir(templates.DefaultTemplateFS, srcDir)
+...
+for _, entry := range entries {
+    if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") { continue }
+    ...
+}
+```
+
+`fs.ReadDir` against `embed.FS` returns every embedded path whose parent matches `srcDir`. No filtering by filename prefix. All 12 `.md` entries pass the suffix check and reach the write step.
+
+**Verdict: REFUTED.** Group fallback yields the full 12 files. `TestInit_FreshDir_CopiesAllFiles` asserts the floor at `>= 7` (the SKETCH §11.1 standard count) so its assertion holds even if a future drop removes the 5 legacy `go-*` placeholders (which `internal/templates/embed.go:65-68` flags as transitional residue eligible for cleanup post-Drop-4c.7). The test does not assert == 12, which is the correct posture: legacy residue is documented as eligible for cleanup.
+
+#### W2-D5-FF3 — `copyAgentFiles` FLAT writes (no group prefix)
+
+**Attack:** builder claims FLAT — no `till-go/` prefix in destination. Verify by inspecting path construction.
+
+**Method:** read `init_cmd.go:460-461`.
+
+**Code:**
+
+```
+target := filepath.Join(agentsDir, entry.Name())
+```
+
+Where `agentsDir = filepath.Join(destDir, ".tillsyn", "agents")` (no group component) and `entry.Name()` is the bare basename returned by `fs.ReadDir` (e.g. `builder-agent.md`, not `till-go/builder-agent.md`). `entry.Name()` from `fs.DirEntry` against an `embed.FS` ReadDir result is documented to return the unqualified basename.
+
+**Test corroboration:** `TestInit_FreshDir_CopiesAllFiles` at `init_cmd_test.go:371` asserts `os.Stat(filepath.Join(agentsDir, "builder-agent.md"))` succeeds with comment `"(FLAT copy required — no till-go/ prefix)"`.
+
+**Verdict: REFUTED.** Destination is `<destDir>/.tillsyn/agents/<basename>` with no group prefix.
+
+#### W2-D5-FF4 — `copyAgentsTOML` source path
+
+**Attack:** confirm `copyAgentsTOML` reads `internal/templates/builtin/agents.example.toml` (NOT `agents.toml`).
+
+**Method:** read `init_cmd.go:497`.
+
+**Code:**
+
+```
+const srcPath = "builtin/agents.example.toml"
+data, err := fs.ReadFile(templates.DefaultTemplateFS, srcPath)
+```
+
+Cross-checked against `internal/templates/embed.go:76` (`//go:embed builtin/agents.example.toml`) and confirmed the file exists at `internal/templates/builtin/agents.example.toml` (4.2K).
+
+**Destination construction at L490:**
+
+```
+target := filepath.Join(destDir, "agents.toml")
+```
+
+The src is `agents.example.toml`; the dst is `agents.toml`. Verbatim per the builder claim.
+
+**Verdict: REFUTED.** Source = `builtin/agents.example.toml`, dst = `<destDir>/agents.toml`.
+
+#### W2-D5-FF5 — `ensureGitignore` first-line-only case
+
+**Attack:** file is exactly `agents.local.toml\n` with NO preceding entries. A raw `bytes.Contains(data, []byte("\nagents.local.toml\n"))` MISSES this. Builder's line-iteration must HANDLE it. Verify by attempting a counterexample input.
+
+**Method:** read `gitignoreLinePresent` at `init_cmd.go:568-576` and reason on the seeded test case at `init_cmd_test.go:458-478`.
+
+**Code (`gitignoreLinePresent`):**
+
+```
+func gitignoreLinePresent(data []byte, want string) bool {
+    sc := bufio.NewScanner(strings.NewReader(string(data)))
+    for sc.Scan() {
+        if strings.TrimSpace(sc.Text()) == want { return true }
+    }
+    return false
+}
+```
+
+**Trace for input `data = "agents.local.toml\n"`, `want = "agents.local.toml"`:**
+- `bufio.Scanner` (default `ScanLines`) yields one token: `"agents.local.toml"` (newline stripped).
+- `strings.TrimSpace` returns `"agents.local.toml"`.
+- Equal to `want` → returns true.
+- No appended duplicate.
+
+**Counterexample-attempt:** try `data = "agents.local.toml"` (no trailing newline). Scanner yields the same token; same TrimSpace; same equality; returns true. No duplicate.
+
+**Try:** `data = "  agents.local.toml  \n"` (whitespace padding). TrimSpace strips → equals `want` → true.
+
+**Try:** `data = "#agents.local.toml\n"` (commented out). TrimSpace yields `#agents.local.toml` ≠ `agents.local.toml` → false. The code would APPEND. This is the documented contract — a commented-out line is not the same as the line itself. Not a counterexample to the builder's claim; matches intent.
+
+**Test corroboration:** `TestInit_GitignoreIdempotent` (init_cmd_test.go:458) seeds exactly `agents.local.toml\n` and asserts `countGitignoreLine == 1` after re-invoking `till init`. Test passes (verified via `mage ci`).
+
+**Verdict: REFUTED.** Line-iteration correctly handles the first-line-only case the raw `bytes.Contains` form would miss.
+
+#### W2-D5-FF6 — `ensureGitignore` trailing-newline corners
+
+**Attack:** file ends with no `\n` → must append `\n` + `agents.local.toml\n`. File ends with `\n` → append `agents.local.toml\n`. Both cases tested?
+
+**Method:** read `init_cmd.go:544-552` and the table-driven test at `init_cmd_test.go:484-529`.
+
+**Code (`ensureGitignore` existing-file branch):**
+
+```
+body := data
+if len(body) > 0 && body[len(body)-1] != '\n' {
+    body = append(body, '\n')
+}
+body = append(body, []byte(gitignoreAgentsLocalLine+"\n")...)
+```
+
+**Trace 1 — file ends with `\n`** (input `"node_modules/\n.env\n"`):
+- `body[-1] == '\n'` → skip newline append.
+- Append `"agents.local.toml\n"` → final: `"node_modules/\n.env\nagents.local.toml\n"`.
+- Single trailing newline; clean append.
+
+**Trace 2 — file ends without `\n`** (input `"node_modules/\n.env"`):
+- `body[-1] != '\n'` → append `'\n'` → `"node_modules/\n.env\n"`.
+- Append `"agents.local.toml\n"` → final: `"node_modules/\n.env\nagents.local.toml\n"`.
+- Same end-state as Trace 1; lines properly delimited.
+
+**Test corroboration:** `TestInit_PreExistingGitignore_AppendsCleanly` is table-driven with two subtests: `trailing_newline` (seed `"node_modules/\n.env\n"`) and `no_trailing_newline` (seed `"node_modules/\n.env"`). Both subtests assert:
+- pre-existing entries survive (`strings.Contains` for `"node_modules/"` and `".env"`),
+- `agents.local.toml` appears exactly once,
+- final body ends with `\n`.
+
+Both subtests pass (verified via `mage ci`).
+
+**Edge: empty file** (input `""`):
+- `len(body) == 0` → skip newline-append (guard prevents OOB).
+- Append `"agents.local.toml\n"` → final: `"agents.local.toml\n"`.
+- Equivalent to the absent-file branch's `body = []byte(gitignoreAgentsLocalLine + "\n")`. Correct.
+
+**Verdict: REFUTED.** Both trailing-newline cases tested explicitly via a table-driven subtest matrix. Empty-file edge handled by the `len(body) > 0` guard.
+
+#### W2-D5-FF7 — `ensureGitignore` concurrent invocations
+
+**Attack:** if two `till init` invocations run concurrently against the same `.gitignore`, can both write the line (duplicate)? `fsatomic.WriteFile` is atomic per call but doesn't serialize against other callers.
+
+**Method:** reason on the read-compute-write window without a file lock.
+
+**Race trace 1 — both see absent file:**
+- Process A: `os.ReadFile` returns `fs.ErrNotExist`; computes `body = "agents.local.toml\n"`; writes.
+- Process B: `os.ReadFile` returns `fs.ErrNotExist` (still — A's rename hasn't landed yet); computes same body; writes.
+- The two `fsatomic.WriteFile` calls each write to a per-process tempfile then rename. Last rename wins. Final content = `"agents.local.toml\n"` either way. No duplicate.
+
+**Race trace 2 — both see existing file WITHOUT the line** (seed `"node_modules/\n"`):
+- A reads `"node_modules/\n"`; `gitignoreLinePresent` false; appends → body = `"node_modules/\nagents.local.toml\n"`; renames.
+- B reads `"node_modules/\n"` (still — A's rename hasn't landed); same compute; renames.
+- Final content = `"node_modules/\nagents.local.toml\n"` either way. No duplicate.
+
+**Race trace 3 — A's rename completes before B reads:**
+- A writes `"...\nagents.local.toml\n"`; renames.
+- B reads `"...\nagents.local.toml\n"`; `gitignoreLinePresent` true; returns nil without writing.
+- No duplicate.
+
+**Race trace 4 — B's read straddles A's rename (TOCTOU window):** the data B reads is either A's pre-write content OR A's post-write content (`fsatomic.WriteFile` rename is atomic — POSIX guarantees this — so no half-written read). Either way, the write A and B produce is the same content (case 2 or case 3). No duplicate.
+
+**Counterexample attempt — write-write conflict in mid-flight:** `fsatomic.WriteFile` writes to `<target>.tmp-<random>` then `os.Rename(tmp, target)`. Two processes use distinct tempfile suffixes (random hex). No tempfile collision. `os.Rename` is atomic on POSIX. No half-overwritten state.
+
+**Verdict: REFUTED.** No duplicate appendable under the read-compute-write race. The atomic-rename + idempotent-compute combination produces the same final content regardless of interleaving. There is no file lock, but the operation is convergent: every interleaving lands on the same single-line-present steady state.
+
+**NIT: there is a theoretical write-amplification (both processes do the work) but no correctness regression.** Worth noting but not a counterexample.
+
+#### W2-D5-FF8 — `runInitPipeline` partial failure cleanup
+
+**Attack:** `copyAgentFiles` succeeds but `copyAgentsTOML` fails. Are the per-agent `.md` files cleaned up? Or partial state survives?
+
+**Method:** read `runInitPipeline` at `init_cmd.go:396-420` and reason on the contract.
+
+**Code (sequential, no rollback):**
+
+```
+if _, _, err := copyAgentFiles(destDir, payload.Group); err != nil {
+    return fmt.Errorf("till init: copy agent files: %w", err)
+}
+if _, _, err := copyAgentsTOML(destDir); err != nil {
+    return fmt.Errorf("till init: copy agents.toml: %w", err)
+}
+if err := ensureGitignore(destDir); err != nil {
+    return fmt.Errorf("till init: ensure .gitignore: %w", err)
+}
+```
+
+If `copyAgentFiles` succeeds (12 files written) and `copyAgentsTOML` fails, the function returns the wrapped error and the 12 `.md` files remain on disk. No `defer`-based cleanup.
+
+**Is this a counterexample?** The droplet's "Re-run safety (mandatory invariant)" clause documents this exact behavior: every write is gated by `os.Stat` skip-existing, so on next invocation the 12 files are SKIPPED and the pipeline resumes from `copyAgentsTOML`. This is the intentional "idempotent forward progress" design.
+
+**Builder doc-comment at `init_cmd.go:387-395`** explicitly says: *"Re-run safety is mandatory: every file write is gated by an `os.Stat` pre-check so existing files are SKIPPED, never overwritten."* Re-run safety covers exactly the partial-failure recovery story.
+
+**Test corroboration:** `TestInit_RerunSafety_NoOverwrite` (init_cmd_test.go:395) invokes `till init` twice and asserts byte-for-byte file equality across the two runs. Pre-existing files survive untouched across a re-invocation. The same invariant means a partial-failure re-run resumes correctly.
+
+**Counterexample attempt — what if a future drop changes a placeholder body?** The skip-existing rule means a re-init does NOT pick up the new content. This is a deliberate user-data-preservation choice (the user may have edited their `.tillsyn/agents/*.md`). A `--force` flag is the documented future answer per SKETCH §9.3.
+
+**Verdict: REFUTED (intentional behavior).** Partial-state survival on mid-pipeline failure is the documented design, justified by re-run safety. Recovery is "re-run `till init`" which is byte-for-byte idempotent over already-written files. NIT: a `--force` flag for explicit re-seeding would close the upgrade-placeholder gap, but that's a post-MVP refinement.
+
+#### W2-D5-FF9 — D6-stub error wrapping semantics
+
+**Attack:** `errors.New(...)` returns a plain error. Does `errors.Is` work against the literal string?
+
+**Method:** read `init_cmd.go:419`.
+
+**Code:**
+
+```
+return errors.New("till init: .mcp.json registration not yet wired (W2.D6)")
+```
+
+Each call to `errors.New` allocates a fresh `*errorString` pointer. `errors.Is(a, b)` for two `errors.New` calls with the same string returns FALSE (pointer comparison via the default `Is` chain, since `*errorString` does not implement `Is(target) bool`).
+
+**Test contract check:** every test that asserts the D6 stub uses `strings.Contains(err.Error(), wantSubstring)` (init_cmd_test.go:57, 80, 105-111, 351). NONE use `errors.Is`. Test contract is decoupled from sentinel-identity.
+
+**Counterexample attempt:** is any production caller expected to route on `errors.Is(err, someSentinel)` here? D5 is the file-copy pipeline; the D6 stub is the closeout. D6 will replace this `errors.New` with real `.mcp.json` registration code, so the stub literal is transient. No production caller depends on routing — it's a not-yet-implemented marker.
+
+**Verdict: REFUTED.** Tests use substring matching, not `errors.Is`. The D6 stub is transient; D6 will replace it. No regression surface here. **NIT: if W2 ships pre-D6 to users (it shouldn't per droplet ordering), surfacing a non-`Is`-able error from a production-named path is mildly fragile. Mitigation is straightforward — wrap a package-level sentinel like `errInitMCPNotWired = errors.New(...)` and reference it. Refinement candidate, not blocking.**
+
+#### W2-D5-FF10 — `mage ci` GREEN verification
+
+**Attack:** run `mage ci` end-to-end; it must be GREEN with no W2-D5-attributable failures.
+
+**Method:** `mage ci` from `main/` working directory.
+
+**Result:**
+
+```
+Test summary
+  tests: 3081
+  passed: 3081
+  failed: 0
+  skipped: 0
+  packages: 26
+  pkg passed: 26
+  pkg failed: 0
+  pkg skipped: 0
+[SUCCESS] All tests passed
+  3081 tests passed across 26 packages.
+[SUCCESS] Coverage threshold met
+  All packages are at or above 70.0% coverage.
+[SUCCESS] Built till from ./cmd/till
+```
+
+`cmd/till` package coverage: **76.0%** (well above 70.0% floor). All 3081 tests across 26 packages pass. Build succeeds.
+
+**Working tree post-mage-ci:** `git status --short` → clean. No test residue.
+
+**Verdict: REFUTED. mage ci is GREEN; no W2-D5-attributable failures.**
+
+### Verdict table
+
+| Hypothesis                          | Result    | Evidence                                                                                                                                                                       |
+| ----------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| H1 t.Chdir audit                    | REFUTED   | FF1 — all 10 tests audited; 7 pipeline-driving tests chdir; 3 teatest-only tests need no chdir; `cmd/till/` working tree clean.                                                |
+| H2 till-go group fallback (12 files) | REFUTED   | FF2 — embed.FS lists all 12; loop reads all 12; test asserts `>= 7` floor (correct posture for transitional legacy residue).                                                   |
+| H3 FLAT writes (no group prefix)    | REFUTED   | FF3 — `target = filepath.Join(agentsDir, entry.Name())`, no group component; test asserts `builder-agent.md` at flat path.                                                     |
+| H4 agents.example.toml source       | REFUTED   | FF4 — `srcPath = "builtin/agents.example.toml"`, dst = `agents.toml`; embed directive confirms.                                                                                |
+| H5 first-line-only case             | REFUTED   | FF5 — `bufio.Scanner`-based line-iteration handles the case the raw `bytes.Contains` form misses; test seeds the exact case and asserts occurrences = 1.                       |
+| H6 trailing-newline corners         | REFUTED   | FF6 — both `body[-1] == '\n'` and `body[-1] != '\n'` branches handled with guard; table-driven test covers both seeds; empty-file edge guarded by `len(body) > 0`.             |
+| H7 concurrent invocations           | REFUTED   | FF7 — four race traces analyzed; atomic-rename + idempotent-compute → all interleavings converge on the same single-line-present steady state. NIT only.                       |
+| H8 partial failure cleanup          | REFUTED   | FF8 — intentional "idempotent forward progress" design; re-run resumes correctly; re-run safety test confirms byte-for-byte preservation across re-invocation.                 |
+| H9 D6-stub errors.Is semantics      | REFUTED   | FF9 — tests use substring match, not `errors.Is`; D6 will replace the stub; no production sentinel-routing dependency.                                                         |
+| H10 mage ci GREEN                   | REFUTED   | FF10 — 3081/3081 tests pass; `cmd/till` 76.0% coverage; build succeeds; working tree clean post-run.                                                                            |
+
+### Probes executed
+
+- **`mage ci`** — GREEN. 3081 tests, 26 packages, coverage threshold met, build success.
+- **Direct `Read` of `cmd/till/init_cmd.go` lines 1-600** — full file inspection of the pipeline + helpers + validate.
+- **Direct `Read` of `cmd/till/init_cmd_test.go` lines 1-552** — full file inspection for the t.Chdir audit; classified each `Test*` function.
+- **Direct `Read` of `internal/templates/embed.go` lines 1-282** — confirmed `agents.example.toml` and 12 till-go `.md` embed directives.
+- **Live `ls` of `internal/templates/builtin/agents/till-go/`** — 12 files; cross-referenced against the 12 embed lines (7 standard + 5 legacy `go-*`).
+- **Live `ls` of `internal/templates/builtin/`** — confirmed `agents.example.toml` exists at the expected path (4.2K).
+- **Live `ls cmd/till/`** — confirmed NO test-residue artifacts (no `.tillsyn/`, no `.gitignore`, no `agents.toml`).
+- **`git status --short`** — clean post-`mage ci`.
+- **`rg -n "runInitPipeline|copyAgentFiles|copyAgentsTOML|ensureGitignore|runInitJSON"` against `cmd/till/`** — 27 hits in 2 files (init_cmd.go + init_cmd_test.go); no leakage outside the pipeline's two files.
+- **Hylla `hylla_search_keyword`** for `runInitPipeline` / `copyAgentFiles` against `github.com/evanmschultz/tillsyn@main` — returned empty (the W2.D5 surface is uncommitted; pre-cascade-ingest staleness is the documented norm).
+
+### Summary
+
+**Verdict: PASS — no W2.D5-attributable CONFIRMED counterexamples.** All 10 attack vectors REFUTED with concrete code + test + run evidence.
+
+**Soundness summary:** the pipeline composes three idempotent helpers with `os.Stat` skip-existing guards. `copyAgentFiles` correctly enumerates 12 till-go placeholders via `fs.ReadDir` + suffix filter, writes flat under `.tillsyn/agents/<basename>` using `fsatomic.WriteFile` (atomic write-temp+rename, mode 0o644). `copyAgentsTOML` reads the embedded `builtin/agents.example.toml` and writes to `<destDir>/agents.toml`. `ensureGitignore` uses `bufio.Scanner` line-iteration (via `gitignoreLinePresent`) to handle the W2-FF10 round-2 LOCKED first-line-only case the raw `bytes.Contains` form misses; trailing-newline handling guards both `body[-1] == '\n'` and `body[-1] != '\n'`. The t.Chdir audit found every pipeline-exercising test sandboxed into `t.TempDir()`; the three teatest-only tests correctly skip chdir because the bubbletea model never invokes the pipeline. `cmd/till/` working tree is clean post-`mage ci`. The W2.D5 droplet is sound, well-tested, and re-run safe.
+
+**Severity breakdown:**
+
+- **0 CONFIRMED counterexamples** attributable to W2.D5.
+- **3 NIT-severity findings** (all refinement candidates, not blocking):
+  - **W2-D5-FF7 NIT** — concurrent invocations do redundant work (read-compute-write race amplifies effort), but converge on correct single-line state. A file lock would close this; not worth the complexity for `till init` (a one-shot setup command).
+  - **W2-D5-FF8 NIT** — no `--force` flag for re-seeding placeholders after the user has edited their `.tillsyn/agents/*.md`. Documented as post-MVP refinement per SKETCH §9.3.
+  - **W2-D5-FF9 NIT** — D6 stub uses ad-hoc `errors.New` instead of a package-level sentinel; tests don't depend on `errors.Is` so this is transient (D6 replaces the stub). Mildly fragile if W2 ships pre-D6 to users — refinement candidate.
+
+**Routing to orchestrator:**
+
+1. **W2.D5 droplet itself: PASS — no respawn required for W2.D5 work.**
+2. **No code changes recommended for W2.D5 closure.**
+3. **Refinement candidates (post-MVP, not blocking):**
+   - W2-D5-FF7 — concurrent-write convergence is correct but does redundant work; flock around the read-compute-write cycle would tighten it.
+   - W2-D5-FF8 — `--force` flag for `till init` to re-seed placeholders after user edits.
+   - W2-D5-FF9 — promote the D6 stub error to a package-level sentinel for `errors.Is` symmetry once W2.D6 lands real code.
+
+### Hylla Feedback
+
+- **Query:** `hylla_search_keyword` for `runInitPipeline` and `copyAgentFiles` against `github.com/evanmschultz/tillsyn@main` (two separate queries).
+  - **Missed because:** the W2.D5 symbols are uncommitted (W2.D5 work is on the working tree, not yet in any Hylla snapshot). Same pre-cascade-ingest staleness window documented across multiple prior rounds in this file (W3.D2 round-2, W3.D4, W2.D1, W3.D5, W2.D8).
+  - **Worked via:** direct `Read` of `cmd/till/init_cmd.go` (full file, 600 lines), `cmd/till/init_cmd_test.go` (full file, 552 lines), `internal/templates/embed.go` (full file, 282 lines), live `ls` of `internal/templates/builtin/` and `internal/templates/builtin/agents/till-go/` for ground-truth file counts, `git status --short` for working-tree state, `rg -n` for cross-file caller audit, and `mage ci` for dynamic verification.
+  - **Suggestion:** non-blocking — same recurring suggestion as prior rounds. When enrichment is in flight or the queried symbol is in an uncommitted change, the keyword tool could optionally fall back to a HEAD-aware index OR surface a hint pointing the caller at the staleness window so they can immediately reach for `Read` rather than burning a Hylla call. Multiple droplets in this drop have raised the same suggestion; aggregate at drop-end Hylla refinements rollup.
