@@ -2,8 +2,8 @@
 
 **State:** planning
 **Blocked by:** 4c.6.W1.D1 (W2 copies the agent .md files shipped by W1; without W1's embedded scaffolding there's nothing to copy)
-**Paths (expected):** `internal/vendor/fsatomic/**`, `internal/vendor/VENDOR_SOURCE.md`, `cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`, `cmd/till/install_cmd.go`, `cmd/till/install_cmd_test.go`, `cmd/till/main.go`, `cmd/till/main_test.go`, `cmd/till/help.go`
-**Packages (expected):** `github.com/evanmschultz/tillsyn/internal/vendor/fsatomic`, `github.com/evanmschultz/tillsyn/cmd/till`
+**Paths (expected):** `internal/fsatomic/**`, `cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`, `cmd/till/install_cmd.go`, `cmd/till/install_cmd_test.go`, `cmd/till/main.go`, `cmd/till/main_test.go`, `cmd/till/help.go`
+**Packages (expected):** `github.com/evanmschultz/tillsyn/internal/fsatomic`, `github.com/evanmschultz/tillsyn/cmd/till`
 **PLAN.md ref:** `workflow/drop_4c_6/PLAN.md` → `4c.6.W2` row (lines 117-133)
 **Workflow:** `workflow/example/drops/WORKFLOW.md`
 **Cascade concept:** `AGENT_CASCADE_DESIGN.md`
@@ -12,7 +12,7 @@
 
 ## Scope
 
-Land `till init` per `SKETCH.md` §9 + §26.W2 — TUI walk (project name + group picker), copy embedded `internal/templates/builtin/agents/<group>/*.md` → `<project>/.tillsyn/agents/*.md` FLAT, copy `agents.example.toml` → `<project>/agents.toml`, ensure `agents.local.toml` in `.gitignore`, optional `.mcp.json` registration, project-DB record creation, Laslig success message, JSON mode (`--json '{...}'`) with identical behavior, re-run safety (never overwrites). Plus: vendor `fsatomic` (52 LOC, zero deps) from `ta` to `internal/vendor/` with `VENDOR_SOURCE.md` provenance per `SKETCH.md` §9.6 — every vendored Go file MUST carry a 2-3 line block-comment header `// DO NOT EDIT — re-vendor from upstream` plus pointer to `internal/vendor/VENDOR_SOURCE.md` (ROUND-2 OQ#2). Plus: ADD `till install` CLI command (NEW — see OQ#3 verification below) that takes over the dev-config-creation behavior currently in `cmd/till/main.go:2039 runInitDevConfig` BEFORE D8 finalizes the removal of `init-dev-config`. JSON-mode + TUI behaviors must be IDENTICAL apart from input source.
+Land `till init` per `SKETCH.md` §9 + §26.W2 — TUI walk (project name + group picker), copy embedded `internal/templates/builtin/agents/<group>/*.md` → `<project>/.tillsyn/agents/*.md` FLAT, copy `agents.example.toml` → `<project>/agents.toml`, ensure `agents.local.toml` in `.gitignore`, optional `.mcp.json` registration, project-DB record creation, Laslig success message, JSON mode (`--json '{...}'`) with identical behavior, re-run safety (never overwrites). Plus: ship a local `internal/fsatomic/` atomic file-write helper (~30–50 LOC, zero deps) per `SKETCH.md` §9.6 — write-temp + rename pattern with cleanup-on-error and optional parent-dir fsync; ROUND-3 W2.D1 pivot from "vendor from `ta`" to "implement locally in Tillsyn" because `ta` is not yet at MVP and the pattern is small enough to own here (future migration to `hylla-shared` post-MVP is unaffected). Plus: ADD `till install` CLI command (NEW — see OQ#3 verification below) that takes over the dev-config-creation behavior currently in `cmd/till/main.go:2039 runInitDevConfig` BEFORE D8 finalizes the removal of `init-dev-config`. JSON-mode + TUI behaviors must be IDENTICAL apart from input source.
 
 **ROUND-2 update (W2-FF4 — configmerge removed):** earlier rounds vendored `configmerge` from `ta` alongside `fsatomic`. Round-2 audit (W2-FF4) confirmed `configmerge` was never load-bearing in this wave — `agents.example.toml` is COPIED (not merged) per D5, and `.gitignore` is a single-line idempotent append. Removing the `configmerge` vendor saves a droplet and reduces vendored surface. If a future drop needs section-merging TOML behavior, vendor it then.
 
@@ -38,31 +38,35 @@ The two are wired via `main.go`'s `rootCmd.AddCommand` line; both share the `cmd
 
 ## Planner
 
-### Droplet 4c.6.W2.D1 — Vendor `fsatomic` package from `ta`
+### Droplet 4c.6.W2.D1 — `internal/fsatomic/` atomic file-write helper (local-implement)
+
+**ROUND-3 PIVOT (W2.D1 local-implement, dev-approved 2026-05-11):** round-2 plan vendored `fsatomic` from `ta` upstream. Dev call: `ta` is not yet at MVP and the atomic-write pattern is small enough (~30–50 LOC) to own locally in Tillsyn. Pivot from "vendor from `ta`" → "implement locally at `internal/fsatomic/`." No upstream provenance, no `VENDOR_SOURCE.md`, no `internal/vendor/` directory, no "DO NOT EDIT — re-vendor from upstream" header rule. Future migration to `hylla-shared` post-MVP is unaffected by where the package originates.
 
 - **State:** todo
 - **Paths:**
-  - `internal/vendor/fsatomic/atomic.go` (NEW)
-  - `internal/vendor/fsatomic/atomic_test.go` (NEW)
-  - `internal/vendor/VENDOR_SOURCE.md` (NEW — created by D1; sole vendored package this wave per W2-FF4 round-2)
-- **Packages:** `github.com/evanmschultz/tillsyn/internal/vendor/fsatomic` (NEW package)
+  - `internal/fsatomic/atomic.go` (NEW)
+  - `internal/fsatomic/atomic_test.go` (NEW)
+- **Packages:** `github.com/evanmschultz/tillsyn/internal/fsatomic` (NEW package)
 - **Acceptance:**
-  - Package `fsatomic` exists at `internal/vendor/fsatomic/`. Source matches the `ta` upstream commit cited in `VENDOR_SOURCE.md` byte-for-byte (run `diff` to confirm during build).
-  - **Every Go file under `internal/vendor/fsatomic/` carries a 2-3 line block-comment header at the very top of the file (above `package fsatomic`):**
-    ```
-    // DO NOT EDIT — re-vendor from upstream.
-    // Source + provenance: see ../VENDOR_SOURCE.md.
-    ```
-  - `internal/vendor/VENDOR_SOURCE.md` lists `fsatomic` with: upstream repo URL (the `ta` repo path), upstream commit hash (full 40-char SHA the dev pins), date vendored (2026-05-09), LOC count (~52), zero-deps confirmation, future-migration plan ("when `ta` reaches MVP, extract to `hylla-shared` per SKETCH.md §9.6"). Markdown table or `### fsatomic` + bullets — pick whichever scales to multiple vendored packages cleanly.
-  - `mage test-pkg ./internal/vendor/fsatomic` passes (the upstream test file vendored alongside).
-  - `mage ci` green — no lint failures on the vendored block-comment header.
-  - Builder confirms `ta` upstream license permits vendoring; LICENSE file (or equivalent attribution) included alongside the source if upstream's license requires it.
+  - Package `fsatomic` exists at `internal/fsatomic/`. Exports the API surface W2.D5 needs at minimum: `WriteFile(path string, data []byte, perm os.FileMode) error` (atomic version of `os.WriteFile`) — write-to-temp-in-same-dir + sync + rename pattern.
+  - Implementation uses `os.CreateTemp(filepath.Dir(target), filepath.Base(target)+".tmp-*")` to land the temp in the same directory as the target (required for `os.Rename` to be atomic on POSIX; cross-filesystem renames are NOT atomic).
+  - Error paths cleanup the temp file via `defer` + a guard (don't double-remove on success). Partial writes never leave a temp file behind.
+  - Sync semantics: `f.Sync()` on the temp file BEFORE close + rename. Optional helper for parent-dir fsync as a separate exported function (`SyncDir(path string) error`) if W2.D5 needs strong durability; if not, leave as a future addition (YAGNI).
+  - Idempotency on existing target: `WriteFile` overwrites by default (matches `os.WriteFile`'s contract). Re-run safety is the CALLER's responsibility (D5's `os.Stat`-then-skip dance lives in `init_cmd.go`, not in fsatomic).
+  - Tests at `internal/fsatomic/atomic_test.go`:
+    - `TestWriteFile_FreshWrite`: write to a `t.TempDir()` path; assert file exists with the expected content + permissions.
+    - `TestWriteFile_OverwritesExisting`: write to a pre-existing file; assert new content overwrites cleanly.
+    - `TestWriteFile_CleansUpTempOnError`: inject an error into the write path (e.g., zero perms on the parent dir, or write to a path that can't exist); assert NO `.tmp-*` files remain in the parent dir after the failed call.
+    - `TestWriteFile_PreservesPermissions`: write with `0o600`; assert resulting file mode matches.
+    - `TestWriteFile_AtomicVisibility`: stretch goal — concurrent reader sees either the OLD content OR the NEW content, never a half-written file. Skip if too flaky on CI; documented as a future test.
+  - `mage test-pkg ./internal/fsatomic` passes.
+  - `mage ci` green.
+  - Doc-comments: package-level doc-comment names the design (write-temp + rename), pins the same-directory-temp requirement for POSIX atomicity, and notes future-migration intent to `hylla-shared` post-MVP per SKETCH §9.6.
 - **Blocked by:** —
 - **Notes for builder:**
-  - `fsatomic` per SKETCH §9.6: "52 LOC, zero deps." Spawn-prompt MUST include the exact upstream commit hash (dev provides). If the dev hasn't pinned a commit, escalate to orchestrator before vendoring (do NOT pick HEAD silently — provenance is load-bearing).
-  - The vendor directory does NOT exist today (`internal/vendor/`: No such file or directory verified 2026-05-09). D1 creates it.
-  - Builder runs `mage format` after vendoring; vendored upstream code may not match `gofumpt` and that's acceptable per "DO NOT EDIT" — but the BLOCK-COMMENT HEADER prefix must come BEFORE the original `package` declaration so `gofumpt` doesn't re-order. If `gofumpt` rewrites the file, file a refinement (do NOT keep the rewrite).
+  - Per SKETCH §9.6: "52 LOC, zero deps." Implement minimally — no exotic API, no struct-based staged writes unless W2.D5's consumer actually needs them.
   - The package is a NEW Go package — no file-collision with `cmd/till` or anything else, so D1 runs fully parallel with D3a–D8 until D5 needs it.
+  - **No upstream vendoring** — this droplet writes original code in the Tillsyn repo. No `DO NOT EDIT` header. No `VENDOR_SOURCE.md`. Future ports to `hylla-shared` can pull the API from this location directly.
 
 ### Droplet 4c.6.W2.D2 — REMOVED (W2-FF4: `configmerge` vestigial)
 
@@ -256,13 +260,13 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 - **OQ#3 verification result is a load-bearing finding.** The L1 directive's premise that "`till install` covers (or is extended to cover) the dev-config-creation behavior" is FALSE — `till install` does NOT exist in the CLI today (only `mage install` exists, which is a build target, not a CLI subcommand). SKETCH §9.1 names `till install` as the destination, so the disposition is to add `till install` as a NEW CLI command (D7.5) before D8 finalizes the removal of `init-dev-config`. This is documented inline in the "OQ#3 Verification" section above and reflected in the droplet decomposition (D7.5 is new; D8 is `Blocked by` D7.5 in addition to D3a — round-2 W2-FF1 split renamed D3 → D3a for the `main.go`-touching half).
 
-- **OQ#2 verification result.** D1 acceptance criterion explicitly requires the 2-3 line `// DO NOT EDIT — re-vendor from upstream.` block-comment header on every vendored Go file. Provenance lives in `internal/vendor/VENDOR_SOURCE.md` (created by D1). _(W2-FF4 round-2: D2/`configmerge` removed; D1 is the sole remaining vendor droplet.)_
+- **OQ#2 verification result (SUPERSEDED by ROUND-3 W2.D1 pivot).** Round-2 D1 required vendor scaffolding — `DO NOT EDIT` headers + `VENDOR_SOURCE.md`. ROUND-3 pivots D1 to local-implement at `internal/fsatomic/` per dev call 2026-05-11 (`ta` not yet at MVP; ~50 LOC is small enough to own here). No vendor scaffolding, no provenance file, no header rule. Future migration to `hylla-shared` post-MVP pulls the API from `internal/fsatomic/` directly.
 
-- **Vendor packages are NEW (verified 2026-05-09).** `internal/vendor/` does not exist; `fsatomic` is not in `go.mod` (only nominal substring matches in unrelated dependency names). D1 is a clean greenfield package addition — it does not collide with `cmd/till` and runs fully parallel until D5 needs it. _(W2-FF4 round-2: `configmerge` was originally going to be a second vendor droplet; round-2 removed it as vestigial — see Scope §ROUND-2 update.)_
+- **`internal/fsatomic/` is NEW (verified 2026-05-09; ROUND-3 path pivoted from `internal/vendor/fsatomic/`).** `internal/fsatomic/` does not exist; `fsatomic` is not in `go.mod` (only nominal substring matches in unrelated dependency names). D1 is a clean greenfield package addition — it does not collide with `cmd/till` and runs fully parallel until D5 needs it. _(W2-FF4 round-2: `configmerge` was originally going to be a second vendor droplet; round-2 removed it as vestigial — see Scope §ROUND-2 update.)_
 
 - **Same-package serialization (`cmd/till`).** D3a, D3b, D4, D5, D6, D7, D7.5, D8 all live in `cmd/till` and most touch `cmd/till/init_cmd.go` directly. The serial chain D3a → D3b → D4 → D5 → D6 → D7 reflects the same-file lock on `init_cmd.go` (D3a creates it; D3b–D7 each modify it in turn). D7.5 introduces a NEW file (`install_cmd.go`) but shares `cmd/till/main.go` with D3a, so D7.5 is `Blocked by: D3a`. D8 modifies BOTH `main.go` and `init_cmd.go`-adjacent surfaces (`help.go`, `main_test.go`) and is `Blocked by: D3a, D7.5`.
 
-- **D5 cross-package blocker.** D5 is `Blocked by: D1, D4` because D5 imports `internal/vendor/fsatomic` (D1 is a NEW package that must exist before D5 compiles), and D5 modifies `cmd/till/init_cmd.go` which D4 last edited (same-file lock). _(W2-FF4 round-2: D2 removed; `configmerge` not used.)_
+- **D5 cross-package blocker.** D5 is `Blocked by: D1, D4` because D5 imports `internal/fsatomic` (D1 is a NEW package that must exist before D5 compiles; ROUND-3 pivot from `internal/vendor/fsatomic` to local-implement), and D5 modifies `cmd/till/init_cmd.go` which D4 last edited (same-file lock). _(W2-FF4 round-2: D2 removed; `configmerge` not used.)_
 
 - **D3 split (W2-FF1 round-2).** Round-1 D3 combined skeleton + flag wiring + JSON parser + `main.go` register + `help.go` entry across 3 production files at the under-decomposed smell threshold. Round-2 split it into D3a (skeleton + register + help-entry; touches `init_cmd.go` + `main.go` + `help.go`) and D3b (JSON parser + validation + table-test; touches `init_cmd.go` only). D3b `Blocked by: D3a`. Downstream chain rewired: D4 `Blocked by: D3b` (was `D3`); D7.5 `Blocked by: D3a` (was `D3`); D8 `Blocked by: D3a, D7.5` (was `D3, D7.5`).
 
