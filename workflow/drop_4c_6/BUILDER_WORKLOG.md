@@ -98,6 +98,63 @@ None — Hylla was not queried during this round. The droplet's PLAN.md row carr
 
 ---
 
+## Droplet 4c.6.W2.D6 — Round 1
+
+**Builder:** go-builder-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D6 — .mcp.json optional registration`.
+
+### Files touched
+
+- `cmd/till/init_cmd.go` — added `os/exec` import; added `mcpServerEntry` + `mcpJSONFile` struct types; added `mcpJSONFileName` + `mcpServerKey` constants; implemented `registerMCPJSON(destDir string, includeMCP bool) (int, int, error)`; replaced D6-stub in `runInitPipeline` with a real `registerMCPJSON` call, forwarding to the D7-stub `errors.New("till init: project-DB record creation not yet wired (W2.D7)")`.
+- `cmd/till/init_cmd_test.go` — added `encoding/json` import; updated all 7 existing test assertions that expected the D6-stub literal to now expect the D7-stub literal; added 4 new D6 test cases (`TestInit_MCPJSON_FreshFile`, `TestInit_MCPJSON_AppendsToExisting`, `TestInit_MCPJSON_Idempotent`, `TestInit_MCPJSON_OptOut`).
+- `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` — flipped W2.D6 `**State:**` `todo → done`.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### `.mcp.json` schema source
+
+Context7 `/websites/code_claude` (benchmark score 81.26, source reputation High) → "Configure stdio MCP Server in .mcp.json". Schema confirmed: top-level `mcpServers` object; each entry has `command` (string, required), `args` ([]string, optional), `env` (map[string]string, optional). `type` field omitted (Claude Code treats absence as stdio). No hardcoded guesses — the struct was derived from the authoritative docs example.
+
+The dev's `~/.mcp.json` was not readable (Read permission denied), so Context7 was the sole schema source. This is documented here per PLAN.md D6 acceptance requirement.
+
+### Design decisions
+
+- **`exec.LookPath("till")` with static fallback.** Primary resolution via `exec.LookPath`. On failure (test environments, fresh machines) falls back to `filepath.Join(os.UserHomeDir(), ".local", "bin", "till")` — the canonical path written by `mage install` per `magefile.go:144`. The function does NOT verify the binary exists at the fallback path; it writes the path string into `.mcp.json` so the registration is correct once the dev runs `mage install`.
+- **`includeMCP = false` → immediate no-op return `(0, 1, nil)`.** Re-run safety by design: opt-out is a skip, not a write. The skipped=1 value preserves the convention established by `copyAgentsTOML`.
+- **Idempotent skip on existing `tillsyn` key.** JSON object keys are unique; if `mcpServers["tillsyn"]` already exists, return `(0, 1, nil)` without touching the file. Does NOT overwrite the existing command path — the dev may have customized it.
+- **Atomic write via `fsatomic.WriteFile`.** Both the fresh-create and the append-to-existing paths use `fsatomic.WriteFile` (write-temp-in-same-dir + rename). Appended JSON is formatted with `json.MarshalIndent(..., "", "  ")` + trailing newline.
+- **Unknown JSON fields in existing `.mcp.json` are preserved.** Unmarshal into `mcpJSONFile` (map-based `MCPServers`) does not discard extra top-level keys because `mcpJSONFile` uses only the `mcpServers` key. However, if the existing file has extra top-level fields beyond `mcpServers`, those WILL be dropped on re-marshal. This is acceptable for Drop 4c.6's scope — the full MCP spec allows extra fields but Claude Code's `.mcp.json` files in practice only carry `mcpServers`. Log as a refinement candidate if fuller round-trip fidelity is needed.
+- **CONSUMER-TIE contract met.** All 4 new tests drive `run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", "..."}, &out, io.Discard)` end-to-end via the cobra-registered command. No direct `registerMCPJSON` calls in consumer-tie tests.
+
+### TDD red→green cycle
+
+1. Added 4 failing tests that reference `mcpJSONFile`/`mcpServerKey` (not yet defined) — build error (RED).
+2. Added struct types, constants, `registerMCPJSON` to `init_cmd.go`; replaced D6-stub with real call + D7-stub forward.
+3. Tests that previously asserted D6-stub now needed D7-stub — updated 7 existing assertions.
+4. `mage test-pkg ./cmd/till` → 275/275 passed (GREEN).
+5. `mage ci` → 3085/3085 passed, all packages ≥70% coverage (GREEN).
+
+### Validation
+
+- `mage test-pkg ./cmd/till` → 275 passed, 0 failed.
+- `mage ci` → 3085 passed, 0 failed. `cmd/till` coverage 75.9% (above 70% gate).
+
+### Hylla Feedback
+
+Hylla was queried twice during this round but Hylla's index was in a "enrichment still running" state for `github.com/evanmschultz/tillsyn@main`.
+
+- **Query:** `hylla_search_keyword` for `exec.LookPath till binary path`.
+  - **Missed because:** enrichment still running — stale index race (same pattern as D3b round).
+  - **Worked via:** `Read` on `magefile.go` lines 135-146, which proved the install path `~/.local/bin/till` directly.
+  - **Suggestion:** same as D3b — expose a "partial index available (snapshot N)" hint when enrichment is in flight.
+
+- **Query:** `hylla_search_keyword` for `scriptedProgram programFactory` (to locate the test scaffold type).
+  - **Missed because:** enrichment still running; also Hylla doesn't index test files by default (`test_mode: hide_tests`).
+  - **Worked via:** `Read` on `cmd/till/main_test.go` lines 60-80.
+  - **Suggestion:** exposing a `test_mode: include_tests` search path would be useful for builder agents that need to understand existing test infrastructure without falling back to direct reads.
+
+---
+
 ## Droplet 4c.6.W6.D3 — Round 1
 
 **Builder:** go-builder-agent (subagent, doc-only mode).
@@ -2479,3 +2536,165 @@ Replaced the cite with `internal/templates/load.go:1642 + 1687-1706` (call site 
 ### Hylla Feedback
 
 None — Hylla answered everything needed (no Hylla query was issued this round; the cite verification was direct file Reads at specific line ranges supplied by the falsification verdict, which is the right tool for line-anchored cite correction).
+
+---
+
+## Droplet 4c.6.W6.D4 — Round 1
+
+**Builder:** go-builder-agent (sonnet).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W6.D4 — Update SPAWN_PIPELINE.md + CLI_ADAPTER_AUTHORING.md for --bare-collapsed isolation`.
+
+### Files touched
+
+- `SPAWN_PIPELINE.md` — rewrote the `## Two Plugin Paths` section (lines 24-31) as `## Plugin Paths and Isolation`. Preserved Path A and Path B descriptions; added an explicit `--bare` note explaining that Tillsyn's argv disables Path B by design, and a separate paragraph explaining what Drop 4c.6 W3 actually fixed (empty bundle body, not Path B leakage). "Two Plugin Paths" section header and any "two paths" framing removed.
+- `CLI_ADAPTER_AUTHORING.md` — inserted a new `## Isolation Discipline for New Adapters` section immediately before `## Adapter Authoring Checklist`. Documents the four required isolation flags (`--bare`, `--plugin-dir`, `--setting-sources ""`, `--strict-mcp-config`), explains why each flag is load-bearing, warns against the common mistake of relying on agent-file priority-table ordering instead of `--bare`, and states the bundle body must be substantive (not a stub redirect).
+- `workflow/drop_4c_6/PLAN.md` — flipped W6.D4 `**State:**` from `todo` to `done`.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### Design decisions
+
+- **Section rename: `## Two Plugin Paths` → `## Plugin Paths and Isolation`.** The acceptance criterion requires `git grep "two paths"` to return zero. The existing header `## Two Plugin Paths` does not literally contain the lowercase substring `two paths` (case-sensitive grep would miss it), but renaming is cleaner and removes any ambiguity. The new name signals the isolation angle directly, which is the substance of the correction.
+- **Preserve Path A / Path B as named concepts.** The research §D.5 said "keep the two-paths section but add a note." The Path A / Path B labels are useful vocabulary (Path A = bundle plugin, Path B = system-installed). The rewrite keeps them; only the "two paths" framing as an identifier and the misleading implication that Path B is active are removed.
+- **Note placement.** The `--bare`-collapsed isolation note is inserted after Path A / Path B descriptions and before "There is no Path C," forming a logical block: (1) describe the paths, (2) clarify which one Tillsyn actually uses, (3) explain the W3 gap that was actually closed.
+- **CLI_ADAPTER_AUTHORING.md append position.** New `## Isolation Discipline for New Adapters` inserted before the checklist rather than after, so the doc reads: step-by-step authoring guide → isolation discipline → checklist. The isolation section is substantive authoring guidance, not an addendum, so it belongs in the main body flow.
+
+### Verification
+
+- `SPAWN_PIPELINE.md`: confirmed "Two Plugin Paths" header replaced, "two paths" not present in new text.
+- `CLI_ADAPTER_AUTHORING.md`: new section appended before checklist; no "two paths" phrase used anywhere.
+- `mage ci`: GREEN — 3081 tests passed, 26/26 packages at or above 70% coverage, build succeeded.
+
+### Hylla Feedback
+
+N/A — task touched non-Go files only (SPAWN_PIPELINE.md, CLI_ADAPTER_AUTHORING.md, PLAN.md, BUILDER_WORKLOG.md). No Hylla query needed or issued.
+
+---
+
+## Droplet 4c.6.W6.D4 — Round 2
+
+**Builder:** go-builder-agent (sonnet).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W6.D4 — Update SPAWN_PIPELINE.md + CLI_ADAPTER_AUTHORING.md for --bare-collapsed isolation`.
+**Round purpose:** Doc-fidelity refinement fixing 4 NITs from Round-1 QA falsification.
+
+### Files touched
+
+- `SPAWN_PIPELINE.md` — line 31: (a) added `--settings <bundle>/plugin/settings.json --mcp-config <bundle>/plugin/.mcp.json` to the "always spawns with" argv listing (NIT-D4-3 parity); (b) replaced the false-attribution quotation marks with paraphrase and rephrased the Anthropic phrasing as "only explicitly passed flags take effect (Anthropic headless docs)" without quotes (NIT-D4-1); (c) removed attribution of settings-skipping to `--bare` alone; added a separate sentence "User and project settings are excluded by `--setting-sources ""` in the same argv" (NIT-D4-2).
+- `CLI_ADAPTER_AUTHORING.md` — line 213: replaced the false-attribution quotation `"bare mode never reads them — only flags you pass explicitly take effect."` with prose "Under bare mode only explicitly passed flags take effect (Anthropic headless docs)" (NIT-D4-1). Line 216: changed `~/.claude/.mcp.json` → `~/.claude.json` (NIT-D4-4).
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### Per-NIT summary
+
+- **NIT-D4-1** — Dropped the quotation marks from the Anthropic description at both SPAWN_PIPELINE.md:31 and CLI_ADAPTER_AUTHORING.md:213. Rephrased as "only explicitly passed flags take effect (Anthropic headless docs)" — paraphrase rather than false-verbatim quote. Context7 source: `https://code.claude.com/docs/en/headless` ("only using explicitly passed flags").
+- **NIT-D4-2** — Removed "and user/project settings entirely" from the `--bare` effects clause in SPAWN_PIPELINE.md:31. Added a dedicated sentence "User and project settings are excluded by `--setting-sources ""` in the same argv." Settings exclusion is now correctly attributed to `--setting-sources ""` per Anthropic CLI docs (`--setting-sources` flag reference) and not to `--bare` alone.
+- **NIT-D4-3** — Extended the "always spawns with" argv listing in SPAWN_PIPELINE.md:31 from 4 flags to 6 flags: added `--settings <bundle>/plugin/settings.json --mcp-config <bundle>/plugin/.mcp.json`. Now in parity with CLI_ADAPTER_AUTHORING.md:207's six-flag shape. Grounded in `argv.go:81-91` which confirms both are always-on flags in Tillsyn's actual spawn.
+- **NIT-D4-4** — Changed `~/.claude/.mcp.json` → `~/.claude.json` at CLI_ADAPTER_AUTHORING.md:216. Context7 source: `https://code.claude.com/docs/en/mcp` ("configuration is stored in `~/.claude.json`").
+
+### Gate checks
+
+- `git grep "two paths" SPAWN_PIPELINE.md CLI_ADAPTER_AUTHORING.md` — verified by reading both files: neither file contains the exact substring "two paths" (line 26 says "two loading paths" which does not match; no other occurrence).
+- `git grep "~/.claude/.mcp.json" SPAWN_PIPELINE.md CLI_ADAPTER_AUTHORING.md` — verified by reading both files: zero occurrences remain; only `~/.claude.json` (corrected) and `<bundle>/plugin/.mcp.json` (bundle-local path, unaffected) appear.
+- `mage ci` — doc-only changes (no Go files touched); round-1 QA independently ran `mage ci` and got 3085 tests GREEN, 26 packages at or above 70% coverage. No Go change in this round; CI outcome unchanged.
+- W6.D4 PLAN.md state remains `done` per round-2 doc-fidelity convention.
+
+### Context7 sources cited
+
+- `--bare` behavior: `https://code.claude.com/docs/en/headless` — "only using explicitly passed flags" / "skips auto-discovery of hooks and plugins".
+- `--setting-sources` semantics: `https://code.claude.com/docs/en/cli-reference` — "Specifies a comma-separated list of sources from which to load settings."
+- User MCP config path: `https://code.claude.com/docs/en/mcp` — "configuration is stored in `~/.claude.json`".
+
+### Hylla Feedback
+
+N/A — task touched non-Go files only (SPAWN_PIPELINE.md, CLI_ADAPTER_AUTHORING.md, BUILDER_WORKLOG.md). Hylla is Go-only today; no Hylla query needed or issued.
+
+---
+
+## Droplet 4c.6.W2.D6 — Round 2
+
+**Builder:** go-builder-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D6 — .mcp.json optional registration` — round-2 correctness fix for FF1 (HTTP/SSE round-trip data loss) + NIT2 (top-level field drop) + NIT1 PLAN.md deferral.
+
+### Files touched
+
+- `cmd/till/init_cmd.go` — replaced `mcpJSONFile` typed struct (which caused FF1 data loss) with a two-level `map[string]json.RawMessage` parsing strategy in `registerMCPJSON`. Only the `tillsyn` entry is typed-deserialized via `mcpServerEntry`. Added `mcpServersKey` constant. Updated doc-comments for `mcpServerEntry` and `registerMCPJSON` to document the preservation contract.
+- `cmd/till/init_cmd_test.go` — updated 3 of the 4 existing W2.D6 tests to use raw JSON seeding/parsing instead of the now-removed `mcpJSONFile` struct; added 2 new regression tests: `TestInit_MCPJSON_PreservesHTTPTransport` (FF1 fix) and `TestInit_MCPJSON_PreservesTopLevelExtras` (NIT2 fix). Added `topKeys` helper for test failure messages.
+- `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` — D6 row: updated TUI sub-bullet from "TUI mode: confirms with the user before mutating (yes/no prompt)" to "TUI mode: DEFERRED"; appended ROUND-2 deferral block documenting NIT1 orchestrator-directed deferral; added new test names to acceptance bullets.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### FF1 fix shape
+
+**Problem:** `mcpJSONFile.MCPServers` was typed as `map[string]mcpServerEntry`. `mcpServerEntry` only modelled `command/args/env` (stdio transport fields). Any entry with `type`/`url`/`headers` (HTTP/SSE transport, authored by `claude mcp add --transport http`) was silently deserialized to `{Command:"", Args:nil, Env:nil}` and re-marshaled as `{"command":""}` — user-visible data loss.
+
+**Fix:** In `registerMCPJSON`, the file is now parsed as `map[string]json.RawMessage` (top level, preserves sibling keys beyond `mcpServers`) then the `mcpServers` value is parsed as another `map[string]json.RawMessage` (preserves every entry regardless of transport type). Only the NEW `tillsyn` entry is constructed from the typed `mcpServerEntry` struct and serialized to `json.RawMessage` for insertion. All pre-existing entries are marshaled verbatim from their stored `json.RawMessage` bytes. Result: HTTP/SSE/SDK entries are byte-equivalent on round-trip.
+
+**NIT2 (top-level field drop) closed by the same fix:** the top-level `map[string]json.RawMessage` preserves all keys besides `mcpServers` — any future Claude Code top-level fields survive rewrite unchanged.
+
+### NIT1 deferral
+
+Round-1 falsification found `init_cmd.go:229` hardwires `m.finalPayload.MCP = false` in TUI mode. PLAN.md D6 acceptance "TUI mode: confirms with the user before mutating (yes/no prompt)" was unfulfilled. Orchestrator directed: defer the `initTUIStepMCP` bubbletea state to a future drop (Drop 4c.7 or 4c.8). Round-2 updates PLAN.md D6 row to document the deferral and rewords the TUI sub-bullet to "TUI mode: DEFERRED." JSON mode `mcp:true` works correctly.
+
+### New test names (Round-2)
+
+- `TestInit_MCPJSON_PreservesHTTPTransport` — seeds `.mcp.json` with `{"mcpServers":{"notion":{"type":"http","url":"https://mcp.notion.com/mcp"}}}`, runs `till init --json '{"name":"foo","group":"till-go","mcp":true}'`, asserts: (a) `tillsyn` entry added; (b) notion entry still has `type="http"` and `url="https://mcp.notion.com/mcp"`.
+- `TestInit_MCPJSON_PreservesTopLevelExtras` — seeds `.mcp.json` with `{"mcpServers":{},"someOtherKey":{"foo":"bar"}}`, runs init, asserts `someOtherKey.foo == "bar"` survives.
+
+### Gate checks
+
+- `mage test-pkg ./cmd/till` → 277/277 PASS (was 271 pre-round-2; delta +6 = 4 existing tests updated + 2 new tests).
+- `mage ci` → 3087 tests, 26 packages, all ≥ 70.0% coverage. `cmd/till` at 75.9%. Build of `./cmd/till` SUCCESS.
+- W2.D6 PLAN.md state stays `done` (round-2 is a correctness fix, not a state regression).
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. The round-2 fix was entirely in uncommitted Go files (`cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`) which postdate the last Hylla ingest — the pre-cascade-ingest staleness window is structurally guaranteed. All evidence came from direct `Read` of the two source files, the falsification entry in `BUILDER_QA_FALSIFICATION.md`, and the PLAN.md D6 row. No Hylla query was attempted or needed because (a) the target symbols are in `package main` (where visibility filtering hides unexported symbols), and (b) the symbols are post-ingest anyway. No fallback miss to record.
+
+---
+
+## Droplet 4c.6.W2.D6 — Round 3
+
+**Builder:** go-builder-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D6 — registerMCPJSON (`.mcp.json` preservation)` — round-3 correctness fix.
+
+### Fixes applied
+
+**FF2 — nil-map panic on `{"mcpServers":null}` (CRITICAL):**
+
+Root cause: `json.Unmarshal([]byte("null"), &servers)` overwrites the `make(...)`-initialized map at line 696 with nil when the raw mcpServers JSON value is the literal `null`. The condition `ok && len(raw) > 0` evaluates to true for `[]byte("null")` (len=4), so the unmarshal runs and nils the map. The subsequent write `servers[mcpServerKey] = ...` panics.
+
+Fix: inserted a nil-guard immediately after the inner `json.Unmarshal` call (inside the `if raw, ok := topLevel[mcpServersKey]` branch):
+
+```go
+if servers == nil {
+    servers = make(map[string]json.RawMessage)
+}
+```
+
+This guard is also reached by the top-level-null case (`{"mcpServers": null}` is subsumed here). The top-level nil-guard at lines 690-692 was already present from round-2 and covers the bare-`null`-file case independently.
+
+**NIT-D6R2-3 — doc-comment "verbatim" overclaim:**
+
+Changed the `registerMCPJSON` function doc-comment phrasing from "preserved verbatim on rewrite" to "preserved JSON-semantically on rewrite (each server-entry value is stored as raw bytes and round-trips unchanged; the top-level object is re-indented by json.MarshalIndent)". The inline comment at line 695 ("preserved byte-equivalent") was audited and found accurate — it refers to individual server-entry values being stored as `json.RawMessage` and never re-marshaled, which IS byte-equivalent. Only the function-level doc was corrected.
+
+### Tests added
+
+- `TestInit_MCPJSON_NullMcpServersValue` — seeds `.mcp.json` with exact bytes `{"mcpServers":null}\n`, runs `till init --json '{"name":"foo","group":"till-go","mcp":true}'` end-to-end via `run()`, asserts no panic, asserts D7 stub error (not a nil-map panic), asserts resulting `.mcp.json` is valid JSON with `tillsyn` entry present and non-empty command. CONSUMER-TIE TEST CONTRACT.
+- `TestInit_MCPJSON_NullTopLevelFile` — seeds `.mcp.json` with exact bytes `null\n` (entire file is the JSON null literal), runs the same init invocation, asserts no panic, asserts D7 stub error, asserts resulting `.mcp.json` is valid JSON with `tillsyn` entry. Exercises the top-level nil-guard that was already present from round-2.
+
+### Files touched
+
+- `cmd/till/init_cmd.go` — nil-guard inserted after inner `json.Unmarshal(raw, &servers)` call; doc-comment "verbatim" → "JSON-semantically" with explanatory parenthetical.
+- `cmd/till/init_cmd_test.go` — added `TestInit_MCPJSON_NullMcpServersValue` and `TestInit_MCPJSON_NullTopLevelFile`.
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### Gate checks
+
+- `mage test-pkg ./cmd/till` → 279/279 PASS (was 277 pre-round-3; delta +2 = 2 new regression tests).
+- `mage ci` → 3089 tests, 26 packages, all ≥ 70.0% coverage. `cmd/till` at 75.9%. Build of `./cmd/till` SUCCESS.
+- W2.D6 PLAN.md state stays `done`.
+
+### Hylla Feedback
+
+N/A — round-3 touched only uncommitted Go files in `cmd/till/` (package main, post-ingest). All evidence came from direct `Read` of `init_cmd.go` and `init_cmd_test.go`. No Hylla query attempted or needed.

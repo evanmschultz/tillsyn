@@ -1359,3 +1359,237 @@ Two relevant queries; one returned irrelevant hits, one returned an empty set; b
 
 - **Query**: `hylla_search_keyword(query="func renderAgentFile", fields=["content"], artifact_ref=tillsyn@main)`. Returned five `internal/domain` block hits unrelated to `cli_claude/render/render.go`. **Missed because**: `render.go` lives in a package added during Drop 4c spawn-architecture work; the latest Hylla snapshot does not appear to include the `cli_claude/render` package's symbols under tail-symbol keyword search. **Worked via**: `Read internal/app/dispatcher/cli_claude/render/render.go` at offset 595 confirmed the function header at line 596 directly. **Suggestion**: when a tail-symbol keyword query returns ranked hits whose `parent_id` does NOT contain the queried symbol's literal name, demote the result to a weak match or include a `keyword_match_confidence` field so callers can decide whether to fall through to the second-tier source rather than acting on misleading high-rank hits.
 - **Query**: `hylla_search_keyword(query="SystemPromptTemplatePath validateAgentBindingNames", fields=["content"], artifact_ref=tillsyn@main)`. Returned `results: []`. **Missed because**: the symbol/string lives in files first landed in Drop 4c.6 W3 (`internal/templates/load.go`'s `validateSystemPromptTemplatePath`, schema.go's field declaration at `:573`); the latest Hylla snapshot is older than this droplet's predecessor work in the same drop. **Worked via**: `git grep -n SystemPromptTemplatePath internal/templates/` returned 18 hits in milliseconds with line-anchored output that immediately revealed the validator's declaration at `:1687`. **Suggestion**: an empty `results` array from `hylla_search_keyword` could carry a `reason` enum field (`enrichment_in_progress` | `no_matches` | `artifact_not_found`) so callers can distinguish "definitely not indexed" from "snapshot too old for this droplet's predecessor work" — the current ambiguity forces unconditional fallback rather than retry-after-reingest discrimination.
+
+---
+
+## Droplet 4c.6.W6.D4 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W6.D4 — Update SPAWN_PIPELINE.md + CLI_ADAPTER_AUTHORING.md for --bare-collapsed isolation`.
+**Verdict:** **PASS.**
+
+### Pass / Fail
+
+**PASS** — doc-only rewrite faithfully reflects `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` §D.5; all four acceptance bullets met; `mage ci` GREEN; no Section 0 leakage; worklog landed at drop-level (not nested).
+
+### Findings
+
+None blocking. Two NITs:
+
+- **NIT1 (informational, header rename beyond minimum):** PLAN.md acceptance bullet 1 reads "the prior 'two paths' framing — rewritten." The builder rewrote the SECTION HEADER `## Two Plugin Paths` → `## Plugin Paths and Isolation`, which §D.5's exact text ("keep the two-paths section but add a note") did not explicitly require — §D.5 only required adding the `--bare`-collapses-Path-B note and the W3-actually-closes paragraph. The rename is stricter satisfaction of acceptance bullet 3 (`git grep "two paths"` zero hits — a literal `## Two Plugin Paths` header would survive case-sensitive substring grep, but the lowercase `two paths` only appears if it's used inline elsewhere). Worklog L2500 explicitly justifies the rename as defensive. Non-blocking; the rename improves the doc's signaling and the Path A / Path B vocabulary is preserved in the body (per §D.5's intent).
+- **NIT2 (informational, Section 0 phrase appears in committed file):** `SPAWN_PIPELINE.md:35` contains the phrase "Section 0 scaffold" as part of the substantive narrative explaining what the empty bundle stub was missing (alongside "role definition" and "tool discipline"). This is intentional content describing what a substantive agent body must include — NOT a leak of Section 0 reasoning blocks (no `# Section 0`, no `## Proposal`, no `## Convergence` headers). Acceptance checklist item 10 ("Section 0 reasoning blocks NOT present in any committed file") is satisfied; flagging this as a NIT only because the search hit needs explicit dismissal.
+
+### Evidence checked
+
+- **Acceptance bullet 1 — SPAWN_PIPELINE.md reflects `--bare`-collapsed framing — PASS.** Read `SPAWN_PIPELINE.md:24-37` post-edit. The `## Plugin Paths and Isolation` section retains Path A / Path B labels (lines 28-29) and adds an explicit `--bare` paragraph at line 31 quoting Anthropic's "bare mode never reads them — only flags you pass explicitly take effect" language and listing the skipped surfaces (plugin auto-discovery, agent auto-discovery, CLAUDE.md project + user, skills, hooks, auto-memory, user/project settings). The Tillsyn argv shape `--bare --plugin-dir <bundle>/plugin --setting-sources "" --strict-mcp-config` is cited verbatim at line 31. Cross-checked against §D.5 lines 333-334 — text matches the recommended correction in substance.
+- **Acceptance bullet 2 — CLI_ADAPTER_AUTHORING.md appended note — PASS.** Read `CLI_ADAPTER_AUTHORING.md:197-220`. New `## Isolation Discipline for New Adapters` section opens at L197 with "`--bare`-collapsed isolation is a load-bearing contract, not a nicety." The four required flags (`--bare`, `--plugin-dir`, `--setting-sources ""`, `--strict-mcp-config`) are documented at L202-208 with per-flag rationale at L211-216. The "common mistake" warning (priority-table-ordering vs `--bare`) lands at L218. The bundle-body-must-be-substantive paragraph at L220 documents Drop 4c.6 W3's actual closure (post-render validator + embedded-default content). Cross-checked against §D.5 line 320 acceptance bullet 2 — matches.
+- **Acceptance bullet 3 — `git grep "two paths"` returns ZERO hits — PASS.** Ran `git grep -n "two paths" SPAWN_PIPELINE.md CLI_ADAPTER_AUTHORING.md`; exit code 1, no output. Confirmed via a broader pattern sweep (`git grep -nE "two paths"` — same result).
+- **Acceptance bullet 4 — `mage ci` GREEN — PASS.** Ran `mage ci` from `main/`. 3081 tests passed, 0 failed, 0 skipped, 26/26 packages at or above 70% coverage. `[SUCCESS] All tests passed` + `[SUCCESS] Coverage threshold met` + `[SUCCESS] Built till from ./cmd/till`. Doc-only edit has no test surface; the green-CI assertion confirms no incidental regression.
+- **Checklist item 8 — PLAN.md W6.D4 state flipped `todo → done` — PASS.** `workflow/drop_4c_6/PLAN.md:314` reads `**State:** done` under the `##### 4c.6.W6.D4` heading at L312. Note: PLAN.md L321 lists `**Blocked by:** 4c.6.W3` — W3 has long since landed (per BUILDER_QA_PROOF.md entries through W3.D6 and the SPAWN_PIPELINE.md body referencing W3's actual closure), so the blocker condition is met.
+- **Checklist item 9 — BUILDER_WORKLOG.md entry at drop-level (not nested) — PASS.** `workflow/drop_4c_6/BUILDER_WORKLOG.md:2485` carries the `## Droplet 4c.6.W6.D4 — Round 1` entry. `git ls-files workflow/drop_4c_6/` confirms the shared drop-level worklog is the only `BUILDER_WORKLOG.md` for W6 droplets (no `workflow/drop_4c_6/DROP_4c.6.W6_*/` subdirectory exists at all — W6 is a flat group sharing drop-level coordination files).
+- **Checklist item 10 — No Section 0 reasoning blocks in committed files — PASS.** `git grep -nE "Section 0|SEMI-FORMAL REASONING|## Proposal|## Convergence" SPAWN_PIPELINE.md CLI_ADAPTER_AUTHORING.md` returns one hit: `SPAWN_PIPELINE.md:35` containing the phrase "Section 0 scaffold" used substantively (see NIT2 above). No `# Section 0 — SEMI-FORMAL REASONING` header, no `## Proposal`/`## QA Proof`/`## QA Falsification`/`## Convergence` reasoning-pass headers, no `Premises:` / `Trace or cases:` / `Conclusion:` certificate fields. The match is intentional doc content describing what bundle bodies must carry, not leaked reasoning. Acceptance checklist item satisfied.
+
+### Cross-reference trace — rewrite text vs §D.5 expectations
+
+| §D.5 expectation                                                                                                                            | Rewrite location                                | Status |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ------ |
+| "Keep the two-paths section but add a note: 'Tillsyn ships `--bare`; under `--bare` Path B is disabled by Claude Code itself.'"             | `SPAWN_PIPELINE.md:28-31`                       | PASS   |
+| "The bundle's plugin (Path A) is the SOLE source for agents, settings, and MCP."                                                            | `SPAWN_PIPELINE.md:31` (last sentence)          | PASS   |
+| "The two-paths model is informational for non-bare callers; Tillsyn's adapters never ship without `--bare`."                                | `SPAWN_PIPELINE.md:33`                          | PASS   |
+| W3 actually closes: bundle body was empty stub, not Path B leakage                                                                          | `SPAWN_PIPELINE.md:35`                          | PASS   |
+| CLI_ADAPTER_AUTHORING.md appended note documenting `--bare`-collapsed isolation for future adapters                                         | `CLI_ADAPTER_AUTHORING.md:197-220`              | PASS   |
+| Four-flag minimal isolation shape documented for future adapter authors                                                                     | `CLI_ADAPTER_AUTHORING.md:200-208`              | PASS   |
+| Common-mistake warning: do not rely on priority-table ordering                                                                              | `CLI_ADAPTER_AUTHORING.md:218`                  | PASS   |
+| Bundle body must be substantive (not stub redirect)                                                                                         | `CLI_ADAPTER_AUTHORING.md:220`                  | PASS   |
+
+### Notes
+
+- The builder's design decision to RENAME `## Two Plugin Paths` → `## Plugin Paths and Isolation` (worklog L2500) is stricter than §D.5's literal text but improves acceptance-bullet-3 robustness. The Path A / Path B vocabulary is preserved in the body, so §D.5's intent ("keep the two-paths section") is honored at the content level even though the header changed.
+- The W3 actual-closure narrative at `SPAWN_PIPELINE.md:35` cleanly anchors what was previously a misleading "Path B silently wins" framing to the corrected "bundle body was a one-liner stub" story. Anyone reading SPAWN_PIPELINE.md going forward gets the post-W3 mental model without needing to consult the research deliverable.
+- The CLI_ADAPTER_AUTHORING.md isolation discipline section is positioned in the main authoring-guide flow (before the checklist) per worklog L2503's deliberate choice — this is correct positioning per §D.5's intent that future adapter authors inherit the right mental model from the start.
+- W2.D6 (the sibling droplet still in build per the spawn prompt) is unrelated and out of scope for this verdict.
+
+### Summary
+
+**PASS.** All four PLAN.md acceptance bullets met. SPAWN_PIPELINE.md's `## Plugin Paths and Isolation` section faithfully reflects `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` §D.5 — `--bare` collapses isolation to Path A only, Anthropic's documented behavior is cited verbatim, the actual W3 closure (empty stub → embedded-default content + post-render validator) is correctly anchored. CLI_ADAPTER_AUTHORING.md's new `## Isolation Discipline for New Adapters` section documents the four required isolation flags with per-flag rationale + the common-mistake warning against priority-table-ordering reliance + the bundle-body-must-be-substantive contract. `git grep "two paths"` returns zero hits; `mage ci` is GREEN (3081/3081 tests, 26/26 packages); PLAN.md W6.D4 state is `done`; worklog entry landed at drop-level (`workflow/drop_4c_6/BUILDER_WORKLOG.md:2485`); no Section 0 reasoning blocks leaked into committed files. Two non-blocking NITs noted for transparency.
+
+### Hylla Feedback
+
+N/A — droplet under review is a pure doc-rewrite touching non-Go files only (`SPAWN_PIPELINE.md`, `CLI_ADAPTER_AUTHORING.md`). No Hylla query attempted or needed. All evidence sourced via `Read`, `git grep`, `git ls-files`, and `mage ci`.
+
+---
+
+## Droplet 4c.6.W2.D6 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D6 — .mcp.json optional registration`.
+**Verdict:** **PASS.**
+
+### Findings
+
+No FF# findings (no must-fix issues).
+
+- **NIT1 — Builder worklog counts "7 existing test assertions" updated D6→D7 stub; actual count is 5.** Worklog L110 says "updated all 7 existing test assertions that expected the D6-stub literal to now expect the D7-stub literal." Counting D7-substring assertions in `init_cmd_test.go` for tests authored pre-W2.D6: `TestInit_BareInvocation_ReturnsTUIStubError:61`, `TestInit_JSONInvocation_RoutesToValidParse:86`, `TestInit_JSONParse_TableDriven/valid_till_go:116`, `TestInit_JSONParse_TableDriven/valid_till_gen_mcp_true:121`, `TestInit_FreshDir_CopiesAllFiles:360`. That's 5 pre-existing assertion sites, not 7. The 7-count claim is not a hard contract — what matters is **zero residual D6 stub literal anywhere**, verified by `git grep -n "mcp.json registration not yet wired" cmd/ internal/` returning exit 1 (no matches). Pure counting nit; no impact on correctness.
+
+- **NIT2 — Unknown top-level `.mcp.json` fields are silently dropped on re-marshal.** `registerMCPJSON` unmarshals into `mcpJSONFile` (which only declares `MCPServers`), then `json.MarshalIndent` re-emits only the known field. If a future Claude Code `.mcp.json` carries extra top-level keys (e.g. project settings, scoped metadata), they will be lost on the first `till init --json mcp:true` re-run. Builder acknowledged this in worklog "Design decisions" bullet 5 ("Unknown JSON fields in existing `.mcp.json` are preserved" — actually misnamed; the prose immediately below clarifies the limitation: "if the existing file has extra top-level fields beyond `mcpServers`, those WILL be dropped on re-marshal"). Accepted as a documented refinement candidate per the builder's own log; out of scope for D6. **Refinement candidate** — file under Drop 4c.6 closing list as `D6-R1` if dev wants round-trip fidelity.
+
+### Evidence checked
+
+**Checklist item 1 — W2 PLAN.md W2.D6 acceptance bullets:**
+- `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md:167-188` — all 4 mandated tests present, schema verification done via Context7, exec.LookPath + ~/.local/bin/till fallback wired, re-run safety on existing key, atomic write via fsatomic. PASS.
+
+**Checklist item 2 — Builder worklog round-1 entry + Context7 source:**
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md:101-155` — round-1 entry present. Context7 source cited: `/websites/code_claude` benchmark score 81.26 source reputation High. Schema confirmed: top-level `mcpServers` object; `command` (required), `args` (optional), `env` (optional); `type` omitted (stdio default). PASS.
+
+**Checklist item 3 — `cmd/till/init_cmd.go` structures + constants + call site:**
+- `mcpServerEntry` struct (lines 613-617): `Command string`, `Args []string` omitempty, `Env map[string]string` omitempty. Matches Context7 schema verbatim.
+- `mcpJSONFile` struct (lines 622-624): `MCPServers map[string]mcpServerEntry` with json tag `"mcpServers"`. Matches schema.
+- `mcpJSONFileName` const (line 627): `".mcp.json"`.
+- `mcpServerKey` const (line 630): `"tillsyn"`.
+- `registerMCPJSON` function (lines 648-709): full implementation matching acceptance.
+- Call site at `runInitPipeline` line 416: `registerMCPJSON(destDir, payload.MCP)` invoked between `ensureGitignore` and the D7 stub return.
+- D7-stub forward at line 423: `return errors.New("till init: project-DB record creation not yet wired (W2.D7)")` — verbatim match against required string. PASS.
+
+**Checklist item 4 — 4 new test cases:**
+- `TestInit_MCPJSON_FreshFile` (lines 569-596): fresh `.mcp.json` create + `tillsyn` entry presence + non-empty Command field. Drives `run(...)` end-to-end via `runInitJSONInTempDir` helper. CONSUMER-TIE ✓.
+- `TestInit_MCPJSON_AppendsToExisting` (lines 602-647): seeds `.mcp.json` with `other-server` entry; asserts both `tillsyn` AND `other-server` survive after re-marshal. Drives `run(...)` directly. CONSUMER-TIE ✓.
+- `TestInit_MCPJSON_Idempotent` (lines 653-704): seeds `.mcp.json` with `tillsyn` entry at `/original/path/to/till`; asserts command path is NOT overwritten on re-run AND server count stays at 1. Drives `run(...)` directly. CONSUMER-TIE ✓.
+- `TestInit_MCPJSON_OptOut` (lines 710-724): `mcp:false`; asserts NO `.mcp.json` created. Uses `runInitJSONInTempDir`. CONSUMER-TIE ✓.
+
+PASS.
+
+**Checklist item 5 — Schema verification independently:**
+- Re-queried Context7 `/websites/code_claude` for `.mcp.json` schema during this proof review. Returned 5 doc snippets confirming `{"mcpServers": {"<name>": {"command": "...", "args": [...], "env": {...}}}}` shape verbatim. Builder's struct types match this exactly. PASS.
+
+**Checklist item 6 — Binary-path resolution:**
+- Lines 653-662: primary `exec.LookPath("till")`, on error fallback to `filepath.Join(home, ".local", "bin", "till")`. `magefile.go:140-144` confirmed — `mage install` writes binary at `~/.local/bin/till`. PASS.
+- LookPath miss returns no error to caller — line 654 catches the err and falls back; only `os.UserHomeDir()` err is propagated (line 658-660). PASS.
+
+**Checklist item 7 — Re-run safety:**
+- `includeMCP == false` → immediate `return 0, 1, nil` at lines 649-651 (no `.mcp.json` write). Verified by `TestInit_MCPJSON_OptOut`. PASS.
+- Existing `tillsyn` key → `return 0, 1, nil` at lines 676-679 (no overwrite). Verified by `TestInit_MCPJSON_Idempotent` (preserves `/original/path/to/till`). PASS.
+
+**Checklist item 8 — D7-stub forward plumb:**
+- `runInitPipeline` line 423: `return errors.New("till init: project-DB record creation not yet wired (W2.D7)")`. Byte-for-byte match against the required forward-plumb string. Surfaced by all 9 D7-stub-asserting tests in `init_cmd_test.go`. PASS.
+
+**Checklist item 9 — CONSUMER-TIE TEST CONTRACT:**
+- `TestInit_MCPJSON_FreshFile` is the canonical proof: line 570 invokes `runInitJSONInTempDir(t, ...)` which at line 340 calls `run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", payload}, &out, io.Discard)` end-to-end. Exercises cobra registration → `initCmd.RunE` → `runInitJSON` → `runInitPipeline` → `registerMCPJSON`. PASS.
+- All 4 new MCP tests follow the same pattern (no direct `registerMCPJSON(...)` calls anywhere in test file). PASS.
+
+**Checklist item 10 — Test hermeticity:**
+- All 4 new tests + the `runInitJSONInTempDir` helper use `t.TempDir()` + `t.Chdir(dir)`. No test residue would land in `cmd/till/`. Spot-checked via `mage test-pkg ./cmd/till` repeated runs — 275/275 GREEN both runs (no transient state). PASS.
+
+**Checklist item 11 — fsatomic.WriteFile usage:**
+- Line 685: `fsatomic.WriteFile(target, append(out, '\n'), agentFileInitPerm)` for append-to-existing branch.
+- Line 701: `fsatomic.WriteFile(target, append(out, '\n'), agentFileInitPerm)` for fresh-create branch.
+- Import at line 20: `"github.com/evanmschultz/tillsyn/internal/fsatomic"`.
+- `internal/fsatomic/atomic.go` shipped by W2.D1; package-level doc + `WriteFile` API verified. Zero raw `os.WriteFile` calls in `registerMCPJSON`. PASS.
+
+**Checklist item 12 — D7-stub assertions update:**
+- 5 pre-existing test sites updated to assert the D7-stub literal (not the 7 claimed in worklog — see NIT1). `git grep -n "mcp.json registration not yet wired"` against `cmd/` and `internal/` returns exit 1 (zero matches). No residual D6-stub literal anywhere in the source tree. PASS.
+
+**Checklist item 13 — `mage test-pkg ./cmd/till`:**
+- Re-ran by reviewer: `mage test-pkg ./cmd/till` → **275 tests passed, 0 failed**. Builder's claim verified. PASS.
+
+**Checklist item 14 — `mage ci` GREEN:**
+- Re-ran by reviewer: `mage ci` → **3085 tests passed, 0 failed, 26/26 packages at or above 70% coverage**. `cmd/till` coverage 75.9% (above 70% gate). Build successful. PASS.
+
+**Checklist item 15 — PLAN.md state for W2.D6 flipped to done:**
+- `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md:169` — `**State:** done`. PASS.
+
+**Checklist item 16 — BUILDER_WORKLOG entry at drop-level (shared file):**
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md:101` — `## Droplet 4c.6.W2.D6 — Round 1` heading. Drop-level shared file (not in any `DROP_4c.6.W2_TILL_INIT/BUILDER_WORKLOG.md` nested file). PASS.
+
+**Checklist item 17 — No Section 0 leakage:**
+- `git grep -n "Section 0\|SEMI-FORMAL REASONING"` against `cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`, `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` → exit 1, zero matches.
+- `BUILDER_WORKLOG.md:26` carries one match for the literal token `# Section 0` inside backticks as a validator-marker reference in W3.D5's prior entry — NOT Section 0 reasoning prose, just a string-marker callout in committed code-validator design discussion. Not a leakage. PASS.
+
+### Hylla Feedback
+
+- **Query:** `hylla_search` (keyword) for `fsatomic.WriteFile atomic file write` against `github.com/evanmschultz/tillsyn@main`.
+  - **Missed because:** `enrichment still running for github.com/evanmschultz/tillsyn@main` — same recurrent stale-index-on-recent-commits race the D3b / D4 / D5 builder rounds flagged. Recent W2.D6 commit batch had not finished reingest at reviewer spawn time.
+  - **Worked via:** direct `Read` of `internal/fsatomic/atomic.go` (lines 1-50) confirmed the `WriteFile(path, data, perm)` API surface, write-temp-in-same-dir + sync + rename pattern, and the package-level doc-comment.
+  - **Suggestion:** repeating the prior rounds' ask — surface an "enrichment in progress; last fully-ingested snapshot is N (M minutes ago); pass `--allow-partial` to query against partial index" hint on Hylla error responses. The current opaque "enrichment still running" makes callers re-discover the right fallback every spawn.
+
+### Notes
+
+Builder's implementation is mechanically correct and matches every PLAN.md acceptance bullet. The Context7 schema citation (`/websites/code_claude` score 81.26) was independently re-verified by the reviewer querying the same library; the returned snippets confirm the `{"mcpServers": {"<name>": {"command", "args", "env"}}}` shape verbatim. `mage ci` GREEN (3085/3085, 26/26 packages ≥70% coverage, 75.9% on `cmd/till`). All 4 new MCP tests drive `run(...)` end-to-end via cobra → `initCmd.RunE` → `runInitJSON` → `runInitPipeline` → `registerMCPJSON`, satisfying the W2-FF6 CONSUMER-TIE CONTRACT.
+
+Two NITs noted for transparency:
+- **NIT1**: builder said "7 existing test assertions" updated D6→D7; actual count is 5 pre-existing sites with D7 substring assertions. Counting nit, not a correctness issue.
+- **NIT2**: unknown top-level fields in pre-existing `.mcp.json` (if any) are silently dropped on re-marshal. Builder acknowledged this in worklog "Design decisions" bullet 5; accepted as a documented refinement candidate (`D6-R1` if dev wants round-trip fidelity). Out of scope for D6 — Claude Code's `.mcp.json` shape in practice carries only `mcpServers`.
+
+### Summary
+
+**PASS.** All 17 checklist items satisfied. `mage ci` GREEN. Schema independently re-verified against Context7. All 4 new MCP tests honor the CONSUMER-TIE contract. Re-run safety verified for opt-out, idempotent existing-entry, and append-to-existing-with-other-server cases. fsatomic.WriteFile used for every `.mcp.json` write. D7-stub forward plumb byte-for-byte correct. No Section 0 leakage. Two non-blocking NITs documented for transparency; neither affects droplet correctness.
+
+---
+
+## Droplet 4c.6.W2.D6 — Round 2
+
+**Reviewer:** go-qa-proof-agent (subagent, opus).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D6 — .mcp.json optional registration` — Round-2 correctness fix for FF1 (HTTP/SSE round-trip data loss) + NIT2 (top-level field drop) + NIT1 PLAN.md deferral.
+**Files reviewed:** `cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`, `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md`, `workflow/drop_4c_6/BUILDER_WORKLOG.md`.
+
+### Pass / Fail
+
+**PASS.** Round-2 closes FF1 + NIT2 correctly. NIT1 deferral is documented per the orchestrator-directed disposition. All 13 verification-checklist items satisfied. `mage test-pkg ./cmd/till` independently re-run GREEN (277/277). `mage ci` independently re-run GREEN (3087 tests, 26 packages, all ≥ 70.0%, `cmd/till` at 75.9%).
+
+### Findings
+
+None blocking. One minor doc-comment observation captured below as **NIT-R2-1** (transparency only, non-blocking, does not affect correctness).
+
+- **NIT-R2-1 (doc-comment fidelity, non-blocking).** `init_cmd.go:631` carries the brief comment `// tillsyn MCP server key in .mcp.json.` for the `mcpServerKey` constant — terser than the project's other top-level decl doc-comments (which are paragraph-form). Cosmetic only; no rename or behavioral fix needed. Listed for record.
+
+### Evidence checked
+
+1. **Round-1 falsification specs read.** FF1 (lines 2990-3006 of BUILDER_QA_FALSIFICATION.md): HTTP/SSE round-trip data loss via typed `mcpServerEntry`'s missing `type`/`url`/`headers`. NIT1 (lines 3024-3030): TUI mode hardwires `MCP=false` at `init_cmd.go:229` with no prompt path. NIT2 (lines 3007-3011): top-level fields beyond `mcpServers` dropped on re-marshal. Round-1 verdict: FAIL. Round-1 fix shape (line 3084): two-level `RawMessage` envelope — accepted by Round-2 as the implementation pattern.
+
+2. **Round-2 builder worklog read.** BUILDER_WORKLOG.md lines 2613-2651: Files-touched list, FF1 fix shape (top-level `map[string]json.RawMessage`, inner `mcpServers` parsed as `map[string]json.RawMessage`, only the new `tillsyn` entry typed-serialized), NIT2 closure note (same fix), NIT1 deferral acknowledgment (orchestrator-directed, future drop 4c.7 / 4c.8). Builder gate-check claims: `mage test-pkg ./cmd/till` 277/277, `mage ci` 3087 GREEN, `cmd/till` 75.9% coverage, PLAN.md state stays `done`.
+
+3. **Code shape verified — `registerMCPJSON` (init_cmd.go:656-749).** Top-level parse uses `var topLevel map[string]json.RawMessage` (line 686). Inner servers parse uses `servers := make(map[string]json.RawMessage)` (line 696). Only `tillsyn` entry is constructed via typed `mcpServerEntry` struct (lines 674-678) and then inserted as a `json.RawMessage` (line 710). All pre-existing entries are passed through verbatim. Fresh-file branch (lines 725-744) uses the same envelope shape (top-level `map[string]json.RawMessage`, servers `map[string]json.RawMessage`). `fsatomic.WriteFile` used in both branches (lines 720, 741). `mcpServerEntry` (lines 619-623) retains stdio fields ONLY (`command`, `args`, `env`) — correct, because it's now ONLY used for the new tillsyn entry, never for pre-existing entries.
+
+4. **FF1 closure confirmed.** Go's `encoding/json` documents that `json.RawMessage.MarshalJSON()` returns the raw byte slice verbatim — so any pre-existing entry (HTTP, SSE, SDK transport) round-trips byte-equivalent through the inner `map[string]json.RawMessage`. The typed `mcpServerEntry` is no longer reachable on any pre-existing entry. The old vulnerable typed `mcpJSONFile` struct is removed from the codebase (`git grep mcpJSONFile cmd/till/` returns only the unrelated `mcpJSONFileName` filename constant + a regression-test doc-comment reference).
+
+5. **NIT2 closure confirmed.** Top-level `map[string]json.RawMessage` (line 686) preserves every sibling key beyond `mcpServers` verbatim across re-marshal. Only `topLevel[mcpServersKey]` is replaced (line 715); all other top-level entries pass through untouched.
+
+6. **`TestInit_MCPJSON_PreservesHTTPTransport` (init_cmd_test.go:752-812).** Seeds `.mcp.json` with `{"mcpServers":{"notion":{"type":"http","url":"https://mcp.notion.com/mcp"}}}` (line 759). Runs `run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", '{"name":"foo","group":"till-go","mcp":true}'}, &out, io.Discard)` (line 765) — CONSUMER-TIE end-to-end through cobra. Asserts (a) `tillsyn` entry added (lines 790-792); (b) notion entry preserves `type="http"` (line 806) and `url="https://mcp.notion.com/mcp"` (line 809). All assertions match the round-1 fix-shape prescription verbatim.
+
+7. **`TestInit_MCPJSON_PreservesTopLevelExtras` (init_cmd_test.go:822-864).** Seeds `.mcp.json` with `{"mcpServers":{},"someOtherKey":{"foo":"bar"}}` (line 827). Runs the same end-to-end `run(...)` invocation (line 833) — CONSUMER-TIE met. Asserts top-level `someOtherKey` survives (lines 853-856) AND its nested `foo="bar"` (lines 858-862) survives byte-equivalent.
+
+8. **3 existing tests updated.** Verified:
+   - **`TestInit_MCPJSON_FreshFile` (line 569):** reshaped — assertions now parse the result via `map[string]json.RawMessage` (lines 588-603) instead of the removed typed struct. Still drives end-to-end via the `runInitJSONInTempDir` helper. Still asserts the D7-stub error surface (line 571).
+   - **`TestInit_MCPJSON_AppendsToExisting` (line 613):** seeds via raw JSON string `{"mcpServers":{"other-server":{"command":"/usr/local/bin/other"}}}` (line 619) instead of typed-struct seed. Asserts both `tillsyn` AND `other-server` present after init (lines 651, 655). End-to-end `run(...)` invocation (line 625).
+   - **`TestInit_MCPJSON_Idempotent` (line 664):** seeds via raw JSON `{"mcpServers":{"tillsyn":{"command":"/original/path/to/till"}}}` (line 669). Asserts the original command is preserved (line 708) AND the total server count is still 1 (line 714) — idempotency proven. End-to-end via `run(...)` (line 675).
+   - **`TestInit_MCPJSON_OptOut` (line 723) — the 4th existing test, NOT touched by Round-2.** Verified still in place and still passes — relies only on the `mcp:false` → no-file-created path which is unchanged by the FF1 refactor. Builder's worklog correctly described it as the "3 of 4 updated" delta.
+
+9. **NIT1 deferral in PLAN.md verified.** `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md:178`: TUI sub-bullet rewritten from "TUI mode: confirms with the user before mutating (yes/no prompt). JSON mode: respects the `mcp` boolean." to "TUI mode: DEFERRED — see ROUND-2 deferral note below. JSON mode: respects the `mcp` boolean." JSON-mode acceptance bullet remains intact. ROUND-2 deferral block (line 188) names the source (W2-D6-NIT1 round-1 falsification), the orchestrator disposition (2026-05-11), the future drop landing target (4c.7 or 4c.8), and pins that JSON mode works correctly. D6 row state remains `done` (line 169). New regression-test names listed under Tests (lines 184-185).
+
+10. **`mage test-pkg ./cmd/till` re-run.** Independently executed by this reviewer: **277/277 PASS**, 0 failures, 0 skips. Builder's claim verified verbatim.
+
+11. **`mage ci` re-run.** Independently executed by this reviewer: **3087 tests passed across 26 packages**, all packages ≥ 70.0% coverage. `cmd/till` coverage **75.9%** (builder claim verified). `internal/fsatomic` at 72.0%. Build of `./cmd/till` SUCCESS. Builder's claim verified verbatim.
+
+12. **No round-1 regression on the 17 verification items (sample-spot-check).**
+    - D7-stub literal byte-exact: `git grep "project-DB record creation not yet wired (W2.D7)" cmd/till/` returns 12 hits — present in `init_cmd.go:423` (production) and 11 test sites. Byte-exact match.
+    - `fsatomic.WriteFile` still in use: `git grep "fsatomic.WriteFile" cmd/till/init_cmd.go` returns 10 hits including the two new `registerMCPJSON` write sites (lines 720, 741). Production write discipline preserved.
+    - CONSUMER-TIE still honored: `git grep "run(context.Background()" cmd/till/init_cmd_test.go` returns 12 hits including both new MCP regression tests (lines 765, 833). End-to-end cobra wiring exercised.
+    - PLAN.md state still `done`: line 169 (PLAN.md `**State:** done`). Confirmed.
+    - No Section 0 leakage: `git diff HEAD -- cmd/till/init_cmd.go cmd/till/init_cmd_test.go workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md workflow/drop_4c_6/BUILDER_WORKLOG.md | rg -i "section 0|semi-formal|## (Proposal|Planner|Builder|Convergence|QA Proof|QA Falsification)"` returns ZERO hits.
+
+13. **No test residue.** `git status --porcelain cmd/till/` post-`mage ci` shows only the two declared modified files (`cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`). No `.tillsyn/`, no stray `.gitignore`, no `agents.toml`, no `.mcp.json` residue. Chdir-into-tempdir discipline preserved across new tests (`t.Chdir(dir)` at lines 615, 666, 754, 824).
+
+### Hylla Feedback
+
+None — Hylla answered everything needed. The Round-2 changes are entirely in uncommitted Go files (`cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`) which postdate the last Hylla ingest — the pre-cascade-ingest staleness window is structurally guaranteed and direct `Read` is authoritative for uncommitted work. The `mcpServerEntry` struct + `registerMCPJSON` function live in `package main` (where visibility filtering would have hidden them from Hylla anyway). No Hylla query was attempted or needed. The PLAN.md / BUILDER_WORKLOG.md cross-references are non-Go and not Hylla-indexable.
+
+### Notes
+
+- **FF1 + NIT2 are closed by the same envelope refactor** as Round-1 falsification predicted at line 3084 — the dual-level `json.RawMessage` envelope at top level + inner `mcpServers` is the correct minimal fix shape.
+- **NIT1 deferral disposition matches Round-1 falsification's "Disposition options (b)"** at line 3029 (record explicit decision + update PLAN.md acceptance to reflect deferral). Orchestrator chose (b) per the worklog Round-2 entry; future-drop landing target named (4c.7 or 4c.8).
+- **Both new regression tests honor CONSUMER-TIE end-to-end** — they exercise the `run(...)` → cobra → `initCmd.RunE` → `runInitJSON` → `runInitPipeline` → `registerMCPJSON` chain rather than calling `registerMCPJSON` directly. The W2-FF6 ROUND-2 contract is met.
+- **`mcpServerEntry`'s typed shape is correct** as-of Round-2 because it's now ONLY used to construct the new tillsyn entry (stdio-only) — never to deserialize pre-existing entries. Future extension to additional Tillsyn-authored transport types would require either widening `mcpServerEntry` OR (cleaner) introducing a per-transport struct family. Out of scope for this droplet.
+- **NIT-R2-1 (terse doc-comment on `mcpServerKey`)** is a cosmetic record; no fix required, no impact on correctness, doc-comment expansion deferred to drop-end refinement aggregation if desired.
+- **Builder discipline observations:** Round-2 produced a minimal, targeted fix; no incidental refactors; the `mcpServerEntry` struct survives in its useful narrow scope; all 4 existing tests' assertions were updated mechanically to the raw-JSON pattern rather than ripping them out. No over-reach.
