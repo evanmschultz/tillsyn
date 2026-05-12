@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"os"
@@ -27,8 +28,12 @@ import (
 // stub. The smoke test still stubs `programFactory` to avoid opening a
 // real terminal AND now chdirs into a `t.TempDir()` so the pipeline's
 // real filesystem writes land in an isolated sandbox rather than the
-// source checkout. The test name is preserved for git-blame continuity
-// even though the surfaced error is now the D6 stub literal.
+// source checkout.
+//
+// **D6 update**: the D6 stub is replaced with real `registerMCPJSON`. Since
+// MCP is false in the stubbed payload the call is a no-op, and the error
+// now surfaces the D7 project-DB stub. Test name preserved for git-blame
+// continuity; want string updated to the D7 stub literal.
 func TestInit_BareInvocation_ReturnsTUIStubError(t *testing.T) {
 	t.Chdir(t.TempDir())
 	origFactory := programFactory
@@ -51,9 +56,9 @@ func TestInit_BareInvocation_ReturnsTUIStubError(t *testing.T) {
 	var out strings.Builder
 	err := run(context.Background(), []string{"--app", "tillsyn-init", "init"}, &out, io.Discard)
 	if err == nil {
-		t.Fatalf("run(init) returned nil; expected D6 .mcp.json stub error after stubbed TUI walk + D5 pipeline, got stdout=%q", out.String())
+		t.Fatalf("run(init) returned nil; expected D7 project-DB stub error after stubbed TUI walk + D5 pipeline + D6 mcp skip, got stdout=%q", out.String())
 	}
-	want := "till init: .mcp.json registration not yet wired (W2.D6)"
+	want := "till init: project-DB record creation not yet wired (W2.D7)"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("run(init) error = %q; want substring %q", err.Error(), want)
 	}
@@ -63,20 +68,22 @@ func TestInit_BareInvocation_ReturnsTUIStubError(t *testing.T) {
 // --json '{...}'` with a well-formed payload routes through cobra to the
 // real JSON parser shipped in D3b AND runs the D5 file-copy pipeline.
 // A valid payload parses, validates, copies the embedded agent set, and
-// then surfaces the D6 `.mcp.json` stub error (which D6 will wire).
+// then surfaces the D7 project-DB stub error (D6 is now wired).
 // CONSUMER-TIE TEST CONTRACT (W2-FF6 ROUND-2).
 //
 // **D5 update**: chdir into a fresh t.TempDir() so the pipeline's real
-// filesystem writes are sandboxed; assert against the D6 stub literal
-// (was D5 stub pre-D5).
+// filesystem writes are sandboxed.
+//
+// **D6 update**: mcp:false means registerMCPJSON is a no-op; the D7
+// project-DB stub fires. Assert against the D7 stub literal.
 func TestInit_JSONInvocation_RoutesToValidParse(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out strings.Builder
 	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":false}`}, &out, io.Discard)
 	if err == nil {
-		t.Fatalf("run(init --json valid) returned nil; expected D6 .mcp.json stub error, got stdout=%q", out.String())
+		t.Fatalf("run(init --json valid) returned nil; expected D7 project-DB stub error, got stdout=%q", out.String())
 	}
-	want := "till init: .mcp.json registration not yet wired (W2.D6)"
+	want := "till init: project-DB record creation not yet wired (W2.D7)"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("run(init --json valid) error = %q; want substring %q", err.Error(), want)
 	}
@@ -91,9 +98,12 @@ func TestInit_JSONInvocation_RoutesToValidParse(t *testing.T) {
 //
 // **D5 update**: every test case chdirs into a fresh t.TempDir() because
 // valid payloads now exercise the D5 pipeline (filesystem side effects)
-// before surfacing the D6 stub error. Invalid payloads short-circuit
+// before surfacing the D7 stub error. Invalid payloads short-circuit
 // before any write, but chdir is uniform across cases for consistency.
-// The two valid cases assert the D6 stub literal (was D5 stub pre-D5).
+//
+// **D6 update**: valid cases now surface the D7 project-DB stub (D6
+// registerMCPJSON is wired; mcp:false is a no-op skip; mcp:true writes
+// .mcp.json and continues to D7). Both valid cases assert the D7 stub.
 func TestInit_JSONParse_TableDriven(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -103,12 +113,12 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 		{
 			name:        "valid_till_go",
 			payload:     `{"name":"foo","group":"till-go","mcp":false}`,
-			wantSubstrs: []string{".mcp.json registration not yet wired (W2.D6)"},
+			wantSubstrs: []string{"project-DB record creation not yet wired (W2.D7)"},
 		},
 		{
 			name:        "valid_till_gen_mcp_true",
 			payload:     `{"name":"bar","group":"till-gen","mcp":true}`,
-			wantSubstrs: []string{".mcp.json registration not yet wired (W2.D6)"},
+			wantSubstrs: []string{"project-DB record creation not yet wired (W2.D7)"},
 		},
 		{
 			name:        "reserved_group_till_gdd",
@@ -345,9 +355,9 @@ func runInitJSONInTempDir(t *testing.T, payload string) (string, error) {
 func TestInit_FreshDir_CopiesAllFiles(t *testing.T) {
 	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"till-go","mcp":false}`)
 	if err == nil {
-		t.Fatalf("run(init --json) returned nil; expected D6 stub error")
+		t.Fatalf("run(init --json) returned nil; expected D7 project-DB stub error")
 	}
-	wantStub := "till init: .mcp.json registration not yet wired (W2.D6)"
+	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
 	if !strings.Contains(err.Error(), wantStub) {
 		t.Fatalf("run(init --json) error = %q; want substring %q", err.Error(), wantStub)
 	}
@@ -548,4 +558,423 @@ func countGitignoreLine(body, want string) int {
 		}
 	}
 	return n
+}
+
+// TestInit_MCPJSON_FreshFile verifies that `till init --json` with `mcp:true`
+// creates a `.mcp.json` file in the destination directory containing a
+// `tillsyn` server entry. The test drives `run(...)` end-to-end (CONSUMER-TIE
+// TEST CONTRACT — proves the cobra wiring exercises registerMCPJSON). The
+// surfaced error is the D7 project-DB stub, confirming the pipeline ran
+// through the D6 seam.
+func TestInit_MCPJSON_FreshFile(t *testing.T) {
+	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"till-go","mcp":true}`)
+	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
+	if err == nil {
+		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
+	}
+	if !strings.Contains(err.Error(), wantStub) {
+		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	}
+
+	mcpPath := filepath.Join(dir, ".mcp.json")
+	data, readErr := os.ReadFile(mcpPath)
+	if readErr != nil {
+		t.Fatalf("os.ReadFile(%q): %v — .mcp.json not created", mcpPath, readErr)
+	}
+
+	// Parse as a two-level raw map to verify the tillsyn entry exists with a
+	// non-empty command. Using map[string]json.RawMessage avoids coupling the
+	// test to the internal mcpServerEntry struct type.
+	var top map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(data, &top); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json top level: %v\nbody = %q", unmarshalErr, string(data))
+	}
+	var servers map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(top["mcpServers"], &servers); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json mcpServers: %v", unmarshalErr)
+	}
+	entryRaw, ok := servers[mcpServerKey]
+	if !ok {
+		t.Fatalf(".mcp.json missing %q entry; servers = %v", mcpServerKey, servers)
+	}
+	var entry mcpServerEntry
+	if unmarshalErr := json.Unmarshal(entryRaw, &entry); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal tillsyn entry: %v", unmarshalErr)
+	}
+	if entry.Command == "" {
+		t.Fatalf(".mcp.json entry %q has empty command", mcpServerKey)
+	}
+}
+
+// TestInit_MCPJSON_AppendsToExisting verifies that `registerMCPJSON` adds
+// the `tillsyn` entry to an existing `.mcp.json` that already contains a
+// different server. The pre-existing entry must survive — no overwrite,
+// no loss. Drives end-to-end via run() (CONSUMER-TIE contract).
+func TestInit_MCPJSON_AppendsToExisting(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Seed .mcp.json with an unrelated stdio server entry using raw JSON to
+	// avoid coupling the test to internal struct types.
+	seedJSON := []byte(`{"mcpServers":{"other-server":{"command":"/usr/local/bin/other"}}}` + "\n")
+	if writeErr := os.WriteFile(filepath.Join(dir, ".mcp.json"), seedJSON, 0o644); writeErr != nil {
+		t.Fatalf("seed .mcp.json: %v", writeErr)
+	}
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
+	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
+	if err == nil {
+		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
+	}
+	if !strings.Contains(err.Error(), wantStub) {
+		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if readErr != nil {
+		t.Fatalf("os.ReadFile .mcp.json: %v", readErr)
+	}
+
+	// Parse via raw maps to verify both entries without depending on internal
+	// struct types.
+	var top map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(data, &top); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json: %v\nbody = %q", unmarshalErr, string(data))
+	}
+	var servers map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(top["mcpServers"], &servers); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json mcpServers: %v", unmarshalErr)
+	}
+
+	// tillsyn entry must be present.
+	if _, ok := servers[mcpServerKey]; !ok {
+		t.Fatalf(".mcp.json missing %q entry after append; servers = %v", mcpServerKey, servers)
+	}
+	// Pre-existing entry must survive.
+	if _, ok := servers["other-server"]; !ok {
+		t.Fatalf(".mcp.json lost pre-existing %q entry; servers = %v", "other-server", servers)
+	}
+}
+
+// TestInit_MCPJSON_Idempotent verifies that running `till init --json` with
+// `mcp:true` when a `tillsyn` entry already exists is a no-op — no duplicate
+// entry, no mutation. The entry that was there must remain unchanged.
+// Drives end-to-end via run() (CONSUMER-TIE contract).
+func TestInit_MCPJSON_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Seed .mcp.json with an existing tillsyn entry using raw JSON.
+	seedJSON := []byte(`{"mcpServers":{"tillsyn":{"command":"/original/path/to/till"}}}` + "\n")
+	if writeErr := os.WriteFile(filepath.Join(dir, ".mcp.json"), seedJSON, 0o644); writeErr != nil {
+		t.Fatalf("seed .mcp.json: %v", writeErr)
+	}
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
+	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
+	if err == nil {
+		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
+	}
+	if !strings.Contains(err.Error(), wantStub) {
+		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if readErr != nil {
+		t.Fatalf("os.ReadFile .mcp.json: %v", readErr)
+	}
+
+	// Parse via raw maps to check idempotency without depending on internal types.
+	var top map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(data, &top); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json: %v\nbody = %q", unmarshalErr, string(data))
+	}
+	var servers map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(top["mcpServers"], &servers); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json mcpServers: %v", unmarshalErr)
+	}
+
+	entryRaw, ok := servers[mcpServerKey]
+	if !ok {
+		t.Fatalf(".mcp.json missing %q entry after idempotent re-run", mcpServerKey)
+	}
+	var entry mcpServerEntry
+	if unmarshalErr := json.Unmarshal(entryRaw, &entry); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal tillsyn entry: %v", unmarshalErr)
+	}
+	// The original command path must be preserved (not overwritten with a new LookPath result).
+	if entry.Command != "/original/path/to/till" {
+		t.Fatalf(".mcp.json entry %q command = %q; want %q (must not overwrite existing entry)",
+			mcpServerKey, entry.Command, "/original/path/to/till")
+	}
+	// Only one tillsyn entry — JSON object keys are unique by definition, but
+	// verify the total server count is still 1 (no phantom duplicates).
+	if got := len(servers); got != 1 {
+		t.Fatalf(".mcp.json has %d server entries; want 1 (idempotent re-run must not add duplicates)", got)
+	}
+}
+
+// TestInit_MCPJSON_OptOut verifies that `till init --json` with `mcp:false`
+// does NOT create a `.mcp.json` file. The pipeline runs through the D6 seam
+// (registerMCPJSON returns immediately on includeMCP=false) and surfaces the
+// D7 project-DB stub. Drives end-to-end via run() (CONSUMER-TIE contract).
+func TestInit_MCPJSON_OptOut(t *testing.T) {
+	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"till-go","mcp":false}`)
+	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
+	if err == nil {
+		t.Fatalf("run(init --json mcp:false) returned nil; expected D7 stub error")
+	}
+	if !strings.Contains(err.Error(), wantStub) {
+		t.Fatalf("run(init --json mcp:false) error = %q; want substring %q", err.Error(), wantStub)
+	}
+
+	mcpPath := filepath.Join(dir, ".mcp.json")
+	if _, statErr := os.Stat(mcpPath); statErr == nil {
+		t.Fatalf(".mcp.json exists at %q; mcp:false must not create the file", mcpPath)
+	}
+}
+
+// TestInit_MCPJSON_PreservesHTTPTransport is the Drop 4c.6 W2.D6 Round-2
+// regression test for FF1. It verifies that `till init --json` with `mcp:true`
+// preserves pre-existing HTTP/SSE server entries byte-equivalent — i.e., that
+// fields like `type` and `url` authored by `claude mcp add --transport http`
+// are NOT silently dropped on round-trip through registerMCPJSON.
+//
+// Prior to the Round-2 fix, the typed mcpServerEntry struct only modelled
+// stdio fields (command/args/env). Any entry with a `type` or `url` field
+// would be deserialized to zero-value and re-marshaled as `{"command":""}`,
+// destroying the entry. The fix uses json.RawMessage for all pre-existing
+// entries and only typed-deserializes the new `tillsyn` entry.
+//
+// Drives end-to-end via run() (CONSUMER-TIE TEST CONTRACT).
+func TestInit_MCPJSON_PreservesHTTPTransport(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Seed .mcp.json with an HTTP-transport entry (the shape produced by
+	// `claude mcp add --transport http --scope project notion https://mcp.notion.com/mcp`).
+	notionEntry := `{"type":"http","url":"https://mcp.notion.com/mcp"}`
+	seedJSON := []byte(`{"mcpServers":{"notion":` + notionEntry + `}}` + "\n")
+	if writeErr := os.WriteFile(filepath.Join(dir, ".mcp.json"), seedJSON, 0o644); writeErr != nil {
+		t.Fatalf("seed .mcp.json: %v", writeErr)
+	}
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
+	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
+	if err == nil {
+		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
+	}
+	if !strings.Contains(err.Error(), wantStub) {
+		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if readErr != nil {
+		t.Fatalf("os.ReadFile .mcp.json: %v", readErr)
+	}
+
+	// Parse the result via raw maps.
+	var top map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(data, &top); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json: %v\nbody = %q", unmarshalErr, string(data))
+	}
+	var servers map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(top["mcpServers"], &servers); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json mcpServers: %v", unmarshalErr)
+	}
+
+	// (a) The tillsyn entry must have been added.
+	if _, ok := servers[mcpServerKey]; !ok {
+		t.Fatalf(".mcp.json missing %q entry; servers = %v", mcpServerKey, servers)
+	}
+
+	// (b) The notion HTTP entry must be preserved with its type and url fields
+	// intact. Parse the raw notion entry and verify via a field map.
+	notionRaw, ok := servers["notion"]
+	if !ok {
+		t.Fatalf(".mcp.json lost pre-existing %q entry; servers = %v", "notion", servers)
+	}
+	var notionFields map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(notionRaw, &notionFields); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal notion entry: %v", unmarshalErr)
+	}
+	wantType := `"http"`
+	wantURL := `"https://mcp.notion.com/mcp"`
+	if got := string(notionFields["type"]); got != wantType {
+		t.Fatalf("notion entry type = %s; want %s (HTTP transport field was dropped)", got, wantType)
+	}
+	if got := string(notionFields["url"]); got != wantURL {
+		t.Fatalf("notion entry url = %s; want %s (HTTP transport URL was dropped)", got, wantURL)
+	}
+}
+
+// TestInit_MCPJSON_PreservesTopLevelExtras verifies that `till init --json`
+// with `mcp:true` preserves sibling top-level keys in `.mcp.json` beyond
+// `mcpServers`. This closes the NIT2 finding from Drop 4c.6 W2.D6 Round-1:
+// the original typed mcpJSONFile struct would have dropped any key it did
+// not declare on re-marshal. The Round-2 fix uses a top-level
+// map[string]json.RawMessage so all sibling keys survive.
+//
+// Drives end-to-end via run() (CONSUMER-TIE TEST CONTRACT).
+func TestInit_MCPJSON_PreservesTopLevelExtras(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Seed .mcp.json with an extra top-level key alongside mcpServers.
+	seedJSON := []byte(`{"mcpServers":{},"someOtherKey":{"foo":"bar"}}` + "\n")
+	if writeErr := os.WriteFile(filepath.Join(dir, ".mcp.json"), seedJSON, 0o644); writeErr != nil {
+		t.Fatalf("seed .mcp.json: %v", writeErr)
+	}
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
+	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
+	if err == nil {
+		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
+	}
+	if !strings.Contains(err.Error(), wantStub) {
+		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if readErr != nil {
+		t.Fatalf("os.ReadFile .mcp.json: %v", readErr)
+	}
+
+	// Parse the result via raw maps and assert the extra key survived.
+	var top map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(data, &top); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json: %v\nbody = %q", unmarshalErr, string(data))
+	}
+
+	extraRaw, ok := top["someOtherKey"]
+	if !ok {
+		t.Fatalf(".mcp.json lost top-level key %q; keys present = %v", "someOtherKey", topKeys(top))
+	}
+	var extra map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(extraRaw, &extra); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal someOtherKey: %v", unmarshalErr)
+	}
+	if got := string(extra["foo"]); got != `"bar"` {
+		t.Fatalf("someOtherKey.foo = %s; want %q (top-level extra key was corrupted)", got, `"bar"`)
+	}
+}
+
+// TestInit_MCPJSON_NullMcpServersValue is the Drop 4c.6 W2.D6 Round-3
+// regression test for FF2. It verifies that `till init --json` with `mcp:true`
+// does NOT panic when the existing `.mcp.json` contains `{"mcpServers":null}`.
+//
+// Prior to the Round-3 fix, json.Unmarshal of the JSON null value into the
+// pre-initialised servers map pointer set servers to nil, causing a
+// "assignment to entry in nil map" panic on the subsequent write.
+//
+// Drives end-to-end via run() (CONSUMER-TIE TEST CONTRACT).
+func TestInit_MCPJSON_NullMcpServersValue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Seed .mcp.json with a null mcpServers value — legal JSON, can be
+	// produced by hand-edits, third-party tools, or migration scripts.
+	seedJSON := []byte(`{"mcpServers":null}` + "\n")
+	if writeErr := os.WriteFile(filepath.Join(dir, ".mcp.json"), seedJSON, 0o644); writeErr != nil {
+		t.Fatalf("seed .mcp.json: %v", writeErr)
+	}
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
+	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
+	if err == nil {
+		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
+	}
+	if !strings.Contains(err.Error(), wantStub) {
+		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if readErr != nil {
+		t.Fatalf("os.ReadFile .mcp.json after null-mcpServers run: %v", readErr)
+	}
+
+	// The resulting file must be well-formed JSON.
+	var top map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(data, &top); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json: %v\nbody = %q", unmarshalErr, string(data))
+	}
+
+	// The tillsyn entry must have been added correctly.
+	var servers map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(top[mcpServersKey], &servers); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json mcpServers: %v", unmarshalErr)
+	}
+	if _, ok := servers[mcpServerKey]; !ok {
+		t.Fatalf(".mcp.json missing %q entry after null-mcpServers run; servers = %v", mcpServerKey, servers)
+	}
+
+	// The tillsyn entry must have a non-empty command field.
+	var entry mcpServerEntry
+	if unmarshalErr := json.Unmarshal(servers[mcpServerKey], &entry); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal tillsyn entry: %v", unmarshalErr)
+	}
+	if entry.Command == "" {
+		t.Fatalf(".mcp.json tillsyn entry has empty command after null-mcpServers run")
+	}
+}
+
+// TestInit_MCPJSON_NullTopLevelFile verifies that `till init --json` with
+// `mcp:true` does NOT panic when `.mcp.json` contains the bare JSON literal
+// `null` (the entire file is the null literal, not an object). This exercises
+// the top-level nil-guard (lines 690-692 of init_cmd.go) which catches
+// json.Unmarshal setting the top-level map to nil.
+//
+// Drives end-to-end via run() (CONSUMER-TIE TEST CONTRACT).
+func TestInit_MCPJSON_NullTopLevelFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	// Seed .mcp.json with the bare JSON null literal — the entire file is null.
+	seedJSON := []byte("null\n")
+	if writeErr := os.WriteFile(filepath.Join(dir, ".mcp.json"), seedJSON, 0o644); writeErr != nil {
+		t.Fatalf("seed .mcp.json with null: %v", writeErr)
+	}
+
+	var out strings.Builder
+	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
+	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
+	if err == nil {
+		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
+	}
+	if !strings.Contains(err.Error(), wantStub) {
+		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if readErr != nil {
+		t.Fatalf("os.ReadFile .mcp.json after null-top-level run: %v", readErr)
+	}
+
+	// The resulting file must be well-formed JSON with the tillsyn entry.
+	var top map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(data, &top); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json: %v\nbody = %q", unmarshalErr, string(data))
+	}
+	var servers map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal(top[mcpServersKey], &servers); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal .mcp.json mcpServers: %v", unmarshalErr)
+	}
+	if _, ok := servers[mcpServerKey]; !ok {
+		t.Fatalf(".mcp.json missing %q entry after null-top-level run; servers = %v", mcpServerKey, servers)
+	}
+}
+
+// topKeys returns the keys of a map[string]json.RawMessage for use in
+// test failure messages.
+func topKeys(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

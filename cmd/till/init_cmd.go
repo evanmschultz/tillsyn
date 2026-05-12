@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -412,11 +413,14 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		return fmt.Errorf("till init: ensure .gitignore: %w", err)
 	}
 
-	// D6 wires the actual `.mcp.json` registration. Until then a
-	// successful D5 file-copy hands forward to this stub so callers
-	// (and tests) can confirm the pipeline ran through to the D6 seam
-	// without short-circuiting earlier.
-	return errors.New("till init: .mcp.json registration not yet wired (W2.D6)")
+	if _, _, err := registerMCPJSON(destDir, payload.MCP); err != nil {
+		return fmt.Errorf("till init: register .mcp.json: %w", err)
+	}
+
+	// D7 wires project-DB record creation and the Laslig success message.
+	// Until then, a successful D6 MCP registration hands forward to this stub
+	// so callers (and tests) confirm the pipeline ran through to the D7 seam.
+	return errors.New("till init: project-DB record creation not yet wired (W2.D7)")
 }
 
 // agentFileInitPerm is the permission applied to every freshly copied
@@ -596,4 +600,159 @@ func validateInitPayload(p initJSONPayload) error {
 		}
 	}
 	return fmt.Errorf("till init: group must be one of %v; got %q", allowedInitGroups, p.Group)
+}
+
+// mcpServerEntry holds the configuration for the `tillsyn` stdio MCP server
+// entry that `registerMCPJSON` writes into `.mcp.json`. The schema matches
+// Claude Code's stdio transport format: `command` is the path to the server
+// binary, `args` are optional CLI arguments, `env` is an optional environment
+// variable map. The `type` field is omitted — Claude Code treats absence as
+// `stdio`.
+//
+// This struct is used ONLY for constructing the new `tillsyn` entry. All
+// pre-existing entries (including HTTP/SSE/SDK entries authored by
+// `claude mcp add --transport http ...`) are preserved verbatim as
+// json.RawMessage and are never deserialized through this typed struct.
+//
+// Source: Context7 `/websites/code_claude` → "Configure stdio MCP Server in
+// .mcp.json". Schema verified against the canonical Claude Code docs.
+type mcpServerEntry struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
+// mcpServersKey is the JSON key for the server map inside `.mcp.json`.
+const mcpServersKey = "mcpServers"
+
+// mcpJSONFileName is the filename written by registerMCPJSON.
+const mcpJSONFileName = ".mcp.json"
+
+// tillsyn MCP server key in .mcp.json.
+const mcpServerKey = "tillsyn"
+
+// registerMCPJSON optionally registers the `tillsyn` MCP server entry in
+// `<destDir>/.mcp.json`. When `includeMCP` is false the function is a
+// no-op (re-run safe; reports added=0, skipped=1 for the opt-out case).
+//
+// When `includeMCP` is true:
+//   - The `till` binary path is resolved via exec.LookPath("till"); on
+//     failure the canonical install path (`~/.local/bin/till`) is used
+//     instead (per magefile.go:144 which writes the binary there).
+//   - If `.mcp.json` is absent a minimal file with just the `tillsyn` entry
+//     is created atomically via fsatomic.WriteFile.
+//   - If `.mcp.json` exists it is parsed, checked for a pre-existing
+//     `tillsyn` entry (idempotent — no duplicate, no overwrite), and if
+//     absent the entry is added and the file rewritten atomically.
+//
+// Preservation contract (Drop 4c.6 W2.D6 Round-2 FF1 fix): the file is
+// parsed as a two-level map[string]json.RawMessage so that all pre-existing
+// server entries (stdio, HTTP, SSE, SDK) and all sibling top-level keys are
+// preserved JSON-semantically on rewrite (each server-entry value is stored
+// as raw bytes and round-trips unchanged; the top-level object is
+// re-indented by json.MarshalIndent). Only the new `tillsyn` entry is
+// deserialized through the typed mcpServerEntry struct.
+//
+// Returns (added, skipped, err). `added` is 1 when the entry was created;
+// `skipped` is 1 when the entry already existed or `includeMCP` is false.
+func registerMCPJSON(destDir string, includeMCP bool) (int, int, error) {
+	if !includeMCP {
+		return 0, 1, nil
+	}
+
+	tillBin, err := exec.LookPath("till")
+	if err != nil {
+		// Fall back to the canonical dev-install path written by
+		// `mage install` per magefile.go:144.
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return 0, 0, fmt.Errorf("resolve home dir for till binary path: %w", homeErr)
+		}
+		tillBin = filepath.Join(home, ".local", "bin", "till")
+	}
+
+	// Serialize the new tillsyn entry once; reused in both the file-exists
+	// and the fresh-file branches.
+	tillsyn := mcpServerEntry{Command: tillBin}
+	tillsynRaw, marshalErr := json.Marshal(tillsyn)
+	if marshalErr != nil {
+		return 0, 0, fmt.Errorf("marshal tillsyn entry: %w", marshalErr)
+	}
+
+	target := filepath.Join(destDir, mcpJSONFileName)
+	data, readErr := os.ReadFile(target)
+	switch {
+	case readErr == nil:
+		// File exists — parse the entire file as a raw top-level JSON object
+		// so sibling keys beyond "mcpServers" are preserved verbatim.
+		var topLevel map[string]json.RawMessage
+		if unmarshalErr := json.Unmarshal(data, &topLevel); unmarshalErr != nil {
+			return 0, 0, fmt.Errorf("parse %q: %w", target, unmarshalErr)
+		}
+		if topLevel == nil {
+			topLevel = make(map[string]json.RawMessage)
+		}
+
+		// Parse the mcpServers sub-map as raw messages so every pre-existing
+		// server entry (stdio, HTTP, SSE, SDK) is preserved byte-equivalent.
+		servers := make(map[string]json.RawMessage)
+		if raw, ok := topLevel[mcpServersKey]; ok && len(raw) > 0 {
+			if unmarshalErr := json.Unmarshal(raw, &servers); unmarshalErr != nil {
+				return 0, 0, fmt.Errorf("parse %q mcpServers: %w", target, unmarshalErr)
+			}
+			// Guard against {"mcpServers":null}: json.Unmarshal of a JSON null
+			// value into a map pointer sets it to nil even though the map was
+			// pre-initialised above. Without this guard the write at
+			// servers[mcpServerKey] panics with "assignment to entry in nil map".
+			if servers == nil {
+				servers = make(map[string]json.RawMessage)
+			}
+		}
+
+		if _, found := servers[mcpServerKey]; found {
+			// Entry already present — idempotent skip.
+			return 0, 1, nil
+		}
+
+		// Add the new tillsyn entry and write the servers map back into the
+		// top-level object (all other top-level keys remain untouched).
+		servers[mcpServerKey] = json.RawMessage(tillsynRaw)
+		serversRaw, marshalErr2 := json.Marshal(servers)
+		if marshalErr2 != nil {
+			return 0, 0, fmt.Errorf("marshal %q mcpServers: %w", target, marshalErr2)
+		}
+		topLevel[mcpServersKey] = json.RawMessage(serversRaw)
+		out, marshalErr3 := json.MarshalIndent(topLevel, "", "  ")
+		if marshalErr3 != nil {
+			return 0, 0, fmt.Errorf("marshal %q: %w", target, marshalErr3)
+		}
+		if writeErr := fsatomic.WriteFile(target, append(out, '\n'), agentFileInitPerm); writeErr != nil {
+			return 0, 0, fmt.Errorf("write %q: %w", target, writeErr)
+		}
+		return 1, 0, nil
+
+	case errors.Is(readErr, fs.ErrNotExist):
+		// File absent — create a minimal file with just the tillsyn entry.
+		servers := map[string]json.RawMessage{
+			mcpServerKey: json.RawMessage(tillsynRaw),
+		}
+		serversRaw, marshalErr2 := json.Marshal(servers)
+		if marshalErr2 != nil {
+			return 0, 0, fmt.Errorf("marshal new %q mcpServers: %w", target, marshalErr2)
+		}
+		topLevel := map[string]json.RawMessage{
+			mcpServersKey: json.RawMessage(serversRaw),
+		}
+		out, marshalErr3 := json.MarshalIndent(topLevel, "", "  ")
+		if marshalErr3 != nil {
+			return 0, 0, fmt.Errorf("marshal new %q: %w", target, marshalErr3)
+		}
+		if writeErr := fsatomic.WriteFile(target, append(out, '\n'), agentFileInitPerm); writeErr != nil {
+			return 0, 0, fmt.Errorf("write new %q: %w", target, writeErr)
+		}
+		return 1, 0, nil
+
+	default:
+		return 0, 0, fmt.Errorf("read %q: %w", target, readErr)
+	}
 }

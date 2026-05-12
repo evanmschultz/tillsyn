@@ -166,7 +166,7 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 ### Droplet 4c.6.W2.D6 — `.mcp.json` optional registration
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `cmd/till/init_cmd.go` (modify: add `registerMCPJSON(destDir, includeMCP bool)` function)
   - `cmd/till/init_cmd_test.go` (modify: add tests for the `--mcp` / `mcp:true` JSON branch)
@@ -175,13 +175,18 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
   - **Schema verification (builder responsibility BEFORE writing code):** the builder MUST verify Claude Code's `.mcp.json` shape via Context7 (`mcp__plugin_context7_context7__resolve-library-id` + `mcp__plugin_context7_context7__query-docs` for "claude-code mcp config" / "Claude Code .mcp.json schema"). If Context7 doesn't surface a usable shape, the builder reads an authoritative live `.mcp.json` from a known-good install (the dev's own machine — escalate to orchestrator for the path) and matches that. Hardcoded guesses are NOT acceptable — schema mismatches break MCP registration silently.
   - `registerMCPJSON` reads existing `<destDir>/.mcp.json` (if present), parses it, adds a `tillsyn` server entry pointing at the local `till` binary path (`exec.LookPath("till")` or `~/.local/bin/till` per `magefile.go:144`), writes back atomically via `fsatomic`. If `.mcp.json` is absent, creates a minimal one with just the `tillsyn` server.
   - Re-run safety: if the `tillsyn` entry already exists, skip (do NOT duplicate or overwrite). Report `added=0, skipped=1` style.
-  - TUI mode: confirms with the user before mutating (yes/no prompt). JSON mode: respects the `mcp` boolean.
+  - TUI mode: DEFERRED — see ROUND-2 deferral note below. JSON mode: respects the `mcp` boolean.
   - Tests:
     - `TestInit_MCPJSON_FreshFile`: creates `.mcp.json` with `tillsyn` entry.
     - `TestInit_MCPJSON_AppendsToExisting`: existing `.mcp.json` with another server entry; re-run adds `tillsyn` without removing the other.
     - `TestInit_MCPJSON_Idempotent`: existing `tillsyn` entry; re-run is a no-op.
     - `TestInit_MCPJSON_OptOut`: `mcp:false`; no `.mcp.json` written.
+    - `TestInit_MCPJSON_PreservesHTTPTransport`: (Round-2 FF1 regression test) seed with HTTP-transport entry; assert type+url fields preserved byte-equivalent after `till init --mcp true`.
+    - `TestInit_MCPJSON_PreservesTopLevelExtras`: (Round-2 NIT2 regression test) seed with sibling top-level key; assert key survives after `till init --mcp true`.
   - `mage test-pkg ./cmd/till` passes.
+
+**ROUND-2 deferral (W2-D6-NIT1, orchestrator-directed 2026-05-11):** Round-1 QA falsification (W2.D6 Round-1, NIT1) found that `init_cmd.go:229` hardwires `m.finalPayload.MCP = false` in TUI mode, meaning the TUI walk provides no path to MCP registration. PLAN.md D6 acceptance line "TUI mode: confirms with the user before mutating (yes/no prompt)" is unfulfilled. The orchestrator directed Round-2 to **defer** the TUI y/n confirmation prompt to a future drop (Drop 4c.7 or 4c.8): adding a `initTUIStepMCP` bubbletea state requires non-trivial state-machine work and Round-2 is scoped to the FF1 correctness fix only. **JSON mode `mcp:true` works correctly and all tests pass.** The TUI MCP prompt is a future refinement, not a Round-2 commitment.
+
 - **Blocked by:** D5 (D6 modifies `cmd/till/init_cmd.go` which D5 last touched — same-file lock).
 - **Notes for builder:**
   - Document Context7 query result (or the authoritative-source path) in `BUILDER_WORKLOG.md` — schema-divergence risk is real per SKETCH §26.W2 RiskNotes.
@@ -255,6 +260,32 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
   - The `TestShellEscapePath` test at `main_test.go:3105` does NOT need to be removed — `shellEscapePath` is still in `main.go` and still used by `runInstall` (in `install_cmd.go`). D8 only updates the doc-comment to drop the "init-dev-config" mention.
   - **D8 doc-comment phrasing (W2-PF1 ROUND-2 carryforward, pinned at orchestrator dispatch time):** the exact replacement string for the `init-dev-config` mention in `TestShellEscapePath`'s doc-comment is set by the orchestrator in the D8 spawn prompt — NOT a builder-discretion choice. Builder reads the spawn-prompt directive and applies it verbatim. (Round-1 NIT 1.6 + round-2 W2-PF1 left the exact string unspecified at plan-level; orchestrator pins it inline at D8 dispatch time so the plan stays decision-free.)
   - Be mindful when removing the rich-help table-test row (`main_test.go:732-734`) that other rows have similar shape — use line-anchored deletion, not pattern-match.
+
+### Droplet 4c.6.W2.D9 — Scrub historical doc-comments referencing deleted `init-dev-config` symbols
+
+**ROUND-3 NEW (W2-D8-FF1 disposition, dev-approved Option B 2026-05-11):** D8's `git grep -n init-dev-config cmd/till/` acceptance left 4 residual references in `install_cmd.go` + `install_cmd_test.go` doc-comments (the D7.5 lift-and-rename narrative). 3 of 4 residuals also reference DELETED symbols (`runInitDevConfig`, `TestRunInitDevConfigCreatesDebugConfig`, `TestRunInitDevConfigUpdatesExistingConfig`) — broken cross-refs in committed code. D9 strips the historical narrative while keeping the technical pins (pointer-receiver rationale, Laslig title byte-for-byte contract, CONSUMER-TIE TEST CONTRACT). Pure doc-comment edits, no code logic changes.
+
+- **State:** todo
+- **Paths:**
+  - `cmd/till/install_cmd.go` (modify: rewrite `newInstallCommand` + `runInstall` doc-comments to drop D7.5/D8/`init-dev-config`/`runInitDevConfig` historical narrative; keep technical pins)
+  - `cmd/till/install_cmd_test.go` (modify: rewrite `TestRunInstall_CreatesDebugConfig` + `TestRunInstall_UpdatesExistingConfig` doc-comments similarly)
+- **Packages:** `github.com/evanmschultz/tillsyn/cmd/till`
+- **Acceptance:**
+  - `git grep -n init-dev-config cmd/till/` returns ZERO matches.
+  - `git grep -n runInitDevConfig cmd/till/ internal/` returns ZERO matches.
+  - `git grep -n TestRunInitDevConfig cmd/till/` returns ZERO matches.
+  - Doc-comments still describe what the code does (present tense). Technical pins retained verbatim in content (rephrasing allowed):
+    - `newInstallCommand`: pointer-receiver rationale for `*rootCommandOptions` (cobra flag-parse value-capture; cites `main.go:508-513` PersistentFlags binding).
+    - `runInstall`: Laslig title `"Dev Config"` byte-for-byte rationale (test bodies assert this substring).
+    - Test doc-comments: CONSUMER-TIE TEST CONTRACT (tests invoke `run(...)` end-to-end, NOT direct `runInstall(...)` calls) AND TEST-NAME underscore-shape rationale.
+  - No code logic / function signature / test logic changes — pure doc-comment edits.
+  - `mage test-pkg ./cmd/till` passes.
+  - `mage ci` green.
+- **Blocked by:** D8 (D8 created the state W2-D8-FF1 flags; D9 is the cleanup pass — same `cmd/till` package lock).
+- **Notes for builder:**
+  - This is a PURE doc-comment scrub. No function signatures, no implementation changes, no test logic changes — just rewrite the comment text.
+  - Forward-pointing references like "D8 later removes..." are tense-broken because D8 already ran. Strip the temporal narrative entirely; do not replace with "D8 has removed..." — just describe what the code is now.
+  - Default to NO comment unless the WHY is non-obvious. The pointer-receiver rationale, Laslig title byte-for-byte rationale, and CONSUMER-TIE TEST CONTRACT pin are all non-obvious / load-bearing for future refactors — keep those. The verbatim-port narrative is decorative — drop it.
 
 ## Notes
 
