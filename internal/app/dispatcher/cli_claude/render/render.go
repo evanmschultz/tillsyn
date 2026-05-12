@@ -27,12 +27,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
+	"github.com/evanmschultz/tillsyn/internal/config"
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
 // PermissionGrantsLister is the narrower read-only view of
@@ -88,6 +92,82 @@ var ErrInvalidRenderInput = errors.New("render: invalid render input")
 // the spawn-pipeline boundary rather than panicking on the type
 // assertion.
 var ErrInvalidGrantsLister = errors.New("render: grants lister does not implement PermissionGrantsLister")
+
+// ErrAgentBodyNotFound is returned by assembleAgentFileBody when the
+// 3-tier resolver exhausts every tier — project tier, user tier, and the
+// embedded tier's cross-group fallback to till-gen — without finding a
+// matching agent file.
+//
+// Per the W3-FF7 LOCKED contract the embedded tier's lookup ladder is
+// primary `builtin/agents/<group>/<basename>` → fallback
+// `builtin/agents/till-gen/<basename>` on fs.ErrNotExist. If till-gen
+// also misses the resolver returns ErrAgentBodyNotFound wrapped with the
+// failing AgentName + group + basename context. Callers detect via
+// errors.Is(err, ErrAgentBodyNotFound) and route to the standard
+// Render-rollback path.
+var ErrAgentBodyNotFound = errors.New("render: agent body not found in project, user, or embedded tier")
+
+// ErrInvalidAgentTemplatePath is returned by assembleAgentFileBody when
+// binding.SystemPromptTemplatePath fails the full-path traversal-defense
+// check (round-2 fix for W3-D23-FF1).
+//
+// Reject rules (applied AFTER the empty-path-is-OK short-circuit per
+// W3-FF5 LOCKED — empty SystemPromptTemplatePath still routes to the
+// till-go embedded default):
+//
+//  1. Absolute paths (starts with "/").
+//  2. Any path segment equal to ".." (full-path defense; the existing
+//     validateAgentBasename only catches leaf "..").
+//  3. Empty intermediate segments (catches "till-go//passwd" shapes that
+//     would otherwise split into an empty segment under strings.Split).
+//
+// Without this validator a malicious template could set
+// SystemPromptTemplatePath = "till-go/../../../../etc/passwd" — path.Base
+// returns "passwd" (passes the basename validator), path.Dir returns
+// "../../../../etc" (UNVALIDATED), and the user tier's
+// filepath.Join(home, ".tillsyn/agents", group, basename) cancels under
+// filepath.Clean to /etc/passwd, leaking host-file content into the
+// rendered agent body when os.ReadFile succeeds.
+//
+// Threat model: today bounded (SystemPromptTemplatePath comes from
+// repo-owned till-*.toml templates), but becomes attacker-controllable
+// as team-aware architecture matures (per
+// feedback_prompt_injection_team.md +
+// project_team_aware_architecture.md). Adding the validator now is
+// defense-in-depth ahead of the team-feature landing.
+//
+// Callers detect via errors.Is(err, ErrInvalidAgentTemplatePath) and
+// route to the standard Render-rollback path.
+var ErrInvalidAgentTemplatePath = errors.New("render: invalid agent template path (traversal-defense reject)")
+
+// agentBodyEmbeddedRoot is the embed.FS-relative root under
+// internal/templates.DefaultTemplateFS where placeholder agent .md
+// scaffolding lives. Per the W3-FF5 + W3-FF7 LOCKED contracts the
+// resolver walks <agentBodyEmbeddedRoot>/<group>/<basename> first, then
+// falls back to <agentBodyEmbeddedRoot>/till-gen/<basename> on miss.
+const agentBodyEmbeddedRoot = "builtin/agents"
+
+// agentBodyDefaultGroup is the dogfood default group selected when
+// binding.SystemPromptTemplatePath is empty (W3-FF5 LOCKED). Adopters
+// targeting till-gen / till-gdd MUST set SystemPromptTemplatePath
+// explicitly in their template; the empty-path fallback is documented
+// dogfood-only behavior.
+const agentBodyDefaultGroup = "till-go"
+
+// agentBodyFallbackGroup is the canonical shared-agents group the
+// embedded-tier cross-group fallback descends into (W3-FF7 LOCKED).
+// One-way fallback only — till-gen does NOT fall back to other groups.
+const agentBodyFallbackGroup = "till-gen"
+
+// projectAgentsSubdir is the per-project override directory the project
+// tier reads from (`<project.RepoPrimaryWorktree>/.tillsyn/agents/`).
+const projectAgentsSubdir = ".tillsyn/agents"
+
+// userAgentsSubdir is the per-user override directory the user tier
+// reads from (`<user-home>/.tillsyn/agents/<group>/`). The user tier is
+// group-scoped; the project tier is not (the project owns its agents
+// directly).
+const userAgentsSubdir = ".tillsyn/agents"
 
 // Render writes the per-spawn bundle artifacts the claude adapter needs:
 //
@@ -156,8 +236,9 @@ func Render(
 		return "", fmt.Errorf("render: plugin manifest: %w", err)
 	}
 
-	// 3. plugin/agents/<name>.md
-	if err := renderAgentFile(bundle, binding); err != nil {
+	// 3. plugin/agents/<name>.md — sources body via the W3.D2 3-tier
+	// resolver (project → user → embedded with till-gen cross-group fallback).
+	if err := renderAgentFile(bundle, project, binding); err != nil {
 		rollback.run()
 		return "", fmt.Errorf("render: agent file: %w", err)
 	}
@@ -304,63 +385,407 @@ func renderPluginManifest(bundle dispatcher.Bundle) error {
 	return os.WriteFile(filepath.Join(dir, "plugin.json"), payload, 0o600)
 }
 
-// renderAgentFile writes <plugin>/agents/<name>.md with the canonical
-// Tillsyn agent template per kind. F.7.3b ships a MINIMAL stub: the
-// frontmatter carries `name` + `description`; the body carries a single
-// pointer line directing the agent to consult its cascade-binding for
-// behavior. The full canonical templates at ~/.claude/agents/<name>.md
-// remain the source of truth for behavior — they are loaded by claude
-// from the system-installed plugin path (Path B per memory §1), not from
-// the per-spawn plugin (Path A).
+// renderAgentFile writes <plugin>/agents/<name>.md with the resolved
+// agent body from the W3.D2 3-tier resolver. The body is emitted verbatim
+// to disk — frontmatter splitting and per-spawn tool-gating frontmatter
+// injection are D3's concern (the strip-then-inject pipeline layers ON
+// TOP of D2's output).
 //
-// Two-layer tool-gating per memory §5: the frontmatter `disallowedTools`
-// field mirrors binding.ToolsDisallowed for human readability. Layer B
-// (settings.json permissions) remains the authoritative gate; this is
-// the safety-net + readability layer.
+// The `project` parameter feeds the project-tier branch of the resolver
+// (`<project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>`). Per the
+// W3-FF5 + W3-FF7 LOCKED contracts the resolver walks the tiers in this
+// priority order:
 //
-// Future evolution (deferred — out of scope for F.7.3b):
+//  1. project tier — `<project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>`
+//  2. user tier    — `<user-home>/.tillsyn/agents/<group>/<basename>`
+//  3. embedded tier — `templates.DefaultTemplateFS` via
+//     `builtin/agents/<group>/<basename>` with cross-group fallback to
+//     `builtin/agents/till-gen/<basename>` on fs.ErrNotExist.
 //
-//   - System-prompt template path read from binding.SystemPromptTemplatePath.
-//     F.7.2 landed the field; F.7.3b's MINIMAL stub does not consult it.
-//     A follow-up droplet adds template-rendering against the path.
-func renderAgentFile(bundle dispatcher.Bundle, binding dispatcher.BindingResolved) error {
+// `<group>` derivation (W3-FF5 LOCKED):
+//
+//   - `<group> = path.Dir(binding.SystemPromptTemplatePath)` when non-empty
+//     (slash-aware `path.Dir`, NOT OS-aware `filepath.Dir`, because
+//     embed.FS paths are always slash-separated).
+//   - `<group> = "till-go"` (dogfood default) when empty.
+//   - If `path.Dir` returns "." (path has no slash), the resolver treats
+//     the path as malformed and falls back to "till-go".
+//
+// `<basename>` derivation:
+//
+//   - `<basename> = path.Base(binding.SystemPromptTemplatePath)` when
+//     non-empty.
+//   - `<basename> = binding.AgentName + ".md"` when empty.
+//
+// On any tier returning an error other than fs.ErrNotExist (e.g.
+// permission denied on the project tier), the resolver propagates the
+// error wrapped with the failing tier's identity — fail-loud rather than
+// silently skipping to the next tier.
+//
+// On a 3-tier exhaustion the resolver returns ErrAgentBodyNotFound wrapped
+// with the failing AgentName + group + basename context.
+func renderAgentFile(bundle dispatcher.Bundle, project domain.Project, binding dispatcher.BindingResolved) error {
 	dir := filepath.Join(bundle.Paths.Root, pluginSubdir, agentsSubdir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("mkdir agents dir: %w", err)
 	}
-	body := assembleAgentFileBody(binding)
+	body, err := assembleAgentFileBody(project, binding)
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(filepath.Join(dir, binding.AgentName+".md"), []byte(body), 0o600)
 }
 
-// assembleAgentFileBody builds the agent stub body. Pure function so
-// tests can pin the exact text. The frontmatter shape mirrors the
-// canonical Tillsyn agent files at ~/.claude/agents/<name>.md — `name`
-// + `description` are the load-bearing fields claude consumes; tools /
-// allowedTools / disallowedTools carry the per-spawn gating layer A.
-func assembleAgentFileBody(binding dispatcher.BindingResolved) string {
-	var b strings.Builder
-	b.WriteString("---\n")
-	b.WriteString("name: ")
-	b.WriteString(binding.AgentName)
-	b.WriteString("\n")
-	b.WriteString("description: Tillsyn-spawned ")
-	b.WriteString(binding.AgentName)
-	b.WriteString(" subagent.\n")
+// assembleAgentFileBody resolves the agent file body via the 3-tier
+// ladder documented on renderAgentFile, then layers the W3.D3
+// strip-then-inject pipeline on top of the resolved body.
+//
+// Pure read-only function (no disk mutation): performs disk + embed.FS
+// reads and string transformations only.
+//
+// D3 strip-then-inject pipeline (post W3-PF1 / W3-FF2 / W3-FF12 LOCKED):
+//
+//  1. Split the resolved body at the leading + trailing `---\n` delimiters
+//     to extract (frontmatter, postFrontmatter). If either delimiter is
+//     absent the body is returned unchanged — D5's post-render validator
+//     catches malformed agent files at the validator layer.
+//  2. Strip template-time frontmatter keys via
+//     config.StripFrontmatterKeys(frontmatter, stripModel, stripTools):
+//     - stripModel = binding.Model != nil && *binding.Model != "" (W3-FF2;
+//     ResolveBinding always populates *Model via resolveStringPtr → a
+//     bare !=nil predicate is always-true and would mis-strip every
+//     render).
+//     - stripTools = true ALWAYS (W3-FF12; tool-gating keys are
+//     template-time only — runtime per-spawn injection is the sole
+//     authoritative source, so unconditional strip prevents stale disk
+//     tool-gating frontmatter from surviving when binding has empty
+//     tool gates).
+//  3. Inject runtime per-spawn fields:
+//     - allowedTools: <comma-joined binding.ToolsAllowed> when non-empty.
+//     - disallowedTools: <comma-joined binding.ToolsDisallowed> when
+//     non-empty.
+//     Empty binding tool-gate slices skip injection (no line emitted).
+//  4. Re-concatenate `---\n` + stripped+injected frontmatter + `---\n` +
+//     postFrontmatter.
+//
+// Ordering is mandatory: strip first removes any stale disk tool-gating
+// frontmatter regardless of binding state; injection then adds runtime
+// values back when the binding has them. Inverting the order would
+// either (a) merge stale embedded values with runtime values OR (b) strip
+// the freshly-injected runtime values — both wrong.
+func assembleAgentFileBody(project domain.Project, binding dispatcher.BindingResolved) (string, error) {
+	// Round-2 W3-D23-FF1 fix: validate the full template path BEFORE
+	// any path.Dir / path.Base derivation. The empty-path branch is
+	// the W3-FF5 LOCKED "use embedded till-go default" sentinel and
+	// MUST short-circuit before the validator runs — the validator
+	// only inspects non-empty paths.
+	if trimmed := strings.TrimSpace(binding.SystemPromptTemplatePath); trimmed != "" {
+		if err := validateAgentTemplatePath(trimmed); err != nil {
+			return "", fmt.Errorf("%w: %q: %s",
+				ErrInvalidAgentTemplatePath, trimmed, err.Error())
+		}
+	}
+
+	basename, err := resolveAgentBasename(binding)
+	if err != nil {
+		return "", err
+	}
+	group := resolveAgentGroup(binding)
+
+	// Tier 1 — project tier.
+	body, found, err := readProjectTierAgent(project.RepoPrimaryWorktree, basename)
+	if err != nil {
+		return "", fmt.Errorf("project-tier read: %w", err)
+	}
+	if !found {
+		// Tier 2 — user tier.
+		body, found, err = readUserTierAgent(group, basename)
+		if err != nil {
+			return "", fmt.Errorf("user-tier read: %w", err)
+		}
+	}
+	if !found {
+		// Tier 3 — embedded tier with cross-group fallback to till-gen.
+		body, err = readEmbeddedTierAgent(group, basename)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// D3 strip-then-inject pipeline. Operates only when both `---\n`
+	// delimiters are present — malformed bodies pass through unchanged
+	// for D5's validator to catch.
+	transformed, ok := stripAndInjectAgentFrontmatter(body, binding)
+	if !ok {
+		return body, nil
+	}
+	return transformed, nil
+}
+
+// stripAndInjectAgentFrontmatter applies the W3.D3 strip-then-inject
+// pipeline to body. Returns the transformed body string + true on success
+// or ("", false) if body lacks the leading or trailing `---\n` delimiter
+// (caller passes the body through unchanged in that case).
+//
+// Strip predicates (LOCKED):
+//   - stripModel = binding.Model != nil && *binding.Model != "" (W3-FF2).
+//   - stripTools = true ALWAYS (W3-FF12).
+//
+// Injection (post-strip):
+//   - non-empty binding.ToolsAllowed → append `allowedTools: <comma-joined>`.
+//   - non-empty binding.ToolsDisallowed → append `disallowedTools: <comma-joined>`.
+//
+// Both lines are appended as plain YAML scalars (NOT YAML lists). The
+// claude frontmatter convention from memory §5 expects comma-joined
+// string form, mirroring the F.7.3b stub's renderAgentFile output.
+func stripAndInjectAgentFrontmatter(body string, binding dispatcher.BindingResolved) (string, bool) {
+	const delim = "---\n"
+
+	// Leading delimiter must be at position 0 OR after a BOM/leading
+	// whitespace block. Accept the canonical shape only — D5 catches
+	// any non-canonical malformed shape downstream.
+	if !strings.HasPrefix(body, delim) {
+		return "", false
+	}
+	afterOpen := body[len(delim):]
+
+	// Find the closing `---\n` delimiter.
+	closeIdx := strings.Index(afterOpen, delim)
+	if closeIdx < 0 {
+		return "", false
+	}
+	frontmatter := afterOpen[:closeIdx]
+	postFrontmatter := afterOpen[closeIdx+len(delim):]
+
+	stripModel := binding.Model != nil && *binding.Model != ""
+	const stripTools = true // W3-FF12: always-strip; runtime inject is sole source.
+
+	stripped, err := config.StripFrontmatterKeys(frontmatter, stripModel, stripTools)
+	if err != nil {
+		// Parse failure on the frontmatter — surface as malformed-body
+		// path so D5 catches it. Returning (body, false) preserves the
+		// original bytes for the caller's pass-through path.
+		return "", false
+	}
+
+	// Ensure trailing newline before injecting so the appended lines
+	// don't accidentally merge with the last line of the stripped
+	// frontmatter. config.StripFrontmatterKeys' marshalNode helper
+	// already guarantees a single trailing `\n` on non-empty output,
+	// but the no-op short-circuit path (both flags false) returns the
+	// input verbatim — defensive trailing-newline ensures correctness
+	// across both paths.
+	injected := stripped
+	if injected != "" && !strings.HasSuffix(injected, "\n") {
+		injected += "\n"
+	}
 	if len(binding.ToolsAllowed) > 0 {
-		b.WriteString("allowedTools: ")
-		b.WriteString(strings.Join(binding.ToolsAllowed, ", "))
-		b.WriteString("\n")
+		injected += "allowedTools: " + strings.Join(binding.ToolsAllowed, ", ") + "\n"
 	}
 	if len(binding.ToolsDisallowed) > 0 {
-		b.WriteString("disallowedTools: ")
-		b.WriteString(strings.Join(binding.ToolsDisallowed, ", "))
-		b.WriteString("\n")
+		injected += "disallowedTools: " + strings.Join(binding.ToolsDisallowed, ", ") + "\n"
 	}
-	b.WriteString("---\n\n")
-	b.WriteString("Tillsyn-spawned subagent stub. Behavior loaded from the canonical ")
-	b.WriteString(binding.AgentName)
-	b.WriteString(" template at the system-installed plugin path.\n")
-	return b.String()
+
+	return delim + injected + delim + postFrontmatter, true
+}
+
+// resolveAgentBasename returns the file-portion of the agent body lookup
+// derived from binding.SystemPromptTemplatePath (when non-empty) or from
+// `binding.AgentName + ".md"` (when empty). The returned basename is
+// sanitized — no path separators, no parent-traversal segments, no
+// absolute paths — to prevent escape from the .tillsyn/agents/ directory
+// at the project and user tiers and from the builtin/agents/ subtree at
+// the embedded tier.
+func resolveAgentBasename(binding dispatcher.BindingResolved) (string, error) {
+	var basename string
+	if trimmed := strings.TrimSpace(binding.SystemPromptTemplatePath); trimmed != "" {
+		basename = path.Base(trimmed)
+	} else {
+		basename = binding.AgentName + ".md"
+	}
+	if err := validateAgentBasename(basename); err != nil {
+		return "", fmt.Errorf("%w: agent basename %q invalid: %s",
+			ErrInvalidRenderInput, basename, err.Error())
+	}
+	return basename, nil
+}
+
+// validateAgentTemplatePath enforces the full-path traversal-defense
+// applied at the top of assembleAgentFileBody, BEFORE path.Dir /
+// path.Base derive the group + basename from the input. Round-2 fix for
+// W3-D23-FF1: validateAgentBasename only inspects the leaf returned by
+// path.Base; the group derived from path.Dir was previously unvalidated
+// and could carry ".." segments that filepath.Join + filepath.Clean
+// collapsed into a host-file traversal at the user tier.
+//
+// Reject rules (per ErrInvalidAgentTemplatePath doc-comment):
+//
+//  1. Absolute paths.
+//  2. Any path segment equal to ".." (anywhere in the path).
+//  3. Empty intermediate segments (consecutive separators).
+//
+// Note on narrowing: a segment containing ".." as a substring (e.g.
+// "..foo") is NOT rejected. filepath.Clean does not collapse
+// "..foo" — it is a literal directory name, not a traversal. The W3-D23-FF1
+// counterexample exploited segments equal to "..", not substrings. Keeping
+// the rule narrow avoids spuriously rejecting legitimate dotfile-like
+// segments while still closing the documented attack.
+//
+// Empty path is NOT inspected here — the W3-FF5 LOCKED empty-string
+// sentinel routes to the till-go embedded default and short-circuits
+// before this validator runs. The caller's TrimSpace guard handles that.
+func validateAgentTemplatePath(p string) error {
+	// Absolute-path rule. path.IsAbs would work on slash-separated
+	// strings (which is the convention for binding.SystemPromptTemplatePath
+	// per W3-FF5: embed.FS paths are always slash-separated), but
+	// inspecting the leading byte is simpler and equivalent here.
+	if strings.HasPrefix(p, "/") {
+		return errors.New("absolute path not allowed")
+	}
+	// Backslash defense: even though slash is the canonical separator,
+	// reject backslashes anywhere in the path so a Windows-host
+	// adopter can't accidentally craft a path that filepath.Join
+	// would treat as separator on its platform.
+	if strings.Contains(p, `\`) {
+		return errors.New("backslash separator not allowed")
+	}
+	// Split on slash and inspect each segment.
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" {
+			return errors.New("empty path segment (consecutive separators)")
+		}
+		if seg == ".." {
+			return errors.New("parent-traversal segment `..` not allowed")
+		}
+	}
+	return nil
+}
+
+// validateAgentBasename enforces the path-traversal defense applied at
+// the project, user, and embedded tier lookups. Mirrors the existing
+// AgentName path-separator check (render.go input validation in Render).
+func validateAgentBasename(basename string) error {
+	if basename == "" {
+		return errors.New("basename is empty")
+	}
+	if basename == "." || basename == ".." {
+		return errors.New("basename is a traversal segment")
+	}
+	if strings.ContainsAny(basename, `/\`) {
+		return errors.New("basename contains path separator")
+	}
+	if strings.Contains(basename, "..") {
+		return errors.New("basename contains parent-traversal sequence")
+	}
+	if filepath.IsAbs(basename) {
+		return errors.New("basename is an absolute path")
+	}
+	return nil
+}
+
+// resolveAgentGroup applies the W3-FF5 LOCKED <group> derivation. Slash-
+// aware path.Dir on binding.SystemPromptTemplatePath when non-empty;
+// agentBodyDefaultGroup (till-go) when empty OR when path.Dir returns "."
+// (malformed path).
+func resolveAgentGroup(binding dispatcher.BindingResolved) string {
+	if trimmed := strings.TrimSpace(binding.SystemPromptTemplatePath); trimmed != "" {
+		if dir := path.Dir(trimmed); dir != "" && dir != "." {
+			return dir
+		}
+	}
+	return agentBodyDefaultGroup
+}
+
+// readProjectTierAgent attempts to read the project-tier agent file at
+// `<projectWorktree>/.tillsyn/agents/<basename>`. Returns (body, true,
+// nil) on hit, ("", false, nil) on fs.ErrNotExist or when the worktree
+// path is empty, and ("", false, err) on any other I/O error.
+//
+// An empty projectWorktree (project not yet bootstrapped) skips this
+// tier silently — there is no path to read from and no I/O error to
+// surface.
+func readProjectTierAgent(projectWorktree, basename string) (string, bool, error) {
+	if strings.TrimSpace(projectWorktree) == "" {
+		return "", false, nil
+	}
+	p := filepath.Join(projectWorktree, projectAgentsSubdir, basename)
+	body, err := os.ReadFile(p)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return string(body), true, nil
+}
+
+// readUserTierAgent attempts to read the user-tier agent file at
+// `$HOME/.tillsyn/agents/<group>/<basename>` using os.UserHomeDir to
+// resolve `$HOME`. Returns (body, true, nil) on hit, ("", false, nil) on
+// fs.ErrNotExist OR when os.UserHomeDir fails (no $HOME available — a
+// rare-but-real case in CI sandboxes; skip the tier rather than fail-loud),
+// and ("", false, err) on other I/O errors.
+func readUserTierAgent(group, basename string) (string, bool, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return "", false, nil
+	}
+	p := filepath.Join(home, userAgentsSubdir, group, basename)
+	body, err := os.ReadFile(p)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return string(body), true, nil
+}
+
+// readEmbeddedTierAgent reads from templates.DefaultTemplateFS via the
+// W3-FF7 LOCKED cross-group fallback ladder:
+//
+//  1. primary  — `builtin/agents/<group>/<basename>`
+//  2. fallback — `builtin/agents/till-gen/<basename>` on fs.ErrNotExist
+//
+// If the primary group is already till-gen, the fallback is skipped (no
+// symmetric fallback — till-gen is the only fallback target).
+//
+// On primary hit returns the primary content. On primary miss + fallback
+// hit returns the fallback content. On both miss returns a wrapped
+// ErrAgentBodyNotFound. On any non-ErrNotExist read error the error is
+// propagated verbatim.
+//
+// embed.FS read errors that are NOT ErrNotExist (e.g. malformed embed,
+// although embed.FS is read-only and compiled-in so this is improbable)
+// propagate up fail-loud.
+func readEmbeddedTierAgent(group, basename string) (string, error) {
+	primary := path.Join(agentBodyEmbeddedRoot, group, basename)
+	body, err := fs.ReadFile(templates.DefaultTemplateFS, primary)
+	if err == nil {
+		return string(body), nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("embedded primary read %q: %w", primary, err)
+	}
+
+	// Primary miss — fall back to till-gen unless group already is
+	// till-gen (no symmetric fallback).
+	if group == agentBodyFallbackGroup {
+		return "", fmt.Errorf("%w: agent_name lookup miss (group %q, basename %q)",
+			ErrAgentBodyNotFound, group, basename)
+	}
+
+	fallback := path.Join(agentBodyEmbeddedRoot, agentBodyFallbackGroup, basename)
+	body, err = fs.ReadFile(templates.DefaultTemplateFS, fallback)
+	if err == nil {
+		return string(body), nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("embedded fallback read %q: %w", fallback, err)
+	}
+
+	return "", fmt.Errorf("%w: agent_name lookup miss (group %q, basename %q, fallback %q)",
+		ErrAgentBodyNotFound, group, basename, fallback)
 }
 
 // mcpConfig is the JSON shape of <plugin>/.mcp.json per spawn architecture

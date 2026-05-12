@@ -771,3 +771,625 @@ func equalStringSlice(a, b []string) bool {
 	}
 	return true
 }
+
+// --- W3.D2: 3-tier agent-body resolver tests --------------------------------
+//
+// These tests exercise render.assembleAgentFileBody's 3-tier resolution path:
+// (1) project tier — <project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>
+// (2) user tier    — <user-home>/.tillsyn/agents/<group>/<basename>
+// (3) embedded tier — templates.DefaultTemplateFS via
+//                     builtin/agents/<group>/<basename> with cross-group
+//                     fallback to till-gen/<basename> on fs.ErrNotExist.
+//
+// The tests do NOT call Render() — they call the integration surface via
+// the existing Render() entrypoint when convenient (project tier + user tier
+// tests do this so we exercise the renderAgentFile signature change end-to-
+// end), but the cross-group fallback + ErrAgentBodyNotFound tests need direct
+// access to the rendered agent file's bytes. Both styles use the standard
+// Render() entry to keep tests black-box.
+//
+// `<group>` defaults to "till-go" when binding.SystemPromptTemplatePath is
+// empty (W3-FF5 LOCKED — `path.Dir`, NOT `filepath.Dir`, on the path).
+
+// agentTierProjectFixture writes a project-tier agent file at
+// <projectDir>/.tillsyn/agents/<basename> with the supplied sentinel
+// content.
+func agentTierProjectFixture(t *testing.T, projectDir, basename, content string) {
+	t.Helper()
+	dir := filepath.Join(projectDir, ".tillsyn", "agents")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("seed project-tier dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, basename), []byte(content), 0o600); err != nil {
+		t.Fatalf("seed project-tier file: %v", err)
+	}
+}
+
+// agentTierUserFixture writes a user-tier agent file at
+// $HOME/.tillsyn/agents/<group>/<basename> via t.Setenv("HOME", homeDir)
+// so os.UserHomeDir resolves to homeDir for the duration of the test.
+func agentTierUserFixture(t *testing.T, homeDir, group, basename, content string) {
+	t.Helper()
+	t.Setenv("HOME", homeDir)
+	dir := filepath.Join(homeDir, ".tillsyn", "agents", group)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("seed user-tier dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, basename), []byte(content), 0o600); err != nil {
+		t.Fatalf("seed user-tier file: %v", err)
+	}
+}
+
+// readRenderedAgentFile reads the rendered <bundle>/plugin/agents/<name>.md
+// file bytes after a successful Render() call.
+func readRenderedAgentFile(t *testing.T, bundleRoot, agentName string) string {
+	t.Helper()
+	p := filepath.Join(bundleRoot, "plugin", "agents", agentName+".md")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%s): %v", p, err)
+	}
+	return string(b)
+}
+
+// TestAssembleAgentFileBody_EmbeddedDefault asserts that with no project-tier
+// override, no user-tier override, and an empty SystemPromptTemplatePath, the
+// resolver falls all the way through to the embedded tier and returns the
+// content of builtin/agents/till-go/<AgentName>.md (the dogfood default group).
+func TestAssembleAgentFileBody_EmbeddedDefault(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used to neutralize HOME.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir) // empty user tier; no .tillsyn/agents subdir
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
+
+	// AgentName "go-builder-agent" maps to till-go/go-builder-agent.md
+	// (verified embedded at internal/templates/embed.go:98).
+	binding := dispatcher.BindingResolved{
+		AgentName: "go-builder-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+		// SystemPromptTemplatePath empty → group defaults to till-go.
+	}
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+	// The embedded placeholder carries the PLACEHOLDER marker on line 6.
+	if !strings.Contains(body, "# PLACEHOLDER") {
+		t.Errorf("embedded-tier body missing PLACEHOLDER marker\nbody:\n%s", body)
+	}
+	// Frontmatter from the embedded file must survive into the rendered
+	// output (D3 may later strip / inject; D2 emits verbatim).
+	if !strings.Contains(body, "name: ") {
+		t.Errorf("embedded-tier body missing frontmatter `name:` line\nbody:\n%s", body)
+	}
+}
+
+// TestAssembleAgentFileBody_UserOverride asserts the user tier wins over the
+// embedded tier when $HOME/.tillsyn/agents/<group>/<basename> exists.
+func TestAssembleAgentFileBody_UserOverride(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+
+	const sentinel = "SENTINEL_USER_TIER"
+	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
+		"---\nname: go-builder-agent\n---\n\n"+sentinel+"\n")
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "go-builder-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+	}
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+	if !strings.Contains(body, sentinel) {
+		t.Errorf("user-tier body missing %q sentinel\nbody:\n%s", sentinel, body)
+	}
+}
+
+// TestAssembleAgentFileBody_ProjectOverride asserts the project tier wins
+// over both the user tier and the embedded tier when
+// <project>/.tillsyn/agents/<basename> exists.
+func TestAssembleAgentFileBody_ProjectOverride(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+
+	// Plant the user-tier sentinel so we can confirm project tier wins.
+	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
+		"---\nname: go-builder-agent\n---\n\nSENTINEL_USER_TIER\n")
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir()
+
+	const projectSentinel = "SENTINEL_PROJECT_TIER"
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md",
+		"---\nname: go-builder-agent\n---\n\n"+projectSentinel+"\n")
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "go-builder-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+	}
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+	if !strings.Contains(body, projectSentinel) {
+		t.Errorf("project-tier body missing %q sentinel\nbody:\n%s", projectSentinel, body)
+	}
+	if strings.Contains(body, "SENTINEL_USER_TIER") {
+		t.Errorf("project-tier body unexpectedly contains user-tier sentinel "+
+			"(project tier should win)\nbody:\n%s", body)
+	}
+}
+
+// TestAssembleAgentFileBody_CrossGroupFallbackToTillGen asserts the W3-FF7
+// LOCKED cross-group fallback: when the primary embedded-tier lookup at
+// builtin/agents/<group>/<basename> misses with fs.ErrNotExist, the resolver
+// falls back to builtin/agents/till-gen/<basename>.
+//
+// AgentName "orchestrator-managed" with empty SystemPromptTemplatePath
+// resolves group "till-go" → builtin/agents/till-go/orchestrator-managed.md
+// MISS → fallback builtin/agents/till-gen/orchestrator-managed.md HIT.
+func TestAssembleAgentFileBody_CrossGroupFallbackToTillGen(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir) // empty user tier
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "orchestrator-managed",
+		CLIKind:   dispatcher.CLIKindClaude,
+		// Empty SystemPromptTemplatePath → group defaults to till-go.
+		// till-go/orchestrator-managed.md DOES NOT EXIST → fallback to
+		// till-gen/orchestrator-managed.md.
+	}
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+	// Cross-group fallback fired → till-gen/orchestrator-managed.md content.
+	if !strings.Contains(body, "orchestrator-managed coordination kinds") {
+		t.Errorf("cross-group fallback did not surface till-gen/orchestrator-managed.md content\nbody:\n%s", body)
+	}
+}
+
+// TestAssembleAgentFileBody_CrossGroupFallbackMissesBothGroups asserts that
+// when BOTH the primary group AND the till-gen fallback miss, the resolver
+// returns a wrapped ErrAgentBodyNotFound sentinel — Render's rollback then
+// runs and the partially-written bundle is cleaned up.
+func TestAssembleAgentFileBody_CrossGroupFallbackMissesBothGroups(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir) // empty user tier
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "nonexistent-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+		// Empty SystemPromptTemplatePath → group "till-go".
+		// Neither till-go/nonexistent-agent.md nor till-gen/nonexistent-agent.md
+		// exists in the embedded FS → ErrAgentBodyNotFound.
+	}
+
+	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil)
+	if err == nil {
+		t.Fatalf("Render() error = nil, want ErrAgentBodyNotFound")
+	}
+	if !errors.Is(err, render.ErrAgentBodyNotFound) {
+		t.Errorf("Render() error = %v, want errors.Is(ErrAgentBodyNotFound)", err)
+	}
+}
+
+// --- W3.D3: frontmatter strip-then-inject pipeline tests --------------------
+//
+// D3 layers a strip-then-inject pipeline on top of D2's 3-tier resolver:
+//
+//   1. Split the resolved body at the leading + trailing `---\n` delimiters
+//      to extract (frontmatter, postFrontmatter).
+//   2. Strip template-time frontmatter keys via config.StripFrontmatterKeys.
+//      Strip predicates (LOCKED):
+//        - stripModel = binding.Model != nil && *binding.Model != "" (W3-FF2).
+//        - stripTools = true ALWAYS (W3-FF12) — tool-gating keys are
+//          template-time only; runtime per-spawn injection is the sole
+//          authoritative source.
+//   3. Inject runtime per-spawn fields. When binding.ToolsAllowed is
+//      non-empty append `allowedTools: <comma-joined>`; same for
+//      binding.ToolsDisallowed.
+//   4. Re-concatenate `---\n` + stripped+injected frontmatter + `---\n` +
+//      postFrontmatter.
+//
+// The tests below seed user-tier agent files (so test fixture content is
+// controlled at runtime, not from embedded placeholders) and assert the
+// expected strip + inject outcome.
+
+// ptrString returns a pointer to the supplied string. Convenience helper for
+// strip-predicate test cases that need a non-nil *string.
+func ptrString(s string) *string {
+	return &s
+}
+
+// d3UserTierFrontmatter constructs an agent body with the supplied
+// frontmatter lines and a fixed body section. Test helper for D3 strip
+// tests so individual test cases focus on frontmatter shape.
+func d3UserTierFrontmatter(frontmatterLines string) string {
+	return "---\n" + frontmatterLines + "---\n\nbody-bytes-preserve-marker\n"
+}
+
+// TestAssembleAgentFileBody_FrontmatterStripModelOnAgentsTOMLSet asserts the
+// `model:` line is removed from the rendered frontmatter when the binding
+// carries a non-empty *Model — i.e. agents.toml's model field set.
+func TestAssembleAgentFileBody_FrontmatterStripModelOnAgentsTOMLSet(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+
+	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
+		d3UserTierFrontmatter("name: go-builder-agent\nmodel: opus\n"))
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir()
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "go-builder-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+		Model:     ptrString("sonnet"), // agents.toml SET model → strip.
+	}
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+	if strings.Contains(body, "model:") {
+		t.Errorf("rendered body unexpectedly contains `model:` line\nbody:\n%s", body)
+	}
+	// Post-frontmatter body bytes preserved.
+	if !strings.Contains(body, "body-bytes-preserve-marker") {
+		t.Errorf("rendered body lost post-frontmatter marker\nbody:\n%s", body)
+	}
+	// `name:` survives strip (not in strip universe).
+	if !strings.Contains(body, "name: go-builder-agent") {
+		t.Errorf("rendered body missing `name:` line\nbody:\n%s", body)
+	}
+}
+
+// TestAssembleAgentFileBody_FrontmatterStripToolsOnAgentsTOMLSet asserts the
+// `tools:` + `allowedTools:` + `disallowedTools:` lines are removed from the
+// rendered frontmatter (strip universe per frontmatter.go:51), and then the
+// runtime per-spawn `allowedTools:` line is re-injected from binding.
+func TestAssembleAgentFileBody_FrontmatterStripToolsOnAgentsTOMLSet(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+
+	// Stale template-time tool-gating keys land in the user-tier fixture
+	// frontmatter — strip must remove them all so the runtime inject step
+	// is the sole source.
+	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
+		d3UserTierFrontmatter(
+			"name: go-builder-agent\n"+
+				"tools: Read, Bash\n"+
+				"allowedTools: Read\n"+
+				"disallowedTools: WebFetch\n"))
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir()
+
+	binding := dispatcher.BindingResolved{
+		AgentName:    "go-builder-agent",
+		CLIKind:      dispatcher.CLIKindClaude,
+		ToolsAllowed: []string{"Read"}, // runtime per-spawn value.
+	}
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+	// Stale template-time keys all stripped.
+	if strings.Contains(body, "tools: Read, Bash") {
+		t.Errorf("rendered body unexpectedly contains stale `tools: Read, Bash` line\nbody:\n%s", body)
+	}
+	// `disallowedTools:` from disk frontmatter was stripped; binding has
+	// no ToolsDisallowed so no inject either → no disallowedTools line.
+	if strings.Contains(body, "disallowedTools:") {
+		t.Errorf("rendered body unexpectedly contains `disallowedTools:` line "+
+			"(binding empty + strip ran)\nbody:\n%s", body)
+	}
+	// Runtime allowedTools injected from binding (NOT the stale disk
+	// value). Match the exact comma-joined form so the inject path is
+	// verified rather than the stripped-then-passed-through accident.
+	if !strings.Contains(body, "allowedTools: Read") {
+		t.Errorf("rendered body missing injected `allowedTools: Read`\nbody:\n%s", body)
+	}
+	// `name:` survives.
+	if !strings.Contains(body, "name: go-builder-agent") {
+		t.Errorf("rendered body missing `name:` line\nbody:\n%s", body)
+	}
+}
+
+// --- W3.D2 Round 2: W3-D23-FF1 path-traversal regression -------------------
+//
+// build-QA-falsification on W3.D2 found a HIGH-severity path-traversal vector
+// via an attacker-controllable `binding.SystemPromptTemplatePath` value:
+//
+//   binding.SystemPromptTemplatePath = "till-go/../../../../../../etc/passwd"
+//
+// On the attack input, path.Base returns "passwd" (passes the existing
+// validateAgentBasename leaf check) and path.Dir returns
+// "../../../../etc" (UNVALIDATED prior to round-2). The user tier then calls
+// filepath.Join(home, ".tillsyn/agents", "../../../../etc", "passwd")
+// which filepath.Clean cancels down to /etc/passwd, and os.ReadFile
+// succeeds when /etc/passwd exists.
+//
+// Threat model: today bounded (SystemPromptTemplatePath comes from repo-
+// owned till-*.toml templates), but becomes attacker-controllable as team-
+// aware architecture matures (per memory feedback_prompt_injection_team.md
+// + project_team_aware_architecture.md).
+//
+// Round-2 fix: introduce a full-path validator (validateAgentTemplatePath)
+// that runs at the top of assembleAgentFileBody — BEFORE path.Dir / path.Base
+// derivation — and rejects:
+//   - absolute paths (starts with "/")
+//   - any segment equal to ".."
+//   - empty segments (catches "//foo" cases)
+//
+// Empty SystemPromptTemplatePath is STILL allowed (the "use embedded
+// till-go default" sentinel per W3-FF5 LOCKED).
+
+// TestAssembleAgentFileBody_RejectsPathTraversalInGroup pins the exact
+// W3-D23-FF1 attack string and asserts the new validator rejects it via
+// the new ErrInvalidAgentTemplatePath sentinel.
+//
+// Positive control: os.Stat("/etc/passwd") is checked first; if the file
+// is absent on the host (rare on POSIX, expected on some sandboxes), the
+// test t.Skip's because the original attack only succeeds when the
+// traversal target actually exists — the assertion would be moot on a
+// host lacking /etc/passwd.
+func TestAssembleAgentFileBody_RejectsPathTraversalInGroup(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	if _, err := os.Stat("/etc/passwd"); err != nil {
+		t.Skipf("/etc/passwd unavailable on this host (%v); the W3-D23-FF1 attack requires the traversal target to exist", err)
+	}
+
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir) // empty user tier
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "go-builder-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+		// W3-D23-FF1 attack string verbatim — the path used by the
+		// build-QA-falsification finding. path.Base="passwd",
+		// path.Dir="till-go/../../../../../../etc". Without the new
+		// validator the user-tier filepath.Join collapses to
+		// /etc/passwd and os.ReadFile succeeds.
+		SystemPromptTemplatePath: "till-go/../../../../../../etc/passwd",
+	}
+
+	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil)
+	if err == nil {
+		t.Fatalf("Render() error = nil, want ErrInvalidAgentTemplatePath (W3-D23-FF1 traversal must be rejected)")
+	}
+	if !errors.Is(err, render.ErrInvalidAgentTemplatePath) {
+		t.Errorf("Render() error = %v, want errors.Is(ErrInvalidAgentTemplatePath)", err)
+	}
+
+	// Defense-in-depth assertion: the rendered agent file MUST NOT exist
+	// on disk after the rejection (the rollback wiped it). If a future
+	// regression leaks the /etc/passwd content into the agent body, this
+	// catches it independently of the sentinel-error check.
+	agentPath := filepath.Join(bundle.Paths.Root, "plugin", "agents", binding.AgentName+".md")
+	if _, statErr := os.Stat(agentPath); !errors.Is(statErr, os.ErrNotExist) {
+		body, _ := os.ReadFile(agentPath)
+		t.Errorf("rejected-traversal agent file unexpectedly present at %q\nbody:\n%s", agentPath, body)
+	}
+}
+
+// TestAssembleAgentFileBody_RejectsPathTraversalSiblingCases covers the
+// adjacent attack vectors the validator's reject-rules also must block:
+// absolute paths, bare ".." segments, and traversal segments at non-leaf
+// positions.
+func TestAssembleAgentFileBody_RejectsPathTraversalSiblingCases(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		// Absolute path — would read directly from the filesystem root
+		// at the user tier (filepath.Join discards earlier segments
+		// when a later segment starts with "/" on POSIX).
+		{"absolute_etc_passwd", "/etc/passwd"},
+		// Bare ".." at end of path — path.Base returns ".." (also
+		// caught by the existing basename validator, but the
+		// full-path validator should fail-first so the error sentinel
+		// is consistent across all traversal shapes).
+		{"trailing_dotdot", "till-go/.."},
+		// ".." segment positioned at leaf with a non-".." follow-on
+		// would not be reachable here (the leaf IS the last segment),
+		// but a ".." sandwiched mid-path is — exercise that.
+		{"mid_path_dotdot", "till-go/../passwd"},
+		// Empty intermediate segment via consecutive slashes — should
+		// be rejected as the validator's empty-segment rule.
+		{"double_slash", "till-go//passwd"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			// Cannot run t.Parallel — t.Setenv used by sibling
+			// fixtures and we want HOME isolated per subtest.
+			bundle := fixtureBundle(t)
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+
+			project := fixtureProject()
+			project.RepoPrimaryWorktree = t.TempDir()
+
+			binding := dispatcher.BindingResolved{
+				AgentName:                "go-builder-agent",
+				CLIKind:                  dispatcher.CLIKindClaude,
+				SystemPromptTemplatePath: tc.path,
+			}
+
+			_, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil)
+			if err == nil {
+				t.Fatalf("Render() error = nil for %q, want ErrInvalidAgentTemplatePath", tc.path)
+			}
+			if !errors.Is(err, render.ErrInvalidAgentTemplatePath) {
+				t.Errorf("Render() error = %v for %q, want errors.Is(ErrInvalidAgentTemplatePath)", err, tc.path)
+			}
+		})
+	}
+}
+
+// TestAssembleAgentFileBody_AcceptsLegitimateTemplatePath is the positive
+// control: a legitimate `till-<group>/<file>.md` path still resolves
+// without the new validator rejecting it. Ensures the round-2 defense
+// does not over-reject and break the W3-FF5 LOCKED dogfood path.
+func TestAssembleAgentFileBody_AcceptsLegitimateTemplatePath(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir) // empty user tier
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "go-builder-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+		// Legitimate canonical form: `till-<group>/<basename>.md`.
+		// Resolves via embedded-tier till-go/go-builder-agent.md.
+		SystemPromptTemplatePath: "till-go/go-builder-agent.md",
+	}
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil (legitimate path must not be rejected)", err)
+	}
+
+	// Agent file rendered successfully.
+	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+	if body == "" {
+		t.Errorf("rendered agent file is empty; legitimate path should produce non-empty body")
+	}
+}
+
+// TestAssembleAgentFileBody_EmptyPathStillRoutesToTillGoDefault asserts
+// the empty-SystemPromptTemplatePath sentinel (W3-FF5 LOCKED — use
+// embedded till-go default) survives the round-2 validator addition.
+// The validator MUST NOT reject the empty-string path; the empty branch
+// short-circuits BEFORE the validator runs.
+func TestAssembleAgentFileBody_EmptyPathStillRoutesToTillGoDefault(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir) // empty user tier
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "go-builder-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+		// Empty path → W3-FF5 LOCKED till-go default.
+	}
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil (empty path must route to till-go default, not reject)", err)
+	}
+
+	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+	// The embedded placeholder for go-builder-agent carries the
+	// PLACEHOLDER marker — same assertion shape as
+	// TestAssembleAgentFileBody_EmbeddedDefault.
+	if !strings.Contains(body, "# PLACEHOLDER") {
+		t.Errorf("empty-path render did not surface till-go default body\nbody:\n%s", body)
+	}
+}
+
+// TestAssembleAgentFileBody_FrontmatterPreservedWhenAgentsTOMLAbsent asserts
+// the model-not-overridden + tool-gates-empty path. With binding.Model =
+// ptr("") AND binding.ToolsAllowed / ToolsDisallowed nil:
+//   - stripModel is FALSE (predicate is `*Model != ""` per W3-FF2), so
+//     embedded `model:` is preserved through StripFrontmatterKeys.
+//   - stripTools is TRUE ALWAYS (W3-FF12), so `tools:` is stripped.
+//   - No inject (binding tool-gate slices empty).
+//
+// Test name retains "Preserved" framing for symmetry with the strip tests;
+// what's preserved is BODY bytes + the `model:` line (NOT the `tools:` line —
+// strip is unconditional per W3-FF12).
+func TestAssembleAgentFileBody_FrontmatterPreservedWhenAgentsTOMLAbsent(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used.
+	bundle := fixtureBundle(t)
+	homeDir := t.TempDir()
+
+	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
+		d3UserTierFrontmatter(
+			"name: go-builder-agent\n"+
+				"model: opus\n"+
+				"tools: Read, Bash\n"))
+
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir()
+
+	binding := dispatcher.BindingResolved{
+		AgentName:       "go-builder-agent",
+		CLIKind:         dispatcher.CLIKindClaude,
+		Model:           ptrString(""), // resolver's "absent" representation per W3-FF2.
+		ToolsAllowed:    nil,
+		ToolsDisallowed: nil,
+	}
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
+	}
+
+	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+	// model: line preserved (stripModel false — predicate `*Model != ""`).
+	if !strings.Contains(body, "model: opus") {
+		t.Errorf("rendered body missing `model: opus` line (stripModel false path)\nbody:\n%s", body)
+	}
+	// tools: line stripped (stripTools always true per W3-FF12).
+	if strings.Contains(body, "tools: Read, Bash") {
+		t.Errorf("rendered body unexpectedly contains stale `tools:` line "+
+			"(stripTools is unconditional per W3-FF12)\nbody:\n%s", body)
+	}
+	// Empty binding tool-gates skip injection — no allowedTools/disallowedTools.
+	if strings.Contains(body, "allowedTools:") {
+		t.Errorf("rendered body unexpectedly contains `allowedTools:` line "+
+			"(binding empty → no injection)\nbody:\n%s", body)
+	}
+	if strings.Contains(body, "disallowedTools:") {
+		t.Errorf("rendered body unexpectedly contains `disallowedTools:` line "+
+			"(binding empty → no injection)\nbody:\n%s", body)
+	}
+	// Body bytes preserved.
+	if !strings.Contains(body, "body-bytes-preserve-marker") {
+		t.Errorf("rendered body lost post-frontmatter marker\nbody:\n%s", body)
+	}
+}

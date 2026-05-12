@@ -92,7 +92,7 @@ Tests are co-located with each droplet's production file. D1 appends to `cli_ada
 
 ### Droplet 4c.6.W3.D2 — 3-tier agent-body resolver in `render.assembleAgentFileBody`
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/app/dispatcher/cli_claude/render/render.go` (MODIFY — replace the F.7.3b stub at `assembleAgentFileBody` lines 340-364 with a 3-tier resolver: project `<project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>` → user `~/.tillsyn/agents/<group>/<basename>` → embedded `builtin/agents/till-<group>/<name>.md` consumed via the EXISTING `templates.DefaultTemplateFS` at `internal/templates/embed.go:104` — ROUND-2 W3-FF1 fix: render.go MUST NOT declare its own `//go:embed builtin/agents` directive because Go forbids parent-traversal in embed patterns and `internal/templates/builtin/agents/` is not a child of the render package directory; render.go imports `github.com/evanmschultz/tillsyn/internal/templates` and reads via `fs.ReadFile(templates.DefaultTemplateFS, "builtin/agents/<group>/<basename>")`; pass `project domain.Project` through `renderAgentFile` so the resolver can read the project worktree path), `internal/app/dispatcher/cli_claude/render/render_test.go` (MODIFY — append `TestAssembleAgentFileBody_EmbeddedDefault`, `TestAssembleAgentFileBody_UserOverride`, `TestAssembleAgentFileBody_ProjectOverride` exercising the 3-tier priority order via tempdir fixtures), and ship a tiny extension to the existing render call wiring at `render.go:160-163` (`renderAgentFile(bundle, binding)` call site) to thread `project` through — a 1-line signature change at the function-call layer.
 - **Packages:** `internal/app/dispatcher/cli_claude/render`.
@@ -137,7 +137,7 @@ Tests are co-located with each droplet's production file. D1 appends to `cli_ada
 
 ### Droplet 4c.6.W3.D3 — Frontmatter strip wiring at render time
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/app/dispatcher/cli_claude/render/render.go` (MODIFY — `assembleAgentFileBody` calls `config.StripFrontmatterKeys(frontmatter, stripModel, stripTools)` after D2's body resolve; computes `stripModel` from `binding.Model != nil && *binding.Model != ""` (ROUND-2 W3-FF2) and sets `stripTools = true` ALWAYS (ROUND-3 W3-FF12 fix — tool-gating keys `tools:` / `allowedTools:` / `disallowedTools:` are template-time only; runtime per-spawn injection is the sole authoritative source, so strip MUST be unconditional to prevent a future-placeholder-author leaving stale `allowedTools:` in disk frontmatter that would survive into the rendered file) per `SKETCH.md` § 4.4 + `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` § D.2; needs to split the resolved body into (frontmatter, body) at the leading + trailing `---\n` delimiters before calling the helper, then re-concatenate after strip), `internal/app/dispatcher/cli_claude/render/render_test.go` (MODIFY — append `TestAssembleAgentFileBody_FrontmatterStripModelOnAgentsTOMLSet`, `TestAssembleAgentFileBody_FrontmatterStripToolsOnAgentsTOMLSet`, `TestAssembleAgentFileBody_FrontmatterPreservedWhenAgentsTOMLAbsent` exercising the strip-condition matrix).
 - **Packages:** `internal/app/dispatcher/cli_claude/render`.
