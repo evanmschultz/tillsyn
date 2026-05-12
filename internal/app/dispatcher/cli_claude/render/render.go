@@ -517,22 +517,40 @@ func renderPluginManifest(bundle dispatcher.Bundle) error {
 	return os.WriteFile(filepath.Join(dir, "plugin.json"), payload, 0o600)
 }
 
-// renderAgentFile writes <plugin>/agents/<name>.md with the resolved
-// agent body from the W3.D2 3-tier resolver. The body is emitted verbatim
-// to disk — frontmatter splitting and per-spawn tool-gating frontmatter
-// injection are D3's concern (the strip-then-inject pipeline layers ON
-// TOP of D2's output).
+// renderAgentFile writes <plugin>/agents/<name>.md — the SOLE agent file
+// Claude Code consults for the spawned subagent under the argv Tillsyn
+// emits. Per RESEARCH/ISOLATION_ENFORCEMENT_FIX.md § A.9 + § C.5, Tillsyn's
+// argv ships `--bare`, which collapses the general Claude Code "two paths"
+// plugin loader model: Path B (system-installed plugins at
+// `~/.claude/plugins/cache/...` plus the priority-table fallback to
+// `~/.claude/agents/<name>.md` / `<cwd>/.claude/agents/<name>.md`) is
+// disabled by Claude Code itself under `--bare`. Path A (the per-spawn
+// bundle plugin opted in via `--plugin-dir <bundle>/plugin`) is the only
+// surviving source. The pre-W3 F.7.3b stub claim that
+// "Behavior loaded from the canonical ... template at the system-installed
+// plugin path" — verbatim in the body sentence the stub used to emit at
+// disk-write time — was FACTUALLY WRONG under the actual argv and is
+// removed by W3.D2. This doc-comment records the post-W3 truth so the
+// next reader cannot regress on it.
 //
-// The `project` parameter feeds the project-tier branch of the resolver
-// (`<project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>`). Per the
-// W3-FF5 + W3-FF7 LOCKED contracts the resolver walks the tiers in this
-// priority order:
+// The body content comes from the W3.D2 3-tier resolver (see
+// `assembleAgentFileBody` for the resolver itself, and for the W3.D3
+// strip-then-inject pipeline that layers ON TOP of the resolved body
+// before disk write). The `project` parameter feeds the project tier of
+// the resolver (`<project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>`).
+// Per the W3-FF5 + W3-FF7 LOCKED contracts the resolver walks the tiers in
+// this priority order:
 //
 //  1. project tier — `<project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>`
 //  2. user tier    — `<user-home>/.tillsyn/agents/<group>/<basename>`
 //  3. embedded tier — `templates.DefaultTemplateFS` via
 //     `builtin/agents/<group>/<basename>` with cross-group fallback to
 //     `builtin/agents/till-gen/<basename>` on fs.ErrNotExist.
+//
+// The tier-1 / tier-2 override paths are deliberately Tillsyn-owned
+// (`.tillsyn/agents/...`), NOT `~/.claude/agents/...`. The latter is what
+// `--bare` collapses; the former lives under the per-spawn bundle's
+// resolver scope and is the only path the rendered bundle reads from.
 //
 // `<group>` derivation (W3-FF5 LOCKED):
 //
@@ -556,6 +574,25 @@ func renderPluginManifest(bundle dispatcher.Bundle) error {
 //
 // On a 3-tier exhaustion the resolver returns ErrAgentBodyNotFound wrapped
 // with the failing AgentName + group + basename context.
+//
+// Future evolution — historical-breadcrumb (W3-FF11 LOCKED 3-landing
+// enumeration; retained as architectural-history breadcrumb until the
+// next refactor):
+//
+//  1. Drop 4c F.7.2 landed the `templates.AgentBinding.SystemPromptTemplatePath`
+//     schema field at `internal/templates/schema.go:573` with validator
+//     at `internal/templates/load.go:1031-1055`.
+//  2. Drop 4c.6 W3.D1 wired the field through
+//     `dispatcher.BindingResolved.SystemPromptTemplatePath` in
+//     `cli_adapter.go` plus the populator in `binding_resolved.go`.
+//  3. Drop 4c.6 W3.D2 implemented the 3-tier render-time resolver in
+//     `assembleAgentFileBody` consuming `templates.DefaultTemplateFS`
+//     with cross-group till-gen fallback.
+//
+// The collapsed round-2 form ("F.7.2 + 4c.6 W3.D2 landed the field-and-
+// resolver-wired version") elided the W3.D1 plumbing step; the expanded
+// 3-landing form keeps the historical sequence diagnosable from the
+// doc-comment alone.
 func renderAgentFile(bundle dispatcher.Bundle, project domain.Project, binding dispatcher.BindingResolved) error {
 	dir := filepath.Join(bundle.Paths.Root, pluginSubdir, agentsSubdir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
