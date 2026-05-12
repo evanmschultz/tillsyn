@@ -1467,3 +1467,153 @@ All other 19 attack families (FF2 through FF20) refute cleanly: D3's strip-then-
 ### Hylla Feedback
 
 N/A — task touched only Go files in `internal/app/dispatcher/cli_claude/render/` whose changes landed within the current uncommitted+just-committed window. Hylla's last ingest for `github.com/evanmschultz/tillsyn@main` predates W3.D2's commit (`f26d2f1` and earlier per `git log`), so the symbols under attack (`ErrAgentBodyNotFound`, `resolveAgentGroup`, `readUserTierAgent`, `validateAgentBasename`, `stripAndInjectAgentFrontmatter`) are not in the index. The falsification relied entirely on `Read` against `render.go`, `render_test.go`, `binding_resolved.go`, `config/frontmatter.go`, `internal/templates/embed.go`, and `internal/templates/builtin/agents/till-gen/orchestrator-managed.md` + `till-go/go-builder-agent.md`. No fallback was attempted via Hylla because the staleness window is structurally guaranteed (the work being attacked has not yet hit a drop-end ingest). Not a Hylla bug — design-as-intended pre-cascade behavior. No miss to record.
+
+---
+
+## Droplet 4c.6.W3.D2 — Round 2
+
+**Reviewer:** go-qa-falsification-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W3.D2 — 3-tier agent-body resolver` — round-2 falsification on the W3-D23-FF1 HIGH security fix committed at `d671b91`.
+
+**Scope:** Round-2 falsification re-attacks the NEW validator (`validateAgentTemplatePath` + `ErrInvalidAgentTemplatePath` + the call-site wiring in `assembleAgentFileBody`). Goal: produce another counterexample OR prove the validator's narrowing decisions are sound under the documented `path` / `filepath.Clean` semantics.
+
+### Findings
+
+#### W3-D2R2-FF1 [LOW / narrowing — three-dot and four-dot segments accepted by validator] — REFUTED
+
+- **Attack:** the validator narrows `..` rejection to EXACT-segment equality (per builder's worklog rationale + the validator's `seg == ".."` predicate). What about `...` (three-dot), `....` (four-dot), and mixed-dot variants? Do these segments either (a) bypass the validator AND collapse under `filepath.Clean` to reach an out-of-sandbox path, or (b) bypass the validator but route to a legitimate-but-attacker-chosen filesystem location?
+- **Method:** `go doc path Clean` (semantics confirmed verbatim) + `go doc filepath Clean` + mental execution of the validator + `resolveAgentBasename` + `resolveAgentGroup` + `readUserTierAgent` against each input.
+- **Trace — three cases:**
+  1. `SystemPromptTemplatePath = "till-go/foo/..."` — validator splits → `["till-go", "foo", "..."]`. Segment `"..."` is NOT empty, NOT `".."` → validator PASSES. Now `resolveAgentBasename`: `path.Base("till-go/foo/...")` → `"..."`. `validateAgentBasename("...")` checks `strings.Contains(basename, "..")` → TRUE (substring `"..."` contains `".."` at positions 0-1) → REJECTED via `ErrInvalidRenderInput` at the basename step. Defense holds at layer 2.
+  2. `SystemPromptTemplatePath = "till-go/.../passwd"` — validator passes (segment `"..."` ≠ `".."`). `path.Base` → `"passwd"`, `path.Dir` → `path.Clean("till-go/...")` → `"till-go/..."` (Clean rule 2 eliminates only `.` elements, not `...`). Group = `"till-go/..."`. User tier: `filepath.Join(home, ".tillsyn/agents", "till-go/...", "passwd")` → `<home>/.tillsyn/agents/till-go/.../passwd`. `filepath.Clean` does NOT collapse `...` (Clean rule 2 is for `.` only, rule 3/4 are for `..` only). Result is a literal directory named three dots. `os.ReadFile` → `ErrNotExist` → user tier returns `(false, nil)` → fall through to embedded tier → embedded miss → `ErrAgentBodyNotFound`. NO host-file leak.
+  3. `SystemPromptTemplatePath = "till-go/foo/...."` — same analysis. `"...."` ≠ `".."` and is not eliminated by `Clean`. Either rejected by basename validator (if leaf) or routes to nonexistent literal directory `"...."`.
+- **Result — REFUTED.** The narrowing is sound. `path.Clean`'s documented rules (per `go doc path Clean`) eliminate ONLY `.` (rule 2) and `..` (rules 3-4) elements. Any segment with 3+ dots is a literal directory name, NOT collapsed. The basename validator's `strings.Contains(basename, "..")` substring check catches `"..."` and `"...."` as leaves; mid-path `"..."` segments route to nonexistent directories and ENOENT-fall-through. No host-file read.
+
+#### W3-D2R2-FF2 [LOW / narrowing — `..foo` and `foo..bar` substring segments] — REFUTED
+
+- **Attack:** the validator's narrowing rationale explicitly preserves segments like `..foo` (legitimate dotfile-like name). Confirm `filepath.Clean` does not collapse `..foo` or `foo..bar` under any code path that would reach the validator-accepted shape.
+- **Method:** `go doc path Clean` (rule 3: "Eliminate each inner `..` path name element" — requires EXACT segment equality to `..`, not substring) + manual trace.
+- **Trace:** `SystemPromptTemplatePath = "till-go/..foo/passwd"`. Validator splits → `["till-go", "..foo", "passwd"]`. `"..foo"` ≠ `".."` → PASSES. `path.Base` → `"passwd"`, `path.Dir` → `path.Clean("till-go/..foo")` → `"till-go/..foo"` (Clean does NOT collapse `..foo` — only exact `..` segments are collapsed per the documented rule). Group = `"till-go/..foo"`. User tier: `filepath.Join(home, ".tillsyn/agents", "till-go/..foo", "passwd")` → `<home>/.tillsyn/agents/till-go/..foo/passwd`. ENOENT on a real host (no such literal directory). Fall through to embedded tier → miss → `ErrAgentBodyNotFound`. No host-file leak.
+- **Result — REFUTED.** The narrowing rationale matches `path.Clean`'s documented semantics verbatim. `..foo` and `foo..bar` are literal directory names under both `path.Clean` and `filepath.Clean`. The narrowing does not create a bypass.
+
+#### W3-D2R2-FF3 [LOW / TrimSpace short-circuit — whitespace-only path bypasses validator] — REFUTED
+
+- **Attack:** `assembleAgentFileBody` short-circuits the validator when `strings.TrimSpace(binding.SystemPromptTemplatePath) == ""`. A whitespace-only value (e.g. `"   "`) bypasses the validator AND falls into the empty-path branch. Does the empty-path branch open any traversal surface?
+- **Method:** Trace the empty-path branch through `resolveAgentBasename` (`render.go:599-611`) and `resolveAgentGroup` (`render.go:690-697`).
+- **Trace:** `binding.SystemPromptTemplatePath = "   "`. `strings.TrimSpace(...) == ""` → validator SKIPPED. `resolveAgentBasename`: `strings.TrimSpace(trimmed) == ""` (`trimmed = "   "`, TrimSpace returns `""`) → falls into the empty branch → `basename = binding.AgentName + ".md"` = `"go-builder-agent.md"` (or whatever AgentName carries). AgentName is already validated upstream in `Render` for path separators (`render.go:219-222`). `resolveAgentGroup`: same TrimSpace check → empty → returns `agentBodyDefaultGroup` = `"till-go"`. Behavior is byte-identical to `binding.SystemPromptTemplatePath = ""`. No traversal surface — group and basename are now derived from the dogfood defaults and the already-validated AgentName.
+- **Result — REFUTED.** Whitespace-only paths normalize to the empty-path branch via two consistent TrimSpace checks. The dogfood defaults (`till-go` + AgentName-derived basename) are within the sandbox. No bypass. The TrimSpace short-circuit is consistent, not a vulnerability.
+
+#### W3-D2R2-FF4 [LOW / dot segments — `.` segment accepted by validator] — REFUTED
+
+- **Attack:** the validator rejects `..` and empty segments but does NOT reject `.` (single-dot, current-directory). A `.` segment is legitimate under `path` semantics. Confirm the `.` segment never produces a traversal under `filepath.Clean`.
+- **Method:** `go doc path Clean` rule 2 ("Eliminate each `.` path name element") + `go doc filepath Clean` rule 2 (identical) + trace.
+- **Trace:** `SystemPromptTemplatePath = "till-go/./passwd"`. Validator accepts (`"."` ≠ `""`, `"."` ≠ `".."`). `path.Base("till-go/./passwd")` → `path.Base(path.Clean("till-go/./passwd"))` = `path.Base("till-go/passwd")` = `"passwd"`. `path.Dir("till-go/./passwd")` = `path.Clean("till-go/.")` = `"till-go"` (`.` eliminated). Group = `"till-go"` — legitimate dogfood group. User tier: `<home>/.tillsyn/agents/till-go/passwd` — within sandbox. Reads via the legitimate user-tier path. No traversal.
+- **Result — REFUTED.** `.` segments are eliminated by `Clean` (`path` and `filepath` both follow the same rule per their docs) and route to a legitimate in-sandbox path. The validator's choice to not reject `.` is correct under the documented semantics.
+
+#### W3-D2R2-FF5 [LOW / symlink traversal — out-of-band attack vector] — REFUTED
+
+- **Attack:** the validator is purely lexical (operates on the STRING). If `<home>/.tillsyn/agents/till-go/` is itself a symlink pointing to `/etc/`, then a fully-validated input like `SystemPromptTemplatePath = "till-go/passwd"` would have `os.ReadFile` follow the symlink and read `/etc/passwd`. Is this a falsification of the validator's security claim?
+- **Method:** Threat model audit. The attack requires the attacker to have already-existing write access to the user's `~/.tillsyn/agents/` tree to plant the symlink. The validator's documented scope (per its doc-comment) is "defense against parent-traversal" + "absolute paths" — NOT "defense against pre-positioned symlinks in the user's own home directory."
+- **Trace:** If attacker has write access to `~/.tillsyn/agents/`, they can also write `~/.tillsyn/agents/till-go/go-builder-agent.md` with arbitrary content directly — no symlink trick needed, the user-tier hit succeeds with attacker-content. Symlink doesn't expand the attack surface beyond what direct write already grants.
+- **Result — REFUTED as validator-falsification.** Symlink resolution is a filesystem-layer concern. The validator's threat model (per its doc-comment) is "attacker-controllable `binding.SystemPromptTemplatePath` values" — the validator successfully prevents `SystemPromptTemplatePath` from escaping the sandbox. A pre-existing symlink inside the user-owned sandbox is a separate threat-model class (host-compromise / chain-of-trust on the user's own home directory) that no string-validator can address. The W3-D23-FF1 fix was scoped to the SystemPromptTemplatePath surface — the validator achieves what it documents. **Not a counterexample.**
+
+#### W3-D2R2-FF6 [LOW / wrap-chain — sentinel survives the double wrap through Render] — REFUTED
+
+- **Attack:** the validator's error is wrapped at `assembleAgentFileBody` (`fmt.Errorf("%w: %q: %s", ErrInvalidAgentTemplatePath, trimmed, err.Error())`) and then wrapped AGAIN at `Render` (`fmt.Errorf("render: agent file: %w", err)` at `render.go:243`). Confirm `errors.Is(returnedErr, ErrInvalidAgentTemplatePath)` survives both wraps.
+- **Method:** Read `render.go:230-243` (`renderAgentFile` returns wrapped as `"render: agent file: %w"`). Read `render.go:476-487` (`assembleAgentFileBody` returns `fmt.Errorf("%w: %q: %s", ErrInvalidAgentTemplatePath, ...)`). Read the test `TestAssembleAgentFileBody_RejectsPathTraversalInGroup` (`render_test.go:1195-1201`) which asserts `errors.Is(err, render.ErrInvalidAgentTemplatePath)`.
+- **Trace:** Both wraps use `%w`. `errors.Is` traverses the chain via `Unwrap` until it matches the sentinel. Test passes per builder's `mage testFunc` GREEN. `mage ci` GREEN confirms full-suite preservation.
+- **Result — REFUTED.** Wrap chain is `%w`-correct at both levels. Sentinel detection survives.
+
+#### W3-D2R2-FF7 [LOW / backslash defense — defense-in-depth for Windows-host adopter] — REFUTED
+
+- **Attack:** the validator rejects `\` anywhere in the path. On macOS/Linux, `filepath.Join` treats `\` as a literal byte (NOT a separator), so backslash injection has no traversal effect on POSIX hosts. Is the backslash rule premature / over-rejecting / YAGNI?
+- **Method:** Read the validator (`render.go:649-651`). Read `go doc filepath Join` ("separating them with an OS specific Separator"). On Windows, `filepath.Separator == '\\'`, so a backslash IS a separator on that platform.
+- **Trace:** On Windows, `binding.SystemPromptTemplatePath = "till-go\\..\\..\\..\\etc\\passwd"` would have `filepath.Join` treat `\` as a separator, and `filepath.Clean` would collapse the `..` segments — opening the same traversal surface that the slash-based attack opens on POSIX. The backslash defense closes that cross-platform port preemptively.
+- **Result — REFUTED.** Backslash defense is defense-in-depth that closes the Windows-port traversal surface. NOT over-rejection because no legitimate `binding.SystemPromptTemplatePath` value should ever contain `\` (the W3-FF5 LOCKED contract uses slash exclusively for embed.FS path conformance). Per builder's worklog: "the canonical form per W3-FF5 LOCKED is slash-separated" — correct.
+
+#### W3-D2R2-FF8 [LOW / empty-trailing-segment rejection — `till-go/` rejected] — REFUTED
+
+- **Attack:** `SystemPromptTemplatePath = "till-go/"` produces `strings.Split("till-go/", "/")` = `["till-go", ""]`. Empty trailing segment → REJECTED by validator. But `path.Base("till-go/")` would return `"till-go"` (per `go doc path Base`: "Trailing slashes are removed before extracting the last element"). Is the rejection over-rejecting a legitimate directory-style input?
+- **Method:** Read `go doc path Base`. Trace acceptance criteria: `SystemPromptTemplatePath` is documented as a path to a file (`till-go/go-builder-agent.md` per the canonical positive control), NOT a directory.
+- **Trace:** A `binding.SystemPromptTemplatePath = "till-go/"` value is semantically incoherent (you can't read a directory as an agent body). The validator's rejection is correct — it prevents a confusing failure-mode downstream where the resolver would silently use the basename `"till-go"` as the agent file name and route to a nonexistent file.
+- **Result — REFUTED.** Empty-trailing-segment rejection is correct. Not over-rejecting.
+
+#### W3-D2R2-FF9 [LOW / project-tier scope — group still unused at project tier] — REFUTED
+
+- **Attack:** confirm the post-round-2 codepath does NOT introduce any usage of the unvalidated-anywhere-else `<group>` at the project tier. The W3-D23-FF1 finding (per its FF12 sub-bullet) noted project tier is immune because group is unused there.
+- **Method:** Re-read `readProjectTierAgent` (`render.go:707-720`) post-round-2.
+- **Trace:** `filepath.Join(projectWorktree, projectAgentsSubdir, basename)` — three args, NO group component. Project tier remains group-immune. Round-2 changes touched only `assembleAgentFileBody` entry and the validator helper; project tier signature unchanged.
+- **Result — REFUTED.** Project-tier scope is preserved. The validator improvement is user-tier-focused, which matches the W3-D23-FF1 vector.
+
+#### W3-D2R2-FF10 [HIGH-tier gate / build — `mage ci` post-fix] — REFUTED
+
+- **Attack:** verify the round-2 fix does not regress any of the 3036 tests across the 25 packages, especially the render package's 38 tests (per builder's worklog).
+- **Method:** Run `mage ci` from the project worktree.
+- **Trace:** Full `mage ci` invocation. Output captured below.
+- **Result — REFUTED — `mage ci` GREEN.**
+
+```
+[SUCCESS] All tests passed
+  3036 tests passed across 25 packages.
+
+[SUCCESS] Coverage threshold met
+  All packages are at or above 70.0% coverage.
+  Render package: 81.3%.
+
+Build
+[SUCCESS] Built till from ./cmd/till
+```
+
+Round-1's report cited 3028 tests at 79.3% render coverage; round-2 lands at 3036 tests at 81.3% render coverage. The delta (+8 tests, +2.0% coverage) is consistent with the 4 new regression tests including 4 sibling-case sub-tests within `TestAssembleAgentFileBody_RejectsPathTraversalSiblingCases`. No package regression.
+
+#### W3-D2R2-FF11 [LOW / regression-test coverage — sibling cases reach every reject rule] — REFUTED
+
+- **Attack:** verify each of the validator's three reject rules (absolute / `..` segment / empty segment) is independently covered by a test, AND that the positive-control + empty-path-control prevent over-rejection.
+- **Method:** Read `TestAssembleAgentFileBody_RejectsPathTraversalSiblingCases` (`render_test.go:1218-1268`), `_AcceptsLegitimateTemplatePath` (`:1274-1300`), `_EmptyPathStillRoutesToTillGoDefault` (`:1307-1333`).
+- **Trace:** Sibling cases — `absolute_etc_passwd` covers rule 1; `trailing_dotdot` + `mid_path_dotdot` cover rule 2 (two positional variants); `double_slash` covers rule 3. Positive control covers no-over-rejection on the canonical positive case. Empty-path control covers the W3-FF5 LOCKED sentinel survives the round-2 addition. Backslash rule is the only one not test-pinned — the builder's three sibling cases plus the original attack string don't exercise backslash. Minor coverage gap, NOT a counterexample (the rule is unreachable on macOS/Linux test hosts because no legitimate POSIX input contains `\`, and the rule is defense-in-depth for a future Windows port).
+- **Result — REFUTED.** Test coverage is adequate for the three rules with documented attack vectors. Backslash rule is uncovered-by-test but is preemptive defense-in-depth; the absence of a test does not falsify the validator's claim.
+
+#### W3-D2R2-FF12 [LOW / closure of W3-D23-FF1] — REFUTED
+
+- **Attack:** the round-2 fix claims W3-D23-FF1 is closed. Verify by mentally replaying the exact W3-D23-FF1 attack trace against the post-round-2 codepath.
+- **Method:** Re-execute the FF1 trace step-by-step against the new validator.
+- **Trace:** `binding.SystemPromptTemplatePath = "till-go/../../../../../../etc/passwd"`. (1) `assembleAgentFileBody` entry: `trimmed = "till-go/../../../../../../etc/passwd"`, non-empty. (2) `validateAgentTemplatePath(trimmed)`: not absolute (no leading `/`), no backslash. Split on `/` → `["till-go", "..", "..", "..", "..", "..", "..", "etc", "passwd"]`. First `..` segment encountered triggers `errors.New("parent-traversal segment '..' not allowed")`. (3) `assembleAgentFileBody` wraps as `fmt.Errorf("%w: %q: %s", ErrInvalidAgentTemplatePath, ...)`. (4) `renderAgentFile` wraps as `"render: agent file: %w"`. (5) `Render` calls `rollback.run()` (per `render.go:241`) which `os.Remove`s `system-prompt.md` AND `os.RemoveAll`s `<bundle>/plugin/`. (6) Returns `("", wrappedErr)`. `errors.Is(err, ErrInvalidAgentTemplatePath)` → TRUE. Test `TestAssembleAgentFileBody_RejectsPathTraversalInGroup` confirms this on every host where `/etc/passwd` exists (skips otherwise). User-tier `filepath.Join` is NEVER reached. Host-file leak path is closed.
+- **Result — REFUTED. W3-D23-FF1 is CLOSED.** The round-2 validator runs BEFORE `path.Dir` / `path.Base` derive group + basename, BEFORE `readProjectTierAgent` / `readUserTierAgent` / `readEmbeddedTierAgent` execute. Every host-file-read codepath is gated by the validator. The defense-in-depth disk-level assertion (`os.Stat(agentPath)` must return `os.ErrNotExist`) provides a second-layer guarantee even if a future refactor accidentally swallows the validator error — the rollback wipes any partial bundle so a leak via partially-written agent file is impossible.
+
+### Severity breakdown
+
+- **HIGH:** 0
+- **MEDIUM:** 0
+- **LOW:** 12 — all REFUTED (11 narrowing / scope / wrap / build attacks + 1 closure-verification of W3-D23-FF1).
+
+### mage ci result
+
+```
+[SUCCESS] All tests passed
+  3036 tests passed across 25 packages.
+
+[SUCCESS] Coverage threshold met
+  All packages are at or above 70.0% coverage.
+  Render package: 81.3%.
+
+Build
+[SUCCESS] Built till from ./cmd/till
+```
+
+### Summary
+
+**Verdict: PASS — no new CONFIRMED counterexamples.** The round-2 validator (`validateAgentTemplatePath` + `ErrInvalidAgentTemplatePath` + the call-site wiring) is sound under the documented `path` / `filepath` semantics. Every probed narrowing decision (exact-`..` rejection vs `..foo` / `...` / `....` acceptance, `.` segment acceptance, backslash rejection, TrimSpace short-circuit symmetry, empty-trailing-segment rejection) matches what `go doc path Clean` documents and is consistent with the round-2 worklog's design rationale. The wrap chain preserves `errors.Is(err, ErrInvalidAgentTemplatePath)` through both `assembleAgentFileBody` and `Render` wraps. The rollback path wipes any partially-written bundle on validator rejection. Project-tier immunity (group unused) is preserved. `mage ci` is GREEN at 3036 tests / 25 packages / 81.3% render coverage (+8 tests, +2.0% render coverage vs round-1).
+
+**W3-D23-FF1 closure status: CLOSED.** The exact attack string `"till-go/../../../../../../etc/passwd"` is now rejected at the validator step BEFORE `path.Dir` / `path.Base` derive the group component. The user-tier `filepath.Join` codepath that previously cancelled to `/etc/passwd` is unreachable. Test `TestAssembleAgentFileBody_RejectsPathTraversalInGroup` pins the attack string verbatim and asserts `errors.Is(err, render.ErrInvalidAgentTemplatePath)`; the defense-in-depth `os.Stat(agentPath)` assertion catches any future regression where the validator might be bypassed without erroring.
+
+**Narrowing soundness — explicit per `path` / `filepath` documented semantics:**
+
+- `path.Clean` and `filepath.Clean` (documented per `go doc`) ELIMINATE only exact `.` and exact `..` segments. Segments with `..` as substring (`..foo`, `foo..bar`) and segments with 3+ dots (`...`, `....`) are LITERAL directory names — preserved through `Clean`, not collapsed. The validator's exact-equality narrowing (`seg == ".."`) matches the only-collapsible shape, so the narrowing is necessary AND sufficient for the documented attack vector.
+- The basename validator (`validateAgentBasename`'s `strings.Contains(basename, "..")` substring rule) is a defense-in-depth layer on the LEAF only — it catches `"..."` leaves that the template-path validator's exact-segment rule lets through. The two validators' overlap is intentional, not redundant: template-path validator gates the full path's group component (the W3-D23-FF1 surface); basename validator gates the leaf (the original W3-D2 surface). Both fire at different layers.
+
+No routing to orchestrator beyond the closure confirmation. W3-D23-FF1 closed; no new findings.
+
+### Hylla Feedback
+
+N/A — round-2 falsification touched only Go files in `internal/app/dispatcher/cli_claude/render/` whose post-W3.D2 round-2 changes (`d671b91`) have not been ingested. Hylla's last ingest predates the round-2 commit, so the new symbols under attack (`validateAgentTemplatePath`, `ErrInvalidAgentTemplatePath`, the wired call site) are not in the index. The falsification relied entirely on `Read` against `render.go` + `render_test.go` + the BUILDER_WORKLOG entry + `go doc path Clean` / `go doc path Dir` / `go doc path Base` / `go doc filepath Join` / `go doc filepath Clean` for the documented language semantics that ground the narrowing analysis. The staleness window is structurally guaranteed pre-cascade-ingest. No fallback miss to record.
