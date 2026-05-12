@@ -103,7 +103,7 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 **ROUND-2 NEW (W2-FF1):** split out from round-1 D3 to keep D3a's surface to skeleton + register. D3b lives in `cmd/till/init_cmd.go` only — no `main.go` or `help.go` edits.
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `cmd/till/init_cmd.go` (modify: replace the D3a JSON-stub error in `RunE` with a real `runInitJSON` function that parses + validates the payload; the stub's downstream file-copy step still returns a D5-stub error in D3b — D5 fills that in)
   - `cmd/till/init_cmd_test.go` (modify: add table-driven JSON-payload parsing test cases — valid, invalid-group, malformed-JSON, missing-required-fields)

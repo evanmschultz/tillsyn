@@ -1,12 +1,39 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// initJSONPayload is the schema for `till init --json '{...}'` headless
+// invocations. `Name` and `Group` are required; `MCP` defaults to false
+// (zero value). Group must be one of the W2-supported values
+// (`till-gen`, `till-go`); `till-gdd` is greyed-out per SKETCH §9.3 and
+// rejected as reserved.
+type initJSONPayload struct {
+	Name  string `json:"name"`
+	Group string `json:"group"`
+	MCP   bool   `json:"mcp"`
+}
+
+// allowedInitGroups lists the active agent groups `till init` accepts in
+// W2. `till-gdd` is deliberately omitted — it is reserved per SKETCH §9.3
+// and will be re-enabled once GDD methodology lands post-dogfood. Order
+// is preserved for the validation error message.
+var allowedInitGroups = []string{"till-gen", "till-go"}
+
+// reservedInitGroups lists groups recognized in the schema but rejected
+// at validation time. Each entry returns a tailored "reserved" error so
+// callers can distinguish typos (unknown group) from intentional-but-not-
+// yet-shipped groups.
+var reservedInitGroups = map[string]string{
+	"till-gdd": "till-gdd",
+}
 
 // newInitCommand returns the `till init` cobra command. D3a ships the
 // skeleton: --json flag wired (default ""), RunE dispatches to a TUI stub
@@ -40,7 +67,7 @@ files are skipped, never overwritten.
 				return err
 			}
 			if strings.TrimSpace(payload) != "" {
-				return errors.New("till init: JSON parse not yet wired (W2.D3b)")
+				return runInitJSON(stdout, rootOpts, payload)
 			}
 			return runInitTUI(stdout, rootOpts)
 		},
@@ -55,4 +82,52 @@ func runInitTUI(stdout io.Writer, opts rootCommandOptions) error {
 	_ = stdout
 	_ = opts
 	return errors.New("till init: TUI walk not yet wired (W2.D4)")
+}
+
+// runInitJSON parses the headless `--json` payload, validates required
+// fields and the group selection, then dispatches to the shared file-copy
+// pipeline. D3b ships parse + validation; the file-copy step is a stub
+// that D5 fills in. The stub error is the contract D5 consumes, so the
+// wording is preserved verbatim across D3b → D5.
+func runInitJSON(stdout io.Writer, opts rootCommandOptions, payload string) error {
+	_ = stdout
+	_ = opts
+
+	var parsed initJSONPayload
+	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
+		return fmt.Errorf("till init: invalid json payload: %w", err)
+	}
+
+	if err := validateInitPayload(parsed); err != nil {
+		return err
+	}
+
+	// D5 wires the actual file-copy pipeline. Until then a successful
+	// parse + validate surfaces this stub so callers (and tests) can
+	// confirm the parser ran without short-circuiting on a malformed
+	// payload.
+	return errors.New("till init: file copy not yet wired (W2.D5)")
+}
+
+// validateInitPayload checks required fields and the group selection on
+// a parsed `initJSONPayload`. Returns a wrapped error pointing at the
+// first failed invariant; `Name` and `Group` are required, and `Group`
+// must be one of `allowedInitGroups` (reserved groups like `till-gdd`
+// surface a tailored "reserved" error).
+func validateInitPayload(p initJSONPayload) error {
+	if strings.TrimSpace(p.Name) == "" {
+		return errors.New("till init: name required")
+	}
+	if strings.TrimSpace(p.Group) == "" {
+		return errors.New("till init: group required")
+	}
+	if reserved, ok := reservedInitGroups[p.Group]; ok {
+		return fmt.Errorf("till init: group must be one of %v; %q is reserved", allowedInitGroups, reserved)
+	}
+	for _, allowed := range allowedInitGroups {
+		if p.Group == allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf("till init: group must be one of %v; got %q", allowedInitGroups, p.Group)
 }
