@@ -1881,30 +1881,9 @@ or explicit path overrides through flags and environment.
 		},
 	}
 
-	initDevConfigCmd := &cobra.Command{
-		Use:   "init-dev-config",
-		Short: "Create the dev config file and enforce [logging] level = \"debug\"",
-		Long: strings.TrimSpace(`
-Create the dev config file from the shipped default template when missing, then
-force the local dev logging level to debug.
-
-Use this when bootstrapping a fresh local workstation or when you want the repo
-default development config file restored quickly.
-`),
-		Example: strings.Join([]string{
-			"  till init-dev-config",
-			"  till --app tillsyn init-dev-config",
-			"  till --home /tmp/tillsyn-dev init-dev-config",
-		}, "\n"),
-		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runInitDevConfig(stdout, rootOpts)
-		},
-	}
-
 	initCmd := newInitCommand(stdout, rootOpts)
 	installCmd := newInstallCommand(stdout, &rootOpts)
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd, initCmd, installCmd)
+	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initCmd, installCmd)
 	applyCommandHelp(rootCmd)
 	return fang.Execute(
 		ctx,
@@ -2037,63 +2016,6 @@ func runtimeRootDir(defaultPaths platform.Paths, dbPath string) string {
 		return defaultPaths.DataDir
 	}
 	return filepath.Dir(dbPath)
-}
-
-// runInitDevConfig creates the dev config file and enforces debug logging level.
-func runInitDevConfig(stdout io.Writer, opts rootCommandOptions) error {
-	if stdout == nil {
-		stdout = io.Discard
-	}
-
-	paths, err := platform.DefaultPathsWithOptions(platform.Options{
-		AppName: opts.appName,
-		DevMode: true,
-		HomeDir: opts.homeDir,
-	})
-	if err != nil {
-		return fmt.Errorf("resolve dev paths: %w", err)
-	}
-
-	configPath := paths.ConfigPath
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return fmt.Errorf("create dev config directory: %w", err)
-	}
-
-	created := false
-	if _, err := os.Stat(configPath); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("stat dev config: %w", err)
-		}
-		templateBytes, templateErr := config.DefaultTemplate()
-		if templateErr != nil {
-			return templateErr
-		}
-		if writeErr := os.WriteFile(configPath, templateBytes, 0o644); writeErr != nil {
-			return fmt.Errorf("write dev config: %w", writeErr)
-		}
-		created = true
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("read dev config: %w", err)
-	}
-	updated := ensureLoggingSectionDebug(string(content))
-	if updated != string(content) {
-		if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
-			return fmt.Errorf("write updated dev config: %w", err)
-		}
-	}
-
-	msg := "dev config already exists"
-	if created {
-		msg = "created dev config"
-	}
-	return writeCLIKV(stdout, "Dev Config", [][2]string{
-		{"status", msg},
-		{"config path", shellEscapePath(configPath)},
-		{"logging level", "debug"},
-	})
 }
 
 // shellEscapePath returns a POSIX-shell-escaped path token suitable for direct paste.

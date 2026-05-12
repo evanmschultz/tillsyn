@@ -473,7 +473,7 @@ func TestRunRootHelp(t *testing.T) {
 		if !strings.Contains(output, "usage") || !strings.Contains(output, "till [command]") {
 			t.Fatalf("expected root usage output, got %q", out.String())
 		}
-		for _, want := range []string{"serve", "mcp", "auth", "project", "embeddings", "capture-state", "kind", "lease", "handoff", "export", "import", "paths", "init-dev-config"} {
+		for _, want := range []string{"serve", "mcp", "auth", "project", "embeddings", "capture-state", "kind", "lease", "handoff", "export", "import", "paths"} {
 			if !strings.Contains(output, want) {
 				t.Fatalf("expected %q command in root help, got %q", want, out.String())
 			}
@@ -727,11 +727,6 @@ func TestRunSubcommandHelp(t *testing.T) {
 			name: "paths",
 			args: []string{"paths", "--help"},
 			want: []string{"till paths", "--dev", "--db", "--config", "resolved runtime paths"},
-		},
-		{
-			name: "init-dev-config",
-			args: []string{"init-dev-config", "--help"},
-			want: []string{"till init-dev-config", "create the dev config file"},
 		},
 	}
 	forms := []string{"--help", "-h", "help", "h"}
@@ -2903,113 +2898,6 @@ func TestRunConfigAndDBEnvOverrides(t *testing.T) {
 	}
 }
 
-// TestRunInitDevConfigCreatesDebugConfig verifies init-dev-config creates the dev config and enforces debug logging.
-func TestRunInitDevConfigCreatesDebugConfig(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
-	t.Setenv("XDG_DATA_HOME", filepath.Join(tmp, ".local", "share"))
-	t.Chdir(tmp)
-	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(go.mod) error = %v", err)
-	}
-	const example = `
-[database]
-path = "/tmp/ignored.db"
-
-[logging]
-level = "info"
-`
-	if err := os.WriteFile(filepath.Join(tmp, "config.example.toml"), []byte(example), 0o644); err != nil {
-		t.Fatalf("WriteFile(config.example.toml) error = %v", err)
-	}
-
-	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init-dev-config"}, &out, io.Discard); err != nil {
-		t.Fatalf("run(init-dev-config) error = %v", err)
-	}
-
-	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-init", DevMode: true})
-	if err != nil {
-		t.Fatalf("DefaultPathsWithOptions() error = %v", err)
-	}
-	for _, want := range []string{"Dev Config", "status", "created dev config", shellEscapePath(paths.ConfigPath), "logging level", "debug"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("expected %q in init-dev-config output, got %q", want, out.String())
-		}
-	}
-
-	content, err := os.ReadFile(paths.ConfigPath)
-	if err != nil {
-		t.Fatalf("ReadFile(config) error = %v", err)
-	}
-	got := string(content)
-	if strings.Count(got, "[logging]") != 1 {
-		t.Fatalf("expected single [logging] section, got\n%s", got)
-	}
-	if !strings.Contains(got, "level = \"debug\"") {
-		t.Fatalf("expected debug logging level in config, got\n%s", got)
-	}
-}
-
-// TestRunInitDevConfigUpdatesExistingConfig verifies init-dev-config rewrites an existing logging section to debug.
-func TestRunInitDevConfigUpdatesExistingConfig(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
-	t.Setenv("XDG_DATA_HOME", filepath.Join(tmp, ".local", "share"))
-	t.Chdir(tmp)
-	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(go.mod) error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, "config.example.toml"), []byte("[database]\npath = \"/tmp/default.db\"\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(config.example.toml) error = %v", err)
-	}
-
-	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-init", DevMode: true})
-	if err != nil {
-		t.Fatalf("DefaultPathsWithOptions() error = %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(paths.ConfigPath), 0o755); err != nil {
-		t.Fatalf("MkdirAll(config dir) error = %v", err)
-	}
-	const existing = `
-[logging]
-level = 'info'
-
-[identity]
-display_name = "Lane User"
-`
-	if err := os.WriteFile(paths.ConfigPath, []byte(existing), 0o644); err != nil {
-		t.Fatalf("WriteFile(existing config) error = %v", err)
-	}
-
-	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init-dev-config"}, &out, io.Discard); err != nil {
-		t.Fatalf("run(init-dev-config existing) error = %v", err)
-	}
-	for _, want := range []string{"Dev Config", "status", "dev config already exists", shellEscapePath(paths.ConfigPath), "logging level", "debug"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("expected %q in init-dev-config existing output, got %q", want, out.String())
-		}
-	}
-
-	content, err := os.ReadFile(paths.ConfigPath)
-	if err != nil {
-		t.Fatalf("ReadFile(config) error = %v", err)
-	}
-	got := string(content)
-	if strings.Count(got, "[logging]") != 1 {
-		t.Fatalf("expected single [logging] section, got\n%s", got)
-	}
-	if !strings.Contains(got, "level = \"debug\"") {
-		t.Fatalf("expected debug logging level in config, got\n%s", got)
-	}
-	if !strings.Contains(got, "[identity]") {
-		t.Fatalf("expected existing config sections to remain, got\n%s", got)
-	}
-}
-
 // TestRunPathsCommand verifies behavior for the covered scenario.
 func TestRunPathsCommand(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -3102,7 +2990,7 @@ func TestRunPathsCommandUsesConfigDatabasePathForRootAndLogs(t *testing.T) {
 	}
 }
 
-// TestShellEscapePath verifies init-dev-config path output is shell-token safe.
+// TestShellEscapePath verifies shellEscapePath produces the expected escaped form for path inputs.
 func TestShellEscapePath(t *testing.T) {
 	in := "/Users/me/Library/Application Support/tillsyn-dev/config.toml"
 	want := "/Users/me/Library/Application\\ Support/tillsyn-dev/config.toml"

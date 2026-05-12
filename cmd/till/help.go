@@ -390,20 +390,6 @@ safe — existing files are skipped, never overwritten.
 			"  till init --json '{\"name\":\"my-project\",\"group\":\"till-go\",\"mcp\":true}'",
 		},
 	},
-	"till init-dev-config": {
-		Long: strings.TrimSpace(`
-Create the dev config file when missing and ensure the logging level is set to
-debug for local development.
-
-Use this when bootstrapping a fresh local runtime before serving MCP or HTTP
-surfaces.
-`),
-		Example: []string{
-			"  till init-dev-config",
-			"  till --app tillsyn init-dev-config",
-			"  till --home /tmp/tillsyn-dev init-dev-config",
-		},
-	},
 	"till install": {
 		Long: strings.TrimSpace(`
 Bootstrap the local Tillsyn dev environment. Creates the dev config file from
