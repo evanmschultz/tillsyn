@@ -1881,7 +1881,7 @@ or explicit path overrides through flags and environment.
 		},
 	}
 
-	initCmd := newInitCommand(stdout, rootOpts)
+	initCmd := newInitCommand(stdout, &rootOpts)
 	installCmd := newInstallCommand(stdout, &rootOpts)
 	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initCmd, installCmd)
 	applyCommandHelp(rootCmd)

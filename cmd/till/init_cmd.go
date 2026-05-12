@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,9 +16,13 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/fsatomic"
+	"github.com/evanmschultz/tillsyn/internal/platform"
 	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
@@ -46,12 +51,14 @@ var reservedInitGroups = map[string]string{
 	"till-gdd": "till-gdd",
 }
 
-// newInitCommand returns the `till init` cobra command. D3a ships the
-// skeleton: --json flag wired (default ""), RunE dispatches to a TUI stub
-// or a JSON stub. Subsequent droplets fill the bodies — D3b wires the JSON
-// payload parser, D4 wires runInitTUI's bubbletea walk, D5 wires the
-// file-copy pipeline both branches share.
-func newInitCommand(stdout io.Writer, rootOpts rootCommandOptions) *cobra.Command {
+// newInitCommand returns the `till init` cobra command.
+//
+// rootOpts is passed by pointer so the RunE closure reads the live values
+// cobra wrote into &rootOpts.appName / &rootOpts.homeDir during flag parse —
+// see main.go:508-513 (PersistentFlags().StringVar(&rootOpts.appName, ...)).
+// Capturing by value would freeze the pre-parse defaults and ignore --app /
+// --home, breaking path resolution for the project-DB record created in D7.
+func newInitCommand(stdout io.Writer, rootOpts *rootCommandOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Seed a Tillsyn project (agents directory, agents.toml, .gitignore, optional .mcp.json)",
@@ -78,9 +85,9 @@ files are skipped, never overwritten.
 				return err
 			}
 			if strings.TrimSpace(payload) != "" {
-				return runInitJSON(stdout, rootOpts, payload)
+				return runInitJSON(stdout, *rootOpts, payload)
 			}
-			return runInitTUI(stdout, rootOpts)
+			return runInitTUI(stdout, *rootOpts)
 		},
 	}
 	cmd.Flags().String("json", "", "Run init in headless mode with a JSON payload (e.g. --json '{\"name\":\"foo\",\"group\":\"till-go\",\"mcp\":false}')")
@@ -383,44 +390,129 @@ func runInitJSON(stdout io.Writer, opts rootCommandOptions, payload string) erro
 
 // runInitPipeline is the shared post-input file-copy pipeline both
 // runInitTUI and runInitJSON invoke. It resolves the destination
-// directory (cwd), runs the three idempotent copy steps in order, and
-// hands forward to the D6 `.mcp.json` registration stub. Re-run safety
-// is mandatory: every file write is gated by an `os.Stat` pre-check so
-// existing files are SKIPPED, never overwritten.
+// directory (cwd), runs the three idempotent copy steps in order,
+// registers the optional `.mcp.json` entry, creates the project-DB
+// record (idempotent — re-run skips if the project name already exists),
+// and writes the Laslig success summary to stdout.
 //
 // `destDir` is derived from `os.Getwd()` (NOT from `opts.appName` /
-// `opts.homeDir`) — D7.5's pointer-vs-value fix on rootCommandOptions
-// does not surface in D5 because the destination is cwd-relative. The
-// project-DB record creation in D7 uses path resolution via
-// `platform.DefaultPathsWithOptions(opts)` and so depends on the D7.5
-// fix; D5 is decoupled from it.
+// `opts.homeDir`) — the destination is cwd-relative. The project-DB
+// record creation in D7 uses path resolution via
+// `platform.DefaultPathsWithOptions(opts)` which reads the live
+// flag values written by cobra before RunE fires — the D3a pointer fix
+// on rootCommandOptions ensures opts carries the correct values.
 func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSONPayload) error {
-	_ = stdout
-	_ = opts
-
 	destDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("till init: resolve cwd: %w", err)
 	}
 
-	if _, _, err := copyAgentFiles(destDir, payload.Group); err != nil {
+	agentsAdded, agentsSkipped, err := copyAgentFiles(destDir, payload.Group)
+	if err != nil {
 		return fmt.Errorf("till init: copy agent files: %w", err)
 	}
-	if _, _, err := copyAgentsTOML(destDir); err != nil {
+	tomlAdded, _, err := copyAgentsTOML(destDir)
+	if err != nil {
 		return fmt.Errorf("till init: copy agents.toml: %w", err)
 	}
 	if err := ensureGitignore(destDir); err != nil {
 		return fmt.Errorf("till init: ensure .gitignore: %w", err)
 	}
 
-	if _, _, err := registerMCPJSON(destDir, payload.MCP); err != nil {
+	mcpAdded, mcpSkipped, err := registerMCPJSON(destDir, payload.MCP)
+	if err != nil {
 		return fmt.Errorf("till init: register .mcp.json: %w", err)
 	}
 
-	// D7 wires project-DB record creation and the Laslig success message.
-	// Until then, a successful D6 MCP registration hands forward to this stub
-	// so callers (and tests) confirm the pipeline ran through to the D7 seam.
-	return errors.New("till init: project-DB record creation not yet wired (W2.D7)")
+	dbStatus, err := createProjectDBRecord(context.Background(), opts, payload.Name)
+	if err != nil {
+		return fmt.Errorf("till init: create project DB record: %w", err)
+	}
+
+	// Laslig success summary.
+	agentsDir := filepath.Join(destDir, ".tillsyn", "agents")
+	agentsTomlPath := filepath.Join(destDir, "agents.toml")
+	gitignoreStatus := "ensured"
+	mcpStatus := "skipped (mcp:false)"
+	if payload.MCP {
+		if mcpAdded > 0 {
+			mcpStatus = "added"
+		} else if mcpSkipped > 0 {
+			mcpStatus = "already exists"
+		}
+	}
+	agentsCopied := fmt.Sprintf("added=%d skipped=%d", agentsAdded, agentsSkipped)
+	agentsTOMLStatus := "skipped (already exists)"
+	if tomlAdded > 0 {
+		agentsTOMLStatus = "added"
+	}
+
+	return writeCLIKV(stdout, "Init", [][2]string{
+		{"project name", payload.Name},
+		{"group", payload.Group},
+		{"agents dir", agentsDir},
+		{"agents copied", agentsCopied},
+		{"agents.toml", agentsTOMLStatus + " — " + agentsTomlPath},
+		{".gitignore", gitignoreStatus},
+		{".mcp.json", mcpStatus},
+		{"project DB", dbStatus},
+	})
+}
+
+// createProjectDBRecord opens the Tillsyn SQLite database, then either
+// creates a new project record for the named project or skips creation if a
+// project with that name already exists (idempotency — re-running `till init`
+// in an already-initialized directory is safe). Returns a short human-readable
+// status string suitable for the Laslig summary row.
+//
+// Service wiring clones the pattern from executeCommandFlow in main.go:
+// platform.DefaultPathsWithOptions → parent-dir creation → sqlite.Open →
+// app.NewService(minimal config). Only the project-creation path is exercised;
+// no auth, no embeddings, no live-wait broker needed here.
+func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, projectName string) (string, error) {
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{
+		AppName: opts.appName,
+		HomeDir: opts.homeDir,
+	})
+	if err != nil {
+		return "", fmt.Errorf("resolve runtime paths: %w", err)
+	}
+
+	dbPath := strings.TrimSpace(opts.dbPath)
+	if dbPath == "" {
+		dbPath = paths.DBPath
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return "", fmt.Errorf("create database directory: %w", err)
+	}
+
+	repo, err := sqlite.Open(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("open database %q: %w", dbPath, err)
+	}
+	defer func() { _ = repo.Close() }()
+
+	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
+		AutoCreateProjectColumns: true,
+	})
+
+	// Idempotency: scan existing projects for a name match before creating.
+	existing, err := svc.ListProjects(ctx, false)
+	if err != nil {
+		return "", fmt.Errorf("list existing projects: %w", err)
+	}
+	for _, p := range existing {
+		if strings.EqualFold(strings.TrimSpace(p.Name), strings.TrimSpace(projectName)) {
+			return "already exists — skipped", nil
+		}
+	}
+
+	_, err = svc.CreateProject(ctx, projectName, "")
+	if err != nil {
+		return "", fmt.Errorf("create project %q: %w", projectName, err)
+	}
+	return "created", nil
 }
 
 // agentFileInitPerm is the permission applied to every freshly copied

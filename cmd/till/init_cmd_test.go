@@ -14,6 +14,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
+	"github.com/google/uuid"
+
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/platform"
 )
 
 // TestInit_BareInvocation_ReturnsTUIStubError verifies that `till init` (bare,
@@ -23,19 +28,15 @@ import (
 // into rootCmd. CONSUMER-TIE TEST CONTRACT (W2-FF6 ROUND-2) — symmetric
 // to D7.5's W2-FF3 contract.
 //
-// **D5 update**: with the file-copy pipeline wired, a completed TUI walk
-// now advances PAST the D5 stub and hands forward to the D6 `.mcp.json`
-// stub. The smoke test still stubs `programFactory` to avoid opening a
-// real terminal AND now chdirs into a `t.TempDir()` so the pipeline's
-// real filesystem writes land in an isolated sandbox rather than the
-// source checkout.
-//
-// **D6 update**: the D6 stub is replaced with real `registerMCPJSON`. Since
-// MCP is false in the stubbed payload the call is a no-op, and the error
-// now surfaces the D7 project-DB stub. Test name preserved for git-blame
-// continuity; want string updated to the D7 stub literal.
+// **D7 update**: D7 wires the real project-DB record creation. The stub
+// error is gone; a completed TUI walk now returns nil. The test asserts
+// success (nil error) and verifies the Laslig output contains the
+// project name. HOME isolation via t.Setenv ensures the DB lands in
+// t.TempDir() rather than the dev's real ~/.tillsyn-init/.
 func TestInit_BareInvocation_ReturnsTUIStubError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
 	origFactory := programFactory
 	t.Cleanup(func() { programFactory = origFactory })
 	programFactory = func(m tea.Model) program {
@@ -47,45 +48,41 @@ func TestInit_BareInvocation_ReturnsTUIStubError(t *testing.T) {
 		// synthetic payload so runInitTUI exercises its happy-path branch
 		// without needing a real terminal.
 		init.step = initTUIStepDone
-		init.finalPayload = initJSONPayload{Name: "stub", Group: "till-go", MCP: false}
+		init.finalPayload = initJSONPayload{Name: "stub-project", Group: "till-go", MCP: false}
 		return scriptedProgram{model: init, runFn: func(current tea.Model) (tea.Model, error) {
 			return current, nil
 		}}
 	}
 
 	var out strings.Builder
-	err := run(context.Background(), []string{"--app", "tillsyn-init", "init"}, &out, io.Discard)
-	if err == nil {
-		t.Fatalf("run(init) returned nil; expected D7 project-DB stub error after stubbed TUI walk + D5 pipeline + D6 mcp skip, got stdout=%q", out.String())
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init"}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init) error = %v; expected nil after D7 wiring (stubbed TUI + D5 pipeline + D6 mcp skip + D7 DB create)", err)
 	}
-	want := "till init: project-DB record creation not yet wired (W2.D7)"
-	if !strings.Contains(err.Error(), want) {
-		t.Fatalf("run(init) error = %q; want substring %q", err.Error(), want)
+	if !strings.Contains(out.String(), "Init") {
+		t.Fatalf("run(init) stdout = %q; want 'Init' Laslig block", out.String())
 	}
 }
 
 // TestInit_JSONInvocation_RoutesToValidParse verifies that `till init
 // --json '{...}'` with a well-formed payload routes through cobra to the
-// real JSON parser shipped in D3b AND runs the D5 file-copy pipeline.
-// A valid payload parses, validates, copies the embedded agent set, and
-// then surfaces the D7 project-DB stub error (D6 is now wired).
+// real JSON parser shipped in D3b AND runs the D5 file-copy pipeline
+// through D7's project-DB record creation.
 // CONSUMER-TIE TEST CONTRACT (W2-FF6 ROUND-2).
 //
-// **D5 update**: chdir into a fresh t.TempDir() so the pipeline's real
-// filesystem writes are sandboxed.
-//
-// **D6 update**: mcp:false means registerMCPJSON is a no-op; the D7
-// project-DB stub fires. Assert against the D7 stub literal.
+// **D7 update**: D7 wires real project-DB creation; the pipeline now
+// returns nil. The test asserts success and verifies the Laslig output
+// contains the project name. HOME isolation ensures the DB lands in
+// t.TempDir().
 func TestInit_JSONInvocation_RoutesToValidParse(t *testing.T) {
-	t.Chdir(t.TempDir())
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
 	var out strings.Builder
-	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":false}`}, &out, io.Discard)
-	if err == nil {
-		t.Fatalf("run(init --json valid) returned nil; expected D7 project-DB stub error, got stdout=%q", out.String())
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":false}`}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json valid) error = %v; expected nil after D7 wiring, stdout=%q", err, out.String())
 	}
-	want := "till init: project-DB record creation not yet wired (W2.D7)"
-	if !strings.Contains(err.Error(), want) {
-		t.Fatalf("run(init --json valid) error = %q; want substring %q", err.Error(), want)
+	if !strings.Contains(out.String(), "foo") {
+		t.Fatalf("run(init --json valid) stdout = %q; want project name 'foo' in Laslig output", out.String())
 	}
 }
 
@@ -94,31 +91,33 @@ func TestInit_JSONInvocation_RoutesToValidParse(t *testing.T) {
 // unknown group, malformed JSON, and missing required fields. Each case
 // drives `run(...)` end-to-end so the cobra wiring is exercised; failure
 // surfaces are matched by substring against the wrapped error returned
-// from `runInitJSON`.
+// from `runInitJSON`. Valid payloads now succeed (nil error) through D7.
+//
+// **D7 update**: valid cases now return nil error with a Laslig output
+// block. HOME isolation added so DB writes land in t.TempDir().
 //
 // **D5 update**: every test case chdirs into a fresh t.TempDir() because
-// valid payloads now exercise the D5 pipeline (filesystem side effects)
-// before surfacing the D7 stub error. Invalid payloads short-circuit
-// before any write, but chdir is uniform across cases for consistency.
-//
-// **D6 update**: valid cases now surface the D7 project-DB stub (D6
-// registerMCPJSON is wired; mcp:false is a no-op skip; mcp:true writes
-// .mcp.json and continues to D7). Both valid cases assert the D7 stub.
+// valid payloads now succeed through D7. Invalid payloads short-circuit
+// before any write and still return errors.
 func TestInit_JSONParse_TableDriven(t *testing.T) {
-	cases := []struct {
+	type testCase struct {
 		name        string
 		payload     string
+		wantSuccess bool // true: expect nil error + wantSubstrs match stdout
 		wantSubstrs []string
-	}{
+	}
+	cases := []testCase{
 		{
 			name:        "valid_till_go",
 			payload:     `{"name":"foo","group":"till-go","mcp":false}`,
-			wantSubstrs: []string{"project-DB record creation not yet wired (W2.D7)"},
+			wantSuccess: true,
+			wantSubstrs: []string{"Init", "foo", "till-go"},
 		},
 		{
 			name:        "valid_till_gen_mcp_true",
 			payload:     `{"name":"bar","group":"till-gen","mcp":true}`,
-			wantSubstrs: []string{"project-DB record creation not yet wired (W2.D7)"},
+			wantSuccess: true,
+			wantSubstrs: []string{"Init", "bar", "till-gen"},
 		},
 		{
 			name:        "reserved_group_till_gdd",
@@ -149,16 +148,29 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
+			tmp := t.TempDir()
+			t.Setenv("HOME", tmp)
+			t.Chdir(tmp)
 			var out strings.Builder
 			err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", tc.payload}, &out, io.Discard)
-			if err == nil {
-				t.Fatalf("run(init --json %q) returned nil; expected error containing %v, stdout=%q", tc.payload, tc.wantSubstrs, out.String())
-			}
-			got := err.Error()
-			for _, sub := range tc.wantSubstrs {
-				if !strings.Contains(got, sub) {
-					t.Fatalf("run(init --json %q) error = %q; want substring %q", tc.payload, got, sub)
+			if tc.wantSuccess {
+				if err != nil {
+					t.Fatalf("run(init --json %q) error = %v; want nil (D7 success)", tc.payload, err)
+				}
+				for _, sub := range tc.wantSubstrs {
+					if !strings.Contains(out.String(), sub) {
+						t.Fatalf("run(init --json %q) stdout = %q; want substring %q", tc.payload, out.String(), sub)
+					}
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("run(init --json %q) returned nil; expected error containing %v, stdout=%q", tc.payload, tc.wantSubstrs, out.String())
+				}
+				got := err.Error()
+				for _, sub := range tc.wantSubstrs {
+					if !strings.Contains(got, sub) {
+						t.Fatalf("run(init --json %q) error = %q; want substring %q", tc.payload, got, sub)
+					}
 				}
 			}
 		})
@@ -322,19 +334,21 @@ func TestRunInitTUI_EscCancelsWalk(t *testing.T) {
 	}
 }
 
-// runInitJSONInTempDir is a tiny helper that chdirs into a fresh temp dir
-// and invokes `till init --json <payload>` end-to-end via `run`. Returns
-// the temp dir + the wrapped error so each D5 test can assert filesystem
-// state under the temp dir and inspect the surfaced error.
+// runInitJSONInTempDir is a tiny helper that chdirs into a fresh temp dir,
+// sets HOME isolation so the project-DB write lands in the temp dir rather
+// than the dev's real ~/.tillsyn-init/, and invokes `till init --json
+// <payload>` end-to-end via `run`. Returns the temp dir + the wrapped
+// error (nil on D7 success) so each test can assert filesystem state and
+// the success/error surface.
 //
 // The JSON-mode end-to-end form is the CONSUMER-TIE shape mandated by
-// W2-FF6 ROUND-2: every D5 test routes through cobra so the wiring proves
-// `runInitJSON` → `copyAgentFiles` → `copyAgentsTOML` → `ensureGitignore`
-// runs in the real dispatch order, not as a unit-test of the pipeline
-// helpers in isolation.
+// W2-FF6 ROUND-2: every D5/D6/D7 test routes through cobra so the wiring
+// proves the full `runInitJSON` → pipeline → DB chain runs in the real
+// dispatch order.
 func runInitJSONInTempDir(t *testing.T, payload string) (string, error) {
 	t.Helper()
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 	var out strings.Builder
 	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", payload}, &out, io.Discard)
@@ -350,16 +364,11 @@ func runInitJSONInTempDir(t *testing.T, payload string) (string, error) {
 //   - `.gitignore` at the project root containing the literal line
 //     `agents.local.toml`.
 //
-// The surfaced error MUST be the D6 stub literal — D5 hands forward to D6
-// for `.mcp.json` registration.
+// **D7 update**: the pipeline now returns nil (project-DB record created).
 func TestInit_FreshDir_CopiesAllFiles(t *testing.T) {
 	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"till-go","mcp":false}`)
-	if err == nil {
-		t.Fatalf("run(init --json) returned nil; expected D7 project-DB stub error")
-	}
-	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
-	if !strings.Contains(err.Error(), wantStub) {
-		t.Fatalf("run(init --json) error = %q; want substring %q", err.Error(), wantStub)
+	if err != nil {
+		t.Fatalf("run(init --json) error = %v; want nil after D7 wiring", err)
 	}
 
 	agentsDir := filepath.Join(dir, ".tillsyn", "agents")
@@ -404,6 +413,7 @@ func TestInit_FreshDir_CopiesAllFiles(t *testing.T) {
 // sufficient on filesystems with second-granularity timestamps).
 func TestInit_RerunSafety_NoOverwrite(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
 	// First run.
@@ -467,6 +477,7 @@ func TestInit_RerunSafety_NoOverwrite(t *testing.T) {
 // would MISS the first-line-only case and append a duplicate.
 func TestInit_GitignoreIdempotent(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
 	// First-line-only seed — the exact case raw bytes.Contains misses.
@@ -502,6 +513,7 @@ func TestInit_PreExistingGitignore_AppendsCleanly(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
+			t.Setenv("HOME", dir)
 			t.Chdir(dir)
 
 			if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(tc.seed), 0o644); err != nil {
@@ -568,12 +580,8 @@ func countGitignoreLine(body, want string) int {
 // through the D6 seam.
 func TestInit_MCPJSON_FreshFile(t *testing.T) {
 	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"till-go","mcp":true}`)
-	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
-	if err == nil {
-		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
-	}
-	if !strings.Contains(err.Error(), wantStub) {
-		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	if err != nil {
+		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
 	mcpPath := filepath.Join(dir, ".mcp.json")
@@ -612,6 +620,7 @@ func TestInit_MCPJSON_FreshFile(t *testing.T) {
 // no loss. Drives end-to-end via run() (CONSUMER-TIE contract).
 func TestInit_MCPJSON_AppendsToExisting(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
 	// Seed .mcp.json with an unrelated stdio server entry using raw JSON to
@@ -622,13 +631,8 @@ func TestInit_MCPJSON_AppendsToExisting(t *testing.T) {
 	}
 
 	var out strings.Builder
-	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
-	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
-	if err == nil {
-		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
-	}
-	if !strings.Contains(err.Error(), wantStub) {
-		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
 	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
@@ -663,6 +667,7 @@ func TestInit_MCPJSON_AppendsToExisting(t *testing.T) {
 // Drives end-to-end via run() (CONSUMER-TIE contract).
 func TestInit_MCPJSON_Idempotent(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
 	// Seed .mcp.json with an existing tillsyn entry using raw JSON.
@@ -672,13 +677,8 @@ func TestInit_MCPJSON_Idempotent(t *testing.T) {
 	}
 
 	var out strings.Builder
-	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
-	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
-	if err == nil {
-		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
-	}
-	if !strings.Contains(err.Error(), wantStub) {
-		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
 	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
@@ -722,12 +722,8 @@ func TestInit_MCPJSON_Idempotent(t *testing.T) {
 // D7 project-DB stub. Drives end-to-end via run() (CONSUMER-TIE contract).
 func TestInit_MCPJSON_OptOut(t *testing.T) {
 	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"till-go","mcp":false}`)
-	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
-	if err == nil {
-		t.Fatalf("run(init --json mcp:false) returned nil; expected D7 stub error")
-	}
-	if !strings.Contains(err.Error(), wantStub) {
-		t.Fatalf("run(init --json mcp:false) error = %q; want substring %q", err.Error(), wantStub)
+	if err != nil {
+		t.Fatalf("run(init --json mcp:false) error = %v; want nil after D7 wiring", err)
 	}
 
 	mcpPath := filepath.Join(dir, ".mcp.json")
@@ -751,6 +747,7 @@ func TestInit_MCPJSON_OptOut(t *testing.T) {
 // Drives end-to-end via run() (CONSUMER-TIE TEST CONTRACT).
 func TestInit_MCPJSON_PreservesHTTPTransport(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
 	// Seed .mcp.json with an HTTP-transport entry (the shape produced by
@@ -762,13 +759,8 @@ func TestInit_MCPJSON_PreservesHTTPTransport(t *testing.T) {
 	}
 
 	var out strings.Builder
-	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
-	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
-	if err == nil {
-		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
-	}
-	if !strings.Contains(err.Error(), wantStub) {
-		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
 	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
@@ -821,6 +813,7 @@ func TestInit_MCPJSON_PreservesHTTPTransport(t *testing.T) {
 // Drives end-to-end via run() (CONSUMER-TIE TEST CONTRACT).
 func TestInit_MCPJSON_PreservesTopLevelExtras(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
 	// Seed .mcp.json with an extra top-level key alongside mcpServers.
@@ -830,13 +823,8 @@ func TestInit_MCPJSON_PreservesTopLevelExtras(t *testing.T) {
 	}
 
 	var out strings.Builder
-	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
-	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
-	if err == nil {
-		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
-	}
-	if !strings.Contains(err.Error(), wantStub) {
-		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
 	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
@@ -874,6 +862,7 @@ func TestInit_MCPJSON_PreservesTopLevelExtras(t *testing.T) {
 // Drives end-to-end via run() (CONSUMER-TIE TEST CONTRACT).
 func TestInit_MCPJSON_NullMcpServersValue(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
 	// Seed .mcp.json with a null mcpServers value — legal JSON, can be
@@ -884,13 +873,8 @@ func TestInit_MCPJSON_NullMcpServersValue(t *testing.T) {
 	}
 
 	var out strings.Builder
-	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
-	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
-	if err == nil {
-		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
-	}
-	if !strings.Contains(err.Error(), wantStub) {
-		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
 	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
@@ -932,6 +916,7 @@ func TestInit_MCPJSON_NullMcpServersValue(t *testing.T) {
 // Drives end-to-end via run() (CONSUMER-TIE TEST CONTRACT).
 func TestInit_MCPJSON_NullTopLevelFile(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
 	// Seed .mcp.json with the bare JSON null literal — the entire file is null.
@@ -941,13 +926,8 @@ func TestInit_MCPJSON_NullTopLevelFile(t *testing.T) {
 	}
 
 	var out strings.Builder
-	err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard)
-	wantStub := "till init: project-DB record creation not yet wired (W2.D7)"
-	if err == nil {
-		t.Fatalf("run(init --json mcp:true) returned nil; expected D7 stub error")
-	}
-	if !strings.Contains(err.Error(), wantStub) {
-		t.Fatalf("run(init --json mcp:true) error = %q; want substring %q", err.Error(), wantStub)
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
 	data, readErr := os.ReadFile(filepath.Join(dir, ".mcp.json"))
@@ -966,6 +946,84 @@ func TestInit_MCPJSON_NullTopLevelFile(t *testing.T) {
 	}
 	if _, ok := servers[mcpServerKey]; !ok {
 		t.Fatalf(".mcp.json missing %q entry after null-top-level run; servers = %v", mcpServerKey, servers)
+	}
+}
+
+// TestInit_CreatesProjectRecord verifies that `till init --json` creates a
+// project record in the Tillsyn SQLite database and that the project is
+// visible via the service layer's list method. CONSUMER-TIE TEST CONTRACT:
+// invokes `run(...)` end-to-end so the cobra wiring, the init pipeline, and
+// the project-DB creation chain are all exercised together.
+//
+// HOME isolation via t.Setenv ensures the DB lands in t.TempDir(), not the
+// dev's real ~/.tillsyn-init/tillsyn-init.db. The DB is opened a second
+// time (read-only inspection) via sqlite.Open + app.NewService so the test
+// proves the record is durable in the underlying store, not just in-process
+// state.
+func TestInit_CreatesProjectRecord(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
+
+	const projectName = "my-init-project"
+	if err := run(context.Background(), []string{
+		"--app", "tillsyn-init", "init", "--json",
+		`{"name":"` + projectName + `","group":"till-go","mcp":false}`,
+	}, nil, io.Discard); err != nil {
+		t.Fatalf("run(init --json) error = %v; want nil", err)
+	}
+
+	// Resolve the DB path the same way createProjectDBRecord does.
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-init"})
+	if err != nil {
+		t.Fatalf("platform.DefaultPathsWithOptions: %v", err)
+	}
+
+	repo, openErr := sqlite.Open(paths.DBPath)
+	if openErr != nil {
+		t.Fatalf("sqlite.Open(%q): %v", paths.DBPath, openErr)
+	}
+	defer func() { _ = repo.Close() }()
+
+	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{})
+	projects, listErr := svc.ListProjects(context.Background(), false)
+	if listErr != nil {
+		t.Fatalf("svc.ListProjects: %v", listErr)
+	}
+	for _, p := range projects {
+		if strings.EqualFold(p.Name, projectName) {
+			return // found — test passes
+		}
+	}
+	names := make([]string, 0, len(projects))
+	for _, p := range projects {
+		names = append(names, p.Name)
+	}
+	t.Fatalf("project %q not found in DB after till init; projects present: %v", projectName, names)
+}
+
+// TestInit_SuccessMessage_Format verifies that `till init --json` writes a
+// Laslig key/value block to stdout containing the expected summary keys:
+// project name, group, "agents copied", "added", and "skipped". CONSUMER-TIE
+// TEST CONTRACT: invokes `run(...)` end-to-end.
+func TestInit_SuccessMessage_Format(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
+
+	var out strings.Builder
+	if err := run(context.Background(), []string{
+		"--app", "tillsyn-init", "init", "--json",
+		`{"name":"format-check","group":"till-go","mcp":false}`,
+	}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json) error = %v; want nil", err)
+	}
+
+	stdout := out.String()
+	for _, want := range []string{"project name", "group", "agents copied", "added", "skipped"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("init stdout missing %q; full output = %q", want, stdout)
+		}
 	}
 }
 

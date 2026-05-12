@@ -1,6 +1,6 @@
 # DROP_4c.6.W2 — TILL_INIT
 
-**State:** planning
+**State:** done
 **Blocked by:** 4c.6.W1.D1 (W2 copies the agent .md files shipped by W1; without W1's embedded scaffolding there's nothing to copy)
 **Paths (expected):** `internal/fsatomic/**`, `cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`, `cmd/till/install_cmd.go`, `cmd/till/install_cmd_test.go`, `cmd/till/main.go`, `cmd/till/main_test.go`, `cmd/till/help.go`
 **Packages (expected):** `github.com/evanmschultz/tillsyn/internal/fsatomic`, `github.com/evanmschultz/tillsyn/cmd/till`
@@ -193,7 +193,7 @@ If a future drop needs section-merging TOML behavior, vendor `configmerge` then.
 
 ### Droplet 4c.6.W2.D7 — Project-DB record creation + Laslig success message
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - `cmd/till/init_cmd.go` (modify: add `createProjectDBRecord(...)` + Laslig success print)
   - `cmd/till/init_cmd_test.go` (modify: add DB-record-existence assertion + success-message-format snapshot)
