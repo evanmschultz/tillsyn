@@ -220,7 +220,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition — yo
 
 ##### 4c.6.W5.D3 — Drop `go-` prefix from agent_name in renamed `till-go.toml` + remove `tools` from frontmatter
 
-- **State:** todo
+- **State:** done
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
 - **Paths:** `internal/templates/builtin/till-go.toml` (NOTE: post-W5.D1 rename), `internal/templates/builtin/till-gen.toml` (post-W5.D2 rename), plus the placeholder agent .md files shipped in W1 — strip `tools:` / `model:` from their frontmatter so agents.toml is sole authority per `SKETCH.md` § 4.4 + § 15. **W5-D2-FF1 ROUND-2 ABSORPTION:** also `internal/templates/load.go` (lines 388 + 1240, paired historical doc-comments referencing both `default-go.toml + default-generic.toml`) and `internal/app/auto_generate_steward.go` (line 108, short-name historical doc-comment `default-generic vs default-go`) — these doc-comment-only sites were deferred from W5.D1 + W5.D2 routed Unknowns and absorbed here so the rebadge cleanup closes in this droplet.
 - **Packages:** `internal/templates`.

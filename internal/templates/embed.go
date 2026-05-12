@@ -55,17 +55,17 @@ import (
 // `validateAgentBindingNames` flips from fail-permissive to fail-strict
 // the moment any `builtin/agents/<group>/*.md` file ships into the
 // embed.FS (probed at package init via `embeddedAgentLibraryShipped`).
-// `till-go.toml` (which W5.D3 will rebadge to bare names) currently
-// references `go-builder-agent`, `go-planning-agent`, `go-research-agent`,
-// `go-qa-proof-agent`, `go-qa-falsification-agent`, plus
-// `orchestrator-managed` for the four coordination kinds — those names
-// must resolve at the embedded floor or `LoadDefaultTemplateForLanguage("go")`
-// fails. Until W5.D3 strips the go- prefix the legacy names ship as
-// additional placeholders alongside the 7 W1.D1 standard names: the 5
-// `go-*-agent.md` placeholders live in `till-go/` (Go-flavored namespace)
-// and `orchestrator-managed.md` lives in `till-gen/` (language-agnostic).
-// The orchestrator-facing closing certificate flags this scope expansion
-// for the orchestrator's audit trail.
+// Drop 4c.6 W5.D3 dropped the `go-` prefix from `till-go.toml`'s
+// agent_name values, so the file now references `builder-agent`,
+// `planning-agent`, `research-agent`, `qa-proof-agent`,
+// `qa-falsification-agent`, `commit-message-agent`, and
+// `orchestrator-managed` — all of which resolve via the W1.D1 standard
+// placeholder set under `builtin/agents/till-go/` (plus
+// `orchestrator-managed.md` under `builtin/agents/till-gen/`). The legacy
+// `go-*-agent.md` placeholders under `builtin/agents/till-go/` remain in
+// the embed.FS as transitional residue from W1.D1 — they are no longer
+// referenced by till-go.toml and a follow-up cleanup drop (post-Drop-4c.7
+// schema removal of runtime fields) may delete them.
 //
 // Canonical specs: workflow/drop_3/PLAN.md droplet 3.14 + main/PLAN.md § 19.3
 // + workflow/drop_4c_5/THEME_F_PLAN.md droplets F.2.1 + F.2.2 + F.1.3 +

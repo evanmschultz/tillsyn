@@ -105,7 +105,8 @@ var loadStewardSeedTemplate = func(lang string) (templates.Template, error) {
 func (s *Service) seedStewardAnchors(ctx context.Context, project domain.Project) error {
 	// Drop 4c.5 droplet F.2.4: pass project.Language through to the seam so
 	// the embedded TOML the STEWARD seeds materialize from is chosen per
-	// the project's language axis (default-generic vs default-go), not a
+	// the project's language axis (till-gen vs till-go ← default-generic
+	// vs default-go, rebadged in Drop 4c.6 W5.D1 + W5.D2), not a
 	// hard-coded language. The 6 STEWARD seed titles are identical across
 	// the two builtins (per F.2.2 acceptance #5), so today the materialized
 	// anchor set is shape-equivalent regardless of language; the redirect

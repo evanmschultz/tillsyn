@@ -385,7 +385,8 @@ var (
 	// WhenParentKind or a CreateChildKind) by any [[child_rules]] entry.
 	//
 	// The validator is vacuously true for the embedded default templates
-	// (default-go.toml + default-generic.toml) because their 4 standard
+	// (till-go.toml + till-gen.toml ← default-go.toml + default-generic.toml,
+	// rebadged in Drop 4c.6 W5.D1 + W5.D2) because their 4 standard
 	// child_rules + 6 standalone-kinds classification cover every member of
 	// the closed enum. The sentinel's real value is for ADOPTER templates
 	// that strip [[child_rules]] entries — typo protection at template Load
@@ -1237,10 +1238,11 @@ func buildBlockedByGraph(rules []ChildRule) map[domain.Kind][]domain.Kind {
 // closed 12-value `domain.Kind` enum MUST be classified at addition time —
 // either it belongs in `reachabilityStandaloneKinds` (standalone, exempt from
 // reachability) OR it MUST appear in some `[[child_rules]]` row of the embedded
-// default template (default-go.toml + default-generic.toml) so the reachability
-// scan finds it. Failing to do either will surface as a load-time
-// ErrUnreachableChildRule against the embedded default and break every project
-// that loads it.
+// default template (till-go.toml + till-gen.toml ← default-go.toml +
+// default-generic.toml, rebadged in Drop 4c.6 W5.D1 + W5.D2) so the
+// reachability scan finds it. Failing to do either will surface as a
+// load-time ErrUnreachableChildRule against the embedded default and break
+// every project that loads it.
 //
 // Today's standalone set per Drop 4c.5 F.5.2 spec:
 //
@@ -1380,10 +1382,11 @@ func validateChildRuleReachability(tpl Template) error {
 //   - confluence: defined by `blocked_by` non-empty, not by child_rules.
 //
 // Drop 4c.5 F.5.2 ships only the drop-coherence wedge; full structural-type ↔
-// kind ↔ role coherence is post-MVP. The embedded default-go.toml uses
-// `structural_type = "droplet"` for every kind today (per Drop 3 Note 1 in
-// THEME_F_PLAN.md), so this validator is a no-op against the default. It only
-// fires on adopter templates that opt into structural_type=drop.
+// kind ↔ role coherence is post-MVP. The embedded till-go.toml (rebadged
+// from default-go.toml in Drop 4c.6 W5.D1) uses `structural_type = "droplet"`
+// for every kind today (per Drop 3 Note 1 in THEME_F_PLAN.md), so this
+// validator is a no-op against the default. It only fires on adopter
+// templates that opt into structural_type=drop.
 //
 // The validator returns on the FIRST offending kind to keep the error surface
 // bounded; outer-map iteration order over tpl.Kinds is non-deterministic in
@@ -2093,8 +2096,11 @@ var embeddedAgentGroups = []string{"till-gen", "till-go", "till-gdd"}
 // embedded paths AND the //go:embed directive in embed.go does not even
 // list the `builtin/agents/` subtree — every default walker call would
 // return false, which would break every existing test that loads the
-// embedded default templates (default-go.toml references "go-builder-agent",
-// "go-planning-agent", etc. — none resolve pre-W1.D1).
+// embedded default templates (at that historical point in time
+// default-go.toml — rebadged to till-go.toml in Drop 4c.6 W5.D1 — referenced
+// "go-builder-agent", "go-planning-agent", etc. — none of which resolved
+// pre-W1.D1. Drop 4c.6 W5.D3 dropped the `go-` prefix from agent_name
+// values; current names are bare `builder-agent`, `planning-agent`, etc.).
 //
 // The reconciliation: the default walker fails-permissive when the
 // embedded library has not yet shipped (no agent .md files probed), and

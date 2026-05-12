@@ -373,10 +373,27 @@ build = ["mage_ci", "commit", "push"]
 #
 # Mapping per main/CLAUDE.md "Agent Bindings" table.
 #
-# model = "opus" for builders + QA + planning + research per pre-MVP rule
-# (memory feedback_opus_builders_pre_mvp.md — "no optimization before
-# measurement; run opus until cascade dogfooding begins"). The commit
-# kind binds the haiku-driven commit-message-agent per CLAUDE.md.
+# Drop 4c.6 W5.D3 dropped the `go-` prefix from every `agent_name` value
+# here per SKETCH.md § 7: Go specialization is communicated by GROUP CHOICE
+# at init time (till-go vs till-gen vs till-gdd, picked when the dev runs
+# `till init`), NOT by a language-marker inside the agent name. The bare
+# names (`planning-agent`, `builder-agent`, etc.) resolve via the embedded
+# placeholder library under builtin/agents/till-go/ for Go projects.
+#
+# Drop 4c.6 W5.D3 also removed the `tools = []` placeholder rows. Per
+# SKETCH.md § 4.1 + § 4.2 tools_allow / tools_deny are agents.toml's sole
+# authority — the runtime config layer that adopters customize per project.
+# AgentBinding.Tools (schema-level) still exists today but the embedded
+# till-*.toml files no longer SET it; the SCHEMA-LEVEL field removal is
+# Drop 4c.7's concern.
+#
+# model = "opus" remains here because AgentBinding.Validate(schema.go)
+# currently REQUIRES `model` non-empty (Drop 4c.7 will relax this once
+# agents.toml is wired as the model-selection authority end-to-end).
+# Per memory feedback_opus_builders_pre_mvp.md the pre-MVP rule is
+# "no optimization before measurement; run opus until cascade dogfooding
+# begins." The commit kind binds the haiku-driven commit-message-agent
+# per CLAUDE.md.
 #
 # Coordination kinds (closeout, refinement, discussion, human-verify) are
 # orchestrator-managed today (CLAUDE.md "Agent Bindings" table) — they do
@@ -385,17 +402,11 @@ build = ["mage_ci", "commit", "push"]
 # placeholder agent name + model so the dispatcher (Drop 4) has a row to
 # look up; the actual spawn behavior for those kinds remains
 # orchestrator-driven until later drops define dedicated agents for them.
-#
-# tools = [] is the placeholder — the actual MCP tool allow-list lands
-# in Drop 4 per finding 5.B.5. AgentBinding.Validate (schema.go) does
-# not constrain Tools content beyond Drop 4's gating, so an empty list
-# decodes cleanly.
 
 [agent_bindings.plan]
-agent_name = "go-planning-agent"
+agent_name = "planning-agent"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 3
 max_budget_usd = 5.0
 max_turns = 50
@@ -421,10 +432,9 @@ max_chars = 50000
 max_rule_duration = "500ms"
 
 [agent_bindings.research]
-agent_name = "go-research-agent"
+agent_name = "research-agent"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 3
 max_budget_usd = 5.0
 max_turns = 50
@@ -434,10 +444,9 @@ blocked_retries = 0
 blocked_retry_cooldown = "30s"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 3
 max_budget_usd = 5.0
 max_turns = 50
@@ -469,10 +478,9 @@ max_chars = 50000
 max_rule_duration = "500ms"
 
 [agent_bindings.plan-qa-proof]
-agent_name = "go-qa-proof-agent"
+agent_name = "qa-proof-agent"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 3
 max_budget_usd = 5.0
 max_turns = 50
@@ -496,10 +504,9 @@ max_chars = 50000
 max_rule_duration = "500ms"
 
 [agent_bindings.plan-qa-falsification]
-agent_name = "go-qa-falsification-agent"
+agent_name = "qa-falsification-agent"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 3
 max_budget_usd = 5.0
 max_turns = 50
@@ -523,10 +530,9 @@ max_chars = 50000
 max_rule_duration = "500ms"
 
 [agent_bindings.build-qa-proof]
-agent_name = "go-qa-proof-agent"
+agent_name = "qa-proof-agent"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 3
 max_budget_usd = 5.0
 max_turns = 50
@@ -557,10 +563,9 @@ max_chars = 50000
 max_rule_duration = "500ms"
 
 [agent_bindings.build-qa-falsification]
-agent_name = "go-qa-falsification-agent"
+agent_name = "qa-falsification-agent"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 3
 max_budget_usd = 5.0
 max_turns = 50
@@ -594,7 +599,6 @@ max_rule_duration = "500ms"
 agent_name = "orchestrator-managed"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 1
 max_budget_usd = 0.0
 max_turns = 1
@@ -607,7 +611,6 @@ blocked_retry_cooldown = "30s"
 agent_name = "commit-message-agent"
 model = "haiku"
 effort = "low"
-tools = []
 max_tries = 3
 max_budget_usd = 1.0
 max_turns = 10
@@ -621,7 +624,6 @@ blocked_retry_cooldown = "30s"
 agent_name = "orchestrator-managed"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 1
 max_budget_usd = 0.0
 max_turns = 1
@@ -635,7 +637,6 @@ blocked_retry_cooldown = "30s"
 agent_name = "orchestrator-managed"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 1
 max_budget_usd = 0.0
 max_turns = 1
@@ -649,7 +650,6 @@ blocked_retry_cooldown = "30s"
 agent_name = "orchestrator-managed"
 model = "opus"
 effort = "medium"
-tools = []
 max_tries = 1
 max_budget_usd = 0.0
 max_turns = 1
