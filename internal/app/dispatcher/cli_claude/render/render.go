@@ -107,6 +107,35 @@ var ErrInvalidGrantsLister = errors.New("render: grants lister does not implemen
 // Render-rollback path.
 var ErrAgentBodyNotFound = errors.New("render: agent body not found in project, user, or embedded tier")
 
+// ErrInvalidAgentBody is returned by validateBundle when the rendered
+// agent-file body fails the post-render shape check. Drop 4c.6 W3.D5
+// wires the validator at Render's exit (per HF8) so a future change to
+// assembleAgentFileBody that re-introduces an empty / stub / malformed
+// body is caught loud rather than silently shipped to the spawned
+// subagent — `feedback_tillsyn_enforces_templates.md` shipped-but-not-
+// wired anti-pattern.
+//
+// The validator applies a 3-signal AND-shaped check (W3-FF6 LOCKED
+// round-3 marker list):
+//
+//   - Signal A — body length > 200 chars (W3-FF8 W4-floor-as-forward-dep).
+//     Bytes after the closing `---\n` delimiter (or the whole body when no
+//     frontmatter is present, in which case Signal B already fails).
+//   - Signal B — frontmatter intact: leading + trailing `---\n` delimiters
+//     present AND the inner block carries a `name:` line.
+//   - Signal C — positive role-section header present: body contains AT
+//     LEAST ONE of `# PLACEHOLDER` (W1.D1 placeholder convention),
+//     `# Section 0` (canonical SEMI-FORMAL-REASONING header per
+//     `SEMI-FORMAL-REASONING.md`), or `## Role` (substantive-prompt
+//     convention). The 3-marker disjunction is REQUIRED — the round-2
+//     2-marker form failed-close on every W1.D1 placeholder body and
+//     would have build-broken the moment D2 + D5 landed together.
+//
+// Callers detect via errors.Is(err, ErrInvalidAgentBody) and route to
+// the standard Render-rollback path. The wrapped error message identifies
+// the specific signal that failed.
+var ErrInvalidAgentBody = errors.New("render: invalid agent body in rendered bundle")
+
 // ErrInvalidAgentTemplatePath is returned by assembleAgentFileBody when
 // binding.SystemPromptTemplatePath fails the full-path traversal-defense
 // check (round-2 fix for W3-D23-FF1).
@@ -256,7 +285,110 @@ func Render(
 		return "", fmt.Errorf("render: settings: %w", err)
 	}
 
+	// 6. Post-render validator (Drop 4c.6 W3.D5). Re-reads the rendered
+	// agent file from disk and applies a 3-signal shape check. Rollback
+	// fires on failure exactly as on any other render-step failure — the
+	// validator is wired here (not exposed as a dangling helper) to honor
+	// the HF8 contract: Tillsyn enforces template rules at the load-
+	// bearing seam, not as documentation. See ErrInvalidAgentBody.
+	if err := validateBundle(bundle, binding); err != nil {
+		rollback.run()
+		return "", fmt.Errorf("render: validate bundle: %w", err)
+	}
+
 	return promptBody, nil
+}
+
+// validateBundle is the W3.D5 post-render shape check. It re-reads the
+// agent file written by renderAgentFile (`<bundle.Paths.Root>/plugin/
+// agents/<binding.AgentName>.md`) and applies the 3-signal AND check
+// documented on ErrInvalidAgentBody.
+//
+// Signal evaluation order is fixed so error messages are deterministic:
+//
+//  1. Signal B (frontmatter intact) — runs first because the byte slice
+//     "body after closing delimiter" is the input to Signal A. A body
+//     missing delimiters fails Signal B with a specific error rather
+//     than a misleading "length 0 < 200" Signal A message.
+//  2. Signal A (length > 200) — measured on the bytes AFTER the closing
+//     `---\n` delimiter.
+//  3. Signal C (marker present) — substring scan on the same post-
+//     frontmatter bytes Signal A measured.
+//
+// Each signal returns its specific error wrapped under ErrInvalidAgentBody
+// so callers can route on errors.Is(err, ErrInvalidAgentBody) AND surface
+// the specific failure to the dev via the error message.
+//
+// The validator reads from disk (not from an in-memory body string) so
+// it catches regressions in the write step too — a future change that
+// silently truncates the file at os.WriteFile time would still fail
+// the validator on the re-read.
+func validateBundle(bundle dispatcher.Bundle, binding dispatcher.BindingResolved) error {
+	agentPath := filepath.Join(bundle.Paths.Root, pluginSubdir, agentsSubdir, binding.AgentName+".md")
+	body, err := os.ReadFile(agentPath)
+	if err != nil {
+		// If renderAgentFile succeeded just above, the file MUST exist;
+		// any read error here is a real I/O failure worth surfacing.
+		return fmt.Errorf("%w: read rendered agent file %q: %s",
+			ErrInvalidAgentBody, agentPath, err.Error())
+	}
+
+	return validateAgentBodyShape(string(body))
+}
+
+// validateAgentBodyShape applies the 3-signal AND check to the supplied
+// body string. Pure function so tests can pin failure modes without
+// touching the filesystem.
+//
+// Per the ErrInvalidAgentBody doc-comment the signals are:
+//
+//   - Signal B — leading + trailing `---\n` delimiters present AND
+//     `name:` line inside the frontmatter block.
+//   - Signal A — bytes after the closing delimiter > 200.
+//   - Signal C — body contains `# PLACEHOLDER` OR `# Section 0` OR
+//     `## Role`.
+//
+// Signal B fires first because it produces the slice Signal A measures.
+// Signal C runs against the same post-frontmatter slice for consistency
+// — markers are part of the body, not the frontmatter.
+func validateAgentBodyShape(body string) error {
+	const delim = "---\n"
+	const minBodyLength = 200
+
+	if !strings.HasPrefix(body, delim) {
+		return fmt.Errorf("%w: missing leading `---\\n` frontmatter delimiter", ErrInvalidAgentBody)
+	}
+	afterOpen := body[len(delim):]
+	closeIdx := strings.Index(afterOpen, delim)
+	if closeIdx < 0 {
+		return fmt.Errorf("%w: missing closing `---\\n` frontmatter delimiter", ErrInvalidAgentBody)
+	}
+	frontmatter := afterOpen[:closeIdx]
+	postFrontmatter := afterOpen[closeIdx+len(delim):]
+
+	if !strings.Contains(frontmatter, "name:") {
+		return fmt.Errorf("%w: frontmatter missing `name:` field", ErrInvalidAgentBody)
+	}
+
+	if n := len(postFrontmatter); n <= minBodyLength {
+		return fmt.Errorf("%w: body length %d <= %d (post-frontmatter floor)",
+			ErrInvalidAgentBody, n, minBodyLength)
+	}
+
+	// Signal C — at least one of the three positive markers must be
+	// present in the post-frontmatter body. Substring match per the
+	// W3-FF13 NIT accepted-by-design — a stub that DELIBERATELY quotes
+	// a marker inside backticks would pass Signal C falsely, but the
+	// realistic-stub case (no marker at all) is caught here, and Signal
+	// A + Signal B catch the common-case stub shapes regardless.
+	markers := []string{"# PLACEHOLDER", "# Section 0", "## Role"}
+	for _, m := range markers {
+		if strings.Contains(postFrontmatter, m) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: body missing positive role-section marker (need one of %v)",
+		ErrInvalidAgentBody, markers)
 }
 
 // renderRollback captures the paths created by Render so a partial render

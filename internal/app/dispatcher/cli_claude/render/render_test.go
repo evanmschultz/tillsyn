@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_claude/render"
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
 // stubGrantsLister is the minimal in-memory PermissionGrantsLister used
@@ -791,6 +794,24 @@ func equalStringSlice(a, b []string) bool {
 // `<group>` defaults to "till-go" when binding.SystemPromptTemplatePath is
 // empty (W3-FF5 LOCKED — `path.Dir`, NOT `filepath.Dir`, on the path).
 
+// validatorConformingBodySuffix returns a body suffix that, when appended
+// after the closing `---\n` of a frontmatter block, clears the W3.D5
+// post-render validator's three signals: a `# PLACEHOLDER` marker (Signal
+// C) plus enough filler content to exceed the 200-char post-frontmatter
+// floor (Signal A). D2 / D3 tests that build ad-hoc fixture bodies append
+// this suffix before any test-specific sentinels (sentinels must appear
+// AFTER the marker so substring assertions on them still hit).
+//
+// Format: `# PLACEHOLDER — body-suffix for validator compliance.\n<filler>\n`
+// where <filler> is a single line of ~250 chars of repeated text. The
+// total post-frontmatter length is ~300 chars — well above the 200-char
+// floor — without being unreadable in test diffs.
+func validatorConformingBodySuffix() string {
+	return "# PLACEHOLDER — body-suffix for validator compliance.\n\n" +
+		strings.Repeat("Validator filler content to clear the 200-char Signal A floor. ", 5) +
+		"\n"
+}
+
 // agentTierProjectFixture writes a project-tier agent file at
 // <projectDir>/.tillsyn/agents/<basename> with the supplied sentinel
 // content.
@@ -878,7 +899,7 @@ func TestAssembleAgentFileBody_UserOverride(t *testing.T) {
 
 	const sentinel = "SENTINEL_USER_TIER"
 	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
-		"---\nname: go-builder-agent\n---\n\n"+sentinel+"\n")
+		"---\nname: go-builder-agent\n---\n\n"+validatorConformingBodySuffix()+sentinel+"\n")
 
 	project := fixtureProject()
 	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
@@ -907,15 +928,18 @@ func TestAssembleAgentFileBody_ProjectOverride(t *testing.T) {
 	homeDir := t.TempDir()
 
 	// Plant the user-tier sentinel so we can confirm project tier wins.
+	// (Project tier wins so the user-tier body's validator compliance is
+	// moot here, but keep both fixtures validator-conforming for
+	// symmetry — a future test reorder might exercise the user tier.)
 	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
-		"---\nname: go-builder-agent\n---\n\nSENTINEL_USER_TIER\n")
+		"---\nname: go-builder-agent\n---\n\n"+validatorConformingBodySuffix()+"SENTINEL_USER_TIER\n")
 
 	project := fixtureProject()
 	project.RepoPrimaryWorktree = t.TempDir()
 
 	const projectSentinel = "SENTINEL_PROJECT_TIER"
 	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md",
-		"---\nname: go-builder-agent\n---\n\n"+projectSentinel+"\n")
+		"---\nname: go-builder-agent\n---\n\n"+validatorConformingBodySuffix()+projectSentinel+"\n")
 
 	binding := dispatcher.BindingResolved{
 		AgentName: "go-builder-agent",
@@ -1033,8 +1057,16 @@ func ptrString(s string) *string {
 // d3UserTierFrontmatter constructs an agent body with the supplied
 // frontmatter lines and a fixed body section. Test helper for D3 strip
 // tests so individual test cases focus on frontmatter shape.
+//
+// Body section carries the W3.D5 validator-conforming suffix (Signal C
+// `# PLACEHOLDER` marker + Signal A length floor) AND the legacy
+// `body-bytes-preserve-marker` sentinel D3 tests assert on, so D3
+// strip-behavior tests continue to drive only the strip-then-inject
+// pipeline without tripping the new validator.
 func d3UserTierFrontmatter(frontmatterLines string) string {
-	return "---\n" + frontmatterLines + "---\n\nbody-bytes-preserve-marker\n"
+	return "---\n" + frontmatterLines + "---\n\n" +
+		validatorConformingBodySuffix() +
+		"body-bytes-preserve-marker\n"
 }
 
 // TestAssembleAgentFileBody_FrontmatterStripModelOnAgentsTOMLSet asserts the
@@ -1391,5 +1423,239 @@ func TestAssembleAgentFileBody_FrontmatterPreservedWhenAgentsTOMLAbsent(t *testi
 	// Body bytes preserved.
 	if !strings.Contains(body, "body-bytes-preserve-marker") {
 		t.Errorf("rendered body lost post-frontmatter marker\nbody:\n%s", body)
+	}
+}
+
+// --- W3.D5: post-render validator failure-path + positive-coverage tests ---
+//
+// D5 wires a post-render validator at `Render`'s exit. The validator inspects
+// each rendered <bundle>/plugin/agents/<name>.md file body and applies a
+// 3-signal check (W3-FF6 LOCKED round-3 marker list):
+//
+//   Signal A — body length > 200 chars (W3-FF8 W4-floor-as-forward-dep).
+//   Signal B — frontmatter intact (leading + trailing `---\n` delimiters
+//              with at least `name:` inside the block).
+//   Signal C — positive role-section header present: body contains AT LEAST
+//              ONE of `# PLACEHOLDER` OR `# Section 0` OR `## Role`.
+//
+// On any signal failure the validator returns a wrapped ErrInvalidAgentBody
+// sentinel; Render's existing rollback machinery cleans up the partial
+// bundle.
+//
+// Tests inject failure bodies via the project tier (W3.D2's resolver gives
+// project-tier first priority over user + embedded), exercising the
+// validator end-to-end through Render rather than calling validateBundle
+// in isolation — HF8 contract: validator MUST be wired into Render's exit,
+// not shipped as a dangling exported helper.
+
+// TestRenderValidatorFailsOnTooShortBody asserts Signal A: a body below
+// the 200-char threshold causes Render to fail with the wrapped sentinel
+// AND triggers rollback (no <bundle>/plugin subtree remains).
+//
+// Failure-injection path: write a project-tier override file with valid
+// frontmatter, a Signal-C marker (so Signals B + C pass cleanly), and a
+// body section shorter than 200 chars. Only Signal A fails.
+func TestRenderValidatorFailsOnTooShortBody(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir()
+
+	// Frontmatter satisfies Signal B (delimiters + name:); body carries a
+	// `# PLACEHOLDER` marker (Signal C). Body remainder is only a handful
+	// of chars so total post-closing-delimiter byte count is < 200.
+	shortBody := "---\nname: go-builder-agent\n---\n\n# PLACEHOLDER\nshort\n"
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md", shortBody)
+
+	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil)
+	if err == nil {
+		t.Fatalf("Render() error = nil, want ErrInvalidAgentBody (Signal A)")
+	}
+	if !errors.Is(err, render.ErrInvalidAgentBody) {
+		t.Errorf("Render() error = %v, want errors.Is(ErrInvalidAgentBody)", err)
+	}
+
+	// Rollback verification — every artifact Render created must be gone.
+	gonePaths := []string{
+		filepath.Join(bundle.Paths.Root, "system-prompt.md"),
+		filepath.Join(bundle.Paths.Root, "plugin"),
+	}
+	for _, p := range gonePaths {
+		if _, statErr := os.Stat(p); !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("path %q still exists after rollback (statErr=%v); rollback should have wiped it", p, statErr)
+		}
+	}
+}
+
+// TestRenderValidatorFailsOnMissingFrontmatter asserts Signal B: a body
+// without frontmatter delimiters fails the validator. Body is well above
+// the 200-char floor (Signal A passes) and contains a Signal-C marker —
+// only Signal B fails so the test exercises that signal in isolation.
+func TestRenderValidatorFailsOnMissingFrontmatter(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir()
+
+	// 300+ chars of body, no frontmatter delimiters, carries a `# PLACEHOLDER`
+	// marker (Signal C). Only Signal B fails.
+	noFrontmatterBody := "# PLACEHOLDER\n\n" +
+		strings.Repeat("body content without frontmatter to clear the 200-char floor on Signal A. ", 5) +
+		"\n"
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md", noFrontmatterBody)
+
+	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil)
+	if err == nil {
+		t.Fatalf("Render() error = nil, want ErrInvalidAgentBody (Signal B)")
+	}
+	if !errors.Is(err, render.ErrInvalidAgentBody) {
+		t.Errorf("Render() error = %v, want errors.Is(ErrInvalidAgentBody)", err)
+	}
+}
+
+// TestRenderValidatorFailsOnMissingMarker asserts Signal C: a body lacking
+// all three positive markers (`# PLACEHOLDER`, `# Section 0`, `## Role`)
+// fails the validator. Body clears Signal A (length > 200) and carries
+// intact frontmatter (Signal B) — only Signal C fails.
+func TestRenderValidatorFailsOnMissingMarker(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir()
+
+	// Frontmatter intact, body > 200 chars, no role-section marker at all.
+	// Mirrors the F.7.3b stub-shape scenario the validator must catch.
+	stubLikeBody := "---\nname: go-builder-agent\n---\n\n" +
+		"Tillsyn-spawned subagent stub. Behavior loaded from the canonical " +
+		"template path. " + strings.Repeat("filler prose to clear Signal A. ", 4) +
+		"\n"
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md", stubLikeBody)
+
+	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil)
+	if err == nil {
+		t.Fatalf("Render() error = nil, want ErrInvalidAgentBody (Signal C)")
+	}
+	if !errors.Is(err, render.ErrInvalidAgentBody) {
+		t.Errorf("Render() error = %v, want errors.Is(ErrInvalidAgentBody)", err)
+	}
+}
+
+// TestRenderValidatorPassesOnSubstantiveBody is the positive-control happy
+// path: a body with intact frontmatter, length > 200, and a `# Section 0`
+// marker clears all three signals and Render succeeds.
+//
+// Doubles as the "minimal sentinel-style integration test" per the W3.D5
+// PLAN.md acceptance bullet ("bundle body length > stub-threshold"). The
+// FULL sentinel-injection-into-Path-B test suite ships in Drop 4c.8 W4-D
+// per RESEARCH/ISOLATION_ENFORCEMENT_FIX.md § E.2.2.
+func TestRenderValidatorPassesOnSubstantiveBody(t *testing.T) {
+	t.Parallel()
+
+	bundle := fixtureBundle(t)
+	project := fixtureProject()
+	project.RepoPrimaryWorktree = t.TempDir()
+
+	// Substantive-shape body: full frontmatter, length > 200, `# Section 0`
+	// marker (representative of post-Drop-4c.8-W4 substantive prompts).
+	substantiveBody := "---\nname: go-builder-agent\ndescription: substantive content\n---\n\n" +
+		"# Section 0 — SEMI-FORMAL REASONING\n\n" +
+		strings.Repeat("Substantive prompt body content above the 200-char floor. ", 4) +
+		"\n"
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md", substantiveBody)
+
+	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil); err != nil {
+		t.Fatalf("Render() error = %v, want nil (substantive body must pass validator)", err)
+	}
+
+	// Defense-in-depth: agent file present on disk after success.
+	agentPath := filepath.Join(bundle.Paths.Root, "plugin", "agents", fixtureBinding().AgentName+".md")
+	if _, err := os.Stat(agentPath); err != nil {
+		t.Errorf("agent file missing after successful Render: %v", err)
+	}
+}
+
+// TestRenderValidatorAcceptsAllEmbeddedPlaceholders is the W1.D1 positive-
+// coverage gate: every shipped embedded placeholder under
+// `internal/templates/builtin/agents/<group>/*.md` MUST pass the post-D5
+// validator unchanged. This is the W3-FF10 contract — the validator MUST
+// NOT spuriously fail-close on the placeholder set today, since D2's
+// resolver returns these bodies on every empty-project / empty-user
+// fresh-clone render.
+//
+// The test walks `templates.DefaultTemplateFS` for every
+// `builtin/agents/<group>/<basename>.md` and exercises Render against a
+// fresh project-tier override carrying that exact placeholder body, then
+// asserts Render succeeds.
+func TestRenderValidatorAcceptsAllEmbeddedPlaceholders(t *testing.T) {
+	// Cannot run t.Parallel — t.Setenv used to neutralize HOME so the
+	// user tier doesn't accidentally hit a real dev's ~/.tillsyn/agents.
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	const agentsRoot = "builtin/agents"
+	var placeholders []string
+	err := fs.WalkDir(templates.DefaultTemplateFS, agentsRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(p, ".md") {
+			return nil
+		}
+		placeholders = append(placeholders, p)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("fs.WalkDir(templates.DefaultTemplateFS, %q): %v", agentsRoot, err)
+	}
+	if len(placeholders) == 0 {
+		t.Fatalf("found 0 embedded placeholders under %q; the W1.D1 embed.FS layout regressed", agentsRoot)
+	}
+
+	for _, embedPath := range placeholders {
+		embedPath := embedPath
+		// Sub-test name strips the embed root for readability.
+		t.Run(strings.TrimPrefix(embedPath, agentsRoot+"/"), func(t *testing.T) {
+			body, err := fs.ReadFile(templates.DefaultTemplateFS, embedPath)
+			if err != nil {
+				t.Fatalf("fs.ReadFile(%q): %v", embedPath, err)
+			}
+
+			bundle := fixtureBundle(t)
+			project := fixtureProject()
+			project.RepoPrimaryWorktree = t.TempDir()
+
+			// Use the embedded basename verbatim as both the project-tier
+			// override basename AND the binding.AgentName (less the .md
+			// suffix). The project tier's filename is the basename, so
+			// the post-D2 resolver finds it via tier 1 before reaching
+			// tier 3's embedded lookup.
+			basename := path.Base(embedPath)
+			agentName := strings.TrimSuffix(basename, ".md")
+			agentTierProjectFixture(t, project.RepoPrimaryWorktree, basename, string(body))
+
+			binding := dispatcher.BindingResolved{
+				AgentName: agentName,
+				CLIKind:   dispatcher.CLIKindClaude,
+			}
+
+			if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+				t.Errorf("Render() returned %v for placeholder %q; W1.D1 placeholder must pass D5 validator", err, embedPath)
+			}
+		})
+	}
+
+	// Sanity check: W1.D1 ships exactly 27 placeholder .md files
+	// (3 groups × ~9 names — see internal/templates/embed.go). If the
+	// count drops below the documented floor, either the embed list
+	// regressed OR this test's walker is mis-scoped.
+	const minPlaceholders = 27
+	if len(placeholders) < minPlaceholders {
+		t.Errorf("walked %d placeholder files, want >= %d (W1.D1 floor)", len(placeholders), minPlaceholders)
 	}
 }
