@@ -6,6 +6,59 @@ sub-block (N/A acceptable for non-Go droplets).
 
 ---
 
+## Droplet 4c.6.W2.D7 — Round 1
+
+**Builder:** go-builder-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D7 — Project-DB record creation + Laslig success message (FINAL W2 droplet)`.
+
+### Files touched
+
+- `cmd/till/init_cmd.go` — D3a pointer fix: changed `newInitCommand(stdout io.Writer, rootOpts rootCommandOptions)` to `*rootCommandOptions`; `RunE` dereferences `*rootOpts` at call time so cobra's flag writes land correctly. Replaced `runInitPipeline` stub with real implementation: captures `(added, skipped)` counts from all copy steps, calls new `createProjectDBRecord`, emits Laslig KV summary via `writeCLIKV`. Added `createProjectDBRecord(ctx, opts, projectName)` function that calls `platform.DefaultPathsWithOptions` → `os.MkdirAll(dir)` → `sqlite.Open(dbPath)` → `app.NewService(minimal config)` → `svc.ListProjects` name-match idempotency check → `svc.CreateProject`. Added imports: `context`, `github.com/google/uuid`, `internal/adapters/storage/sqlite`, `internal/app`, `internal/platform`.
+- `cmd/till/init_cmd_test.go` — Added HOME isolation (`t.Setenv("HOME", tmp)`) to ALL tests that call `run(...)` end-to-end (prevents DB writes hitting dev's real `~/.tillsyn-init/`). Updated all tests asserting the D7 stub error to assert success (nil error). Updated `runInitJSONInTempDir` helper to set HOME isolation. Added 2 new tests: `TestInit_CreatesProjectRecord` (verifies project appears in DB via `sqlite.Open + app.NewService + ListProjects`) and `TestInit_SuccessMessage_Format` (verifies Laslig output contains `project name`, `group`, `agents copied`, `added`, `skipped`). Added imports: `github.com/google/uuid`, `internal/adapters/storage/sqlite`, `internal/app`, `internal/platform`.
+- `cmd/till/main.go` — one-line change: `newInitCommand(stdout, rootOpts)` → `newInitCommand(stdout, &rootOpts)`.
+- `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` — flipped W2.D7 `**State:**` `todo → done`; flipped W2 container `**State:**` `planning → done` (W2 is now fully closed).
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` — this entry.
+
+### Design decisions
+
+- **Pointer fix pattern cloned from `newInstallCommand`** (`install_cmd.go:25`). Doc-comment includes rationale citing `main.go:508-513` PersistentFlags binding — same wording pattern as install_cmd.go.
+- **Minimal service config for init** — `app.ServiceConfig{AutoCreateProjectColumns: true}` only. No auth, no embeddings, no live-wait broker. `CreateProject` and `ListProjects` don't gate on auth so a nil `AuthRequests` is safe. `AutoCreateProjectColumns: true` creates default board columns so newly created projects are immediately usable.
+- **Idempotency via name-match** — `svc.ListProjects` then case-insensitive name comparison. "Project already exists — skipped" is the idempotent-skip status. `strings.EqualFold` chosen over exact match to handle re-run when the dev slightly cased the name differently in their shell. This is consistent with UX expectations for `init`.
+- **DB path resolution**: uses `opts.dbPath` if set (respects `--db` flag), else `paths.DBPath` from `platform.DefaultPathsWithOptions(AppName, HomeDir)`. `opts.homeDir` is now live (pointer fix applied) so `--home` flag works correctly.
+- **HOME isolation in all tests**: `t.Setenv("HOME", tmp)` added to every `run(...)` invocation in `init_cmd_test.go`. Without this, D7's DB write would land in the dev's real `~/.tillsyn-init/tillsyn-init.db` during every test run, polluting the real DB. This is a correctness requirement, not just a tidiness preference.
+- **`runInitJSONInTempDir` updated with HOME isolation** — the helper now sets HOME before `t.Chdir`, ensuring all tests using it are hermetic.
+- **Laslig title "Init"** — distinct from install's "Dev Config". Title choice was discretionary within D7 scope; "Init" matches the command name.
+
+### TDD red→green cycle
+
+1. Applied D3a pointer fix + stub replacement skeleton — `mage test-pkg ./cmd/till` → build error (missing imports for sqlite/app/platform/uuid).
+2. Added imports + `createProjectDBRecord` stub returning empty strings — compiled.
+3. Wrote `TestInit_CreatesProjectRecord` and `TestInit_SuccessMessage_Format` (RED — pipeline still returned stub error).
+4. Updated `runInitPipeline` to replace stub with real `createProjectDBRecord` call and Laslig output — `mage test-func ./cmd/till TestInit_SuccessMessage_Format` → PASS.
+5. `mage test-func ./cmd/till TestInit_CreatesProjectRecord` → PASS.
+6. `mage test-pkg ./cmd/till` → build error: `domain` import unused in `init_cmd_test.go`. Removed.
+7. `mage test-pkg ./cmd/till` → format error: `init_cmd_test.go` needs gofumpt. Ran `mage format`.
+8. `mage ci` → GREEN. 3091 tests / 26 packages / all ≥70% coverage / build clean.
+
+### Validation
+
+- `mage test-func ./cmd/till TestInit_CreatesProjectRecord` → 1 PASS.
+- `mage test-func ./cmd/till TestInit_SuccessMessage_Format` → 1 PASS.
+- `mage test-pkg ./cmd/till` → 281 passed, 0 failed.
+- `mage ci` → GREEN. Coverage `cmd/till` = 76.1%. All 26 packages ≥70%.
+
+### Hylla Feedback
+
+Hylla was attempted for Go symbol lookups but returned `enrichment still running` on the first call. All subsequent evidence was gathered via `Read` (init_cmd.go, main.go, service.go, install_cmd.go, platform/paths.go, cli_render.go) and `Bash` for file listing. No Hylla query successfully returned results this round.
+
+- **Query**: `hylla_search_keyword` — `CreateProject CreateProjectWithMetadata Service`.
+- **Missed because**: Hylla returned "enrichment still running" — the index was mid-ingest at spawn time.
+- **Worked via**: `Read /internal/app/service.go` offset-scanning for `CreateProject*` signatures. Found at line 302 (`CreateProject`) and line 310 (`CreateProjectWithMetadata`).
+- **Suggestion**: Expose a "last successful ingest timestamp" field in the error response so agents can decide whether to wait or fall back immediately. "enrichment still running" with no ETA forces immediate fallback — an ETA (even a rough one like "started 2 min ago, typically 5 min") would let the agent wait vs fall back with better calibration.
+
+---
+
 ## Droplet 4c.6.W3.D5 — Round 1
 
 **Builder:** go-builder-agent (subagent).

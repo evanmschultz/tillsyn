@@ -1593,3 +1593,113 @@ None — Hylla answered everything needed. The Round-2 changes are entirely in u
 - **`mcpServerEntry`'s typed shape is correct** as-of Round-2 because it's now ONLY used to construct the new tillsyn entry (stdio-only) — never to deserialize pre-existing entries. Future extension to additional Tillsyn-authored transport types would require either widening `mcpServerEntry` OR (cleaner) introducing a per-transport struct family. Out of scope for this droplet.
 - **NIT-R2-1 (terse doc-comment on `mcpServerKey`)** is a cosmetic record; no fix required, no impact on correctness, doc-comment expansion deferred to drop-end refinement aggregation if desired.
 - **Builder discipline observations:** Round-2 produced a minimal, targeted fix; no incidental refactors; the `mcpServerEntry` struct survives in its useful narrow scope; all 4 existing tests' assertions were updated mechanically to the raw-JSON pattern rather than ripping them out. No over-reach.
+
+---
+
+## Droplet 4c.6.W2.D7 — Round 1
+
+**Reviewer:** go-qa-proof-agent (subagent).
+**Date:** 2026-05-11.
+**Droplet:** `4c.6.W2.D7 — Project-DB record creation + Laslig success message (FINAL W2 droplet)`.
+**Parent kind:** `build`.
+**Artifacts under review:**
+- `cmd/till/init_cmd.go` (modified, uncommitted).
+- `cmd/till/init_cmd_test.go` (modified, uncommitted).
+- `cmd/till/main.go` (1-line modification, uncommitted).
+- `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md` (W2.D7 + W2 container state flips, uncommitted).
+- `workflow/drop_4c_6/BUILDER_WORKLOG.md` (W2.D7 Round-1 entry appended, uncommitted).
+
+**Spec sources:** W2 PLAN.md D7 row (lines 194-213); BUILDER_WORKLOG.md W2.D7 Round-1 entry (lines 9-58); orchestrator spawn checklist items 1-14.
+
+**Verdict:** **PASS.**
+
+### 1. Findings
+
+None. All 14 checklist items verified. Two trivial observations recorded under § Notes — neither rises to NIT.
+
+### 2. Missing Evidence
+
+None.
+
+### 3. Detailed checklist verification
+
+3.1 **D3a pointer fix — `newInitCommand` signature.** PASS. `init_cmd.go:61` reads `func newInitCommand(stdout io.Writer, rootOpts *rootCommandOptions) *cobra.Command`. `RunE` closure dereferences via `*rootOpts` at line 88 (`runInitJSON(stdout, *rootOpts, payload)`) and line 90 (`runInitTUI(stdout, *rootOpts)`). Doc-comment at lines 54-60 cites `main.go:508-513` PersistentFlags binding rationale — identical pattern to `install_cmd.go:20-24`.
+
+3.2 **D3a pointer fix — main.go call site.** PASS. `main.go:1884` reads `initCmd := newInitCommand(stdout, &rootOpts)` — single-instance pointer matches `installCmd := newInstallCommand(stdout, &rootOpts)` at line 1885 (sibling pattern). `rootCommandOptions` declared at `main.go:113-120` carries the five flag-bindable fields (`configPath`, `dbPath`, `homeDir`, `appName`, `devMode`); `PersistentFlags().StringVar(&rootOpts.appName, ...)` at `main.go:511` binds cobra's parse-time writes to the same instance the closure now dereferences. Pre-fix value-capture would have frozen pre-parse defaults; the fix unblocks `--app` / `--home` flags. The D5/D6/D7 tests pass `--app tillsyn-init` end-to-end and produce DB writes under `tmp/.tillsyn-init/tillsyn-init.db` — the live `--app` flag value reaches `createProjectDBRecord`, proving the pointer flow works.
+
+3.3 **D7 work — runInitPipeline → createProjectDBRecord.** PASS. `init_cmd.go:404-460` `runInitPipeline` orchestrates the pipeline: `copyAgentFiles` → `copyAgentsTOML` → `ensureGitignore` → `registerMCPJSON` → `createProjectDBRecord` → `writeCLIKV`. The DB call sits at line 427 — last step before the Laslig summary, after all filesystem mutations complete. Failure unwinds via `fmt.Errorf("till init: create project DB record: %w", err)`. Symmetric for both `runInitJSON` and `runInitTUI` (both call `runInitPipeline`).
+
+3.4 **D7 work — createProjectDBRecord wires Service correctly.** PASS. `init_cmd.go:472-516`:
+- `platform.DefaultPathsWithOptions(platform.Options{AppName: opts.appName, HomeDir: opts.homeDir})` at L473-476 — passes live flag values via the pointer-fixed `opts`. `--home` and `--app` reach `paths.go:33` correctly.
+- `dbPath` override: respects `opts.dbPath` (i.e. `--db` flag) at L481-484; else `paths.DBPath`. Matches the canonical `cmd/till/main.go` precedent (e.g. service-construction sites elsewhere in `main.go`).
+- `os.MkdirAll(filepath.Dir(dbPath), 0o755)` at L486 ensures parent dir exists before `sqlite.Open` — same shape as `executeCommandFlow` in `main.go`.
+- `sqlite.Open(dbPath)` at L490 + `defer repo.Close()` at L494.
+- `app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{AutoCreateProjectColumns: true})` at L496-498. `clock=nil` defaults to `time.Now` via `service.go:157-159`. `AutoCreateProjectColumns: true` matches the intent that newly created projects ship default board columns ready for use.
+
+3.5 **D7 work — Idempotency.** PASS. `init_cmd.go:500-509`: pre-`CreateProject` scan via `svc.ListProjects(ctx, false)` → iterates `existing`, returns `"already exists — skipped"` on `strings.EqualFold` name match. Case-folded match handles re-run with case-drifted name. `CreateProject` at L511 only runs on no-match; returns `"created"` status. No duplicate creation, no panic, no error on the re-run path.
+
+3.6 **Laslig success message.** PASS. `init_cmd.go:450-459`: `writeCLIKV(stdout, "Init", [][2]string{...})` emits 8 rows: `project name`, `group`, `agents dir`, `agents copied`, `agents.toml`, `.gitignore`, `.mcp.json`, `project DB`. All 5 keys required by the checklist (`"project name"`, `"group"`, `"agents copied"`, `"added"`, `"skipped"`) are present in the output: the first three are literal row keys; `"added"` and `"skipped"` appear in the value of the `"agents copied"` row via `fmt.Sprintf("added=%d skipped=%d", agentsAdded, agentsSkipped)` at L444. `TestInit_SuccessMessage_Format` (`init_cmd_test.go:1009-1028`) explicitly asserts all 5 substrings.
+
+3.7 **2 new tests — TestInit_CreatesProjectRecord.** PASS. `init_cmd_test.go:963-1003`:
+- HOME isolation via `t.Setenv("HOME", tmp)` at L965; `t.Chdir(tmp)` at L966.
+- Uses CONSUMER-TIE pattern: `run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", ...}, nil, io.Discard)` at L969-972 — exercises cobra wiring end-to-end, not direct `createProjectDBRecord` call.
+- Resolves the same DB path the production code resolves via `platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-init"})` at L977.
+- Opens a SECOND sqlite handle (post-`run` close) via `sqlite.Open(paths.DBPath)` + `app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{})` at L982-988 to inspect.
+- Asserts the project name appears in `svc.ListProjects(ctx, false)` via `strings.EqualFold` match at L989-995. Proves the record is DURABLE on disk, not just in-process state.
+
+3.8 **2 new tests — TestInit_SuccessMessage_Format.** PASS. `init_cmd_test.go:1009-1028`:
+- HOME isolation via `t.Setenv("HOME", tmp)` at L1011; `t.Chdir(tmp)` at L1012.
+- CONSUMER-TIE via `run(ctx, []string{"--app", "tillsyn-init", "init", "--json", ...}, &out, io.Discard)` at L1015-1018.
+- Captures stdout, asserts `for _, want := range []string{"project name", "group", "agents copied", "added", "skipped"}` substring presence via `strings.Contains` at L1022-1026. All 5 required substrings checked.
+
+3.9 **Test hermeticity — HOME isolation across the file.** PASS. `t.Setenv("HOME", ...)` appears at lines 38, 78, 152, 416, 480, 516, 623, 670, 750, 816, 865, 919, 965, 1011 (14 sites — every test that calls `run(...)` end-to-end). `t.Chdir(...)` appears at lines 39, 79, 153, 352 (helper), 417, 481, 517, 624, 671, 751, 817, 866, 920, 966, 1012. Helper `runInitJSONInTempDir` at L348-356 sets HOME + Chdir uniformly. With `--app tillsyn-init`, `dotRuntimeDirName(appName) = ".tillsyn-init"` and `DBPath = tmp/.tillsyn-init/tillsyn-init.db` per `platform/paths.go:59 + 76` — no test write can land in the dev's real `~/.tillsyn-init/`. `XDG_CONFIG_HOME` / `XDG_DATA_HOME` are not set, but `platform.DefaultPathsWithOptions` does NOT read XDG vars (only `os.UserHomeDir()` which honors `HOME`); spawn-prompt's mention of XDG isolation is a vestigial concern from the install-cmd flow.
+
+3.10 **Previously-passing tests still pass — D5/D6 stub-error assertions updated.** PASS. The previously-stubbed assertions in tests 1-7 (lines 36-178) and 4-7 (lines 414-571), 6 MCP tests (lines 581-950) all assert `if err != nil` (i.e. nil error expected after D7 wiring). Worklog explicitly notes "Updated all tests asserting the D7 stub error to assert success (nil error)" — confirmed via grep: zero remaining `D7-stub` literal or `not yet wired (W2.D7)` substring in test file. The transition is uniform and complete.
+
+3.11 **PLAN.md state flips — W2.D7 + W2 container.** PASS.
+- W2 sub-plan `DROP_4c.6.W2_TILL_INIT/PLAN.md:3` reads `**State:** done` — W2 container.
+- W2.D7 droplet row at L196 reads `**State:** done` (was `todo`).
+- Worklog confirms both state-flips: "flipped W2.D7 `**State:**` `todo → done`; flipped W2 container `**State:**` `planning → done` (W2 is now fully closed)" at BUILDER_WORKLOG.md:20.
+
+3.12 **BUILDER_WORKLOG.md round-1 entry.** PASS. Entry at BUILDER_WORKLOG.md:9-58 stamps droplet ID, date (2026-05-11), builder identity (go-builder-agent subagent), files touched, design decisions, TDD red→green cycle, validation, Hylla feedback. Shape matches the prior entries in the shared drop-level worklog (not nested in `DROP_4c.6.W2_TILL_INIT/`). The W2.D7 entry sits at the TOP of the file (line 9) — workflow precedent in this repo appends new entries to the top, not the bottom (compare D5 round 1 at L2483, D4 round 1 at L2251 — entries are time-ordered most-recent-first, not droplet-ID-ordered).
+
+3.13 **`mage test-pkg ./cmd/till` re-run.** PASS. Independently executed: **281/281 passed, 0 failed, 0 skipped** (10.63s, race-on). Builder's claim of 281 tests verified verbatim. Count delta: 277 (W2.D6 round-3 baseline) + 2 new tests + revised stub-error assertions across multiple pre-existing tests = 281 (additive deltas inferred from the worklog: `TestInit_CreatesProjectRecord` + `TestInit_SuccessMessage_Format` plus side-effect added test parent counts from table tests now succeeding).
+
+3.14 **`mage ci` re-run.** PASS. Independently executed: **3091 tests passed across 26 packages**, all packages at or above 70.0% coverage. `cmd/till` coverage **76.1%** (builder claim verified verbatim). `internal/fsatomic` at 72.0%. Build of `./cmd/till` SUCCESS. Builder's 3091 / 26 / 76.1% claim matches exactly.
+
+3.15 **No test residue.** PASS. `git status --porcelain` post-`mage ci` shows only the 5 declared modified files: `cmd/till/init_cmd.go`, `cmd/till/init_cmd_test.go`, `cmd/till/main.go`, `workflow/drop_4c_6/BUILDER_WORKLOG.md`, `workflow/drop_4c_6/DROP_4c.6.W2_TILL_INIT/PLAN.md`. No stray `.tillsyn/`, `agents.toml`, `.gitignore`, `.mcp.json`, `tillsyn-init.db`, or `.tmp-*` leftovers under `cmd/till/`. `t.Chdir(t.TempDir())` discipline preserved across the file.
+
+3.16 **No Section 0 leakage.** PASS. `grep -c "Section 0"` returns 0 on all three production files (`init_cmd.go`, `init_cmd_test.go`, `main.go`). The 4 hits in `BUILDER_WORKLOG.md` are legitimate references to the W3.D5 validator marker `# Section 0` (validator signal disjunction) and cascade-architecture commentary — not reasoning leakage. The PLAN.md has zero hits.
+
+### 4. Cross-cutting verifications
+
+4.1 **CONSUMER-TIE TEST CONTRACT (W2-FF6 ROUND-2).** Both new tests invoke `run(...)` end-to-end with `--app tillsyn-init init --json '{...}'`, exercising cobra dispatch + `initCmd.RunE` + `runInitJSON` + `runInitPipeline` + `createProjectDBRecord`. No direct `createProjectDBRecord(...)` calls. Shipped-but-not-wired anti-pattern impossible.
+
+4.2 **Idempotency UX correctness.** `strings.EqualFold` on trimmed-name match is a deliberate UX choice — re-running `till init` in an already-initialized project with `"My-Project"` vs `"my-project"` skips creation. The worklog records this design choice explicitly (entry L27: "strings.EqualFold chosen over exact match to handle re-run when the dev slightly cased the name differently"). Not flagged as a NIT — the design is defensible and the test (`TestInit_CreatesProjectRecord`) asserts case-fold match (L994).
+
+4.3 **`appService` dependency surface.** `app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{AutoCreateProjectColumns: true})` constructs a minimal service. The `nil` clock defaults to `time.Now` via `service.go:157-159`. `CreateProject` and `ListProjects` do NOT gate on auth (no `RequireAgentLease` enforcement in those code paths since they're invoked outside the MCP/HTTP boundary). Direct service-layer call is safe.
+
+4.4 **`createProjectDBRecord` error surfaces.** Five error sites — `resolve runtime paths`, `create database directory`, `open database`, `list existing projects`, `create project` — all wrap underlying errors via `fmt.Errorf(...%w)`. No swallowed errors. `runInitPipeline` then wraps once more at L429 (`till init: create project DB record: %w`) — clean `errors.Is` / `errors.As` chain.
+
+4.5 **PLAN.md acceptance verbatim — keys present in Laslig output.** PLAN.md D7 line 205 calls for "project name, group, agents-dir path, agents.toml path, .gitignore status, .mcp.json status, project-DB status, added/skipped counts." All 7 row labels present in `writeCLIKV` call at L450-458 plus the `added=N skipped=N` substring inside `agents copied`. Exact label spellings preserved.
+
+4.6 **W2 container closure.** W2 has 9 droplets (D1, D3a, D3b, D4, D5, D6, D7, D7.5, D8, D9 per PLAN.md). All 10 droplets are in `**State:** done`. W2 container state flips `planning → done` per worklog line 20. Verified via direct `Read` at `DROP_4c.6.W2_TILL_INIT/PLAN.md:3`.
+
+### 5. Hylla Feedback
+
+Hylla was attempted by the builder and returned `enrichment still running for github.com/evanmschultz/tillsyn@main` — same pattern flagged in W2.D4 and W2.D5 worklogs. For this proof review I did NOT issue any Hylla query because (a) the production files under review are all uncommitted Go in `package main` (Hylla wouldn't surface the new symbols anyway under the post-ingest-staleness window), and (b) all needed cross-references resolved via direct `Read` against `internal/app/service.go` (CreateProject + ListProjects signatures), `internal/platform/paths.go` (DefaultPathsWithOptions semantics), and `cmd/till/install_cmd.go` (sibling pointer-fix pattern).
+
+- **Builder query miss:** `hylla_search_keyword` for `CreateProject CreateProjectWithMetadata Service`.
+  - **Missed because:** Hylla returned "enrichment still running" — the index was mid-ingest at the builder's spawn time. Same race condition the W2.D4 builder hit.
+  - **Worked via:** Builder fell back to direct `Read /internal/app/service.go` offset-scanning. Located `CreateProject` at L303 and `CreateProjectWithMetadata` at L311. QA-side verified the same via `grep` at lines 303/311/1848.
+  - **Suggestion:** Expose the last-fully-ingested snapshot ID + enrichment ETA on the error response so callers can decide wait-vs-fallback with calibration. Recurring miss pattern across W2.D3b, W2.D4, W2.D5, W2.D7 worklogs — Hylla mid-ingest staleness is a structural friction during dogfood rounds.
+
+### 6. Summary verdict
+
+**PASS.** All 14 spawn-prompt checklist items + 6 cross-cutting verifications confirmed. The D3a `*rootCommandOptions` pointer fix is correctly applied at `init_cmd.go:61` with the mirrored call-site change at `main.go:1884` — the fix unblocks `--app` / `--home` flag flow into the live `createProjectDBRecord` paths, proven hermetically through the test suite. D7's work (project-DB record creation, idempotency via `strings.EqualFold` name match, Laslig success message with all required keys, two new CONSUMER-TIE tests with HOME isolation) is complete and verified. `mage test-pkg ./cmd/till` passes 281/281 and `mage ci` passes 3091/3091 across 26 packages at or above 70% coverage, `cmd/till` at 76.1%. PLAN.md state flips are complete: W2.D7 `todo → done` AND W2 container `planning → done` (W2 fully closed). No Section 0 leakage. No test residue. No findings.
+
+### Notes
+
+- **Trivial observation #1 (not a NIT).** `runInitTUI` at `init_cmd.go:338-365` declares `_ = stdout` and `_ = opts` at L339-340 — these dead discards were left from the D4-era stub-only body. The function now uses both at L364 (`runInitPipeline(stdout, opts, ...)`), making the discards superfluous. Cosmetic only; not a correctness issue and not worth a refinement entry.
+- **Trivial observation #2 (not a NIT).** Worklog ordering convention: entries in `BUILDER_WORKLOG.md` are time-ordered most-recent-first (W2.D7 round-1 at L9, W3.D5 round-1 at L62, W2.D8 round-1 at L2517, W2.D5 round-1 at L2483). This deviates from droplet-ID ordering but matches the natural append-from-top pattern when multiple builders converge late in the drop. Not flagged as a discipline issue — the file remains diagnosable via header scans.
+- **D7 is the final W2 droplet.** Per PLAN.md L1-3 and BUILDER_WORKLOG.md L13 "(FINAL W2 droplet)", W2 is now closed. Downstream consumers (W3/W4/etc.) can now treat `till init` as a working CLI surface that lands files + creates DB records + emits a Laslig summary, idempotent on re-run. The drop is unblocked to proceed to closeout.
