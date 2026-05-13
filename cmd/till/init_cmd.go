@@ -405,6 +405,77 @@ func runInitJSON(stdout io.Writer, opts rootCommandOptions, payload string) erro
 	return runInitPipeline(stdout, opts, parsed)
 }
 
+// detectFLATLayout checks whether `<destDir>/.tillsyn/agents/` contains any
+// `.md` regular files directly at its root — the "FLAT" layout written by
+// Drop 4c.6 and earlier sessions. If the directory is absent the check is
+// a no-op (returns nil). If a `.md` file is found at the root level (not
+// inside a group subdirectory), the function returns a non-nil error with a
+// clear remediation instruction.
+//
+// The check is placed in `runInitPipeline` (not inside `copyAgentFiles`) so
+// it survives the D5 rewrite of `copyAgentFiles` independently — see
+// W2.D2 ContextBlocks decision.
+func detectFLATLayout(destDir string) error {
+	agentsDir := filepath.Join(destDir, ".tillsyn", "agents")
+	entries, err := os.ReadDir(agentsDir)
+	switch {
+	case err == nil:
+		// Directory exists — scan for .md files at root.
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				return fmt.Errorf("FLAT agent layout detected at %s/. Remove it and re-run: rm -rf %s && till init --group <group>",
+					agentsDir, agentsDir)
+			}
+		}
+		return nil
+	case errors.Is(err, fs.ErrNotExist):
+		// Directory absent — nothing to detect.
+		return nil
+	default:
+		return fmt.Errorf("till init: stat %q: %w", agentsDir, err)
+	}
+}
+
+// detectOldSchemaAgentsTOML checks whether `<destDir>/agents.toml` uses the
+// old `[agents.<kind>]` TOML schema (the schema from before Drop 4c.6.1
+// migrated to the new group-keyed format). The check reads only the first 20
+// lines — a pragmatic heuristic sufficient to catch the most common placement
+// of section headers. If any line stripped of leading whitespace starts with
+// the exact prefix `[agents.` (with trailing dot), the function returns a
+// non-nil error with a clear remediation instruction.
+//
+// If the file is absent the check is a no-op (returns nil) — first-time
+// `till init` runs have no agents.toml yet.
+//
+// The 20-line bound is documented in W2.D2 RiskNotes: a user with a very long
+// comment block (> 20 lines) before the first section header will not be
+// detected. 20 lines is considered a reasonable pragmatic bound.
+func detectOldSchemaAgentsTOML(destDir string) error {
+	path := filepath.Join(destDir, "agents.toml")
+	f, err := os.Open(path)
+	switch {
+	case err == nil:
+		// File open — scan first 20 lines.
+		defer func() { _ = f.Close() }()
+		sc := bufio.NewScanner(f)
+		lineNum := 0
+		for sc.Scan() && lineNum < 20 {
+			lineNum++
+			if strings.HasPrefix(strings.TrimSpace(sc.Text()), "[agents.") {
+				tomlPath := filepath.Join(destDir, "agents.toml")
+				return fmt.Errorf("agents.toml uses the old [agents.kind] schema. Remove it and re-run: rm %s && till init --group <group>",
+					tomlPath)
+			}
+		}
+		return nil
+	case errors.Is(err, fs.ErrNotExist):
+		// File absent — no-op.
+		return nil
+	default:
+		return fmt.Errorf("till init: open %q: %w", path, err)
+	}
+}
+
 // runInitPipeline is the shared post-input file-copy pipeline both
 // runInitTUI and runInitJSON invoke. It resolves the destination
 // directory (cwd), runs the three idempotent copy steps in order,
@@ -422,6 +493,16 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 	destDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("till init: resolve cwd: %w", err)
+	}
+
+	// Pre-flight checks: fail loud if a known-bad state is detected. Both
+	// checks run before any file-copy side effects (no partial writes on
+	// failure). See W2.D2 for FLAT layout and old-schema detection rationale.
+	if err := detectFLATLayout(destDir); err != nil {
+		return err
+	}
+	if err := detectOldSchemaAgentsTOML(destDir); err != nil {
+		return err
 	}
 
 	// D1: pass single group stub until D5 upgrades to the full multi-group

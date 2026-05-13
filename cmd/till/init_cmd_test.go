@@ -1212,6 +1212,178 @@ func TestInit_ConsumerTie_W2D1(t *testing.T) {
 	})
 }
 
+// TestRunInitPipeline_FLATDetection exercises the three CONSUMER-TIE cases
+// mandated by W2.D2 acceptance criteria for FLAT agent layout detection:
+//
+//	(a) FLAT layout present (.tillsyn/agents/ contains a .md file at root)
+//	    -> run() returns non-zero error containing "FLAT agent layout".
+//	(b) Old-schema agents.toml present (first line starts with "[agents.")
+//	    -> run() returns non-zero error containing "agents.toml uses the old".
+//	(c) Clean state (no FLAT agents dir, no old-schema agents.toml)
+//	    -> both checks pass, run() returns nil.
+func TestRunInitPipeline_FLATDetection(t *testing.T) {
+	t.Run("flat_layout_present", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+
+		// Seed a FLAT-layout agents dir with a .md file directly at root.
+		agentsDir := filepath.Join(tmp, ".tillsyn", "agents")
+		if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll %q: %v", agentsDir, err)
+		}
+		if err := os.WriteFile(filepath.Join(agentsDir, "builder-agent.md"), []byte("# builder\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile builder-agent.md: %v", err)
+		}
+
+		var out strings.Builder
+		err := run(context.Background(), []string{
+			"--app", "tillsyn-init", "init", "--json",
+			`{"name":"flattest","groups":["go"],"mcp":false}`,
+		}, &out, io.Discard)
+		if err == nil {
+			t.Fatalf("run() = nil; want error containing 'FLAT agent layout'")
+		}
+		if !strings.Contains(err.Error(), "FLAT agent layout") {
+			t.Fatalf("error = %q; want substring 'FLAT agent layout'", err.Error())
+		}
+	})
+
+	t.Run("clean_state_no_flat_layout", func(t *testing.T) {
+		// Clean temp dir — no .tillsyn/agents/, no agents.toml. Both checks
+		// must pass and the pipeline must succeed.
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+
+		var out strings.Builder
+		err := run(context.Background(), []string{
+			"--app", "tillsyn-init", "init", "--json",
+			`{"name":"cleantest","groups":["go"],"mcp":false}`,
+		}, &out, io.Discard)
+		if err != nil {
+			t.Fatalf("run() on clean state error = %v; want nil (both detection checks should pass)", err)
+		}
+		if !strings.Contains(out.String(), "Init") {
+			t.Fatalf("stdout = %q; want Laslig Init block", out.String())
+		}
+	})
+}
+
+// TestRunInitPipeline_OldSchemaDetection exercises the old-schema agents.toml
+// detection mandated by W2.D2 acceptance criteria:
+//
+//	(a) agents.toml with "[agents." prefix on a line -> non-zero error.
+//	(b) agents.toml absent -> no-op (clean-state covered by FLATDetection above).
+//	(c) agents.toml with "[agents]" only (no dot) -> no match, pipeline succeeds.
+func TestRunInitPipeline_OldSchemaDetection(t *testing.T) {
+	t.Run("old_schema_first_line", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+
+		// Seed agents.toml with old-schema header.
+		if err := os.WriteFile(filepath.Join(tmp, "agents.toml"), []byte("[agents.build]\nfoo = \"bar\"\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile agents.toml: %v", err)
+		}
+
+		var out strings.Builder
+		err := run(context.Background(), []string{
+			"--app", "tillsyn-init", "init", "--json",
+			`{"name":"oldschema","groups":["go"],"mcp":false}`,
+		}, &out, io.Discard)
+		if err == nil {
+			t.Fatalf("run() = nil; want error containing 'agents.toml uses the old'")
+		}
+		if !strings.Contains(err.Error(), "agents.toml uses the old") {
+			t.Fatalf("error = %q; want substring 'agents.toml uses the old'", err.Error())
+		}
+	})
+
+	t.Run("no_dot_agents_section_not_old_schema", func(t *testing.T) {
+		// [agents] without a trailing dot must NOT trigger the check. The
+		// detection is prefix "[agents." (with dot) only.
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+
+		// Write agents.toml with [agents] (no dot) — must not trigger detection.
+		// Note: copyAgentsTOML skips if agents.toml already exists, so the
+		// pipeline proceeds normally.
+		if err := os.WriteFile(filepath.Join(tmp, "agents.toml"), []byte("[agents]\nfoo = \"bar\"\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile agents.toml: %v", err)
+		}
+
+		var out strings.Builder
+		err := run(context.Background(), []string{
+			"--app", "tillsyn-init", "init", "--json",
+			`{"name":"nodotschema","groups":["go"],"mcp":false}`,
+		}, &out, io.Discard)
+		if err != nil {
+			t.Fatalf("run() error = %v; want nil ([agents] without dot must not trigger old-schema detection)", err)
+		}
+	})
+
+	t.Run("old_schema_within_first_20_lines", func(t *testing.T) {
+		// Seed agents.toml with a comment block (15 lines) before the
+		// [agents.plan] section — must still be detected within the 20-line
+		// heuristic window.
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+
+		var body strings.Builder
+		for i := range 15 {
+			body.WriteString("# comment line ")
+			body.WriteString(strings.Repeat("x", i))
+			body.WriteString("\n")
+		}
+		body.WriteString("[agents.plan]\nfoo = \"bar\"\n")
+		if err := os.WriteFile(filepath.Join(tmp, "agents.toml"), []byte(body.String()), 0o644); err != nil {
+			t.Fatalf("WriteFile agents.toml: %v", err)
+		}
+
+		var out strings.Builder
+		err := run(context.Background(), []string{
+			"--app", "tillsyn-init", "init", "--json",
+			`{"name":"deepschema","groups":["go"],"mcp":false}`,
+		}, &out, io.Discard)
+		if err == nil {
+			t.Fatalf("run() = nil; want error (old-schema within 20 lines must be detected)")
+		}
+		if !strings.Contains(err.Error(), "agents.toml uses the old") {
+			t.Fatalf("error = %q; want substring 'agents.toml uses the old'", err.Error())
+		}
+	})
+
+	t.Run("old_schema_beyond_20_lines_not_detected", func(t *testing.T) {
+		// The 20-line heuristic: [agents.X] appearing AFTER line 20 is NOT
+		// detected. This is the documented pragmatic bound (W2.D2 RiskNotes).
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+
+		var body strings.Builder
+		for range 25 {
+			body.WriteString("# comment\n")
+		}
+		body.WriteString("[agents.plan]\nfoo = \"bar\"\n")
+		if err := os.WriteFile(filepath.Join(tmp, "agents.toml"), []byte(body.String()), 0o644); err != nil {
+			t.Fatalf("WriteFile agents.toml: %v", err)
+		}
+
+		var out strings.Builder
+		err := run(context.Background(), []string{
+			"--app", "tillsyn-init", "init", "--json",
+			`{"name":"farschema","groups":["go"],"mcp":false}`,
+		}, &out, io.Discard)
+		// No error expected — the old-schema line is beyond the 20-line window.
+		if err != nil {
+			t.Fatalf("run() error = %v; want nil (old-schema beyond 20-line window should not be detected)", err)
+		}
+	})
+}
+
 // topKeys returns the keys of a map[string]json.RawMessage for use in
 // test failure messages.
 func topKeys(m map[string]json.RawMessage) []string {
