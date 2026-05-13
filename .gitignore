@@ -17,6 +17,9 @@ coverage.out
 # (`.tillsyn/`); the latter blocks every re-include rule per gitignore docs.
 .tillsyn/*
 !.tillsyn/template.toml
+!.tillsyn/agents/
+!.tillsyn/agents/**/*.md
+!.tillsyn/bindings.json
 .artifacts/
 .tmp/
 
@@ -31,6 +34,12 @@ coverage.out
 .claude/
 .codex/
 .nvimlog
+
+# Wails build outputs and generated bindings (Drop 4c.6.1 W6.D1)
+build/bin/
+frontend/node_modules/
+frontend/dist/
+frontend/wailsjs/
 
 # Secrets — belt-and-suspenders
 .env
