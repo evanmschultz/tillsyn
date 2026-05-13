@@ -95,14 +95,14 @@ var ErrInvalidGrantsLister = errors.New("render: grants lister does not implemen
 
 // ErrAgentBodyNotFound is returned by assembleAgentFileBody when the
 // 3-tier resolver exhausts every tier — project tier, user tier, and the
-// embedded tier's cross-group fallback to till-gen — without finding a
+// embedded tier's cross-group fallback to gen — without finding a
 // matching agent file.
 //
 // Per the W3-FF7 LOCKED contract the embedded tier's lookup ladder is
 // primary `builtin/agents/<group>/<basename>` → fallback
-// `builtin/agents/till-gen/<basename>` on fs.ErrNotExist. If till-gen
-// also misses the resolver returns ErrAgentBodyNotFound wrapped with the
-// failing AgentName + group + basename context. Callers detect via
+// `builtin/agents/gen/<basename>` on fs.ErrNotExist. If gen also misses
+// the resolver returns ErrAgentBodyNotFound wrapped with the failing
+// AgentName + group + basename context. Callers detect via
 // errors.Is(err, ErrAgentBodyNotFound) and route to the standard
 // Render-rollback path.
 var ErrAgentBodyNotFound = errors.New("render: agent body not found in project, user, or embedded tier")
@@ -142,12 +142,12 @@ var ErrInvalidAgentBody = errors.New("render: invalid agent body in rendered bun
 //
 // Reject rules (applied AFTER the empty-path-is-OK short-circuit per
 // W3-FF5 LOCKED — empty SystemPromptTemplatePath still routes to the
-// till-go embedded default):
+// go embedded default):
 //
 //  1. Absolute paths (starts with "/").
 //  2. Any path segment equal to ".." (full-path defense; the existing
 //     validateAgentBasename only catches leaf "..").
-//  3. Empty intermediate segments (catches "till-go//passwd" shapes that
+//  3. Empty intermediate segments (catches "go//passwd" shapes that
 //     would otherwise split into an empty segment under strings.Split).
 //
 // Without this validator a malicious template could set
@@ -173,7 +173,7 @@ var ErrInvalidAgentTemplatePath = errors.New("render: invalid agent template pat
 // internal/templates.DefaultTemplateFS where placeholder agent .md
 // scaffolding lives. Per the W3-FF5 + W3-FF7 LOCKED contracts the
 // resolver walks <agentBodyEmbeddedRoot>/<group>/<basename> first, then
-// falls back to <agentBodyEmbeddedRoot>/till-gen/<basename> on miss.
+// falls back to <agentBodyEmbeddedRoot>/gen/<basename> on miss.
 const agentBodyEmbeddedRoot = "builtin/agents"
 
 // agentBodyDefaultGroup is the dogfood default group selected when
@@ -203,9 +203,9 @@ const agentBodyFallbackGroup = "gen"
 const projectAgentsSubdir = ".tillsyn/agents"
 
 // userAgentsSubdir is the per-user override directory the user tier
-// reads from (`<user-home>/.tillsyn/agents/<group>/`). The user tier is
-// group-scoped; the project tier is not (the project owns its agents
-// directly).
+// reads from (`<user-home>/.tillsyn/agents/<group>/`). The user and project
+// tiers are both group-scoped; Drop 4c.6.1 W1.D3 brought the project tier
+// in line with the user tier (subdir-per-group layout).
 const userAgentsSubdir = ".tillsyn/agents"
 
 // Render writes the per-spawn bundle artifacts the claude adapter needs:
@@ -598,7 +598,7 @@ func renderPluginManifest(bundle dispatcher.Bundle) error {
 //     `cli_adapter.go` plus the populator in `binding_resolved.go`.
 //  3. Drop 4c.6 W3.D2 implemented the 3-tier render-time resolver in
 //     `assembleAgentFileBody` consuming `templates.DefaultTemplateFS`
-//     with cross-group till-gen fallback.
+//     with cross-group gen fallback.
 //
 // The collapsed round-2 form ("F.7.2 + 4c.6 W3.D2 landed the field-and-
 // resolver-wired version") elided the W3.D1 plumbing step; the expanded
@@ -673,7 +673,7 @@ func assembleAgentFileBody(project domain.Project, binding dispatcher.BindingRes
 	group := resolveAgentGroup(binding)
 
 	// Tier 1 — project tier.
-	body, found, err := readProjectTierAgent(project.RepoPrimaryWorktree, basename)
+	body, found, err := readProjectTierAgent(project.RepoPrimaryWorktree, group, basename)
 	if err != nil {
 		return "", fmt.Errorf("project-tier read: %w", err)
 	}
@@ -685,7 +685,7 @@ func assembleAgentFileBody(project domain.Project, binding dispatcher.BindingRes
 		}
 	}
 	if !found {
-		// Tier 3 — embedded tier with cross-group fallback to till-gen.
+		// Tier 3 — embedded tier with cross-group fallback to gen.
 		body, err = readEmbeddedTierAgent(group, basename)
 		if err != nil {
 			return "", err
@@ -812,7 +812,7 @@ func resolveAgentBasename(binding dispatcher.BindingResolved) (string, error) {
 // segments while still closing the documented attack.
 //
 // Empty path is NOT inspected here — the W3-FF5 LOCKED empty-string
-// sentinel routes to the till-go embedded default and short-circuits
+// sentinel routes to the go embedded default and short-circuits
 // before this validator runs. The caller's TrimSpace guard handles that.
 func validateAgentTemplatePath(p string) error {
 	// Absolute-path rule. path.IsAbs would work on slash-separated
@@ -878,18 +878,22 @@ func resolveAgentGroup(binding dispatcher.BindingResolved) string {
 }
 
 // readProjectTierAgent attempts to read the project-tier agent file at
-// `<projectWorktree>/.tillsyn/agents/<basename>`. Returns (body, true,
-// nil) on hit, ("", false, nil) on fs.ErrNotExist or when the worktree
-// path is empty, and ("", false, err) on any other I/O error.
+// `<projectWorktree>/.tillsyn/agents/<group>/<basename>`. Returns (body,
+// true, nil) on hit, ("", false, nil) on fs.ErrNotExist or when the
+// worktree path is empty, and ("", false, err) on any other I/O error.
+//
+// Drop 4c.6.1 W1.D3: project tier is now group-scoped (subdir-per-group
+// layout) matching the user tier. The old flat layout
+// (`<projectWorktree>/.tillsyn/agents/<basename>`) no longer resolves.
 //
 // An empty projectWorktree (project not yet bootstrapped) skips this
 // tier silently — there is no path to read from and no I/O error to
 // surface.
-func readProjectTierAgent(projectWorktree, basename string) (string, bool, error) {
+func readProjectTierAgent(projectWorktree, group, basename string) (string, bool, error) {
 	if strings.TrimSpace(projectWorktree) == "" {
 		return "", false, nil
 	}
-	p := filepath.Join(projectWorktree, projectAgentsSubdir, basename)
+	p := filepath.Join(projectWorktree, projectAgentsSubdir, group, basename)
 	body, err := os.ReadFile(p)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

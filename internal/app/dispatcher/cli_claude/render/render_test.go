@@ -778,11 +778,11 @@ func equalStringSlice(a, b []string) bool {
 // --- W3.D2: 3-tier agent-body resolver tests --------------------------------
 //
 // These tests exercise render.assembleAgentFileBody's 3-tier resolution path:
-// (1) project tier — <project.RepoPrimaryWorktree>/.tillsyn/agents/<basename>
+// (1) project tier — <project.RepoPrimaryWorktree>/.tillsyn/agents/<group>/<basename>
 // (2) user tier    — <user-home>/.tillsyn/agents/<group>/<basename>
 // (3) embedded tier — templates.DefaultTemplateFS via
 //                     builtin/agents/<group>/<basename> with cross-group
-//                     fallback to till-gen/<basename> on fs.ErrNotExist.
+//                     fallback to gen/<basename> on fs.ErrNotExist.
 //
 // The tests do NOT call Render() — they call the integration surface via
 // the existing Render() entrypoint when convenient (project tier + user tier
@@ -791,7 +791,7 @@ func equalStringSlice(a, b []string) bool {
 // access to the rendered agent file's bytes. Both styles use the standard
 // Render() entry to keep tests black-box.
 //
-// `<group>` defaults to "till-go" when binding.SystemPromptTemplatePath is
+// `<group>` defaults to "go" when binding.SystemPromptTemplatePath is
 // empty (W3-FF5 LOCKED — `path.Dir`, NOT `filepath.Dir`, on the path).
 
 // validatorConformingBodySuffix returns a body suffix that, when appended
@@ -813,11 +813,12 @@ func validatorConformingBodySuffix() string {
 }
 
 // agentTierProjectFixture writes a project-tier agent file at
-// <projectDir>/.tillsyn/agents/<basename> with the supplied sentinel
-// content.
-func agentTierProjectFixture(t *testing.T, projectDir, basename, content string) {
+// <projectDir>/.tillsyn/agents/<group>/<basename> with the supplied sentinel
+// content. Drop 4c.6.1 W1.D3: project tier is now group-scoped (subdir-per-
+// group layout), matching the user-tier convention.
+func agentTierProjectFixture(t *testing.T, projectDir, group, basename, content string) {
 	t.Helper()
-	dir := filepath.Join(projectDir, ".tillsyn", "agents")
+	dir := filepath.Join(projectDir, ".tillsyn", "agents", group)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("seed project-tier dir: %v", err)
 	}
@@ -921,7 +922,7 @@ func TestAssembleAgentFileBody_UserOverride(t *testing.T) {
 
 // TestAssembleAgentFileBody_ProjectOverride asserts the project tier wins
 // over both the user tier and the embedded tier when
-// <project>/.tillsyn/agents/<basename> exists.
+// <project>/.tillsyn/agents/<group>/<basename> exists.
 func TestAssembleAgentFileBody_ProjectOverride(t *testing.T) {
 	// Cannot run t.Parallel — t.Setenv used.
 	bundle := fixtureBundle(t)
@@ -938,7 +939,7 @@ func TestAssembleAgentFileBody_ProjectOverride(t *testing.T) {
 	project.RepoPrimaryWorktree = t.TempDir()
 
 	const projectSentinel = "SENTINEL_PROJECT_TIER"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md",
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go", "builder-agent.md",
 		"---\nname: builder-agent\n---\n\n"+validatorConformingBodySuffix()+projectSentinel+"\n")
 
 	binding := dispatcher.BindingResolved{
@@ -1021,8 +1022,8 @@ func TestAssembleAgentFileBody_CrossGroupFallbackMissesBothGroups(t *testing.T) 
 	binding := dispatcher.BindingResolved{
 		AgentName: "nonexistent-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
-		// Empty SystemPromptTemplatePath → group "till-go".
-		// Neither till-go/nonexistent-agent.md nor till-gen/nonexistent-agent.md
+		// Empty SystemPromptTemplatePath → group "go" (agentBodyDefaultGroup).
+		// Neither go/nonexistent-agent.md nor gen/nonexistent-agent.md
 		// exists in the embedded FS → ErrAgentBodyNotFound.
 	}
 
@@ -1477,7 +1478,7 @@ func TestRenderValidatorFailsOnTooShortBody(t *testing.T) {
 	// `# PLACEHOLDER` marker (Signal C). Body remainder is only a handful
 	// of chars so total post-closing-delimiter byte count is < 200.
 	shortBody := "---\nname: go-builder-agent\n---\n\n# PLACEHOLDER\nshort\n"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md", shortBody)
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go", "builder-agent.md", shortBody)
 
 	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil)
 	if err == nil {
@@ -1515,7 +1516,7 @@ func TestRenderValidatorFailsOnMissingFrontmatter(t *testing.T) {
 	noFrontmatterBody := "# PLACEHOLDER\n\n" +
 		strings.Repeat("body content without frontmatter to clear the 200-char floor on Signal A. ", 5) +
 		"\n"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md", noFrontmatterBody)
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go", "builder-agent.md", noFrontmatterBody)
 
 	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil)
 	if err == nil {
@@ -1543,7 +1544,7 @@ func TestRenderValidatorFailsOnMissingMarker(t *testing.T) {
 		"Tillsyn-spawned subagent stub. Behavior loaded from the canonical " +
 		"template path. " + strings.Repeat("filler prose to clear Signal A. ", 4) +
 		"\n"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md", stubLikeBody)
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go", "builder-agent.md", stubLikeBody)
 
 	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil)
 	if err == nil {
@@ -1575,7 +1576,7 @@ func TestRenderValidatorPassesOnSubstantiveBody(t *testing.T) {
 		"# Section 0 — SEMI-FORMAL REASONING\n\n" +
 		strings.Repeat("Substantive prompt body content above the 200-char floor. ", 4) +
 		"\n"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md", substantiveBody)
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go", "builder-agent.md", substantiveBody)
 
 	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil (substantive body must pass validator)", err)
@@ -1643,16 +1644,27 @@ func TestRenderValidatorAcceptsAllEmbeddedPlaceholders(t *testing.T) {
 
 			// Use the embedded basename verbatim as both the project-tier
 			// override basename AND the binding.AgentName (less the .md
-			// suffix). The project tier's filename is the basename, so
-			// the post-D2 resolver finds it via tier 1 before reaching
-			// tier 3's embedded lookup.
+			// suffix). The group is derived from the embed path (structure:
+			// builtin/agents/<group>/<basename>). The project tier now uses
+			// subdir-per-group layout (<project>/.tillsyn/agents/<group>/<basename>)
+			// per Drop 4c.6.1 W1.D3, so the fixture must be seeded at the
+			// correct group subdir for the project tier to win (tier 1 hit).
+			//
+			// SystemPromptTemplatePath = "<group>/<basename>" ensures the
+			// resolver derives the correct group from the path (instead of
+			// defaulting to agentBodyDefaultGroup = "go"), which matters for
+			// groups like "till-gdd" whose agent names don't exist in "go/"
+			// or "gen/" embedded subdirs.
+			relPath := strings.TrimPrefix(embedPath, agentsRoot+"/")
+			group := path.Dir(relPath)
 			basename := path.Base(embedPath)
 			agentName := strings.TrimSuffix(basename, ".md")
-			agentTierProjectFixture(t, project.RepoPrimaryWorktree, basename, string(body))
+			agentTierProjectFixture(t, project.RepoPrimaryWorktree, group, basename, string(body))
 
 			binding := dispatcher.BindingResolved{
-				AgentName: agentName,
-				CLIKind:   dispatcher.CLIKindClaude,
+				AgentName:                agentName,
+				CLIKind:                  dispatcher.CLIKindClaude,
+				SystemPromptTemplatePath: relPath, // "<group>/<basename>" → correct group resolution
 			}
 
 			if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
@@ -1669,4 +1681,110 @@ func TestRenderValidatorAcceptsAllEmbeddedPlaceholders(t *testing.T) {
 	if len(placeholders) < minPlaceholders {
 		t.Errorf("walked %d placeholder files, want >= %d (W1.D1 floor)", len(placeholders), minPlaceholders)
 	}
+}
+
+// TestReadProjectTierAgent_SubdirPerGroup pins the Drop 4c.6.1 W1.D3
+// contract: the project-tier resolver now uses subdir-per-group layout
+// (<project>/.tillsyn/agents/<group>/<basename>) rather than the
+// previously flat layout (<project>/.tillsyn/agents/<basename>).
+//
+// Case 1 — MISS on flat layout: a file seeded at the old flat path
+// <project>/.tillsyn/agents/builder-agent.md is NOT found by the project
+// tier (resolver looks in <group>/<basename>), so the render falls through
+// to the embedded tier and returns the embedded placeholder body.
+//
+// Case 2 — HIT on subdir layout: a file seeded at the new subdir path
+// <project>/.tillsyn/agents/go/builder-agent.md IS found by the project
+// tier and its content wins over the embedded placeholder.
+func TestReadProjectTierAgent_SubdirPerGroup(t *testing.T) {
+	t.Run("flat_layout_is_miss", func(t *testing.T) {
+		// Cannot run t.Parallel — t.Setenv used.
+		bundle := fixtureBundle(t)
+		homeDir := t.TempDir()
+		t.Setenv("HOME", homeDir) // empty user tier
+
+		project := fixtureProject()
+		project.RepoPrimaryWorktree = t.TempDir()
+
+		// Seed the OLD flat layout at <project>/.tillsyn/agents/<basename>.
+		// After W1.D3 the resolver looks at <group>/<basename> — so this
+		// file must NOT be found at the project tier.
+		const flatSentinel = "SENTINEL_FLAT_LAYOUT_MUST_NOT_WIN"
+		flatDir := filepath.Join(project.RepoPrimaryWorktree, ".tillsyn", "agents")
+		if err := os.MkdirAll(flatDir, 0o700); err != nil {
+			t.Fatalf("seed flat-layout dir: %v", err)
+		}
+		flatBody := "---\nname: builder-agent\n---\n\n" +
+			validatorConformingBodySuffix() + flatSentinel + "\n"
+		if err := os.WriteFile(filepath.Join(flatDir, "builder-agent.md"), []byte(flatBody), 0o600); err != nil {
+			t.Fatalf("seed flat-layout file: %v", err)
+		}
+
+		binding := dispatcher.BindingResolved{
+			AgentName: "builder-agent",
+			CLIKind:   dispatcher.CLIKindClaude,
+			// Empty SystemPromptTemplatePath → group = "go" (agentBodyDefaultGroup).
+		}
+
+		if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+			t.Fatalf("Render() error = %v, want nil (should fall through to embedded tier)", err)
+		}
+
+		body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+		if strings.Contains(body, flatSentinel) {
+			t.Errorf("flat-layout file unexpectedly won at project tier "+
+				"(sentinel found); W1.D3 requires subdir-per-group layout to win, not flat\nbody:\n%s", body)
+		}
+		// Embedded tier fired — body carries the PLACEHOLDER marker.
+		if !strings.Contains(body, "# PLACEHOLDER") {
+			t.Errorf("expected embedded-tier PLACEHOLDER marker after flat-layout miss\nbody:\n%s", body)
+		}
+	})
+
+	t.Run("subdir_layout_is_hit", func(t *testing.T) {
+		// Cannot run t.Parallel — t.Setenv used.
+		bundle := fixtureBundle(t)
+		homeDir := t.TempDir()
+		t.Setenv("HOME", homeDir) // empty user tier
+
+		project := fixtureProject()
+		project.RepoPrimaryWorktree = t.TempDir()
+
+		// Seed the NEW subdir layout at <project>/.tillsyn/agents/go/<basename>.
+		// The resolver must find this file at the project tier (tier 1 hit),
+		// and its sentinel content must appear in the rendered output.
+		//
+		// Body uses `## Role` as the Signal C validator marker (avoids
+		// `# PLACEHOLDER` which would be ambiguous with the embedded tier's
+		// placeholder body marker). Content exceeds the 200-char Signal A
+		// floor via explicit filler. Signal B: full frontmatter with `name:`.
+		const subdirSentinel = "SENTINEL_SUBDIR_LAYOUT_WINS"
+		const embeddedMarker = "Substantive content lands in Drop 4c.8 W4"
+		subdirBody := "---\nname: builder-agent\n---\n\n" +
+			"## Role\n\n" +
+			strings.Repeat("Project-tier override content to clear the 200-char Signal A floor. ", 4) +
+			"\n" + subdirSentinel + "\n"
+		agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go", "builder-agent.md", subdirBody)
+
+		binding := dispatcher.BindingResolved{
+			AgentName: "builder-agent",
+			CLIKind:   dispatcher.CLIKindClaude,
+			// Empty SystemPromptTemplatePath → group = "go" (agentBodyDefaultGroup).
+		}
+
+		if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+			t.Fatalf("Render() error = %v, want nil", err)
+		}
+
+		body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+		if !strings.Contains(body, subdirSentinel) {
+			t.Errorf("subdir-layout file not found at project tier "+
+				"(sentinel missing); W1.D3 requires <group>/<basename> subdir layout to win\nbody:\n%s", body)
+		}
+		// Embedded placeholder's unique description field must NOT appear
+		// in the rendered body (project tier wins over embedded tier).
+		if strings.Contains(body, embeddedMarker) {
+			t.Errorf("embedded-tier content unexpectedly present; project tier should win\nbody:\n%s", body)
+		}
+	})
 }
