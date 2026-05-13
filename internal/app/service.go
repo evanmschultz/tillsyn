@@ -449,8 +449,9 @@ const projectTemplateDir = ".tillsyn"
 // bakes into a project's KindCatalog.
 //
 // Drop 4c.5 droplet F.1.2 extends F.1.1's empty-path embedded fallback
-// with the on-disk filesystem walk Drop 3.14 had deferred. Today's
-// resolution order, in priority sequence:
+// with the on-disk filesystem walk Drop 3.14 had deferred. Drop 4c.6.1
+// droplet W1.D1 inserts the user HOME tier between the project-worktree
+// tier and the embedded fallback. Resolution order, in priority sequence:
 //
 //  1. <project.RepoBareRoot>/.tillsyn/template.toml — when RepoBareRoot
 //     (after whitespace trim) is non-empty AND the file exists. The bare
@@ -461,7 +462,12 @@ const projectTemplateDir = ".tillsyn"
 //     RepoPrimaryWorktree (after whitespace trim) is non-empty AND the
 //     file exists. Adopters that do not use a bare-root layout author
 //     their template here.
-//  3. Embedded `default-<lang>.toml` selected by project.Language via
+//  3. <$HOME>/.tillsyn/templates/<group>.toml — where group is
+//     strings.TrimSpace(project.Language). Skipped when os.UserHomeDir()
+//     fails, when home is whitespace-only, or when Language is empty.
+//     Allows users to override the embedded default for all projects that
+//     share a language without per-project template files (W1.D1).
+//  4. Embedded `default-<lang>.toml` selected by project.Language via
 //     templates.LoadDefaultTemplateForLanguage (F.1.3's resolver). This
 //     is the unconditional final fallback whenever no on-disk candidate
 //     matches, including when both repo-path fields are empty.
@@ -530,18 +536,53 @@ func loadProjectTemplate(project *domain.Project) (templates.Template, bool, err
 	if project == nil {
 		return templates.Template{}, false, nil
 	}
+	homeDir := ""
+	if h, err := os.UserHomeDir(); err == nil && strings.TrimSpace(h) != "" {
+		homeDir = h
+	}
+	return loadProjectTemplateWithHome(project, homeDir, strings.TrimSpace(project.Language))
+}
+
+// loadProjectTemplateWithHome is the testability seam for the 4-tier template
+// resolution walk. loadProjectTemplate calls it with the real os.UserHomeDir()
+// result and the project's Language (TrimSpace applied). D2's multi-group
+// coordinator calls it per element in project.Metadata.Groups with the same
+// homeDir.
+//
+// Resolution order:
+//
+//  1. <project.RepoBareRoot>/.tillsyn/template.toml
+//  2. <project.RepoPrimaryWorktree>/.tillsyn/template.toml
+//  3. <homeDir>/.tillsyn/templates/<group>.toml (HOME tier — new in D1)
+//  4. Embedded default via templates.LoadDefaultTemplateForLanguage
+//
+// HOME tier is skipped when homeDir is empty (os.UserHomeDir() failed or
+// returned whitespace) or when group is empty (empty Language → no meaningful
+// group name → malformed path avoided). This mirrors the readUserTierAgent
+// pattern in render.go.
+//
+// First-candidate-wins and error-propagation semantics are identical to the
+// pre-D1 walk: a candidate file that EXISTS but fails templates.Load
+// propagates an error without falling through to subsequent candidates.
+func loadProjectTemplateWithHome(project *domain.Project, homeDir, group string) (templates.Template, bool, error) {
+	if project == nil {
+		return templates.Template{}, false, nil
+	}
 	bareRoot := strings.TrimSpace(project.RepoBareRoot)
 	primaryWorktree := strings.TrimSpace(project.RepoPrimaryWorktree)
 	// Build the candidate list in priority order. Empty paths are
 	// dropped here so the walk loop never feeds filepath.Join an empty
 	// root (which would silently produce a CWD-relative path). See the
-	// "Relative-path safety" doc-comment paragraph above.
-	candidates := make([]string, 0, 2)
+	// "Relative-path safety" doc-comment paragraph on loadProjectTemplate.
+	candidates := make([]string, 0, 3)
 	if bareRoot != "" {
 		candidates = append(candidates, filepath.Join(bareRoot, projectTemplateDir, projectTemplateFilename))
 	}
 	if primaryWorktree != "" {
 		candidates = append(candidates, filepath.Join(primaryWorktree, projectTemplateDir, projectTemplateFilename))
+	}
+	if homeDir != "" && group != "" {
+		candidates = append(candidates, filepath.Join(homeDir, ".tillsyn", "templates", group+".toml"))
 	}
 	for _, candidatePath := range candidates {
 		tpl, ok, err := loadProjectTemplateCandidate(candidatePath)
@@ -553,8 +594,8 @@ func loadProjectTemplate(project *domain.Project) (templates.Template, bool, err
 		}
 	}
 	// All on-disk candidates absent (or no candidates at all because both
-	// repo-path fields are empty). Fall through to the language-aware
-	// embedded default per F.1.3.
+	// repo-path fields are empty and HOME tier was skipped). Fall through
+	// to the language-aware embedded default per F.1.3.
 	tpl, err := templates.LoadDefaultTemplateForLanguage(project.Language)
 	if err != nil {
 		return templates.Template{}, false, fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)
@@ -1400,7 +1441,7 @@ func (s *Service) MoveActionItem(ctx context.Context, actionItemID, toColumnID s
 //   - STEWARD owner-state-lock: the adapter-layer caller is responsible for
 //     the `assertOwnerStateGate` check before invoking this method, mirror-
 //     ing the `MoveActionItem` adapter's pattern. See
-//     `internal/adapters/server/common/app_service_adapter_mcp.go` for the
+//     `internal/adapters/mcp_common/app_service_adapter_mcp.go` for the
 //     adapter passthrough.
 //
 // Returns the post-supersede `domain.ActionItem` with `LifecycleState =
