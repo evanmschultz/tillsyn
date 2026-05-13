@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,7 +19,9 @@ import (
 
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/evanmschultz/tillsyn/internal/platform"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
 // TestInit_BareInvocation_ReturnsTUIStubError verifies that `till init` (bare,
@@ -1899,21 +1902,37 @@ func topKeys(m map[string]json.RawMessage) []string {
 
 // TestWriteTemplateTOML_HOMETierPresent verifies that writeTemplateTOML reads
 // from the HOME tier (~/.tillsyn/templates/<group>.toml) when it exists, and
-// writes the content with a [<group>] section header to template.toml.
+// writes the content (prefixed with the group marker comment) to template.toml.
 // CONSUMER-TIE TEST CONTRACT (W2.D6) — drives through run() end-to-end so
 // the full runInitPipeline → writeTemplateTOML chain is exercised.
+//
+// W2.D7 update: the HOME-tier template must be a valid templates.Template TOML
+// body (schema_version = "v1" at top level) so bakeProjectKindCatalog can
+// parse it when RepoPrimaryWorktree is set. The test uses the comment
+// "# home-tier-sentinel" to distinguish the HOME-tier file from the embedded
+// default, replacing the old my_custom_key = "home-tier-value" approach (which
+// would fail templates.Load's DisallowUnknownFields check).
 func TestWriteTemplateTOML_HOMETierPresent(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
 	// Seed the HOME-tier template for the "go" group.
+	// The content must be a valid templates.Template TOML body so
+	// bakeProjectKindCatalog does not fail when RepoPrimaryWorktree is set.
+	// We use the embedded till-go.toml content as the base and prepend a
+	// unique sentinel comment to distinguish HOME-tier from embedded default.
 	homeTemplatesDir := filepath.Join(dir, ".tillsyn", "templates")
 	if err := os.MkdirAll(homeTemplatesDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll HOME templates dir: %v", err)
 	}
-	customContent := "# custom go template\nmy_custom_key = \"home-tier-value\"\n"
-	if err := os.WriteFile(filepath.Join(homeTemplatesDir, "go.toml"), []byte(customContent), 0o644); err != nil {
+	// Read the embedded till-go.toml to build a valid HOME-tier template.
+	embeddedGoContent, fsErr := fs.ReadFile(templates.DefaultTemplateFS, "builtin/till-go.toml")
+	if fsErr != nil {
+		t.Fatalf("fs.ReadFile(till-go.toml): %v", fsErr)
+	}
+	homeTierContent := "# home-tier-sentinel\n" + string(embeddedGoContent)
+	if err := os.WriteFile(filepath.Join(homeTemplatesDir, "go.toml"), []byte(homeTierContent), 0o644); err != nil {
 		t.Fatalf("WriteFile HOME go.toml: %v", err)
 	}
 
@@ -1922,7 +1941,7 @@ func TestWriteTemplateTOML_HOMETierPresent(t *testing.T) {
 		t.Fatalf("run(init --json) error = %v; want nil", err)
 	}
 
-	// template.toml must exist and contain the HOME-tier custom content.
+	// template.toml must exist and contain the HOME-tier sentinel.
 	tplPath := filepath.Join(dir, ".tillsyn", "template.toml")
 	data, readErr := os.ReadFile(tplPath)
 	if readErr != nil {
@@ -1930,13 +1949,16 @@ func TestWriteTemplateTOML_HOMETierPresent(t *testing.T) {
 	}
 	body := string(data)
 
-	// The [go] section header must be present.
-	if !strings.Contains(body, "[go]") {
-		t.Fatalf("template.toml = %q; want [go] section header", body)
+	// The group marker comment must be present (added by writeTemplateTOML for
+	// partial-state detection; replaces the old [go] TOML section header per
+	// W2.D7 fix — section headers break bakeProjectKindCatalog's schema_version
+	// detection when RepoPrimaryWorktree is set by till init).
+	if !strings.Contains(body, "# till-init-groups: go") {
+		t.Fatalf("template.toml = %q; want '# till-init-groups: go' marker comment", body)
 	}
-	// The HOME-tier custom content must be present (not the embedded default).
-	if !strings.Contains(body, "home-tier-value") {
-		t.Fatalf("template.toml = %q; want HOME-tier custom content (my_custom_key = home-tier-value)", body)
+	// The HOME-tier sentinel comment must be present (not the embedded default).
+	if !strings.Contains(body, "# home-tier-sentinel") {
+		t.Fatalf("template.toml = %q; want HOME-tier sentinel comment '# home-tier-sentinel'", body)
 	}
 
 	// Laslig summary must include "template.toml" row.
@@ -1966,9 +1988,10 @@ func TestWriteTemplateTOML_HOMETierAbsent(t *testing.T) {
 	}
 	body := string(data)
 
-	// [go] section header must be present (written by writeTemplateTOML).
-	if !strings.Contains(body, "[go]") {
-		t.Fatalf("template.toml = %q; want [go] section header from embedded fallback", body)
+	// The group marker comment must be present (per W2.D7 fix — replaces old
+	// [go] TOML section header to avoid breaking bakeProjectKindCatalog).
+	if !strings.Contains(body, "# till-init-groups: go") {
+		t.Fatalf("template.toml = %q; want '# till-init-groups: go' marker comment from embedded fallback", body)
 	}
 	// File must have non-trivial content from the embedded till-go.toml.
 	if len(body) < 100 {
@@ -2018,28 +2041,221 @@ func TestWriteTemplateTOML_Idempotent(t *testing.T) {
 	}
 }
 
+// TestCreateProjectDBRecord_GitRepoCase verifies W2.D7 acceptance criteria (a):
+// when `till init` runs inside a git repository, the created project record has
+// RepoPrimaryWorktree set to a non-empty absolute path. CONSUMER-TIE TEST
+// CONTRACT: invokes run() end-to-end so the full cobra wiring + init pipeline
+// + createProjectDBRecord chain are exercised. The test initialises a bare
+// git repository in a temp dir so it is hermetic; it skips when the git binary
+// is absent (CI bare PATH safety per W2.D7 RiskNotes).
+func TestCreateProjectDBRecord_GitRepoCase(t *testing.T) {
+	gitBin, lookErr := exec.LookPath("git")
+	if lookErr != nil {
+		t.Skip("git binary not in PATH; skipping git-repo case")
+	}
+
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
+
+	// Initialise a git repo in tmp so detectBareRoot produces a non-empty result.
+	if out, gitErr := exec.Command(gitBin, "-C", tmp, "init").CombinedOutput(); gitErr != nil {
+		t.Fatalf("git init: %v — %s", gitErr, string(out))
+	}
+
+	const projectName = "git-repo-project"
+	if err := run(context.Background(), []string{
+		"--app", "tillsyn-init", "init", "--json",
+		`{"name":"` + projectName + `","groups":["go"],"mcp":false}`,
+	}, nil, io.Discard); err != nil {
+		t.Fatalf("run(init --json) error = %v; want nil", err)
+	}
+
+	// Read the project back from the DB and verify field population.
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-init"})
+	if err != nil {
+		t.Fatalf("platform.DefaultPathsWithOptions: %v", err)
+	}
+	repo, openErr := sqlite.Open(paths.DBPath)
+	if openErr != nil {
+		t.Fatalf("sqlite.Open(%q): %v", paths.DBPath, openErr)
+	}
+	defer func() { _ = repo.Close() }()
+	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{})
+	projects, listErr := svc.ListProjects(context.Background(), false)
+	if listErr != nil {
+		t.Fatalf("svc.ListProjects: %v", listErr)
+	}
+	var found *domain.Project
+	for i := range projects {
+		if strings.EqualFold(projects[i].Name, projectName) {
+			p := projects[i]
+			found = &p
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("project %q not found in DB after till init; projects: %v", projectName, projectNamesFromSlice(projects))
+	}
+	// (a) RepoPrimaryWorktree must be a non-empty absolute path (set from os.Getwd()).
+	if found.RepoPrimaryWorktree == "" {
+		t.Fatalf("RepoPrimaryWorktree = empty; want non-empty absolute path (git-repo case)")
+	}
+	if !filepath.IsAbs(found.RepoPrimaryWorktree) {
+		t.Fatalf("RepoPrimaryWorktree = %q; want absolute path", found.RepoPrimaryWorktree)
+	}
+	// RepoBareRoot must also be non-empty (git repo present).
+	if found.RepoBareRoot == "" {
+		t.Fatalf("RepoBareRoot = empty; want non-empty (git repo was initialised in tmp)")
+	}
+	// Language must map groups[0]="go" -> "go".
+	if found.Language != "go" {
+		t.Fatalf("Language = %q; want %q for groups=[go]", found.Language, "go")
+	}
+	// Metadata.Groups must be set from payload.Groups.
+	if len(found.Metadata.Groups) != 1 || found.Metadata.Groups[0] != "go" {
+		t.Fatalf("Metadata.Groups = %v; want [go]", found.Metadata.Groups)
+	}
+}
+
+// TestCreateProjectDBRecord_NonGitDirCase verifies W2.D7 acceptance criteria (b):
+// when `till init` runs in a directory that is NOT a git repository,
+// RepoBareRoot is empty (non-fatal) and the project record is still created.
+// CONSUMER-TIE TEST CONTRACT — drives run() end-to-end.
+func TestCreateProjectDBRecord_NonGitDirCase(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
+	// tmp is not a git repo — no git init.
+
+	const projectName = "non-git-project"
+	if err := run(context.Background(), []string{
+		"--app", "tillsyn-init", "init", "--json",
+		`{"name":"` + projectName + `","groups":["fe"],"mcp":false}`,
+	}, nil, io.Discard); err != nil {
+		t.Fatalf("run(init --json) error = %v; want nil (non-git dir must not fail)", err)
+	}
+
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-init"})
+	if err != nil {
+		t.Fatalf("platform.DefaultPathsWithOptions: %v", err)
+	}
+	repo, openErr := sqlite.Open(paths.DBPath)
+	if openErr != nil {
+		t.Fatalf("sqlite.Open(%q): %v", paths.DBPath, openErr)
+	}
+	defer func() { _ = repo.Close() }()
+	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{})
+	projects, listErr := svc.ListProjects(context.Background(), false)
+	if listErr != nil {
+		t.Fatalf("svc.ListProjects: %v", listErr)
+	}
+	var found *domain.Project
+	for i := range projects {
+		if strings.EqualFold(projects[i].Name, projectName) {
+			p := projects[i]
+			found = &p
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("project %q not found in DB; projects: %v", projectName, projectNamesFromSlice(projects))
+	}
+	// (b) RepoBareRoot must be empty (not a git repo — graceful non-fatal).
+	if found.RepoBareRoot != "" {
+		t.Fatalf("RepoBareRoot = %q; want empty (non-git dir must produce empty RepoBareRoot)", found.RepoBareRoot)
+	}
+	// RepoPrimaryWorktree must still be non-empty absolute path.
+	if found.RepoPrimaryWorktree == "" {
+		t.Fatalf("RepoPrimaryWorktree = empty; want non-empty absolute path even in non-git dir")
+	}
+	// Language must map groups[0]="fe" -> "fe".
+	if found.Language != "fe" {
+		t.Fatalf("Language = %q; want %q for groups=[fe]", found.Language, "fe")
+	}
+	// Metadata.Groups must be set.
+	if len(found.Metadata.Groups) != 1 || found.Metadata.Groups[0] != "fe" {
+		t.Fatalf("Metadata.Groups = %v; want [fe]", found.Metadata.Groups)
+	}
+}
+
+// TestCreateProjectDBRecord_IdempotentRerun verifies W2.D7 acceptance criteria (c):
+// running `till init` twice with the same project name in the same directory
+// returns nil error on the second run (idempotency — "already exists" is
+// reported in the Laslig project DB row, not as an error). CONSUMER-TIE TEST
+// CONTRACT — drives run() end-to-end both times.
+func TestCreateProjectDBRecord_IdempotentRerun(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
+
+	const projectName = "idempotent-project"
+	args := []string{
+		"--app", "tillsyn-init", "init", "--json",
+		`{"name":"` + projectName + `","groups":["go"],"mcp":false}`,
+	}
+
+	// First run — must succeed.
+	if err := run(context.Background(), args, nil, io.Discard); err != nil {
+		t.Fatalf("first run error = %v; want nil", err)
+	}
+
+	// Second run — must also succeed (nil error) and show "already exists" in output.
+	var out strings.Builder
+	if err := run(context.Background(), args, &out, io.Discard); err != nil {
+		t.Fatalf("second run error = %v; want nil (idempotent re-run must not error)", err)
+	}
+	if !strings.Contains(out.String(), "already exists") {
+		t.Fatalf("second run stdout = %q; want 'already exists' in project DB row", out.String())
+	}
+}
+
+// projectNamesFromSlice extracts project Name fields from a []domain.Project
+// slice for diagnostic failure messages.
+func projectNamesFromSlice(projects []domain.Project) []string {
+	names := make([]string, 0, len(projects))
+	for _, p := range projects {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
 // TestWriteTemplateTOML_PartialStateWarning verifies that when template.toml
-// already exists but is missing the [<group>] section for a selected group,
-// a warning is printed to stdout but the run exits zero (non-fatal). The
-// template.toml file must NOT be modified.
+// already exists but is missing the group marker or section for a selected
+// group, a warning is printed to stdout but the run exits zero (non-fatal).
+// The template.toml file must NOT be modified.
 // CONSUMER-TIE TEST CONTRACT (W2.D6).
+//
+// W2.D7 update: the seeded file must be a valid templates.Template TOML body
+// (schema_version = "v1" at top level) so bakeProjectKindCatalog does not
+// fail when RepoPrimaryWorktree is set. The seeded file uses the embedded
+// till-gen.toml content prefixed with "# till-init-groups: gen" so the
+// partial-state check correctly identifies gen as present and go as missing.
 func TestWriteTemplateTOML_PartialStateWarning(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Chdir(dir)
 
-	// Pre-create template.toml with only [gen] section — missing [go].
+	// Read the embedded till-gen.toml to build a valid seeded file for "gen".
+	embeddedGenContent, fsErr := fs.ReadFile(templates.DefaultTemplateFS, "builtin/till-gen.toml")
+	if fsErr != nil {
+		t.Fatalf("fs.ReadFile(till-gen.toml): %v", fsErr)
+	}
+	// Seed template.toml with gen-only marker + valid gen template content —
+	// no "# till-init-groups: go" marker, no "[go]" section → WARN for go.
+	existingContent := "# till-init-groups: gen\n" + string(embeddedGenContent)
+
+	// Pre-create template.toml with only gen group — missing go.
 	tillsynDir := filepath.Join(dir, ".tillsyn")
 	if err := os.MkdirAll(tillsynDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll .tillsyn: %v", err)
 	}
-	existingContent := "[gen]\n# gen content only\n"
 	tplPath := filepath.Join(tillsynDir, "template.toml")
 	if err := os.WriteFile(tplPath, []byte(existingContent), 0o644); err != nil {
 		t.Fatalf("WriteFile template.toml: %v", err)
 	}
 
-	// Run init with groups=["go"] — template.toml exists but missing [go].
+	// Run init with groups=["go"] — template.toml exists but missing go.
 	var stdout strings.Builder
 	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"partial","groups":["go"],"mcp":false}`}, &stdout, io.Discard); err != nil {
 		t.Fatalf("run error = %v; want nil (partial-state warning is non-fatal)", err)
@@ -2061,5 +2277,123 @@ func TestWriteTemplateTOML_PartialStateWarning(t *testing.T) {
 	}
 	if string(afterData) != existingContent {
 		t.Fatalf("template.toml was modified; want unchanged\nbefore=%q\nafter=%q", existingContent, string(afterData))
+	}
+}
+
+// TestCreateProjectDBRecord_MultiGroup verifies W2.D7 NIT.4 / NIT D absorption:
+// when `till init` runs with multiple groups (e.g. ["go","fe"]), the init
+// pipeline completes successfully with the correct DB fields and skips writing
+// template.toml (multi-group skip). Per-group agent subdirs must still be
+// created. CONSUMER-TIE TEST CONTRACT — drives run() end-to-end.
+func TestCreateProjectDBRecord_MultiGroup(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
+	// tmp is not a git repo — RepoBareRoot will be empty; that is fine here.
+
+	const projectName = "multi-group-project"
+	if err := run(context.Background(), []string{
+		"--app", "tillsyn-init", "init", "--json",
+		`{"name":"` + projectName + `","groups":["go","fe"],"mcp":false}`,
+	}, nil, io.Discard); err != nil {
+		t.Fatalf("run(init --json multi-group) error = %v; want nil", err)
+	}
+
+	// Read project back from DB.
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-init"})
+	if err != nil {
+		t.Fatalf("platform.DefaultPathsWithOptions: %v", err)
+	}
+	repo, openErr := sqlite.Open(paths.DBPath)
+	if openErr != nil {
+		t.Fatalf("sqlite.Open(%q): %v", paths.DBPath, openErr)
+	}
+	defer func() { _ = repo.Close() }()
+	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{})
+	projects, listErr := svc.ListProjects(context.Background(), false)
+	if listErr != nil {
+		t.Fatalf("svc.ListProjects: %v", listErr)
+	}
+	var found *domain.Project
+	for i := range projects {
+		if strings.EqualFold(projects[i].Name, projectName) {
+			p := projects[i]
+			found = &p
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("project %q not found in DB; projects: %v", projectName, projectNamesFromSlice(projects))
+	}
+
+	// Metadata.Groups must carry both groups in order.
+	if len(found.Metadata.Groups) != 2 || found.Metadata.Groups[0] != "go" || found.Metadata.Groups[1] != "fe" {
+		t.Fatalf("Metadata.Groups = %v; want [go fe]", found.Metadata.Groups)
+	}
+
+	// Language must map groups[0]="go" -> "go" (selection-order policy).
+	if found.Language != "go" {
+		t.Fatalf("Language = %q; want %q (first group wins in multi-group case)", found.Language, "go")
+	}
+
+	// template.toml must NOT be created for multi-group projects.
+	tplPath := filepath.Join(tmp, ".tillsyn", "template.toml")
+	if _, statErr := os.Stat(tplPath); statErr == nil {
+		t.Fatalf("template.toml exists at %q; want absent for multi-group (PLATFORM-TEMPLATES-R1 deferred)", tplPath)
+	}
+
+	// Per-group agent subdirs must exist.
+	goAgentsDir := filepath.Join(tmp, ".tillsyn", "agents", "go")
+	if _, statErr := os.Stat(goAgentsDir); statErr != nil {
+		t.Fatalf("agents/go dir not found at %q: %v", goAgentsDir, statErr)
+	}
+	feAgentsDir := filepath.Join(tmp, ".tillsyn", "agents", "fe")
+	if _, statErr := os.Stat(feAgentsDir); statErr != nil {
+		t.Fatalf("agents/fe dir not found at %q: %v", feAgentsDir, statErr)
+	}
+}
+
+// TestMapGroupsToLanguage covers the closed-switch mapping including the
+// default branch (NIT.2 / NIT C absorption from W2.D7 QA). Table-driven to
+// cover gen->empty, multi-group-gen-first, go, fe, and empty-slice cases.
+func TestMapGroupsToLanguage(t *testing.T) {
+	cases := []struct {
+		name   string
+		groups []string
+		want   string
+	}{
+		{
+			name:   "gen maps to empty string",
+			groups: []string{"gen"},
+			want:   "",
+		},
+		{
+			name:   "gen first wins over go (selection-order policy)",
+			groups: []string{"gen", "go"},
+			want:   "",
+		},
+		{
+			name:   "go maps to go",
+			groups: []string{"go"},
+			want:   "go",
+		},
+		{
+			name:   "fe maps to fe",
+			groups: []string{"fe"},
+			want:   "fe",
+		},
+		{
+			name:   "empty slice returns empty string without panic",
+			groups: []string{},
+			want:   "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapGroupsToLanguage(tc.groups)
+			if got != tc.want {
+				t.Fatalf("mapGroupsToLanguage(%v) = %q; want %q", tc.groups, got, tc.want)
+			}
+		})
 	}
 }

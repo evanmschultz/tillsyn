@@ -21,6 +21,7 @@ import (
 
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/evanmschultz/tillsyn/internal/fsatomic"
 	"github.com/evanmschultz/tillsyn/internal/platform"
 	"github.com/evanmschultz/tillsyn/internal/templates"
@@ -510,7 +511,7 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 	}
 
 	// D6: aggregate template.toml from HOME tier or embedded defaults.
-	templateAdded, templateSkipped, err := writeTemplateTOML(stdout, destDir, payload.Groups, homeDir)
+	templateAdded, templateSkipped, templateTOMLStatusFromWrite, err := writeTemplateTOML(stdout, destDir, payload.Groups, homeDir)
 	if err != nil {
 		return fmt.Errorf("till init: write template.toml: %w", err)
 	}
@@ -528,7 +529,7 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		return fmt.Errorf("till init: register .mcp.json: %w", err)
 	}
 
-	dbStatus, err := createProjectDBRecord(context.Background(), opts, payload.Name)
+	dbStatus, err := createProjectDBRecord(context.Background(), opts, payload)
 	if err != nil {
 		return fmt.Errorf("till init: create project DB record: %w", err)
 	}
@@ -550,11 +551,13 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 	if tomlAdded > 0 {
 		agentsTOMLStatus = "added"
 	}
-	templateTOMLStatus := "skipped (already exists)"
-	if templateAdded > 0 {
-		templateTOMLStatus = "added"
-	}
-	_ = templateSkipped // counter unused beyond status string; retained for symmetry with other (added,skipped,err) returns.
+	// Use the status string returned directly from writeTemplateTOML so the
+	// Laslig row is accurate for all three cases: "added", "skipped (already
+	// exists)", and "skipped (multi-group — uses per-group HOME/embedded
+	// resolution)". The templateAdded and templateSkipped counters are kept for
+	// symmetry with other (added,skipped,err) return patterns.
+	templateTOMLStatus := templateTOMLStatusFromWrite
+	_, _ = templateAdded, templateSkipped // counters available for future use
 
 	return writeCLIKV(stdout, "Init", [][2]string{
 		{"project name", payload.Name},
@@ -569,17 +572,94 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 	})
 }
 
+// detectBareRoot attempts to resolve the git bare-root path for cwd by running
+// `git rev-parse --git-common-dir`. This command prints the common git
+// directory shared by all worktrees — a relative path such as `.git` for a
+// regular repo or an absolute path for a linked worktree.
+//
+// Failure policy (non-fatal): if git is absent from PATH, or the command exits
+// non-zero (cwd is not a git repo), an empty string is returned. This mirrors
+// the RepoBareRoot zero-value semantics in domain.Project (empty = not yet
+// bootstrapped) per Drop 4a L4 WAVE_1_PLAN.md §1.8.
+//
+// Path resolution: trimmed output is checked with filepath.IsAbs. If it is
+// already absolute (linked-worktree case — git returns the main repo's .git
+// as an absolute path), the trimmed value is used directly. If relative (e.g.
+// ".git"), it is joined with cwd before calling filepath.Abs. The cmd.Dir is
+// set to cwd so the git subprocess runs in the intended directory regardless of
+// the process working directory at call time.
+func detectBareRoot(ctx context.Context, cwd string) string {
+	if _, lookErr := exec.LookPath("git"); lookErr != nil {
+		// git absent from PATH — non-fatal.
+		return ""
+	}
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-common-dir")
+	cmd.Dir = cwd
+	out, err := cmd.Output()
+	if err != nil {
+		// Not a git repo or git returned non-zero — non-fatal.
+		return ""
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return ""
+	}
+	// Avoid filepath.Join(cwd, "/abs/path") concatenation garbage: use the
+	// absolute path directly when git returns one (linked-worktree case).
+	combined := trimmed
+	if !filepath.IsAbs(trimmed) {
+		combined = filepath.Join(cwd, trimmed)
+	}
+	abs, absErr := filepath.Abs(combined)
+	if absErr != nil {
+		return ""
+	}
+	return abs
+}
+
+// mapGroupsToLanguage maps the first element of groups to the project's
+// Language field using the closed language enum: "go" -> "go", "fe" -> "fe",
+// anything else (including "gen" and multi-word options) -> "" (no language
+// bias). Selection-order wins: the user's first group pick determines the
+// primary language. The fixed go-priority heuristic was explicitly rejected per
+// plan-QA NIT5 — user intent expressed through group order is the policy.
+//
+// An empty groups slice returns "" without panicking. This should never occur
+// after validateInitPayload, but the function is defensive.
+func mapGroupsToLanguage(groups []string) string {
+	if len(groups) == 0 {
+		return ""
+	}
+	switch groups[0] {
+	case "go":
+		return "go"
+	case "fe":
+		return "fe"
+	default:
+		// "gen" and any future unmapped groups have no language bias.
+		return ""
+	}
+}
+
 // createProjectDBRecord opens the Tillsyn SQLite database, then either
-// creates a new project record for the named project or skips creation if a
-// project with that name already exists (idempotency — re-running `till init`
-// in an already-initialized directory is safe). Returns a short human-readable
-// status string suitable for the Laslig summary row.
+// creates a new project record for the init payload or skips creation if a
+// project with the same name already exists (idempotency — re-running
+// `till init` in an already-initialized directory is safe). Returns a short
+// human-readable status string suitable for the Laslig summary row.
 //
 // Service wiring clones the pattern from executeCommandFlow in main.go:
 // platform.DefaultPathsWithOptions → parent-dir creation → sqlite.Open →
 // app.NewService(minimal config). Only the project-creation path is exercised;
 // no auth, no embeddings, no live-wait broker needed here.
-func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, projectName string) (string, error) {
+//
+// Field population:
+//   - Name = payload.Name
+//   - RepoPrimaryWorktree = os.Getwd() (absolute cwd at call time)
+//   - RepoBareRoot = git rev-parse --git-common-dir result, resolved to
+//     absolute path; empty string if git is absent or cwd is not a git repo
+//   - Language = payload.Groups[0] mapped through the closed enum (go/fe/gen)
+//   - Metadata.Groups = payload.Groups (typed []string field from W1.D2)
+func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, payload initJSONPayload) (string, error) {
 	paths, err := platform.DefaultPathsWithOptions(platform.Options{
 		AppName: opts.appName,
 		HomeDir: opts.homeDir,
@@ -613,14 +693,27 @@ func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, project
 		return "", fmt.Errorf("list existing projects: %w", err)
 	}
 	for _, p := range existing {
-		if strings.EqualFold(strings.TrimSpace(p.Name), strings.TrimSpace(projectName)) {
+		if strings.EqualFold(strings.TrimSpace(p.Name), strings.TrimSpace(payload.Name)) {
 			return "already exists — skipped", nil
 		}
 	}
 
-	_, err = svc.CreateProject(ctx, projectName, "")
+	cwd, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("create project %q: %w", projectName, err)
+		return "", fmt.Errorf("resolve cwd for project record: %w", err)
+	}
+
+	_, err = svc.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
+		Name:                payload.Name,
+		RepoPrimaryWorktree: cwd,
+		RepoBareRoot:        detectBareRoot(ctx, cwd),
+		Language:            mapGroupsToLanguage(payload.Groups),
+		Metadata: domain.ProjectMetadata{
+			Groups: payload.Groups,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("create project %q: %w", payload.Name, err)
 	}
 	return "created", nil
 }
@@ -630,6 +723,18 @@ func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, project
 // conventional 0o644 (user rw, group r, other r) the embedded fixtures
 // themselves ship with under git.
 const agentFileInitPerm os.FileMode = 0o644
+
+// templateGroupMarkerPrefix is the comment prefix written at the top of a
+// newly created .tillsyn/template.toml file so the partial-state check on
+// re-run can identify which groups the file was generated for — without
+// embedding a TOML `[<group>]` section header that would nest the template
+// content inside a sub-table and break templates.Load schema_version detection.
+//
+// Format: `# till-init-groups: go,fe` (comma-separated, ascending sort order).
+// The partial-state check in writeTemplateTOML looks for this prefix AND for
+// the legacy `[<group>]` / `[<group>.]` patterns so that hand-authored files
+// using the old section-headed format continue to suppress the WARN.
+const templateGroupMarkerPrefix = "# till-init-groups: "
 
 // writeTemplateTOML aggregates template TOML content for each group in
 // `groups` and writes the result to `<destDir>/.tillsyn/template.toml`.
@@ -641,39 +746,54 @@ const agentFileInitPerm os.FileMode = 0o644
 //  2. Embedded fallback: `builtin/till-<group>.toml` from
 //     `templates.DefaultTemplateFS` — used when the HOME-tier file is absent.
 //
-// Each group's content is written under a `[<group>]` section header unless
-// the content already starts with `[<group>]`. This produces a file where
-// `[<group>]` is present as a string, enabling the partial-state check.
+// The aggregate content is written WITHOUT `[<group>]` TOML section headers.
+// Each group's template content is a valid top-level templates.Template TOML
+// body (schema_version = "v1" at the top level). Writing section headers
+// nests schema_version under [group], which breaks templates.Load used by
+// bakeProjectKindCatalog when RepoPrimaryWorktree is set by `till init`. For
+// multi-group projects the first group's template content is written at the
+// top level; subsequent groups are concatenated (merged in template-load
+// order). For partial-state detection a comment marker is written at the very
+// top of the file (format: "# till-init-groups: go,fe") so re-runs can
+// identify missing groups without relying on TOML section headers.
 //
 // Blanket skip: if `<destDir>/.tillsyn/template.toml` already exists the
 // function does NOT overwrite it (returns added=0, skipped=1, err=nil) — users
 // may have customized the file. Partial-state warning: if the existing file
-// is missing `[<group>]` or `[<group>.` for one or more selected groups, a
-// WARN line is printed to stdout (non-fatal — exits zero).
-//
-// The partial-state check is a simple string presence heuristic (NOT a full
-// TOML parse): `strings.Contains(content, "[<group>]")` OR
-// `strings.Contains(content, "[<group>.")`. A section header appearing only
-// in a TOML comment line (e.g., `# [go] group`) would suppress the warning;
-// this is the documented and accepted tradeoff per W2.D6 RiskNotes.
+// is missing the group marker or a `[<group>]` or `[<group>.` section for
+// one or more selected groups, a WARN line is printed to stdout (non-fatal —
+// exits zero).
 //
 // `homeDir` must be an absolute path. The caller (`runInitPipeline`) resolves
 // it via `os.UserHomeDir()` when `rootOpts.homeDir` is empty, so by the time
 // `writeTemplateTOML` is called `homeDir` is always absolute.
 //
-// Returns `(added, skipped, err)`: added=1 when the file was written,
-// skipped=1 when the file already existed. On error the error is wrapped.
-func writeTemplateTOML(stdout io.Writer, destDir string, groups []string, homeDir string) (int, int, error) {
+// Returns `(added, skipped, status, err)`: added=1 when the file was written,
+// skipped=1 when the file already existed. status is a short human-readable
+// string for the Laslig summary row — one of:
+//
+//   - "added" — file was freshly written (single-group).
+//   - "skipped (already exists)" — file existed; no write performed.
+//   - "skipped (multi-group — uses per-group HOME/embedded resolution)" — file
+//     deliberately not written because per-group fallback resolution handles
+//     multi-group projects (PLATFORM-TEMPLATES-R1 deferred).
+//
+// On error the error is wrapped and status is empty.
+func writeTemplateTOML(stdout io.Writer, destDir string, groups []string, homeDir string) (int, int, string, error) {
 	target := filepath.Join(destDir, ".tillsyn", "template.toml")
 
 	// Blanket skip with optional partial-state warning.
 	existing, statErr := os.ReadFile(target)
 	if statErr == nil {
-		// File exists — check for missing group sections.
+		// File exists — check for missing groups via the marker comment or
+		// legacy section headers. Both forms suppress the WARN so hand-authored
+		// files using `[<group>]` TOML headers continue to work.
 		content := string(existing)
 		var missing []string
 		for _, group := range groups {
-			if !strings.Contains(content, "["+group+"]") && !strings.Contains(content, "["+group+".") {
+			inMarker := templateGroupMarkerPresent(content, group)
+			inSection := strings.Contains(content, "["+group+"]") || strings.Contains(content, "["+group+".")
+			if !inMarker && !inSection {
 				missing = append(missing, group)
 			}
 		}
@@ -681,40 +801,78 @@ func writeTemplateTOML(stdout io.Writer, destDir string, groups []string, homeDi
 			fmt.Fprintf(stdout, "WARN: %s already exists but is missing sections for group(s): %v. Remove it and re-run to regenerate.\n",
 				target, missing)
 		}
-		return 0, 1, nil
+		return 0, 1, "skipped (already exists)", nil
 	}
 	if !errors.Is(statErr, fs.ErrNotExist) {
-		return 0, 0, fmt.Errorf("stat %q: %w", target, statErr)
+		return 0, 0, "", fmt.Errorf("stat %q: %w", target, statErr)
 	}
 
-	// File absent — aggregate content from all groups.
+	// File absent — write the group marker comment followed by the template
+	// body for single-group projects.
+	//
+	// For single-group projects: write the template content as-is (no
+	// [<group>] section header). The embedded template is a valid top-level
+	// templates.Template TOML body with schema_version = "v1" at the top
+	// level. Prepending a [<group>] header would nest schema_version inside a
+	// sub-table and break bakeProjectKindCatalog's templates.Load call when
+	// RepoPrimaryWorktree is populated (D7 fix).
+	//
+	// For multi-group projects: skip writing template.toml entirely. Multi-group
+	// projects rely on bakeProjectKindCatalog's per-group HOME-tier and
+	// embedded-default resolution (loadProjectTemplatesForGroups iterates each
+	// group independently). Writing a project-level template.toml for multi-group
+	// would require a semantic merge of potentially conflicting TOML documents
+	// (both till-go.toml and till-fe.toml declare [kinds.plan], [kinds.build],
+	// etc.); templates.Load rejects naive concatenations with "table plan already
+	// exists". The PLATFORM-TEMPLATES-R1 refinement item tracks a future proper
+	// multi-group template.toml aggregation path.
+	if len(groups) != 1 {
+		return 0, 0, "skipped (multi-group — uses per-group HOME/embedded resolution)", nil
+	}
+
 	var buf strings.Builder
-	for _, group := range groups {
-		data, err := readTemplateForGroup(homeDir, group)
-		if err != nil {
-			return 0, 0, fmt.Errorf("read template for group %q: %w", group, err)
-		}
+	buf.WriteString(templateGroupMarkerPrefix)
+	buf.WriteString(groups[0])
+	buf.WriteString("\n")
 
-		// Prepend [<group>] header if the content does not already start with it.
-		content := strings.TrimRight(string(data), "\n")
-		header := "[" + group + "]"
-		if !strings.HasPrefix(content, header) {
-			buf.WriteString(header)
-			buf.WriteString("\n")
-		}
-		buf.WriteString(content)
-		buf.WriteString("\n\n")
+	data, err := readTemplateForGroup(homeDir, groups[0])
+	if err != nil {
+		return 0, 0, "", fmt.Errorf("read template for group %q: %w", groups[0], err)
 	}
+	content := strings.TrimRight(string(data), "\n")
+	buf.WriteString(content)
+	buf.WriteString("\n")
 
 	// Ensure the .tillsyn directory exists.
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return 0, 0, fmt.Errorf("mkdir %q: %w", filepath.Dir(target), err)
+		return 0, 0, "", fmt.Errorf("mkdir %q: %w", filepath.Dir(target), err)
 	}
 
 	if err := fsatomic.WriteFile(target, []byte(buf.String()), agentFileInitPerm); err != nil {
-		return 0, 0, fmt.Errorf("write %q: %w", target, err)
+		return 0, 0, "", fmt.Errorf("write %q: %w", target, err)
 	}
-	return 1, 0, nil
+	return 1, 0, "added", nil
+}
+
+// templateGroupMarkerPresent reports whether content contains a
+// `# till-init-groups: ...` comment that lists group as one of the
+// comma-separated entries. The check is case-sensitive and trims spaces
+// around the entry separator to handle `go, fe` and `go,fe` variants.
+func templateGroupMarkerPresent(content, group string) bool {
+	sc := bufio.NewScanner(strings.NewReader(content))
+	for sc.Scan() {
+		line := sc.Text()
+		if !strings.HasPrefix(line, templateGroupMarkerPrefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(line, templateGroupMarkerPrefix)
+		for _, entry := range strings.Split(rest, ",") {
+			if strings.TrimSpace(entry) == group {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // readTemplateForGroup returns the TOML content for `group` from the HOME
