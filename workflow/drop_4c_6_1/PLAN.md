@@ -1,13 +1,34 @@
 # DROP_4c.6.1 — USER_SURFACE_MULTI_GROUP_FE_BOOTSTRAP
 
 **State:** planning
-**Round:** 9
+**Round:** 10 (L2 plan-QA round absorbed; round-2 L2 planner dispatch pending)
 **Blocked by:** none (DROP_4c.6 closed, HEAD `e321d3f` on origin/main)
 **Blocks:** DROP_4c.7 (cascade wiring needs this drop's user surface to be dogfood-friendly first)
 **Paths (expected):** See per-wave rows below.
-**Packages (expected):** `internal/config`, `internal/app`, `internal/app/dispatcher/cli_claude/render`, `internal/templates`, `internal/adapters/mcp_stdio` (NEW), `internal/adapters/mcp_common` (NEW), `internal/adapters/mcp_rpc` (NEW — receives `mcpapi/` per W7 inverted carving), `cmd/till`, `internal/tui/components` (NEW), `internal/tui/style` (NEW), `internal/tui/keybindings` (NEW), `fe/` (NEW — separate go.mod per W6 L2 decision), `CLAUDE.md` (doc-only)
+**Packages (expected):** `internal/config`, `internal/app`, `internal/app/dispatcher/cli_claude/render`, `internal/domain` (Groups field addition), `internal/templates`, `internal/adapters/mcp_stdio` (NEW), `internal/adapters/mcp_common` (NEW), `internal/adapters/mcp_rpc` (NEW — receives `mcpapi/` per W7 inverted carving), `cmd/till`, `internal/tui/components` (NEW), `internal/tui/style` (NEW), `internal/tui/keybindings` (NEW), tillsyn-repo-root Wails files (`main.go` + `app.go` with `//go:build wails`; no new Go package — shared root module), `frontend/` (NEW — Astro/Solid pnpm scope, non-Go), `CLAUDE.md` (doc-only)
 **Workflow:** `workflow/example/drops/WORKFLOW.md`
 **Started:** 2026-05-12
+
+## Round 10 Changes (L2 plan-QA consolidated absorption — orchestrator edits, 2026-05-12)
+
+After dispatching 6 parallel L2 sub-planners (round-1) and 12 parallel L2 plan-QA agents (proof + falsification per wave), 5 of 6 waves returned FAIL verdicts (W6 = both proof + fals FAIL; W1/W2/W3/W5 = fals FAIL; W8 = PASS-WITH-NITS/ABSORB). 4 cross-cutting design questions surfaced and the dev decided:
+
+- **R10-D1 (`till-` prefix drift, W1+W2 fals FF1)**: Option A — W4.D1 renames embedded subdirs `till-go/` → `go/` + `till-gen/` → `gen/` via `git mv` (preserves history); W1.D3 updates `agentBodyDefaultGroup` constant from `"till-go"` → `"go"` + `agentBodyFallbackGroup` from `"till-gen"` → `"gen"` in `render.go`. Canonical group names downstream: `go`, `fe`, `gen` — no `till-` prefix. `till-gdd/` subdir stays (it's a template-family identifier, not a group).
+- **R10-D2 (Groups typed-vs-stopgap, 5x confirmed)**: W1.D2 ships typed `ProjectMetadata.Groups []string` field. W2.D7 + W3.D1 consume it directly (`Metadata.Groups = payload.Groups`); NO `KindPayload` JSON stopgap, NO `--add-group/--remove-group` TODO fallback. W2-GROUPS-R1 refinement RESOLVED inline.
+- **R10-D3 (Wails layout, W6 fals FF2)**: Option (c) Wails at tillsyn repo root — canonical Wails v2 layout. `main.go` + `app.go` + `wails.json` + `frontend/` all at the tillsyn repo root, sharing the existing single `go.mod`. NO separate `fe/go.mod`, NO `replace` directive, NO `fe/` subfolder. `//go:build wails` build tag isolates CGO from default builds (matches Wails-internal practice).
+- **R10-D4 (Model frontmatter, W8 proof+fals FF)**: Bare aliases — `model: sonnet` (builder), `model: opus` (planning/qa-*/research), `model: haiku` (commit-message), `model: orchestrator-managed` (closeout/orchestrator-managed kinds). Matches live `~/.claude/agents/go-*-agent.md` system frontmatter. Auto-tracks Claude Code's model-resolver upgrades.
+
+Additional Round 10 inline absorptions (orchestrator-edit, pre-round-2-dispatch):
+- **W5 fals FF1**: `View() string` doesn't satisfy Bubble Tea v2 `tea.Model` (which requires `View() View` struct). L1 spec drops the `tea.Model` claim for W5 components; they're sub-models composed by outer `tea.Model`. Encoded in locked decisions block.
+- **W5 fals FF2**: D2/D3/D4 must not `return tea.Quit` (kills parent TUI); use `return nil` + `Done()`/`Cancelled()` accessors. Encoded in locked decisions block.
+- **W6 fals FF3**: stil `tokens.css` declares font families but ships fonts via `@fontsource/*` pnpm packages. W6 D3 `package.json` MUST include `@fontsource/{inter,iosevka,fira-code,jetbrains-mono}` deps + `MainLayout.astro` imports. Encoded in locked decisions block + W6 spec.
+- **W6 proof FF1**: W6 L2 PLAN.md JSON manifest contradiction with `_BLOCKERS.toml` (parallel D5-D8 vs serial chain). **Orchestrator-fixed unilaterally** in W6 L2 PLAN.md: KindPayload.children + Droplet Graph + Dispatch order + D5/D6 canonical `Blocked by:` bullets now all match `_BLOCKERS.toml` serial chain.
+- **W1 proof FF1**: orphan "per U1" reference in `_BLOCKERS.toml`. **Orchestrator-fixed unilaterally** (the constant rename is properly captured in R10-D1).
+- **W2 `_BLOCKERS.toml`**: missing W2.D1 entry. **Orchestrator-fixed unilaterally**.
+
+**Round-2 L2 planner dispatch pending**: W1 + W2 + W3 + W5 + W6 round-2 L2 planners absorb remaining round-1 plan-QA findings + R10-D1/D2/D3/D4 decisions + wave-specific FFs/NITs. W8 minor absorptions (model frontmatter + naming-drift + 2 ABSORB NITs) handled via orchestrator-direct W8 L2 PLAN.md edit (smaller than a round-2 planner pass).
+
+**Additional Round 10 dev call**: **W2 Proof NIT6 (agents.toml multi-group aggregation gap)** — dev directive 2026-05-12: do NOT defer. RESOLVED per Option (a) — W4.D2 acceptance already specifies single `agents.example.toml` fixture with BOTH `[go]` and `[fe]` group sections present (line ~397 acceptance bullet). W2 D5/D6 consume this single fixture for multi-group projects (no separate per-group aggregation logic needed at init-time). Marked RESOLVED.
 
 ## Round 9 Changes
 
@@ -320,64 +341,79 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition," this
 
 ### Wave W4 — Agent Set Restructure + Schema Shift
 
-#### 4c.6.1.W4.D1 — Restructure embedded agent dirs (orphan deletion + qa split + fe group + embed.go)
+#### 4c.6.1.W4.D1 — Restructure embedded agent dirs (subdir rename + orphan deletion + qa split + fe group + embed.go)
+
+**Round 10 absorption (W1+W2 fals FF1)**: scope expanded to include `git mv till-go → go` + `git mv till-gen → gen` for canonical-group-name alignment. All paths below use the post-rename canonical names (`go/`, `gen/`, `fe/`). The rename happens FIRST in the droplet's execution order so subsequent file modifications target the new paths.
 
 - **State:** todo
 - **Kind:** `build` (atomic droplet; `Irreducible: true`)
+- **Execution order**:
+  1. **`git mv internal/templates/builtin/agents/till-go internal/templates/builtin/agents/go`** (preserves git history for 5 existing files inside).
+  2. **`git mv internal/templates/builtin/agents/till-gen internal/templates/builtin/agents/gen`** (preserves git history for files inside).
+  3. Then proceed with file additions / deletions / replacements per Paths list below (all using post-rename canonical paths).
 - **Paths:**
-  - `internal/templates/builtin/agents/till-go/go-builder-agent.md` (DELETE — orphan)
-  - `internal/templates/builtin/agents/till-go/go-planning-agent.md` (DELETE — orphan)
-  - `internal/templates/builtin/agents/till-go/go-qa-falsification-agent.md` (DELETE — orphan)
-  - `internal/templates/builtin/agents/till-go/go-qa-proof-agent.md` (DELETE — orphan)
-  - `internal/templates/builtin/agents/till-go/go-research-agent.md` (DELETE — orphan)
-  - `internal/templates/builtin/agents/till-go/qa-proof-agent.md` (REPLACE CONTENTS → becomes plan-qa-proof-agent.md + source for build-qa-proof-agent.md)
-  - `internal/templates/builtin/agents/till-go/qa-falsification-agent.md` (REPLACE CONTENTS → becomes plan-qa-falsification-agent.md + source for build-qa-falsification-agent.md)
-  - `internal/templates/builtin/agents/till-go/plan-qa-proof-agent.md` (NEW — split from qa-proof-agent.md)
-  - `internal/templates/builtin/agents/till-go/plan-qa-falsification-agent.md` (NEW)
-  - `internal/templates/builtin/agents/till-go/build-qa-proof-agent.md` (NEW)
-  - `internal/templates/builtin/agents/till-go/build-qa-falsification-agent.md` (NEW)
-  - `internal/templates/builtin/agents/till-go/orchestrator-managed.md` (ADD if absent in till-go; verify via Read first — it may exist already in till-gen only)
-  - `internal/templates/builtin/agents/till-gen/qa-proof-agent.md` (REPLACE CONTENTS → split)
-  - `internal/templates/builtin/agents/till-gen/qa-falsification-agent.md` (REPLACE CONTENTS → split)
-  - `internal/templates/builtin/agents/till-gen/plan-qa-proof-agent.md` (NEW)
-  - `internal/templates/builtin/agents/till-gen/plan-qa-falsification-agent.md` (NEW)
-  - `internal/templates/builtin/agents/till-gen/build-qa-proof-agent.md` (NEW)
-  - `internal/templates/builtin/agents/till-gen/build-qa-falsification-agent.md` (NEW)
-  - `internal/templates/builtin/agents/till-gen/orchestrator-managed.md` (KEEP — do NOT delete; FF3 disposition)
+  - `internal/templates/builtin/agents/go/go-builder-agent.md` (DELETE — orphan, post-rename path)
+  - `internal/templates/builtin/agents/go/go-planning-agent.md` (DELETE — orphan)
+  - `internal/templates/builtin/agents/go/go-qa-falsification-agent.md` (DELETE — orphan)
+  - `internal/templates/builtin/agents/go/go-qa-proof-agent.md` (DELETE — orphan)
+  - `internal/templates/builtin/agents/go/go-research-agent.md` (DELETE — orphan)
+  - `internal/templates/builtin/agents/go/qa-proof-agent.md` (REPLACE CONTENTS → becomes plan-qa-proof-agent.md + source for build-qa-proof-agent.md)
+  - `internal/templates/builtin/agents/go/qa-falsification-agent.md` (REPLACE CONTENTS → becomes plan-qa-falsification-agent.md + source for build-qa-falsification-agent.md)
+  - `internal/templates/builtin/agents/go/plan-qa-proof-agent.md` (NEW — split from qa-proof-agent.md)
+  - `internal/templates/builtin/agents/go/plan-qa-falsification-agent.md` (NEW)
+  - `internal/templates/builtin/agents/go/build-qa-proof-agent.md` (NEW)
+  - `internal/templates/builtin/agents/go/build-qa-falsification-agent.md` (NEW)
+  - `internal/templates/builtin/agents/go/orchestrator-managed.md` (ADD if absent in go/; verify via Read post-rename first — it may exist already in gen/ only)
+  - `internal/templates/builtin/agents/gen/qa-proof-agent.md` (REPLACE CONTENTS → split)
+  - `internal/templates/builtin/agents/gen/qa-falsification-agent.md` (REPLACE CONTENTS → split)
+  - `internal/templates/builtin/agents/gen/plan-qa-proof-agent.md` (NEW)
+  - `internal/templates/builtin/agents/gen/plan-qa-falsification-agent.md` (NEW)
+  - `internal/templates/builtin/agents/gen/build-qa-proof-agent.md` (NEW)
+  - `internal/templates/builtin/agents/gen/build-qa-falsification-agent.md` (NEW)
+  - `internal/templates/builtin/agents/gen/orchestrator-managed.md` (KEEP — do NOT delete; FF3 disposition)
   - `internal/templates/builtin/agents/fe/` (NEW dir — 10 placeholder files: 9 standard + orchestrator-managed.md)
-  - `internal/templates/builtin/embed.go` (MODIFY — update //go:embed list explicitly per-file)
-  - `internal/templates/embed_test.go` (MODIFY — FS introspection test updates)
-  - `internal/templates/builtin/till-gdd/` (AUDIT-ONLY — till-gdd has 7 agents; verify no action needed per §2.11 scope; do NOT add 4 new qa agents to till-gdd unless REVISION_BRIEF explicitly requires it)
+  - `internal/templates/builtin/embed.go` (MODIFY — update //go:embed list explicitly per-file, all post-rename canonical paths)
+  - `internal/templates/embed_test.go` (MODIFY — FS introspection test updates, canonical paths)
+  - `internal/templates/builtin/till-gdd/` (AUDIT-ONLY — `till-gdd/` is NOT being renamed; it's an orthogonal `gdd` template family, not part of this drop's canonical-group rename. Verify no action needed per §2.11 scope; do NOT add 4 new qa agents to till-gdd unless REVISION_BRIEF explicitly requires it. The `till-` prefix on `till-gdd/` stays because it's a template-family identifier, not a group name.)
 - **Packages:** `internal/templates`
 - **Acceptance:**
-  - Final `till-go/` agent set (**10 files**): `planning-agent.md`, `builder-agent.md`, `plan-qa-proof-agent.md`, `plan-qa-falsification-agent.md`, `build-qa-proof-agent.md`, `build-qa-falsification-agent.md`, `research-agent.md`, `closeout-agent.md`, `commit-message-agent.md`, `orchestrator-managed.md`. No `go-*` orphan files. No old `qa-proof-agent.md` / `qa-falsification-agent.md` (2-file model).
-  - Final `till-gen/` agent set (**10 files**): same 10 names. `orchestrator-managed.md` KEPT (FF3 disposition — do NOT delete).
+  - `git mv` operations executed; `git status` shows renames (R) not delete+add (D+A) for the migrated files.
+  - Post-rename directory listing: `internal/templates/builtin/agents/` contains exactly `go/`, `gen/`, `fe/`, `till-gdd/` (4 subdirs). NO `till-go/`. NO `till-gen/`.
+  - Final `go/` agent set (**10 files**): `planning-agent.md`, `builder-agent.md`, `plan-qa-proof-agent.md`, `plan-qa-falsification-agent.md`, `build-qa-proof-agent.md`, `build-qa-falsification-agent.md`, `research-agent.md`, `closeout-agent.md`, `commit-message-agent.md`, `orchestrator-managed.md`. No `go-*` orphan files. No old `qa-proof-agent.md` / `qa-falsification-agent.md` (2-file model).
+  - Final `gen/` agent set (**10 files**): same 10 names. `orchestrator-managed.md` KEPT (FF3 disposition — do NOT delete).
   - Final `fe/` agent set (**10 placeholder files**): same 10 names. Each file body: `# PLACEHOLDER — substantive FE-stack-agnostic content lands in Drop 4c.8 W4` plus frontmatter `name: <name>`, `description: ...placeholder...`.
   - All new agent placeholder files use `name` + `description` frontmatter ONLY (no `model:`, no `tools:`) per Drop 4c.6 W5.D3 convention.
-  - `//go:embed` list in `embed.go` is explicit per-file (NOT `**/*.md` glob) — lists all files for `till-go/`, `till-gen/`, `till-gdd/`, `fe/`. Per Drop 4c.6 F.2.1 falsification-mitigation pattern.
-  - `embed_test.go` FS-introspection test updated to assert all expected paths resolve, including `fe/orchestrator-managed.md` and all 4 new qa-agent files per group.
-  - `git ls-files internal/templates/builtin/agents/` shows 10+10+7+10=37 total agent files (till-go=10, till-gen=10, till-gdd=7 unchanged, fe=10).
+  - `//go:embed` list in `embed.go` is explicit per-file (NOT `**/*.md` glob) — lists all files for `go/`, `gen/`, `till-gdd/`, `fe/`. Per Drop 4c.6 F.2.1 falsification-mitigation pattern.
+  - `embed_test.go` FS-introspection test updated to assert all expected paths resolve at canonical names (no `till-go/` / `till-gen/` references remain).
+  - `git ls-files internal/templates/builtin/agents/` shows 10+10+7+10=37 total agent files (go=10, gen=10, till-gdd=7 unchanged, fe=10).
+  - `git grep "till-go\|till-gen" internal/templates/builtin/agents/` returns zero hits (post-rename verification).
   - `mage test-pkg ./internal/templates` passes; `mage ci` green.
 - **Blocked by:** — (Wave A head; no blockers)
 - **Specify:**
-  - **Objective:** Restructure embedded agent dirs to the 10-agent-per-group standard (plan-qa-proof separate from build-qa-proof, `go-` orphans deleted, `orchestrator-managed.md` kept in till-gen and added to till-go and fe, `fe/` group added), update embed.go to list new files explicitly.
+  - **Objective:** Restructure embedded agent dirs to the canonical-group-name 10-agent-per-group standard (`go/`, `gen/`, `fe/` — no `till-` prefix), splitting plan-qa-proof from build-qa-proof, deleting `go-*` orphans, keeping `orchestrator-managed.md` in `gen/` and adding to `go/` + `fe/`, adding the `fe/` group, updating embed.go to list new files explicitly. The `git mv` rename is the FIRST operation in the droplet so all downstream paths target canonical names.
   - **AcceptanceCriteria:** see Acceptance bullets above.
-  - **ValidationPlan:** `git ls-files internal/templates/builtin/agents/` count check; `mage test-pkg ./internal/templates`; `mage ci`.
+  - **ValidationPlan:** `git status` confirms rename detection; `git ls-files internal/templates/builtin/agents/` count check; `git grep "till-go\|till-gen" internal/templates/builtin/agents/` returns zero hits; `mage test-pkg ./internal/templates`; `mage ci`.
   - **RiskNotes:**
-    - `orchestrator-managed.md` in `till-gen/`: KEEP per FF3 disposition. DO NOT delete. This file covers closeout/refinement/discussion/human-verify kind bindings in `till-go.toml`. Deleting it would break those bindings. ORCH-MANAGED-R1 tracks future split into role-specific agents in Drop 4c.8.
-    - `orchestrator-managed.md` presence in `till-go/` vs `till-gen/` only: builder must `Read` the `till-go/` directory listing first to determine if `orchestrator-managed.md` already exists there. If it does, keep it. If it does not, add it (copy from till-gen's content as starting point).
-    - `till-gdd/` currently has 7 agent files (not 10). REVISION_BRIEF §2.11 mentions "Confirm gen/ group has 10 placeholders" and add `fe/` group but does NOT list `till-gdd` for the 10-agent expansion. Leave `till-gdd` at 7 files unless an explicit split is required; document in this droplet's QA verdict.
+    - **Rename ordering**: `git mv` MUST run before file additions/deletions inside the renamed dirs. If the builder runs deletions first, then `git mv`, git history is lost on the renamed-then-modified files. Order discipline matters.
+    - **Subdir name vs filename**: dropping `till-` prefix from SUBDIR names (`till-go/` → `go/`) is independent of dropping `go-` prefix from FILENAMES (`go-builder-agent.md` → `builder-agent.md`). Both happen in W4.D1 but they're orthogonal renames.
+    - `orchestrator-managed.md` in `gen/` (formerly `till-gen/`): KEEP per FF3 disposition. DO NOT delete. This file covers closeout/refinement/discussion/human-verify kind bindings in `till-go.toml` / `till-gen.toml` (TOML filenames are NOT being renamed in this droplet — that's W4.D2's call; agent_name references inside the TOML files DO need updating in W4.D2). ORCH-MANAGED-R1 tracks future split into role-specific agents in Drop 4c.8.
+    - `orchestrator-managed.md` presence in `go/` vs `gen/`: post-rename, builder must `Read` the `go/` directory listing to determine if `orchestrator-managed.md` already exists there. If it does, keep it. If it does not, add it (copy from `gen/`'s content as starting point).
+    - `till-gdd/` currently has 7 agent files (not 10). It is NOT a group; it's a separate template family. REVISION_BRIEF §2.11 mentions "Confirm gen/ group has 10 placeholders" and add `fe/` group but does NOT list `till-gdd` for the 10-agent expansion. Leave `till-gdd/` at 7 files. The `till-` prefix on `till-gdd/` is NOT renamed — `till-gdd` is a template-family identifier, not a group name.
     - Deletion of 5 `go-*` orphan files uses `git rm` (not `os.Remove`) to preserve git history.
-    - `embed.go` explicit per-file list: the builder MUST verify the existing explicit list pattern in `embed.go` before editing (Drop 4c.6 W1.D1 pattern — read embed.go before writing).
-    - Old `qa-proof-agent.md` and `qa-falsification-agent.md` files in `till-go/` and `till-gen/` should be deleted (or their content forked into the 4 new files first). The old 2-file model is superseded. Builder reads the old file content, copies forward to `plan-qa-*-agent.md`, then deletes the old file via `git rm`.
+    - `embed.go` explicit per-file list: the builder MUST verify the existing explicit list pattern in `embed.go` before editing (Drop 4c.6 W1.D1 pattern — read embed.go before writing). All path entries change from `till-go/...` to `go/...` and from `till-gen/...` to `gen/...`.
+    - Old `qa-proof-agent.md` and `qa-falsification-agent.md` files in `go/` and `gen/` should be deleted (or their content forked into the 4 new files first). The old 2-file model is superseded. Builder reads the old file content, copies forward to `plan-qa-*-agent.md`, then deletes the old file via `git rm`.
+    - **Downstream coordination**: W1.D3 updates `agentBodyDefaultGroup` constant in `render.go` from `"till-go"` to `"go"` (and `agentBodyFallbackGroup` from `"till-gen"` to `"gen"`). W1.D3 is `blocked_by W4.D1`, so by W1.D3 build time the canonical subdir names exist. Coordinated absorption.
   - **ContextBlocks:**
+    - `constraint` (critical): execute `git mv till-go → go` + `git mv till-gen → gen` as Step 1 BEFORE any other file ops. Preserves history.
     - `constraint` (high): explicit per-file embed.go list — never `**/*.md` glob.
     - `constraint` (high): 10 standard agent names (including `orchestrator-managed.md`) must be IDENTICAL across groups (same filenames, different content per group).
-    - `constraint` (critical): do NOT delete `orchestrator-managed.md` from till-gen. FF3 disposition is KEEP. Deleting it would break 4 kind bindings in till-go.toml and till-gen.toml.
+    - `constraint` (critical): do NOT delete `orchestrator-managed.md` from `gen/`. FF3 disposition is KEEP. Deleting it would break 4 kind bindings in till-go.toml and till-gen.toml.
+    - `constraint` (high): `till-gdd/` subdir is NOT renamed. It is a template-family directory, not a group directory.
+    - `decision` (normal): Drop `till-` prefix from group subdir names per Round 10 W1+W2 fals FF1 absorption (SKETCH §10 + L1 locked decisions). Canonical group names: `go`, `gen`, `fe`.
     - `decision` (normal): Drop `go-` prefix per SKETCH §2.1 — group subdir is the distinguisher, not filename prefix.
-    - `warning` (high): `till-go.toml` and `till-gen.toml` agent_name references will still use the old names until W4.D2 updates them. The builder for W4.D1 does NOT touch the TOML files — W4.D2 handles that.
+    - `warning` (high): `till-go.toml` and `till-gen.toml` TOML FILE NAMES are NOT renamed in W4.D1. Their agent_name values DO need updating in W4.D2 to reference new agent filenames. The TOML file names themselves are W4.D2's concern (see SKETCH §10 for whether TOML filenames also drop `till-` prefix — Round 10 decision pending in W4.D2 rewrite if needed).
     - `reference` (normal): Drop 4c.6 W1.D1 pattern for explicit embed.go list + placeholder frontmatter convention.
-  - **KindPayload:** `{"changes":[{"file":"internal/templates/builtin/agents/till-go/","symbol":"5 go-* orphan files","action":"delete","shape_hint":"git rm; preserves history"},{"file":"internal/templates/builtin/agents/till-go/{plan-qa-proof,plan-qa-falsification,build-qa-proof,build-qa-falsification}-agent.md","symbol":"4 new QA agent files","action":"add","shape_hint":"PLACEHOLDER frontmatter; name+description only; plan-qa files copy from old qa-proof-agent.md"},{"file":"internal/templates/builtin/agents/till-go/orchestrator-managed.md","symbol":"orchestrator-managed.md","action":"add if absent","shape_hint":"copy from till-gen if not present; verify first"},{"file":"internal/templates/builtin/agents/till-gen/","symbol":"old qa files","action":"delete+split","shape_hint":"keep orchestrator-managed.md; split old qa-proof/qa-falsification into 4 new files"},{"file":"internal/templates/builtin/agents/fe/","symbol":"10 new placeholder agent files","action":"add","shape_hint":"new dir; FE-generic placeholder content; same 10 names"},{"file":"internal/templates/embed.go","symbol":"DefaultTemplateFS","action":"modify","shape_hint":"extend //go:embed explicit list with all new + renamed files; remove deleted file entries"},{"file":"internal/templates/embed_test.go","symbol":"FS introspection test","action":"modify","shape_hint":"assert 10-agent paths per group + fe dir resolved"}]}`
+  - **KindPayload:** `{"changes":[{"file":"internal/templates/builtin/agents/till-go → go","symbol":"subdir rename","action":"git_mv","shape_hint":"Step 1: git mv till-go go; preserves history for 5 existing files"},{"file":"internal/templates/builtin/agents/till-gen → gen","symbol":"subdir rename","action":"git_mv","shape_hint":"Step 1: git mv till-gen gen; preserves history"},{"file":"internal/templates/builtin/agents/go/","symbol":"5 go-* orphan files","action":"delete","shape_hint":"git rm post-rename; preserves history"},{"file":"internal/templates/builtin/agents/go/{plan-qa-proof,plan-qa-falsification,build-qa-proof,build-qa-falsification}-agent.md","symbol":"4 new QA agent files","action":"add","shape_hint":"PLACEHOLDER frontmatter; name+description only; plan-qa files copy from old qa-proof-agent.md"},{"file":"internal/templates/builtin/agents/go/orchestrator-managed.md","symbol":"orchestrator-managed.md","action":"add if absent","shape_hint":"copy from gen/ if not present in go/ post-rename; verify first"},{"file":"internal/templates/builtin/agents/gen/","symbol":"old qa files","action":"delete+split","shape_hint":"keep orchestrator-managed.md; split old qa-proof/qa-falsification into 4 new files"},{"file":"internal/templates/builtin/agents/fe/","symbol":"10 new placeholder agent files","action":"add","shape_hint":"new dir; FE-generic placeholder content; same 10 names"},{"file":"internal/templates/builtin/embed.go","symbol":"DefaultTemplateFS","action":"modify","shape_hint":"extend //go:embed explicit list with all new + renamed files; all path entries use canonical go/ + gen/ + fe/ paths; remove deleted file entries"},{"file":"internal/templates/embed_test.go","symbol":"FS introspection test","action":"modify","shape_hint":"assert 10-agent paths per group + fe dir resolved using canonical names"}]}`
 
 #### 4c.6.1.W4.D2 — Schema shift TOML files + agents.example.toml + new till-fe.toml
 
@@ -394,7 +430,7 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition," this
 - **Acceptance:**
   - `till-go.toml` `[agent_bindings.<kind>]` `agent_name` values updated with `-agent` suffix: `plan-qa-proof-agent`, `plan-qa-falsification-agent`, `build-qa-proof-agent`, `build-qa-falsification-agent` match the new 10-agent file names from W4.D1. The 4 orchestrator-managed bindings (`closeout`, `refinement`, `discussion`, `human-verify`) continue to reference `orchestrator-managed` (no `-agent` suffix — this is the special 10th file, not a standard agent).
   - `till-gen.toml` same updates.
-  - `agents.example.toml` sections: `[go]` replaces `[agents]`; `[go.plan-qa-proof]` replaces `[agents.plan-qa-proof]` etc. Full schema per REVISION_BRIEF §2.12. Both `[go]` and `[fe]` group sections present.
+  - `agents.example.toml` sections: `[go]` replaces `[agents]`; `[go.plan-qa-proof]` replaces `[agents.plan-qa-proof]` etc. Full schema per REVISION_BRIEF §2.12. **All 3 group sections present: `[go]`, `[gen]`, and `[fe]`** (Round 10 absorption — W2 fals NIT-R2-2: `till init --group gen` is a valid user path; fixture must cover all 3 canonical groups).
   - `till-fe.toml` (NEW) ships at `internal/templates/builtin/till-fe.toml` with minimal cascade template structure for `fe` group per the `[<group>.<kind>]` schema. Agent bindings reference the 10 standard agent names (9 standard + `orchestrator-managed`).
   - `embed.go` `//go:embed` directive extended to include `builtin/till-fe.toml`.
   - `embed_test.go` updated to assert `till-fe.toml` path resolves.
@@ -467,12 +503,12 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition," this
   - All TUI components route key events through this dispatcher (the W2 `runInitTUI` refactor uses vim-style keys consistent with the rest of the TUI).
   - Migration marker: `// MIGRATION TARGET: github.com/hylla-org/lykta` (co-extracts with components + style).
 
-  All component implementations are pure Bubble Tea v2 models (Init/Update/View). Tests use `teatest_v2` per existing patterns in `internal/tui/`.
+  All component implementations are Bubble Tea v2 **sub-components** (Init/Update/View with `View() string` return) composed by an outer `tea.Model` at `internal/tui/model.go` or by W2's `runInitTUI` — they do NOT themselves implement `tea.Model` (whose `View()` returns `tea.View` struct per `charm.land/bubbletea/v2@v2.0.0-rc.2/tea.go:52-63`). Components return `nil` from Update on completion (NOT `tea.Quit`, which would kill the parent TUI); parents poll `Done()` / `Confirmed()` / `Cancelled()` accessors. Tests use `teatest_v2` per existing patterns in `internal/tui/`. (Round 10 absorption — W5 fals FF1+FF2.)
 - **Acceptance (L1 contract; L2 plan refines):**
   - All 7 component files + 3 style files + 4 keybinding files exist and compile.
   - Each file carries `// MIGRATION TARGET: github.com/hylla-org/lykta` at package doc-comment level.
-  - `confirm.go` implements `tea.Model`; renders y/n prompt; `Confirmed()` / `Cancelled()` accessors work.
-  - `picker_multi.go` implements `tea.Model`; returns `[]string` of selected items; handles Enter (confirm), Space (toggle), Esc (cancel).
+  - `confirm.go` renders y/n prompt; exposes `Confirmed()` / `Cancelled()` accessors that the parent polls. Sub-component pattern — does NOT implement `tea.Model` interface directly.
+  - `picker_multi.go` returns `[]string` of selected items via `Selected()` accessor; handles Enter (confirm), Space (toggle), Esc (cancel). Sub-component pattern — does NOT implement `tea.Model` interface directly.
   - `dispatcher.go` loads stil baseline.json + Tillsyn-local bindings.json with ID-based deep merge; command palette contains 9 commands when local file present (baseline's 4 + local's 5) or 4 commands when local absent; `Dispatch(keyMsg, mode)` returns registered handler or no-op.
   - `mage test-pkg ./internal/tui/components` passes; `mage test-pkg ./internal/tui/style` passes; `mage test-pkg ./internal/tui/keybindings` passes; `mage ci` green.
 - **Blocked by:** — (Wave A head; no blockers)
@@ -481,44 +517,54 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition," this
 
 ---
 
-### Wave W6 — FE Scaffold
+### Wave W6 — FE Scaffold (Wails at tillsyn repo root — Round 10 absorption W6 fals FF2)
 
 #### 4c.6.1.W6 — sub-plan container
 
 - **State:** todo
 - **Kind:** `plan` (sub-plan container; spawns its own L2 planner)
 - **Directory:** `workflow/drop_4c_6_1/DROP_4c.6.1.W6_FE_SCAFFOLD/`
-- **Paths (expected):**
-  - `fe/main.go` (NEW — Wails main + Service bindings + DEFAULT NATIVE MENU: Quit/About/Hide/Minimize/etc.)
-  - `fe/wails.json` (NEW — Wails config)
-  - `fe/go.mod` (NEW — separate module; imports main module via replace directive)
-  - `fe/frontend/package.json` (NEW)
-  - `fe/frontend/astro.config.mjs` (NEW)
-  - `fe/frontend/pnpm-lock.yaml` (NEW)
-  - `fe/frontend/public/stil-tokens.css` (NEW — built artifact from stil or symlink)
-  - `fe/frontend/src/pages/` (NEW — Astro pages: projects.astro, project-detail.astro, settings.astro)
-  - `fe/frontend/src/components/` (NEW — Tillsyn FE components with MIGRATION TARGET comments)
-  - `fe/frontend/src/layouts/` (NEW — Astro layout)
-  - `fe/frontend/src/lib/` (NEW — client-side helpers + Wails IPC wrappers)
-  - `fe/frontend/src/lib/vim/engine.ts` (NEW — vim engine consuming stil baseline.json + Tillsyn-local bindings.json)
-  - `fe/frontend/src/lib/vim/types.ts` (NEW — binding/mode/dispatch types)
-  - `fe/frontend/src/lib/vim/wails-keys.ts` (NEW — Wails-aware keypress filter for OS-level keys)
-  - `fe/frontend/src/lib/vim/palette.ts` (NEW — command palette backed by product_extensions.tillsyn.commands)
-  - `fe/app.go` (NEW — Go-side service bindings exposed to Wails IPC)
-- **Packages:** `fe` (NEW — separate `fe/go.mod` module importing main module via `replace` directive; standard Wails v2 pattern)
+- **Layout (Round 10 — Wails at tillsyn repo root, canonical Wails v2 layout, single shared `go.mod`)**:
+  - Wails files live at the tillsyn repo root (alongside `cmd/till/`, `internal/`, `magefile.go`, `go.mod`).
+  - `cmd/till/` (TUI) is a sibling cmd binary in the same module.
+  - Backend at `internal/` is shared across TUI + desktop + future variants.
+  - **No `fe/` subfolder. No separate `fe/go.mod`. No `replace` directive.**
+  - Wails-tagged files use `//go:build wails` to isolate CGO from default builds.
+- **Paths (expected — all relative to tillsyn repo root)**:
+  - `main.go` (NEW — Wails main + Service bindings + DEFAULT NATIVE MENU; carries `//go:build wails`)
+  - `app.go` (NEW — Go-side App struct + service bindings exposed to Wails IPC; carries `//go:build wails`)
+  - `wails.json` (NEW — Wails config; persist `-tags wails` via `wails dev -save`)
+  - `frontend/package.json` (NEW — Astro + Solid + `@fontsource/*` deps for Inter/Iosevka/Fira/JetBrains-Mono fonts)
+  - `frontend/astro.config.mjs` (NEW)
+  - `frontend/pnpm-lock.yaml` (NEW)
+  - `frontend/public/stil-tokens.css` (NEW — copy from `stil/main/src/styles/tokens.css`)
+  - `frontend/src/pages/` (NEW — Astro pages: projects.astro, project-detail.astro, settings.astro)
+  - `frontend/src/components/` (NEW — Tillsyn FE components with MIGRATION TARGET comments)
+  - `frontend/src/layouts/` (NEW — Astro layout incl. `@fontsource/*` imports)
+  - `frontend/src/lib/` (NEW — client-side helpers + Wails IPC wrappers)
+  - `frontend/src/lib/vim/engine.ts` (NEW — vim engine consuming stil baseline.json + Tillsyn-local bindings.json)
+  - `frontend/src/lib/vim/types.ts` (NEW — binding/mode/dispatch types)
+  - `frontend/src/lib/vim/wails-keys.ts` (NEW — Wails-aware keypress filter for OS-level keys)
+  - `frontend/src/lib/vim/palette.ts` (NEW — command palette backed by product_extensions.tillsyn.commands)
+  - `build/` (NEW — Wails build output; gitignored except `build/appicon.png` + `build/darwin/` + `build/windows/` per Wails convention)
+  - `magefile.go` (MODIFY — add `mage ci-fe` target)
+  - `.gitignore` (MODIFY — ignore `frontend/node_modules/`, `frontend/dist/`, `build/bin/`, `frontend/wailsjs/`)
+- **Packages:** root module `github.com/evanmschultz/tillsyn` (UNCHANGED — Wails files join the existing module; no new module). Wails-tagged files (`main.go`, `app.go`) excluded from default builds.
 - **Scope:**
-  Bootstrap the Wails v2 desktop app per REVISION_BRIEF §2.15 + SKETCH §5. All Tillsyn-specific FE components carry `// MIGRATION TARGET: @hylla/stil-solid` doc-comment (EXTRACT-R2 tracked). Size-adaptive CSS from day 1 (container queries + responsive units per SKETCH §5.6).
+  Bootstrap Wails v2 desktop app at the tillsyn repo root per REVISION_BRIEF §2.15 + SKETCH §5 + Round 10 layout decision. All Tillsyn-specific FE components carry `// MIGRATION TARGET: @hylla/stil-solid` doc-comment (EXTRACT-R2 tracked). Size-adaptive CSS from day 1 (container queries + responsive units per SKETCH §5.6).
 
-  **Go layer (Wails bindings):**
-  - `fe/main.go` — Wails `Run()` entry point, `*app.Service` bindings via `wails.Bind()`.
+  **Go layer (Wails bindings) — at tillsyn repo root**:
+  - `main.go` — Wails `Run()` entry point, `*app.Service` bindings via `wails.Bind()`. Carries `//go:build wails`.
+  - `app.go` — `App` struct holding `*app.Service`; methods delegated to service. Carries `//go:build wails`.
   - Wails IPC exposes: `ListProjects`, `GetProject`, `ListActionItems`, `CreateActionItem`, `RunDispatcher(actionItemID string)`, `GetAgentsConfig`, `GetTemplateConfig`.
 
-  **Frontend (Astro + Solid):**
+  **Frontend (Astro + Solid) — at `frontend/` (tillsyn repo root)**:
   - Astro pages: project list, project detail + action item tree, settings panel.
   - SolidJS islands for interactive components: action item create dialog, dispatcher trigger button, spawn output viewer, settings editor.
-  - stil tokens consumed from `stil/main/src/styles/tokens.css` (the source-of-truth path). `dist/tokens.css` does NOT exist pre-build per `stil/main/package.json`'s `pnpm build:tokens` step (which produces `dist/tokens.json`, not `dist/tokens.css`). Consuming `src/` directly avoids requiring a stil build pre-step. When stil-solid publishes as a pnpm package, switch to the linked artifact. Per REVISION_BRIEF §2.15 (R3-NIT7 disposition) + SKETCH §10 "Stil tokens consumption path" row.
+  - stil tokens consumed from `stil/main/src/styles/tokens.css` (the source-of-truth path), copied to `frontend/public/stil-tokens.css`. `dist/tokens.css` does NOT exist pre-build per `stil/main/package.json`'s `pnpm build:tokens` step (which produces `dist/tokens.json`, not `dist/tokens.css`).
+  - **Fonts (Round 10 absorption — W6 fals FF3)**: stil `tokens.css` declares `--font-family-sans: 'Inter'` etc. but does NOT ship font binaries. `frontend/package.json` MUST include `@fontsource/inter`, `@fontsource/iosevka`, `@fontsource/fira-code`, `@fontsource/jetbrains-mono` pnpm deps. `frontend/src/layouts/MainLayout.astro` (or equivalent) MUST import these via `@fontsource/inter` etc. so Inter/Iosevka/JetBrains-Mono actually resolve at runtime.
 
-  **Vim keybinding engine (REVISION_BRIEF §2.15 + SKETCH §10):**
+  **Vim keybinding engine (REVISION_BRIEF §2.15 + SKETCH §10) — at `frontend/src/lib/vim/`**:
   - `engine.ts` — TS-side vim engine. Consumes stil `baseline.json` AND the Tillsyn-local `.tillsyn/bindings.json` (§2.19) at startup. Dispatches key events through mode state machine. Graceful fallback when bindings.json absent (empty extension table). Migration marker: `// MIGRATION TARGET: github.com/hylla-org/ro-vim`.
   - `types.ts` — TypeScript types for bindings, modes, dispatch handlers.
   - `wails-keys.ts` — Wails-aware keypress filter. Runs at document level inside the WebView. Filters OS-level keys (Cmd+Q quit, Cmd+M minimize, Cmd+W close window, Cmd+H hide) so OS/Wails default menu handles them. Passes everything else to `engine.ts`. Migration marker: `// MIGRATION TARGET: github.com/hylla-org/ro-vim`.
@@ -526,11 +572,11 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition," this
   - Vitest unit tests for engine + wails-keys filter.
   - Playwright (via MCP `mcp__plugin_playwright_playwright__*`) for end-to-end keybinding tests in dev mode.
 
-  **Wails native menu (REVISION_BRIEF §2.15):** `fe/main.go` uses the DEFAULT Wails v2 native menu (Quit, About, Hide, Minimize, Window controls). No custom menu items in v1. NATIVE-MENU-R1 tracks future vim-command-dispatch integration with the native menu.
+  **Wails native menu**: root `main.go` uses the DEFAULT Wails v2 native menu (Quit, About, Hide, Minimize, Window controls). No custom menu items in v1. NATIVE-MENU-R1 tracks future vim-command-dispatch integration with the native menu.
 
-  **CI gate decision (R2-NIT1 resolution — "added" is authoritative):** A separate `mage ci-fe` target IS ADDED to `magefile.go` in W6 covering `fe/frontend` build + Vitest runs. `fe/` is excluded from the main `mage ci` target pre-MVP. Dev runs `mage ci-fe` manually during FE development. The exact scope of what `mage ci-fe` runs (which Vitest suites, whether Playwright runs) is L2-decided. Go tests for `fe/main.go` + `fe/app.go` ARE covered by `mage test-pkg ./fe/...` if the root `mage ci` is extended — L2 planner decides and documents.
+  **CI gate decision (Round 10 reframing for Wails-at-root)**: `mage ci` runs `go test ./...` from root WITHOUT `-tags wails` — naturally skips `//go:build wails`-tagged files (root `main.go` + `app.go`). No CGO/WebKit toolchain needed for default `mage ci`. **`mage ci-fe` is a separate target** that runs `pnpm run test` + `pnpm run build` in `frontend/`, AND optionally `go build -tags wails .` to verify the Wails Go layer compiles. `mage ci-fe` is NOT in the main CI gate pre-MVP. Dev runs it manually during FE development. Exact `mage ci-fe` scope (Vitest suites, Playwright) is L2-decided.
 
-  **v1 surfaces (SKETCH §5.3):**
+  **v1 surfaces (SKETCH §5.3)**:
   - Project list page — table with archived filter, create button.
   - Project detail / action item tree — collapsible tree left pane, detail right pane.
   - Action item create dialog — kind picker, paths input, description editor.
@@ -538,8 +584,10 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition," this
   - Spawn output viewer — live tail of subagent output (uses Wails event streaming or polling).
   - Settings panel — view/edit agents.toml, view template.toml, manage groups.
 - **Acceptance (L1 contract; L2 plan refines):**
-  - `wails dev` in `fe/` launches Tillsyn desktop app showing project list (acceptance criterion 5.10).
-  - stil tokens load and brand is consistent (Inter / JetBrains Mono fonts load from stil).
+  - `wails dev` (run from tillsyn repo root with `-tags wails`; persisted via `wails dev -save`) launches Tillsyn desktop app showing project list (acceptance criterion 5.10).
+  - `wails.json` declares `frontend:dev:serverUrl` matching Astro default port (4321 or per `astro.config.mjs`).
+  - stil tokens load (`frontend/public/stil-tokens.css` copied from `stil/main/src/styles/tokens.css`).
+  - **Fonts resolve at runtime**: Inter / Iosevka / JetBrains-Mono / Fira-Code load via `@fontsource/*` pnpm packages declared in `frontend/package.json` and imported in `frontend/src/layouts/MainLayout.astro`. Browser-rendered text uses the declared families, not system fallbacks.
   - Project list page renders with real data from Wails IPC → `(*Service).ListProjects`.
   - Action item create dialog submits via Wails IPC → `(*Service).CreateActionItem`.
   - Every Tillsyn-specific FE component file has `// MIGRATION TARGET: @hylla/stil-solid` doc-comment.
@@ -548,11 +596,11 @@ Per `~/.claude/agents/go-planning-agent.md` § "Multi-level decomposition," this
   - `wails-keys.ts` blocks OS-level keys (Cmd+Q, Cmd+M, Cmd+W, Cmd+H) from reaching engine.ts.
   - Vitest unit tests for component logic + vim engine pass (run via `mage ci-fe`).
   - Playwright (via MCP) test covers at least one user-flow interaction (e.g. project list navigation).
-  - `mage ci-fe` target exists in `magefile.go`; runs at minimum `pnpm run test` + `pnpm run build` in `fe/frontend/`.
-  - `mage ci` green (Go tests pass; `fe/` excluded from main `mage ci` per pre-MVP decision).
+  - `mage ci-fe` target exists in `magefile.go`; runs at minimum `pnpm run test` + `pnpm run build` in `frontend/`.
+  - **`mage ci` green WITHOUT `-tags wails` from systems lacking CGO/WebKit toolchain** (W6 fals FF1 mitigation): explicit acceptance test verifies `go test ./...` from tillsyn root completes cleanly. Default builds skip `//go:build wails`-tagged files.
 - **Blocked by:** — (Wave A head; no blockers)
-- **Source-of-truth Specify:** REVISION_BRIEF §2.15; SKETCH §5; SKETCH §10 vim keybinding FE row.
-- **L2 sub-planner spawn directive:** "Decompose W6 into atomic droplets. CRITICAL pre-planning question: The `fe/go.mod` separate-module approach (standard Wails v2 pattern) is the confirmed decision. L2 planner confirms Wails v2 project layout via Context7 before authoring droplets. `mage ci-fe` target: add a new `magefile.go` target that runs `pnpm run test` + `pnpm run build` in `fe/frontend/`. The target IS added in W6 (R2-NIT1 resolution — not deferred). Exact scope of what runs in `mage ci-fe` (which Vitest suites, whether Playwright runs) is decided at L2. Likely droplet shape: D1 `fe/go.mod` + `fe/main.go` (with DEFAULT Wails native menu) + `fe/wails.json` + Wails `Run()` wiring (Wails bootstrap — the skeleton that `wails dev` needs; separate go.mod with replace directive pointing to `../`); D2 Go service bindings (`fe/app.go` — `ListProjects`, `CreateActionItem`, `RunDispatcher`); D3 Astro + Solid dev setup (`fe/frontend/package.json`, `astro.config.mjs`, stil tokens symlink/copy from `stil/main/src/styles/tokens.css` → `fe/frontend/public/stil-tokens.css`) + `mage ci-fe` target in `magefile.go` (R3-NIT7: src/styles/tokens.css is the correct source path; `dist/tokens.css` does NOT exist pre-build); D4 project list page (Astro page + SolidJS island + Wails IPC call); D5 project detail + action item tree; D6 action item create dialog; D7 dispatcher trigger + spawn output viewer; D8 settings panel; D9 vim engine (`engine.ts` + `types.ts` + `wails-keys.ts` + `palette.ts` + Vitest tests + Playwright test; `palette.ts` implements ID-based deep merge: baseline's 4 commands + local's 5 = 9 total; R3-FF2 disposition). Wire `blocked_by`: D1 first; D2 after D1; D3 parallel to D1/D2 (pure frontend setup); D4-D8 each blocked by D2 + D3; D9 blocked by D3 (needs frontend dev environment established). Every FE component file must have `// MIGRATION TARGET: @hylla/stil-solid` in its JS/TS doc comment. Vim engine files get `// MIGRATION TARGET: github.com/hylla-org/ro-vim`. Playwright (via MCP `mcp__plugin_playwright_playwright__*`): FE QA agents use `browser_snapshot` for semantic checks + `browser_take_screenshot` for visual checks — no dev-side screenshot capture required. Playwright test: navigate to project list page, verify at least one project appears in accessibility tree."
+- **Source-of-truth Specify:** REVISION_BRIEF §2.15 (updated Round 10 for Wails-at-root); SKETCH §5; SKETCH §10 vim keybinding FE row + Wails layout row.
+- **L2 sub-planner spawn directive:** "Decompose W6 into atomic droplets. **CRITICAL: Wails files live at tillsyn repo root (NOT in a `fe/` subfolder). Single shared `go.mod` (no separate module, no `replace`). Wails-tagged files use `//go:build wails`.** L2 planner confirms Wails v2 canonical project structure via Context7 before authoring droplets. `mage ci-fe` target: add a new `magefile.go` target that runs `pnpm run test` + `pnpm run build` in `frontend/`. The target IS added in W6. Exact scope L2-decided. **Round 10 Bubble Tea v2 nit (W5 fals FF1 — relevant for any FE↔TUI integration)**: Wails Go side has no `tea.Model`; this constraint applies to W5's TUI components only. **Bake `@fontsource/*` deps into D3's `package.json` shape_hint** (W6 fals FF3): include `@fontsource/inter`, `@fontsource/iosevka`, `@fontsource/fira-code`, `@fontsource/jetbrains-mono`; D4 (project list / MainLayout.astro) imports them. Likely droplet shape: D1 `main.go` (with `//go:build wails` + DEFAULT Wails native menu) + `wails.json` + `.gitignore` updates (Wails bootstrap at root); D2 `app.go` (Go service bindings — `ListProjects`, `CreateActionItem`, `RunDispatcher`; also `//go:build wails`); D3 Astro + Solid dev setup (`frontend/package.json` WITH `@fontsource/*` deps, `astro.config.mjs`, stil tokens copy from `stil/main/src/styles/tokens.css` → `frontend/public/stil-tokens.css`) + `mage ci-fe` target in `magefile.go`; D4 project list page + MainLayout.astro (Astro page + SolidJS island + Wails IPC call + `@fontsource/*` imports in MainLayout); D5 project detail + action item tree (blocked_by D4 — shares `frontend/src/lib/wails.ts` file); D6 action item create dialog (blocked_by D5 — same `wails.ts` file lock); D7 dispatcher trigger + spawn output viewer (blocked_by D6); D8 settings panel (blocked_by D7); D9 vim engine (`engine.ts` + `types.ts` + `wails-keys.ts` + `palette.ts` + Vitest tests + Playwright test; `palette.ts` implements ID-based deep merge: baseline's 4 commands + local's 5 = 9 total). Wire `blocked_by`: D1 first; D2 after D1 (shared package); D3 parallel to D1/D2 (pure frontend setup); D4 after D2 + D3; **D5→D6→D7→D8 serial chain after D4 (all 5 droplets edit `frontend/src/lib/wails.ts` — concurrent edit would conflict; this is the W6 fals D4-D8 wails.ts serialization finding)**; D9 blocked by D3 only (vim engine touches `frontend/src/lib/vim/` only — parallel to D4-D8 chain). Every FE component file must have `// MIGRATION TARGET: @hylla/stil-solid` in its JS/TS doc comment. Vim engine files get `// MIGRATION TARGET: github.com/hylla-org/ro-vim`. **`mage ci` acceptance** (W6 fals FF1 mitigation): D3 OR D1 acceptance includes a verification step that `go test ./...` from tillsyn root passes WITHOUT `-tags wails` — confirms build-tag isolation actually keeps the TUI/cloud path CGO-free. Playwright (via MCP `mcp__plugin_playwright_playwright__*`): FE QA agents use `browser_snapshot` for semantic checks + `browser_take_screenshot` for visual checks — no dev-side screenshot capture required. Playwright test: navigate to project list page, verify at least one project appears in accessibility tree."
 
 ---
 
@@ -859,11 +907,13 @@ L1 emits **6 sub-plan containers** (W1, W2, W3, W5, W6, W8) and **7 direct dropl
 
 L2 sub-planners author their own `workflow/drop_4c_6_1/DROP_4c.6.1.W<X>_<NAME>/PLAN.md` per `workflow/example/drops/WORKFLOW.md` § Sub-Drops.
 
-### Locked architectural decisions (inherited from SKETCH §10 — updated for Round 4)
+### Locked architectural decisions (inherited from SKETCH §10 — updated Round 10 post-L2-QA)
 
 - Multi-group composable (NOT exclusive). 10 agents per group (9 standard + `orchestrator-managed.md` special).
 - Subdir-per-group for agent files: `<project>/.tillsyn/agents/<group>/<name>.md`.
-- Drop `go-` prefix; group subdir is the distinguisher.
+- Drop `go-` prefix on agent FILE NAMES; group subdir is the distinguisher.
+- **Embedded-template subdirs use canonical group names (Round 10 absorption — W1+W2 fals FF1)**: `internal/templates/builtin/agents/go/` (NOT `till-go/`), `internal/templates/builtin/agents/gen/` (NOT `till-gen/`), `internal/templates/builtin/agents/fe/`. W4.D1 performs `git mv till-go → go` + `git mv till-gen → gen` as part of its scope. `agentBodyDefaultGroup` constant in `render.go` updates from `"till-go"` → `"go"` (and `agentBodyFallbackGroup` from `"till-gen"` → `"gen"`) — absorbed into W1.D3 scope (same droplet that touches `render.go`). Canonical group names: `go`, `fe`, `gen`. No `till-` prefix anywhere downstream of W4.D1.
+- **`ProjectMetadata.Groups []string` ships as typed field in W1.D2** (Round 10 absorption — W1 fals FF2 + W2 proof FF1 + W2 fals FF2 + W3 proof FF1 + W3 fals FF1; 5x independent confirmation). Downstream consumers (W2.D7 + W3.D1) write `Metadata.Groups = payload.Groups` directly — NO `KindPayload` JSON stopgap, NO `--add-group/--remove-group` TODO fallback. W2-GROUPS-R1 refinement RESOLVED inline.
 - Plan-QA vs Build-QA split into 4 separate files per group.
 - `orchestrator-managed.md` KEPT as special 10th file per group. FF3 disposition. ORCH-MANAGED-R1 tracks split in Drop 4c.8.
 - FLAT layout detection: fail loud, no migration code. FF2 disposition. D7-R6 tracks manual cleanup.
@@ -871,17 +921,20 @@ L2 sub-planners author their own `workflow/drop_4c_6_1/DROP_4c.6.1.W<X>_<NAME>/P
 - `till serve` deletion: **INVERTED CARVING — 4-droplet sequence** (W7.D1=Inventory; W7.D2=Extract-everything-not-HTTP per inventory; W7.D3=Delete-residue with mandatory `mage ci` belt-and-suspenders check; W7.D4=CLAUDE.md update). R3-FF1 disposition. Pattern discipline: specify the residue from the deletion side, extract everything else first, then delete. TILL-SERVE-R1 tracks rebuild. W7.D3 blocked by W7.D2 AND W2 (cmd/till compile lock).
 - `internal/config/agents.go` decoder: multi-group `[<group>]` / `[<group>.<kind>]` deep-merge. Proof-FF1 disposition. Must land before W4.D2.
 - TUI components inline `internal/tui/components/` (EXTRACT-R1) + vim keybinding dispatcher `internal/tui/keybindings/` (KEYBIND-R1) — both migration-marker'd for lykta.
-- FE inline `fe/` with separate `fe/go.mod` (standard Wails v2 pattern; no go.work) + vim engine `fe/frontend/src/lib/vim/` (KEYBIND-R2) migration-marker'd for ro-vim.
-- Wails v2 native menu DEFAULT in `fe/main.go` (Quit/About/Hide/Minimize — no custom items in v1). NATIVE-MENU-R1 tracks future vim-dispatch integration.
+- **Wails at tillsyn repo root — canonical Wails v2 layout** (Round 10 absorption — W6 fals FF2). `main.go` + `app.go` + `wails.json` + `frontend/` + `build/` all live at the tillsyn repo root, sharing the single existing `go.mod`. `cmd/till/` (TUI) is a sibling cmd binary in the same module. Backend at `internal/` is shared across all surfaces. **NO separate `fe/go.mod`, NO replace directive, NO `fe/` subfolder.** Wails-tagged files use `//go:build wails` build tag to isolate CGO from default builds (matches Wails-internal practice — Wails itself uses `//go:build linux && cgo && !gtk4 && !android` etc.). `wails dev -tags wails -save` persists the tag in `wails.json`. Future surfaces: web variant adds `cmd/till-web/main.go` in same module (no Wails dep, no CGO); mobile via Capacitor wraps `frontend/dist/` bundle (no extra Go); cloud auth server lives in a SEPARATE hylla-org repo. Vim engine at `frontend/src/lib/vim/` (KEYBIND-R2) migration-marker'd for ro-vim.
+- Wails v2 native menu DEFAULT in root `main.go` (Quit/About/Hide/Minimize — no custom items in v1). NATIVE-MENU-R1 tracks future vim-dispatch integration.
 - Wails v2 + Astro + Solid + stil tokens. NO `till serve`. Wails IPC for Go↔JS.
+- **`@fontsource/*` font packages required in `frontend/package.json`** (Round 10 absorption — W6 fals FF3): stil `tokens.css` declares `--font-family-sans: 'Inter'` etc. but ships font binaries via `@fontsource/inter`, `@fontsource/jetbrains-mono`, `@fontsource/fira-code`, `@fontsource/iosevka` pnpm deps — NOT inline in `tokens.css`. W6 D3 package.json must include these or the Inter/Iosevka fonts won't resolve and AC2 fails.
+- **Bubble Tea v2 `tea.Model` `View()` returns `tea.View` struct, not string** (Round 10 absorption — W5 fals FF1). Verified against `charm.land/bubbletea/v2@v2.0.0-rc.2/tea.go:52-63`. W5 components are Bubble Tea sub-models composed by an outer `tea.Model`; they don't satisfy `tea.Model` directly. Spec drops the `var _ tea.Model = (*ConfirmModel)(nil)` claim and reframes as sub-component interfaces. Also: D2/D3/D4 must NOT return `tea.Quit` (kills parent TUI); use `return nil` + `Done()`/`Cancelled()` accessors instead (W5 fals FF2).
 - `agents.toml` gets NO HOME tier (per-project runtime config only).
 - Schema: `[<group>]` and `[<group>.<kind>]` — no `agents.`/`template.` prefix.
 - Methodology docs deferred to Drop 4c.8 (out of scope).
-- No go.work (single-repo; `fe/go.mod` uses replace directive).
+- No go.work, no pnpm workspace — single `go.mod` at repo root.
 - `stil-rust` adapter dropped from plans entirely.
-- `fe/` excluded from `mage ci` pre-MVP; `mage ci-fe` target IS ADDED in W6 (R2-NIT1 resolution — "added" is authoritative; exact scope L2-decided).
+- **Wails-tagged files excluded from main `mage ci` via build-tag default** (Round 10 reframing — previous "fe/ excluded" framing was for the old `fe/` subfolder approach). `mage ci-fe` target IS ADDED in W6 (R2-NIT1 resolution — "added" is authoritative; exact scope L2-decided). `mage ci` MUST include an explicit acceptance test verifying `go test ./...` from root completes cleanly without `-tags wails` (W6 fals FF1 mitigation).
 - Vim keybindings: single source-of-truth via stil baseline.json + Tillsyn-local `.tillsyn/bindings.json` extension (per REVISION_BRIEF §2.19 R3-FF2 disposition). **Merge semantic: ID-based deep merge** — baseline's `product_extensions.tillsyn.commands` (4: `new-drop`, `complete-drop`, `handoff`, `comment`) + local's additions (5: `dispatch`, `plan`, `archive`, `settings`, `help`); local wins on collision; absent local = baseline-only (4 commands). Both W5 TUI dispatcher and W6 FE engine implement this merge with graceful fallback. **KEYBIND-R3 rewording**: when stil-solid lands, canonicalize Tillsyn's 5 local commands into stil's `product_extensions.tillsyn` as an ADDITIVE operation (baseline's 4 + local's 5 → all 9 in baseline); the local file then becomes a no-op or is deleted. This is NOT a "move" (the slot is already occupied by 4 commands in baseline).
 - Tillsyn-project-local prompts: 20 prompt files at `.tillsyn/agents/{go,fe}/` (10 per group) + `.tillsyn/bindings.json` + `.gitignore` re-includes (W8). Skip `gen/` per disposition 7.6.
+- **W8 prompt frontmatter `model:` uses bare aliases** (Round 10 absorption — W8 proof FF1.1 + W8 fals FF2): `model: sonnet` (builder), `model: opus` (planning/qa-*/research), `model: haiku` (commit-message), `model: orchestrator-managed` (closeout/orchestrator-managed kinds). Matches live `~/.claude/agents/go-*-agent.md` system frontmatter. The bare-alias form auto-tracks Claude Code's model-resolver upgrades; versioned IDs would rot fast.
 - `till agents bootstrap` CLI: folds into W3. 2-into-4 QA fan-out (source 2 files → dest 4 files). QA-SPLIT-R1 tracks proper per-role differentiation in Drop 4c.8.
 
 ### 5.13 dogfood end-to-end smoke — explicit deferral
@@ -961,7 +1014,7 @@ Planner + builder run `model: sonnet`; QA pair runs `model: opus` (per system fr
 | ORCH-MANAGED-R1 | Split `orchestrator-managed.md` into role-specific agents (closeout-agent, refinement-agent, discussion-agent, human-verify-agent) during Drop 4c.8 prompt-authoring |
 | BOOTSTRAP-R1 | `till agents bootstrap` extends to other non-`~/.claude/agents/` sources post-MVP (e.g. per-org template libraries, marketplace pulls) |
 | KEYBIND-R1 | Extract `internal/tui/keybindings/` to `github.com/hylla-org/lykta` when lykta publishes |
-| KEYBIND-R2 | Extract `fe/frontend/src/lib/vim/` (engine + wails-keys + palette) to `github.com/hylla-org/ro-vim` when ro-vim publishes |
+| KEYBIND-R2 | Extract `frontend/src/lib/vim/` (engine + wails-keys + palette) to `github.com/hylla-org/ro-vim` when ro-vim publishes |
 | KEYBIND-R3 | When stil-solid lands: canonicalize Tillsyn's 5 local commands (`dispatch`, `plan`, `archive`, `settings`, `help`) INTO `stil/main/src/bindings/baseline.json`'s existing `product_extensions.tillsyn` block as an ADDITIVE operation — all 9 commands (baseline's 4 + local's 5) land in baseline; local `.tillsyn/bindings.json` becomes no-op. NOT a "move" — the slot already has 4 commands; this is additive canonicalization. (R3-FF2 disposition) |
 | BIND-CONSIST-R1 | Cross-surface keybinding consistency test: same `j` does next-item in BOTH TUI action item list AND desktop FE project list |
 | NATIVE-MENU-R1 | Wails native menu integration with vim command dispatch (File→Open Project triggers same handler as `:plan` vim command) — post-4c.7 |

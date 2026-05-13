@@ -1,0 +1,18 @@
+# _BLOCKERS.toml — workflow/drop_4c_6_1/DROP_4c.6.1.W1_TEMPLATE_RESOLUTION/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+
+[[blockers]]
+node = "W1.D1"
+blocked_by = ["4c.6.1.W4.D1"]
+reason = "HOME-tier insertion in loadProjectTemplate; canonical group names (go/fe/gen, no till- prefix) must be confirmed before single-group HOME-tier path uses project.Language; test fixtures use W4.D1-confirmed names"
+
+[[blockers]]
+node = "W1.D2"
+blocked_by = ["W1.D1"]
+reason = "service.go package compile lock; D2 adds loadProjectTemplatesForGroups + mergeTemplates after D1's HOME-tier insertion and loadProjectTemplateWithHome seam lands; also adds Groups []string to domain.ProjectMetadata (internal/domain)"
+
+[[blockers]]
+node = "W1.D3"
+blocked_by = ["4c.6.1.W4.D1"]
+reason = "readProjectTierAgent signature change from flat to subdir-per-group lookup; agentBodyDefaultGroup rename 'till-go'→'go' and agentBodyFallbackGroup rename 'till-gen'→'gen' depend on W4.D1's embedded FS dir renames (git mv till-go→go, till-gen→gen) being in place; test fixtures use W4.D1-confirmed canonical group names"

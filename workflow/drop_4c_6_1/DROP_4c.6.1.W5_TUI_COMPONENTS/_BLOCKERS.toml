@@ -1,0 +1,19 @@
+# _BLOCKERS.toml — workflow/drop_4c_6_1/DROP_4c.6.1.W5_TUI_COMPONENTS/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+# D1 (style) and D6 (keybindings) have no blockers and are not listed here.
+
+[[blockers]]
+node = "D3"
+blocked_by = ["D2"]
+reason = "internal/tui/components package created by D2; D3 adds textinput.go to same package compile unit"
+
+[[blockers]]
+node = "D4"
+blocked_by = ["D3"]
+reason = "internal/tui/components package compile — D4 adds pickers to same package as D3"
+
+[[blockers]]
+node = "D5"
+blocked_by = ["D4"]
+reason = "internal/tui/components package compile — D5 adds header+footer to same package as D4"

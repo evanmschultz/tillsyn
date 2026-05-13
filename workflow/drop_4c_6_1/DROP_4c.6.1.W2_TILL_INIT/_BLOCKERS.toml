@@ -1,0 +1,39 @@
+# _BLOCKERS.toml — workflow/drop_4c_6_1/DROP_4c.6.1.W2_TILL_INIT/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+# All 7 droplets share cmd/till/init_cmd.go + package cmd/till — full serial chain.
+
+[[blockers]]
+node = "W2.D1"
+blocked_by = ["4c.6.1.W4.D1"]
+reason = "D1 renames allowedInitGroups + initJSONPayload.Group → Groups; group names depend on W4.D1's canonical naming (per L1 PLAN.md wave-level blocker)"
+
+[[blockers]]
+node = "W2.D2"
+blocked_by = ["W2.D1"]
+reason = "init_cmd.go written by D1 (Group→Groups rename); D2 reads Groups slice"
+
+[[blockers]]
+node = "W2.D3"
+blocked_by = ["W2.D2", "4c.6.1.W5"]
+reason = "init_cmd.go written by D2; picker_multi.go component provided by W5"
+
+[[blockers]]
+node = "W2.D4"
+blocked_by = ["W2.D3", "4c.6.1.W5"]
+reason = "init_cmd.go written by D3; confirm.go component provided by W5"
+
+[[blockers]]
+node = "W2.D5"
+blocked_by = ["W2.D4", "4c.6.1.W4.D1"]
+reason = "init_cmd.go written by D4; D5 reads from builtin/agents/<group>/ embed paths that W4.D1's git mv creates (canonical unprefixed names go/fe/gen); without W4.D1 fs.ReadDir returns ENOENT"
+
+[[blockers]]
+node = "W2.D6"
+blocked_by = ["W2.D5"]
+reason = "init_cmd.go written by D5; D6 adds writeTemplateTOML after copyAgentFiles"
+
+[[blockers]]
+node = "W2.D7"
+blocked_by = ["W2.D6"]
+reason = "init_cmd.go written by D6; D7 upgrades createProjectDBRecord using payload.Groups from D1"

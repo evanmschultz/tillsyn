@@ -1,0 +1,121 @@
+# _BLOCKERS.toml — workflow/drop_4c_6_1/DROP_4c.6.1.W8_TILLSYN_PROJECT_PROMPTS/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+# Node IDs use bare D* form (consistent with sibling L2 plans + PLAN.md mirror).
+# Cross-wave reference 4c.6.1.W1 in D21 retains its fully-qualified form.
+#
+# Shape: D0 is the Wave A head (no blockers). D1-D20 prompt droplets all
+# blocked_by D0 (git tracking precedes file authoring). D21 smoke-test
+# blocked_by D0 + all 20 prompt droplets + cross-wave 4c.6.1.W1 (subdir-per-group
+# resolver from W1 must ship before the test fixture pattern at .tillsyn/agents/<group>/<name>.md
+# matches the resolver's lookup path).
+
+[[blockers]]
+node = "D0"
+blocked_by = []
+reason = "Wave A head — no upstream blockers"
+
+[[blockers]]
+node = "D1"
+blocked_by = ["D0"]
+reason = ".gitignore re-includes + .tillsyn/bindings.json from D0 must land first so go/planning-agent.md is git-trackable"
+
+[[blockers]]
+node = "D2"
+blocked_by = ["D0"]
+reason = "D0 git tracking — go/builder-agent.md"
+
+[[blockers]]
+node = "D3"
+blocked_by = ["D0"]
+reason = "D0 git tracking — go/plan-qa-proof-agent.md"
+
+[[blockers]]
+node = "D4"
+blocked_by = ["D0"]
+reason = "D0 git tracking — go/plan-qa-falsification-agent.md"
+
+[[blockers]]
+node = "D5"
+blocked_by = ["D0"]
+reason = "D0 git tracking — go/build-qa-proof-agent.md"
+
+[[blockers]]
+node = "D6"
+blocked_by = ["D0"]
+reason = "D0 git tracking — go/build-qa-falsification-agent.md"
+
+[[blockers]]
+node = "D7"
+blocked_by = ["D0"]
+reason = "D0 git tracking — go/research-agent.md"
+
+[[blockers]]
+node = "D8"
+blocked_by = ["D0"]
+reason = "D0 git tracking — go/closeout-agent.md (FROM SCRATCH)"
+
+[[blockers]]
+node = "D9"
+blocked_by = ["D0"]
+reason = "D0 git tracking — go/commit-message-agent.md (FROM SCRATCH, haiku model)"
+
+[[blockers]]
+node = "D10"
+blocked_by = ["D0"]
+reason = "D0 git tracking — go/orchestrator-managed.md (FROM SCRATCH)"
+
+[[blockers]]
+node = "D11"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/planning-agent.md"
+
+[[blockers]]
+node = "D12"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/builder-agent.md"
+
+[[blockers]]
+node = "D13"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/plan-qa-proof-agent.md"
+
+[[blockers]]
+node = "D14"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/plan-qa-falsification-agent.md"
+
+[[blockers]]
+node = "D15"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/build-qa-proof-agent.md"
+
+[[blockers]]
+node = "D16"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/build-qa-falsification-agent.md"
+
+[[blockers]]
+node = "D17"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/research-agent.md"
+
+[[blockers]]
+node = "D18"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/closeout-agent.md (FROM SCRATCH)"
+
+[[blockers]]
+node = "D19"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/commit-message-agent.md (FROM SCRATCH, haiku model)"
+
+[[blockers]]
+node = "D20"
+blocked_by = ["D0"]
+reason = "D0 git tracking — fe/orchestrator-managed.md (FROM SCRATCH)"
+
+[[blockers]]
+node = "D21"
+blocked_by = ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14", "D15", "D16", "D17", "D18", "D19", "D20", "4c.6.1.W1"]
+reason = "smoke test exercises subdir-per-group resolver (W1's render.go change) against project-tier prompts authored by D1-D20; needs all 20 prompts written AND W1 shipped; Wave C transitively"

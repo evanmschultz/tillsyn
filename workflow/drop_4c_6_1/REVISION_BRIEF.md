@@ -228,11 +228,11 @@ Scope:
 
 **Refactor** `runInitTUI` to consume these components AND the dispatcher (so till init walks use vim-style keys consistent with the rest of the TUI).
 
-### 2.15 FE scaffold + vim keybinding engine (inline in tillsyn — see §10)
+### 2.15 FE scaffold + vim keybinding engine (Wails at tillsyn repo root — Round 10 layout, see §10)
 
 **Stack**: **Wails v2 desktop** (per dev decision) + **Astro** + **SolidJS islands** + **stil tokens** (consumed from `/Users/evanschultz/Documents/Code/hylla/stil/`).
 
-**Build at** `tillsyn/main/fe/`.
+**Build at the tillsyn repo root** (Round 10 W6 fals FF2 absorption): Wails files (`main.go`, `app.go`, `wails.json`, `frontend/`, `build/`) live at the tillsyn repo root, sharing the existing `go.mod` with `cmd/till/` + `internal/...`. **No `fe/` subfolder. No separate `fe/go.mod`. No `replace` directive.** This is the canonical Wails v2 layout applied to a multi-cmd Go monorepo. Wails-tagged files use `//go:build wails` to isolate CGO from default builds (matches Wails' own internal practice — Wails itself uses `//go:build linux && cgo && !gtk4 && !android` etc.).
 
 **v1 surfaces**:
 
@@ -243,15 +243,21 @@ Scope:
 - Spawn output viewer (live tail)
 - Settings panel (view/edit agents.toml, view template.toml, manage groups)
 
-**Wails project structure**:
+**Wails project structure (at tillsyn repo root)**:
 
-- `fe/main.go` — Wails main + Service bindings + DEFAULT NATIVE MENU (Quit / About / Hide / Minimize / etc.; no custom menu items in v1)
-- `fe/frontend/` — Astro project (package.json, astro.config.mjs, src/)
-- `fe/frontend/src/components/` — Tillsyn-specific components (consume stil tokens)
-- `fe/frontend/src/lib/vim/` — vim keybinding engine + Wails-aware key handler (see below)
-- `fe/wails.json` — Wails config
+- `main.go` — Wails `Run()` entry point + Service bindings + DEFAULT NATIVE MENU (Quit / About / Hide / Minimize; no custom menu items in v1). Carries `//go:build wails`.
+- `app.go` — `App` struct holding `*app.Service`; methods delegate to backend. Carries `//go:build wails`.
+- `frontend/` — Astro project (package.json, astro.config.mjs, src/) at tillsyn repo root.
+- `frontend/src/components/` — Tillsyn-specific components (consume stil tokens).
+- `frontend/src/lib/vim/` — vim keybinding engine + Wails-aware key handler (see below).
+- `wails.json` — Wails config. Run `wails dev -tags wails -save` once to persist the build tag.
+- `build/` — Wails build output. Gitignore `build/bin/`; commit Wails icon + platform-specific build assets per Wails convention.
 
-**Vim keybinding engine** at `tillsyn/main/fe/frontend/src/lib/vim/`:
+**Future surfaces from this same module**: web variant = new `cmd/till-web/main.go` using `net/http` (no Wails dep, no CGO); mobile = Capacitor wraps `frontend/dist/` bundle (no extra Go). Cloud auth server lives in a SEPARATE hylla-org repo, not in tillsyn.
+
+**`@fontsource/*` font packages (Round 10 W6 fals FF3)**: stil `tokens.css` declares `--font-family-sans: 'Inter'` etc. but ships fonts via pnpm packages — NOT inline in `tokens.css`. `frontend/package.json` MUST include `@fontsource/inter`, `@fontsource/iosevka`, `@fontsource/fira-code`, `@fontsource/jetbrains-mono`. `frontend/src/layouts/MainLayout.astro` imports them via `@fontsource/inter` etc. Without this, Inter / Iosevka / JetBrains-Mono won't resolve at runtime and the brand-consistency acceptance bullet fails.
+
+**Vim keybinding engine** at `frontend/src/lib/vim/`:
 
 - `engine.ts` — TS-side vim engine. Consumes `/Users/evanschultz/Documents/Code/hylla/stil/main/src/bindings/baseline.json` AND the Tillsyn-local `<project>/.tillsyn/bindings.json` (per §2.19) at startup. Dispatches key events through mode state machine.
 - `types.ts` — types for bindings, modes, dispatch handlers.
@@ -262,11 +268,13 @@ Scope:
 
 **Migration markers**: `engine.ts` + `wails-keys.ts` + `palette.ts` carry `// MIGRATION TARGET: github.com/hylla-org/ro-vim`. UI components carry `// MIGRATION TARGET: @hylla/stil-solid`. Refinement EXTRACT-R2 + KEYBIND-R2 track the moves-when-stable.
 
-**Brand consistency**: consume stil tokens directly from `/Users/evanschultz/Documents/Code/hylla/stil/main/src/styles/tokens.css` (the source-of-truth path; `dist/tokens.css` does NOT exist pre-build per `stil/main/package.json`'s `pnpm build:tokens` step). Consuming `src/` directly avoids requiring a stil build pre-step in Tillsyn's build flow. When stil-solid lands as a pnpm package, switch to the linked path.
+**Brand consistency**: consume stil tokens directly from `/Users/evanschultz/Documents/Code/hylla/stil/main/src/styles/tokens.css` → copy to `frontend/public/stil-tokens.css`. `dist/tokens.css` does NOT exist pre-build per `stil/main/package.json`'s `pnpm build:tokens` step (which produces `dist/tokens.json`). Consuming `src/` directly avoids requiring a stil build pre-step. When stil-solid lands as a pnpm package, switch to the linked path. Fonts loaded via `@fontsource/*` deps per the package.json above.
 
 **Size-adaptive CSS from day 1** — every component uses container queries / responsive units so future web + mobile wraps work without rework.
 
 **Testing**: Vitest for component unit tests, Playwright (via MCP) for FE integration tests in dev mode. Per the agent-perception model: agents use `browser_snapshot` (accessibility tree) + `browser_take_screenshot` (multimodal Claude sees images) — zero dev-side screenshot capture required.
+
+**Build gates**: `mage ci` runs `go test ./...` from tillsyn repo root WITHOUT `-tags wails`; the build tag isolation makes this naturally CGO-free (cloud-Linux CI without WebKit headers passes). `mage ci-fe` is a SEPARATE target that runs `pnpm run test` + `pnpm run build` in `frontend/`, plus optionally `go build -tags wails .` to verify the Wails Go layer compiles. `mage ci-fe` is NOT part of the main CI gate pre-MVP.
 
 ### 2.16 Refactor `internal/adapters/server/` — INVERSE DISCIPLINE (W7 4-step restructure)
 

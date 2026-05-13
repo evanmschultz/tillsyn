@@ -1,0 +1,33 @@
+# _BLOCKERS.toml — DROP_4c.6.1.W3_CLI_SURFACE/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline Blocked by: bullets in PLAN.md; PLAN.md is truth.
+
+[[blockers]]
+node = "W3.D2"
+blocked_by = ["W3.D1"]
+reason = "shares cmd/till/project_cli.go"
+
+[[blockers]]
+node = "W3.D3"
+blocked_by = ["W3.D2"]
+reason = "same cmd/till package compile; D2 must settle before D3 extends action_item_cli.go"
+
+[[blockers]]
+node = "W3.D4"
+blocked_by = ["W3.D3"]
+reason = "same cmd/till package compile; D4 creates template_cli.go"
+
+[[blockers]]
+node = "W3.D5"
+blocked_by = ["W3.D4"]
+reason = "same cmd/till package compile; D5 creates agents_cli.go"
+
+[[blockers]]
+node = "W3.D6"
+blocked_by = ["W3.D5"]
+reason = "shares agents_cli.go which D5 creates"
+
+[[blockers]]
+node = "W3.D7"
+blocked_by = ["W3.D6"]
+reason = "all W3 command files must exist before main.go registers them"
