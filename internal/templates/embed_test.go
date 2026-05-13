@@ -466,7 +466,7 @@ func TestDefaultTemplateMatchesNestingFixture(t *testing.T) {
 
 // TestDefaultTemplateStewardOwnedKinds verifies the kinds that PLAN.md
 // § 15.7 (§ 19.3 bullet 9) names as STEWARD-owned have owner = "STEWARD"
-// in their KindRule. The auth gate at internal/adapters/server/common/
+// in their KindRule. The auth gate at internal/adapters/mcp_common/
 // app_service_adapter_mcp.go reads this field via 3.20's auto-generator;
 // regression here would silently let drop-orchs move STEWARD-owned items.
 func TestDefaultTemplateStewardOwnedKinds(t *testing.T) {
@@ -944,32 +944,89 @@ func TestLoadDefaultTemplateForLanguage_Go(t *testing.T) {
 	}
 }
 
-// TestLoadDefaultTemplateForLanguage_FERejected asserts the `"fe"` axis
-// returns an error wrapping `ErrLanguageNotSupported` per the Q1 resolution
-// (workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5 — defer FE until an FE
-// adopter materializes).
+// TestLoadDefaultTemplateForLanguage_FESupported asserts the `"fe"` axis
+// successfully loads `builtin/till-fe.toml` and returns a valid Template.
 //
-// Drop 4c.5 droplet F.1.3 acceptance criterion #4 + #8. The error must
-// be `errors.Is`-routable via the closed sentinel so callers in
-// project-create boundaries can distinguish "no template for this lang"
-// from a TOML parse error or schema-version mismatch. The wrapped
-// message must include the offending lang value so the dev-facing
-// surface (CLI / MCP error envelope) names the input that failed.
-func TestLoadDefaultTemplateForLanguage_FERejected(t *testing.T) {
+// Drop 4c.6.1 W4.D2 resolves the Q1 deferral from
+// workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5: the FE group now ships
+// `builtin/till-fe.toml` alongside the W4.D1 agent scaffold. This test
+// replaces the prior `TestLoadDefaultTemplateForLanguage_FERejected` from
+// Drop 4c.5 F.1.3. The FE-distinguishing assertion is the 12 agent bindings
+// (same count as till-go.toml) — generic till-gen.toml ships zero.
+func TestLoadDefaultTemplateForLanguage_FESupported(t *testing.T) {
 	t.Parallel()
 
 	tpl, err := LoadDefaultTemplateForLanguage("fe")
-	if err == nil {
-		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): err = nil; want wrapped ErrLanguageNotSupported")
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): unexpected error: %v", err)
 	}
-	if !errors.Is(err, ErrLanguageNotSupported) {
-		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): err %v not errors.Is(ErrLanguageNotSupported); routing contract broken", err)
+	if tpl.SchemaVersion != SchemaVersionV1 {
+		t.Fatalf("SchemaVersion = %q; want %q", tpl.SchemaVersion, SchemaVersionV1)
 	}
-	if got := err.Error(); !strings.Contains(got, `"fe"`) {
-		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): error message = %q; want to contain offending lang value `\"fe\"`", got)
+
+	// FE template ships 12 agent bindings (one per closed-enum kind) — same
+	// count as till-go.toml. If the resolver mistakenly routed lang="fe" to
+	// till-gen.toml this assertion would fail because till-gen ships 0 bindings.
+	if got, want := len(tpl.AgentBindings), len(allKinds); got != want {
+		t.Fatalf("len(AgentBindings) = %d; want %d (lang=\"fe\" must route to till-fe.toml; generic ships 0 bindings)", got, want)
 	}
-	if tpl.SchemaVersion != "" || len(tpl.Kinds) != 0 {
-		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): returned non-zero Template = %+v; want zero value on rejection", tpl)
+}
+
+// TestLoadDefaultTemplateFEResolves is the canary for the FE builtin shipped
+// in Drop 4c.6.1 W4.D2. It verifies that builtin/till-fe.toml:
+//
+//  1. Opens cleanly from the embed.FS (the //go:embed directive extends
+//     to include till-fe.toml in W4.D2).
+//  2. Parses + validates through the full templates.Load() chain.
+//  3. Carries the closed 12-kind catalog (same vocabulary as till-go).
+//  4. Carries exactly six standard + drop-narrowed child_rules: the four
+//     standard rules (build->build-qa-{proof,falsification},
+//     plan->plan-qa-{proof,falsification}) plus the two drop-narrowed
+//     entries (DROP-PLAN-QA-PROOF, DROP-PLAN-QA-FALSIFICATION). Mirrors
+//     till-go.toml's shape.
+//  5. Carries the same six STEWARD persistent-parent seeds as till-go.
+//  6. Has 12 agent_bindings — one per closed-enum kind.
+func TestLoadDefaultTemplateFEResolves(t *testing.T) {
+	t.Parallel()
+
+	f, err := DefaultTemplateFS.Open("builtin/till-fe.toml")
+	if err != nil {
+		t.Fatalf("DefaultTemplateFS.Open(till-fe.toml): unexpected error: %v", err)
+	}
+	defer f.Close()
+
+	tpl, err := Load(f)
+	if err != nil {
+		t.Fatalf("Load(till-fe.toml): unexpected error: %v", err)
+	}
+
+	if tpl.SchemaVersion != SchemaVersionV1 {
+		t.Fatalf("SchemaVersion = %q; want %q", tpl.SchemaVersion, SchemaVersionV1)
+	}
+
+	// Closed 12-kind catalog — same vocabulary as till-go.
+	if got, want := len(tpl.Kinds), len(allKinds); got != want {
+		t.Fatalf("len(Kinds) = %d; want %d (closed 12-kind catalog)", got, want)
+	}
+	for _, kind := range allKinds {
+		if _, ok := tpl.Kinds[kind]; !ok {
+			t.Fatalf("Kinds[%q] missing — every closed-12-kind must have a [kinds.<kind>] section", kind)
+		}
+	}
+
+	// Six child_rules: four standard + two drop-narrowed. Mirrors till-go.toml.
+	if got, want := len(tpl.ChildRules), 6; got != want {
+		t.Fatalf("len(ChildRules) = %d; want %d (four standard + two drop-narrowed rules, mirrors till-go.toml)", got, want)
+	}
+
+	// Six STEWARD seeds — same coordination scaffold as till-go.
+	if got, want := len(tpl.StewardSeeds), 6; got != want {
+		t.Fatalf("len(StewardSeeds) = %d; want %d (DISCUSSIONS / HYLLA_FINDINGS / LEDGER / WIKI_CHANGELOG / REFINEMENTS / HYLLA_REFINEMENTS)", got, want)
+	}
+
+	// 12 agent_bindings — one per kind.
+	if got, want := len(tpl.AgentBindings), len(allKinds); got != want {
+		t.Fatalf("len(AgentBindings) = %d; want %d (FE template ships one binding per closed-enum kind)", got, want)
 	}
 }
 

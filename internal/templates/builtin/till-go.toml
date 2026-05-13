@@ -478,7 +478,7 @@ max_chars = 50000
 max_rule_duration = "500ms"
 
 [agent_bindings.plan-qa-proof]
-agent_name = "qa-proof-agent"
+agent_name = "plan-qa-proof-agent"
 model = "opus"
 effort = "medium"
 max_tries = 3
@@ -504,7 +504,7 @@ max_chars = 50000
 max_rule_duration = "500ms"
 
 [agent_bindings.plan-qa-falsification]
-agent_name = "qa-falsification-agent"
+agent_name = "plan-qa-falsification-agent"
 model = "opus"
 effort = "medium"
 max_tries = 3
@@ -530,7 +530,7 @@ max_chars = 50000
 max_rule_duration = "500ms"
 
 [agent_bindings.build-qa-proof]
-agent_name = "qa-proof-agent"
+agent_name = "build-qa-proof-agent"
 model = "opus"
 effort = "medium"
 max_tries = 3
@@ -563,7 +563,7 @@ max_chars = 50000
 max_rule_duration = "500ms"
 
 [agent_bindings.build-qa-falsification]
-agent_name = "qa-falsification-agent"
+agent_name = "build-qa-falsification-agent"
 model = "opus"
 effort = "medium"
 max_tries = 3

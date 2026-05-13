@@ -84,7 +84,7 @@ import (
 // workflow/drop_4c_6/SKETCH.md § 4.1 + § 4.2 + § 11.1 + § 14.2 + § 21.6 +
 // workflow/drop_4c_6_1/PLAN.md droplet 4c.6.1.W4.D1.
 //
-//go:embed builtin/till-go.toml builtin/till-gen.toml
+//go:embed builtin/till-go.toml builtin/till-gen.toml builtin/till-fe.toml
 //go:embed builtin/agents.example.toml
 //go:embed builtin/agents/gen/planning-agent.md
 //go:embed builtin/agents/gen/builder-agent.md
@@ -127,10 +127,10 @@ var DefaultTemplateFS embed.FS
 
 // ErrLanguageNotSupported is the closed sentinel returned by
 // `LoadDefaultTemplateForLanguage` when the caller-supplied language axis
-// is recognized as a not-yet-shipped value (currently `"fe"` per the Q1
-// resolution in workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5) OR is
-// outside the closed `domain.Project.Language` enum entirely (e.g. a
-// hand-rolled `"rust"`).
+// is outside the closed `domain.Project.Language` enum entirely (e.g. a
+// hand-rolled `"rust"`). Drop 4c.6.1 W4.D2 resolved the Q1 deferral and
+// shipped `till-fe.toml`, so `"fe"` is now a supported language and no
+// longer returns this error.
 //
 // Routing contract: callers programmatically distinguish "no template for
 // this language" from a TOML parse error or schema-version mismatch via
@@ -139,9 +139,9 @@ var DefaultTemplateFS embed.FS
 // MCP error envelopes) can name the input that failed.
 //
 // Closed-enum drift guard: when a future drop extends
-// `domain.Project.Language` (e.g. landing FE adopter support), the new
+// `domain.Project.Language` (e.g. landing Rust adopter support), the new
 // language MUST also be wired into `LoadDefaultTemplateForLanguage`'s
-// switch AND ship a matching `builtin/default-<lang>.toml` file in the
+// switch AND ship a matching `builtin/till-<lang>.toml` file in the
 // embed.FS. The sentinel exists precisely so the resolver fails LOUD on
 // the gap rather than silently returning the Go default.
 var ErrLanguageNotSupported = errors.New("template language not supported")
@@ -201,11 +201,11 @@ func LoadDefaultTemplate() (Template, error) {
 //     catalog rebadged by F.2.1 from `default.toml` and again by Drop
 //     4c.6 W5.D1 to the `till-` prefix family — 12 kinds + child rules +
 //     STEWARD seeds + agent bindings + gates + context).
-//   - `"fe"`   → returns an error wrapping `ErrLanguageNotSupported`
-//     per Q1 resolution (workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5).
-//     FE template ships post-MVP via the F.4 marketplace CLI once an
-//     FE adopter materializes; until then dev-FE-projects must author
-//     `<project_root>/.tillsyn/template.toml` directly.
+//   - `"fe"`   → loads `builtin/till-fe.toml` (the FE / Wails catalog
+//     shipped in Drop 4c.6.1 W4.D2 — 12 kinds + child_rules + STEWARD
+//     seeds + gates + agent_bindings referencing the 10 standard FE
+//     agent names from builtin/agents/fe/). The Q1 deferral from
+//     workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5 is resolved.
 //   - Anything else → returns an error wrapping
 //     `ErrLanguageNotSupported` with the offending value verbatim.
 //
@@ -219,8 +219,7 @@ func LoadDefaultTemplate() (Template, error) {
 // global mutation. Safe to call from any goroutine.
 //
 // Returns (Template{}, err) on:
-//   - `lang == "fe"` (deferred per Q1).
-//   - `lang` outside the closed enum.
+//   - `lang` outside the closed enum (e.g. `"rust"` — not yet shipped).
 //   - embed.FS open failure (programmer error — files compiled in).
 //   - any error returned by Load — schema-version mismatch, unknown
 //     key, unknown kind reference, child-rule cycle, etc.
@@ -232,11 +231,14 @@ func LoadDefaultTemplateForLanguage(lang string) (Template, error) {
 	case "go":
 		path = "builtin/till-go.toml"
 	case "fe":
-		// Deferred per workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5
-		// (Q1 resolution). Surface a clear, lang-tagged error so
-		// project-create boundaries can route the dev to author a
-		// project-local template.
-		return Template{}, fmt.Errorf("language %q: fe template unavailable; defer until FE adopter materializes: %w", lang, ErrLanguageNotSupported)
+		// Shipped in Drop 4c.6.1 W4.D2 alongside the FE agent scaffold
+		// (W4.D1) and FE cascade template TOML (this drop). The Q1
+		// deferral from workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5 is
+		// resolved: the `fe` group ships `builtin/till-fe.toml` with the
+		// same 12-kind catalog + child_rules + STEWARD seeds + gates +
+		// agent_bindings as till-go.toml, using the 10 standard FE agent
+		// names from builtin/agents/fe/*.md.
+		path = "builtin/till-fe.toml"
 	default:
 		return Template{}, fmt.Errorf("language %q: outside closed Project.Language enum: %w", lang, ErrLanguageNotSupported)
 	}
@@ -265,16 +267,13 @@ func LoadDefaultTemplateForLanguage(lang string) (Template, error) {
 // files dropped into builtin/ cannot accidentally appear in the wire result.
 //
 // The function returns a fresh slice on every call so callers cannot mutate
-// the package-level source of truth. Pre-MVP the list contains
-// "till-gen" + "till-go" only (Drop 4c.6 W5.D1 rebadged the Go-flavored
-// builtin from `default-go` to `till-go`; W5.D2 rebadged the
-// language-agnostic builtin from `default-generic` to `till-gen`,
-// completing the `till-` prefix family). Stable lexical order preserved
-// (`till-gen` < `till-go`). The FE template ships post-MVP via the F.4
-// marketplace CLI per the Q1 resolution in
-// workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5.
+// the package-level source of truth. Drop 4c.6.1 W4.D2 adds "till-fe" to the
+// list alongside "till-gen" + "till-go": the Q1 deferral of the FE template
+// (workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5) is resolved now that the FE
+// agent scaffold + till-fe.toml ship together. Stable lexical order preserved
+// (`till-fe` < `till-gen` < `till-go`).
 func BuiltinTemplateNames() []string {
-	return []string{"till-gen", "till-go"}
+	return []string{"till-fe", "till-gen", "till-go"}
 }
 
 // MarshalTOML serializes a Template back to canonical TOML bytes via

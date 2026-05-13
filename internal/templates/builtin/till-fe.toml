@@ -1,0 +1,461 @@
+# Tillsyn FE (front-end / Wails) default cascade template (builtin).
+#
+# Drop 4c.6.1 W4.D2 adds this file as the third canonical group template
+# alongside `till-go.toml` (Go) and `till-gen.toml` (language-agnostic).
+# The `fe` group targets Wails + Astro + SolidJS front-end projects per
+# REVISION_BRIEF.md § 2.15. Agent body resolution walks:
+#
+#   1. <project>/.tillsyn/agents/fe/<name>.md  (project local)
+#   2. ~/.tillsyn/agents/fe/<name>.md           (user HOME tier)
+#   3. builtin/agents/fe/<name>.md              (this binary, embedded)
+#
+# Substantive FE-specific prompt content for the 10 placeholder .md files
+# ships in Drop 4c.8 W4. The agent_name values here reference the 10
+# standard file names from Drop 4c.6.1 W4.D1 (9 standard + 1 special).
+#
+# Loaded via internal/templates.LoadDefaultTemplateForLanguage("fe") once
+# the resolver case is wired in embed.go (same drop, W4.D2). Projects using
+# the `fe` group fall back to this default at project-creation bake time
+# (KindCatalog.Bake — internal/templates/catalog.go).
+#
+# Canonical specs:
+#   - workflow/drop_4c_6_1/REVISION_BRIEF.md § 2.15 (FE scaffold scope).
+#   - workflow/drop_4c_6_1/PLAN.md droplet 4c.6.1.W4.D2.
+#   - main/CLAUDE.md "Agent Bindings" table.
+#
+# Encoding rules (mirrors till-go.toml):
+#   - schema_version is pinned to "v1".
+#   - Reverse-hierarchy prohibitions are EXPLICIT via allowed_child_kinds.
+#   - Auto-create rules encoded as [[child_rules]] entries.
+#   - STEWARD persistent parent seeds encoded as [[steward_seeds]] entries.
+#   - Drop-narrowed child_rules (DROP-PLAN-QA-PROOF, DROP-PLAN-QA-FALSIFICATION)
+#     included to match till-go.toml's drop-level cascade shape.
+
+schema_version = "v1"
+
+# -----------------------------------------------------------------------------
+# [kinds] — closed 12-value Kind enum.
+# -----------------------------------------------------------------------------
+
+[kinds.plan]
+# Planning-dominant — planner agent decomposes work into children. Plans
+# nest infinitely; a plan may contain sub-plans, builds, research,
+# discussions, etc.
+structural_type = "droplet"
+
+[kinds.research]
+# Read-only investigation — research agent compiles findings, posts a
+# comment, dies. Does NOT auto-create QA children.
+structural_type = "droplet"
+
+[kinds.build]
+# Code-changing leaf — builder agent implements, tests, commits.
+# Auto-creates build-qa-proof + build-qa-falsification children via
+# [[child_rules]] below.
+structural_type = "droplet"
+
+[kinds.plan-qa-proof]
+# Proof-completeness QA pass on a plan parent.
+structural_type = "droplet"
+
+[kinds.plan-qa-falsification]
+# Falsification QA pass on a plan parent.
+structural_type = "droplet"
+
+[kinds.build-qa-proof]
+# Proof-completeness QA pass on a build parent. Reverse-hierarchy
+# prohibition: build-qa-proof cannot parent a plan.
+# allowed_child_kinds enumerates every kind EXCEPT plan.
+allowed_child_kinds = [
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.build-qa-falsification]
+# Falsification QA pass on a build parent. Reverse-hierarchy prohibition:
+# build-qa-falsification cannot parent a plan.
+allowed_child_kinds = [
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.closeout]
+# Drop-end coordination — aggregates ledger / refinements / findings.
+# STEWARD-owned per PLAN.md § 15.7. Reverse-hierarchy prohibition:
+# closeout cannot parent another closeout.
+owner = "STEWARD"
+allowed_child_kinds = [
+    "plan",
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.commit]
+# Commit action — template-triggered under plan at level >= 2. Reverse-
+# hierarchy prohibition: commit cannot parent a plan.
+allowed_child_kinds = [
+    "research",
+    "build",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+[kinds.refinement]
+# Perpetual / long-lived tracking umbrella — drop-end entries roll up
+# here. STEWARD-owned per PLAN.md § 15.7.
+owner = "STEWARD"
+structural_type = "droplet"
+
+[kinds.discussion]
+# Cross-cutting decision park — description = converged shape, comments =
+# audit trail.
+structural_type = "droplet"
+
+[kinds.human-verify]
+# Dev sign-off hold point — attention items + checklist children, no
+# plan/QA. Reverse-hierarchy prohibition: human-verify cannot parent a
+# build.
+allowed_child_kinds = [
+    "plan",
+    "research",
+    "plan-qa-proof",
+    "plan-qa-falsification",
+    "build-qa-proof",
+    "build-qa-falsification",
+    "closeout",
+    "commit",
+    "refinement",
+    "discussion",
+    "human-verify",
+]
+structural_type = "droplet"
+
+# -----------------------------------------------------------------------------
+# [[child_rules]] — auto-create directives evaluated at parent creation time.
+# -----------------------------------------------------------------------------
+
+# build -> build-qa-proof
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-proof"
+title = "BUILD-QA-PROOF"
+blocked_by_parent = true
+
+# build -> build-qa-falsification
+[[child_rules]]
+when_parent_kind = "build"
+create_child_kind = "build-qa-falsification"
+title = "BUILD-QA-FALSIFICATION"
+blocked_by_parent = true
+
+# plan -> plan-qa-proof
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "plan-qa-proof"
+title = "PLAN-QA-PROOF"
+blocked_by_parent = true
+
+# plan -> plan-qa-falsification
+[[child_rules]]
+when_parent_kind = "plan"
+create_child_kind = "plan-qa-falsification"
+title = "PLAN-QA-FALSIFICATION"
+blocked_by_parent = true
+
+# structural_type=drop -> plan-qa-proof (drop-level plan QA twin).
+[[child_rules]]
+when_parent_kind = "plan"
+when_parent_structural_type = "drop"
+create_child_kind = "plan-qa-proof"
+title = "DROP-PLAN-QA-PROOF"
+blocked_by_parent = true
+
+# structural_type=drop -> plan-qa-falsification (drop-level plan QA twin).
+[[child_rules]]
+when_parent_kind = "plan"
+when_parent_structural_type = "drop"
+create_child_kind = "plan-qa-falsification"
+title = "DROP-PLAN-QA-FALSIFICATION"
+blocked_by_parent = true
+
+# -----------------------------------------------------------------------------
+# [[steward_seeds]] — long-lived coordination anchors seeded at project creation.
+# -----------------------------------------------------------------------------
+
+[[steward_seeds]]
+title = "DISCUSSIONS"
+description = "Cross-cutting discussion topics. Description = converged shape, comments = audit trail of dev quotes."
+
+[[steward_seeds]]
+title = "HYLLA_FINDINGS"
+description = "Per-drop Hylla feedback aggregated by drop-orch + STEWARD."
+
+[[steward_seeds]]
+title = "LEDGER"
+description = "Per-drop ledger entries — cost, node count, refactors, descriptions. Populated post-merge by STEWARD from each drop's DROP_N_LEDGER_ENTRY level_2 finding."
+
+[[steward_seeds]]
+title = "WIKI_CHANGELOG"
+description = "Per-drop wiki changelog entries — what shifted in WIKI.md and why. Populated post-merge by STEWARD."
+
+[[steward_seeds]]
+title = "REFINEMENTS"
+description = "Perpetual refinement rollup — entries raised during drop work that did not block the drop. Populated drop-end by drop-orch via DROP_N_REFINEMENTS_RAISED."
+
+[[steward_seeds]]
+title = "HYLLA_REFINEMENTS"
+description = "Perpetual Hylla-tooling refinement rollup — entries that came out of Hylla-feedback rounds. Populated drop-end by drop-orch via DROP_N_HYLLA_REFINEMENTS_RAISED."
+
+# -----------------------------------------------------------------------------
+# [gates] — per-kind closed-enum gate sequence.
+# -----------------------------------------------------------------------------
+
+[gates]
+build = ["mage_ci", "commit", "push"]
+
+# -----------------------------------------------------------------------------
+# [agent_bindings] — closed 12-value Kind -> agent spawn parameters.
+# -----------------------------------------------------------------------------
+#
+# References the 10 standard FE agent file names from Drop 4c.6.1 W4.D1:
+#   1. planning-agent.md
+#   2. builder-agent.md
+#   3. plan-qa-proof-agent.md
+#   4. build-qa-proof-agent.md
+#   5. plan-qa-falsification-agent.md
+#   6. build-qa-falsification-agent.md
+#   7. research-agent.md
+#   8. closeout-agent.md
+#   9. commit-message-agent.md
+#  10. orchestrator-managed.md  (special — covers closeout/refinement/discussion/human-verify)
+#
+# Substantive FE-specific content for these files ships in Drop 4c.8 W4.
+# Until then the files are PLACEHOLDER scaffolding.
+
+[agent_bindings.plan]
+agent_name = "planning-agent"
+model = "opus"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.plan.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
+[agent_bindings.research]
+agent_name = "research-agent"
+model = "opus"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.build]
+agent_name = "builder-agent"
+model = "opus"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.build.context]
+parent = true
+parent_git_diff = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
+[agent_bindings.plan-qa-proof]
+agent_name = "plan-qa-proof-agent"
+model = "opus"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.plan-qa-proof.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
+[agent_bindings.plan-qa-falsification]
+agent_name = "plan-qa-falsification-agent"
+model = "opus"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.plan-qa-falsification.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
+[agent_bindings.build-qa-proof]
+agent_name = "build-qa-proof-agent"
+model = "opus"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.build-qa-proof.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
+[agent_bindings.build-qa-falsification]
+agent_name = "build-qa-falsification-agent"
+model = "opus"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.build-qa-falsification.context]
+parent = true
+ancestors_by_kind = ["plan"]
+delivery = "file"
+max_chars = 50000
+max_rule_duration = "500ms"
+
+[agent_bindings.closeout]
+# Orchestrator-managed (CLAUDE.md "Agent Bindings" table).
+agent_name = "orchestrator-managed"
+model = "opus"
+effort = "medium"
+max_tries = 1
+max_budget_usd = 0.0
+max_turns = 1
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.commit]
+agent_name = "commit-message-agent"
+model = "haiku"
+effort = "low"
+max_tries = 3
+max_budget_usd = 1.0
+max_turns = 10
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.refinement]
+# Orchestrator-managed (CLAUDE.md "Agent Bindings" table).
+agent_name = "orchestrator-managed"
+model = "opus"
+effort = "medium"
+max_tries = 1
+max_budget_usd = 0.0
+max_turns = 1
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.discussion]
+# Orchestrator-managed (CLAUDE.md "Agent Bindings" table).
+agent_name = "orchestrator-managed"
+model = "opus"
+effort = "medium"
+max_tries = 1
+max_budget_usd = 0.0
+max_turns = 1
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+
+[agent_bindings.human-verify]
+# Orchestrator-managed + dev sign-off (CLAUDE.md "Agent Bindings" table).
+agent_name = "orchestrator-managed"
+model = "opus"
+effort = "medium"
+max_tries = 1
+max_budget_usd = 0.0
+max_turns = 1
+auto_push = false
+commit_agent = "commit-message-agent"
+blocked_retries = 0
+blocked_retry_cooldown = "30s"

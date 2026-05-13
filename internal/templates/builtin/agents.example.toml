@@ -1,29 +1,38 @@
-# agents.example.toml — Tillsyn runtime-config example (Drop 4c.6 W1.D1 fixture).
+# agents.example.toml — Tillsyn runtime-config example (Drop 4c.6.1 W4.D2 schema).
 #
 # Copied to <project>/agents.toml by `till init` (Drop 4c.6 W2). Adopters
 # customize per project; an optional gitignored agents.local.toml deep-merges
 # OVER this file at spawn time per SKETCH.md § 4.3 / § 5.
 #
-# Schema source-of-truth: workflow/drop_4c_6/SKETCH.md § 4 — top-level [agents]
-# defaults block + per-kind override blocks with field-level inheritance. The
-# values below match SKETCH.md § 4.1 + § 4.2 sane Anthropic-direct defaults:
+# Schema source-of-truth: REVISION_BRIEF.md § 2.12 — multi-group
+# [<group>] defaults block + [<group>.<kind>] per-kind override blocks.
+# Drop 4c.6.1 W0 lands the Go decoder for this schema in
+# internal/config/agents.go (AgentsRegistry).
 #
-#   - Planner + builder default to sonnet (cascade-dogfooding speed/cost).
-#   - QA pair (proof + falsification, plan-side + build-side) runs opus
-#     (deeper falsification + proof reasoning warrants the bigger model).
-#   - Commit-message-agent runs haiku (cheap+fast commit message generation).
-#   - tools_allow per kind enumerates the explicit closed set the agent may
-#     reach for; tools_deny stays empty by default — adopters add deny-list
-#     entries when their security model requires a hardcoded floor.
+# Shape: [<group>] for group-level defaults; [<group>.<kind>] for per-kind
+# overrides within a group. Per-kind blocks override only the fields they
+# care about; absent fields fall through to the group defaults via
+# field-level inheritance per SKETCH.md § 4.2.1.
 #
-# This fixture is loader-validated by Drop 4c.6 W0 once W0 lands; W1.D1 ships
-# the file but does NOT exercise the loader (chicken/egg avoided per the
-# droplet RiskNotes).
+# The three canonical group names shipped in Drop 4c.6.1 W4.D1:
+#   - go  — Go + mage projects (uses till-go.toml agent bindings)
+#   - gen — language-agnostic generic (uses till-gen.toml agent bindings)
+#   - fe  — front-end / Wails projects (uses till-fe.toml agent bindings)
+#
+# This fixture is loader-validated by Drop 4c.6.1 W0 once W0 lands; W1.D1
+# shipped the file but did NOT exercise the loader (chicken/egg avoided per
+# the droplet RiskNotes). W4.D2 migrates to the new schema.
 
-[agents]
-# Defaults every cascade kind inherits from. Per-kind blocks below override
-# only the fields they care about; absent fields fall through to these
-# defaults via field-level inheritance per SKETCH.md § 4.2.1.
+# -----------------------------------------------------------------------------
+# [go] — Go group defaults.
+# -----------------------------------------------------------------------------
+#
+# Every cascade kind in the go group inherits from this block. Per-kind
+# [go.<kind>] blocks below override only the fields they care about; absent
+# fields fall through to these defaults via field-level inheritance per
+# SKETCH.md § 4.2.1.
+
+[go]
 client = "claude"
 model = "claude-sonnet-4-6"
 effort = "medium"
@@ -41,54 +50,182 @@ tools_deny = []
 claude_md_addons = []
 
 # -----------------------------------------------------------------------------
-# Per-kind overrides — cascade-dogfooding model assignments per SKETCH.md § 4.2.
-# Planner + builder run sonnet (inherited from [agents]); QA pair runs opus;
+# Per-kind overrides within the go group.
+# Planner + builder run sonnet (inherited from [go]); QA pair runs opus;
 # commit-message-agent runs haiku.
 # -----------------------------------------------------------------------------
 
-[agents.plan]
-# Planner inherits model = sonnet from [agents]. Bigger budget + turn cap
+[go.plan]
+# Planner inherits model = sonnet from [go]. Bigger budget + turn cap
 # because decomposition + plan-down work consumes more tokens than typical
 # cascade work.
 max_budget_usd = 8.0
 max_turns = 80
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__plugin_context7_context7__resolve-library-id", "mcp__plugin_context7_context7__query-docs", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
-[agents.build]
-# Builder inherits model = sonnet from [agents]. Adds Edit + Write to the
+[go.build]
+# Builder inherits model = sonnet from [go]. Adds Edit + Write to the
 # tool surface — builder is the only role that mutates code.
 tools_allow = ["Read", "Edit", "Write", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
 # QA agents run on opus — deeper falsification + proof reasoning warrants the
 # bigger model. NO Edit / Write — QA is read-only by structural rule.
-[agents.plan-qa-proof]
+[go.plan-qa-proof]
 model = "claude-opus-4-7"
 max_budget_usd = 4.0
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
-[agents.plan-qa-falsification]
+[go.plan-qa-falsification]
 model = "claude-opus-4-7"
 max_budget_usd = 4.0
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
-[agents.build-qa-proof]
+[go.build-qa-proof]
 model = "claude-opus-4-7"
 max_budget_usd = 3.0
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
-[agents.build-qa-falsification]
+[go.build-qa-falsification]
 model = "claude-opus-4-7"
 max_budget_usd = 3.0
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
-[agents.research]
-# Research inherits model = sonnet from [agents]. Smaller budget — research
+[go.research]
+# Research inherits model = sonnet from [go]. Smaller budget — research
 # is read-only investigation that should fit in a single comment.
 max_budget_usd = 3.0
 
-[agents.commit]
+[go.commit]
 # Commit-message-agent runs haiku — cheap+fast commit message generation.
 # Tools are minimal: Read for diff context, Bash for `git diff` / `git log`.
+model = "claude-haiku-4-5-20251001"
+max_budget_usd = 0.10
+max_turns = 5
+tools_allow = ["Read", "Bash"]
+
+# -----------------------------------------------------------------------------
+# [gen] — language-agnostic generic group defaults.
+# -----------------------------------------------------------------------------
+#
+# Mirrors the go group structure. Use when the project is language-agnostic
+# or does not have a dedicated group template. Till-gen.toml bindings omit
+# [agent_bindings] by design; adopters declare bindings in their project-local
+# template.toml. The gen group is the safe default for non-Go projects until
+# a dedicated group ships.
+
+[gen]
+client = "claude"
+model = "claude-sonnet-4-6"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+auto_push = false
+env_set = {}
+env_from_shell = { ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY" }
+cli_args = []
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP"]
+tools_deny = []
+claude_md_addons = []
+
+[gen.plan]
+max_budget_usd = 8.0
+max_turns = 80
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__plugin_context7_context7__resolve-library-id", "mcp__plugin_context7_context7__query-docs", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[gen.build]
+tools_allow = ["Read", "Edit", "Write", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[gen.plan-qa-proof]
+model = "claude-opus-4-7"
+max_budget_usd = 4.0
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[gen.plan-qa-falsification]
+model = "claude-opus-4-7"
+max_budget_usd = 4.0
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[gen.build-qa-proof]
+model = "claude-opus-4-7"
+max_budget_usd = 3.0
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[gen.build-qa-falsification]
+model = "claude-opus-4-7"
+max_budget_usd = 3.0
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[gen.research]
+max_budget_usd = 3.0
+
+[gen.commit]
+model = "claude-haiku-4-5-20251001"
+max_budget_usd = 0.10
+max_turns = 5
+tools_allow = ["Read", "Bash"]
+
+# -----------------------------------------------------------------------------
+# [fe] — front-end / Wails group defaults (Drop 4c.6.1 W4.D1 + W4.D2).
+# -----------------------------------------------------------------------------
+#
+# FE projects use Wails + Astro + SolidJS. The fe group adds Playwright MCP
+# tools for visual + interaction QA. Til-fe.toml ships the agent bindings for
+# this group (planning-agent, builder-agent, plan-qa-proof-agent, etc.).
+
+[fe]
+client = "claude"
+model = "claude-sonnet-4-6"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 50
+blocked_retries = 0
+blocked_retry_cooldown = "30s"
+auto_push = false
+env_set = {}
+env_from_shell = { ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY" }
+cli_args = []
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP"]
+tools_deny = []
+claude_md_addons = []
+
+[fe.plan]
+max_budget_usd = 8.0
+max_turns = 80
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__plugin_context7_context7__resolve-library-id", "mcp__plugin_context7_context7__query-docs", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[fe.build]
+# FE builder also needs Write for TypeScript / Astro / CSS file creation.
+tools_allow = ["Read", "Edit", "Write", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[fe.plan-qa-proof]
+model = "claude-opus-4-7"
+max_budget_usd = 4.0
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[fe.plan-qa-falsification]
+model = "claude-opus-4-7"
+max_budget_usd = 4.0
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+[fe.build-qa-proof]
+model = "claude-opus-4-7"
+max_budget_usd = 3.0
+# FE QA proof adds Playwright MCP for visual + interaction verification.
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment", "mcp__plugin_playwright_playwright__*"]
+
+[fe.build-qa-falsification]
+model = "claude-opus-4-7"
+max_budget_usd = 3.0
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment", "mcp__plugin_playwright_playwright__*"]
+
+[fe.research]
+max_budget_usd = 3.0
+
+[fe.commit]
 model = "claude-haiku-4-5-20251001"
 max_budget_usd = 0.10
 max_turns = 5

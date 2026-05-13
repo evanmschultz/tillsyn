@@ -29,21 +29,25 @@
 #
 # Why omit agent_bindings?
 #   Agent identities are inherently group- and project-specific — even with
-#   the bare-name convention (`builder-agent`, `qa-proof-agent`, etc.) the
-#   resolver's GROUP choice (till-go vs till-gen vs till-gdd) decides which
-#   placeholder library to load from. A language-agnostic default cannot
-#   honestly nominate which agent or which group should run for any kind
-#   without biasing toward a particular ecosystem. Per workflow/drop_4c_5/
-#   THEME_F_PLAN.md § F.2.2 acceptance #2 (and falsification mitigations
-#   F1+F2+F3), the safest contract for the generic template is "no agent
-#   bindings declared" — the dispatcher tolerates absent bindings (an
-#   absent binding for kind X means "no auto-spawn for kind X"; orchestrator
-#   handles those kinds manually until the adopter authors a project-local
-#   <project_root>/.tillsyn/template.toml that declares its preferred
-#   bindings). Drop 4c.6 W5.D3 dropped the `go-` prefix from till-go.toml's
-#   agent_name values per SKETCH.md § 7; historical example
-#   `go-builder-agent` → current bare name `builder-agent` under the
-#   `till-go/` placeholder group.
+#   the bare-name convention (`builder-agent`, `plan-qa-proof-agent`,
+#   `plan-qa-falsification-agent`, `build-qa-proof-agent`,
+#   `build-qa-falsification-agent`, etc.) the resolver's GROUP choice
+#   (go vs gen vs till-gdd) decides which placeholder library to load from.
+#   A language-agnostic default cannot honestly nominate which agent or which
+#   group should run for any kind without biasing toward a particular
+#   ecosystem. Per workflow/drop_4c_5/THEME_F_PLAN.md § F.2.2 acceptance #2
+#   (and falsification mitigations F1+F2+F3), the safest contract for the
+#   generic template is "no agent bindings declared" — the dispatcher
+#   tolerates absent bindings (an absent binding for kind X means "no
+#   auto-spawn for kind X"; orchestrator handles those kinds manually until
+#   the adopter authors a project-local <project_root>/.tillsyn/template.toml
+#   that declares its preferred bindings). Drop 4c.6 W5.D3 dropped the `go-`
+#   prefix from till-go.toml's agent_name values per SKETCH.md § 7;
+#   historical example `go-builder-agent` → bare name `builder-agent` under
+#   the `go/` placeholder group. Drop 4c.6.1 W4.D1 split the single
+#   `qa-proof-agent` into four per-kind files (`plan-qa-proof-agent`,
+#   `plan-qa-falsification-agent`, `build-qa-proof-agent`,
+#   `build-qa-falsification-agent`).
 #
 # When does this file get loaded?
 #   Drop 4c.5 droplet F.1.3 lands `LoadDefaultTemplateForLanguage(lang)`. Per
