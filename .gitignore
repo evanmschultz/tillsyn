@@ -37,3 +37,4 @@ coverage.out
 .env.local
 *.pem
 *.key
+agents.local.toml
