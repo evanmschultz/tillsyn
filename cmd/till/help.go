@@ -387,7 +387,7 @@ safe — existing files are skipped, never overwritten.
 `),
 		Example: []string{
 			"  till init",
-			"  till init --json '{\"name\":\"my-project\",\"group\":\"till-go\",\"mcp\":true}'",
+			"  till init --json '{\"name\":\"my-project\",\"groups\":[\"go\"],\"mcp\":true}'",
 		},
 	},
 	"till install": {

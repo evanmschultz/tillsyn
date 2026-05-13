@@ -48,7 +48,8 @@ func TestInit_BareInvocation_ReturnsTUIStubError(t *testing.T) {
 		// synthetic payload so runInitTUI exercises its happy-path branch
 		// without needing a real terminal.
 		init.step = initTUIStepDone
-		init.finalPayload = initJSONPayload{Name: "stub-project", Group: "go", MCP: false}
+		mcpFalse := false
+		init.finalPayload = initJSONPayload{Name: "stub-project", Groups: []string{"go"}, MCP: &mcpFalse}
 		return scriptedProgram{model: init, runFn: func(current tea.Model) (tea.Model, error) {
 			return current, nil
 		}}
@@ -78,7 +79,7 @@ func TestInit_JSONInvocation_RoutesToValidParse(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Chdir(tmp)
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":false}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json valid) error = %v; expected nil after D7 wiring, stdout=%q", err, out.String())
 	}
 	if !strings.Contains(out.String(), "foo") {
@@ -87,16 +88,18 @@ func TestInit_JSONInvocation_RoutesToValidParse(t *testing.T) {
 }
 
 // TestInit_JSONParse_TableDriven covers the D3b JSON-payload parser +
-// group-validation matrix: valid payload, reserved `till-gdd` group,
+// group-validation matrix: valid payloads (go, gen, fe, multi-group),
 // unknown group, malformed JSON, and missing required fields. Each case
-// drives `run(...)` end-to-end so the cobra wiring is exercised; failure
-// surfaces are matched by substring against the wrapped error returned
-// from `runInitJSON`. Valid payloads now succeed (nil error) through D7.
+// drives `run(...)` end-to-end so the cobra wiring is exercised. Valid
+// payloads succeed (nil error) through D7. The old `till-gdd` reserved-
+// group case is replaced by an unknown-group case because reservedInitGroups
+// was deleted in W2.D1 — `till-gdd` now surfaces as a plain invalid-group
+// error.
 //
-// **D7 update**: valid cases now return nil error with a Laslig output
-// block. HOME isolation added so DB writes land in t.TempDir().
+// D7 update: valid cases return nil error with a Laslig output block.
+// HOME isolation added so DB writes land in t.TempDir().
 //
-// **D5 update**: every test case chdirs into a fresh t.TempDir() because
+// D5 update: every test case chdirs into a fresh t.TempDir() because
 // valid payloads now succeed through D7. Invalid payloads short-circuit
 // before any write and still return errors.
 func TestInit_JSONParse_TableDriven(t *testing.T) {
@@ -109,25 +112,31 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 	cases := []testCase{
 		{
 			name:        "valid_go",
-			payload:     `{"name":"foo","group":"go","mcp":false}`,
+			payload:     `{"name":"foo","groups":["go"],"mcp":false}`,
 			wantSuccess: true,
 			wantSubstrs: []string{"Init", "foo", "go"},
 		},
 		{
 			name:        "valid_gen_mcp_true",
-			payload:     `{"name":"bar","group":"gen","mcp":true}`,
+			payload:     `{"name":"bar","groups":["gen"],"mcp":true}`,
 			wantSuccess: true,
 			wantSubstrs: []string{"Init", "bar", "gen"},
 		},
 		{
-			name:        "reserved_group_till_gdd",
-			payload:     `{"name":"foo","group":"till-gdd","mcp":false}`,
-			wantSubstrs: []string{"till-gdd", "reserved"},
+			name:        "valid_fe",
+			payload:     `{"name":"baz","groups":["fe"],"mcp":false}`,
+			wantSuccess: true,
+			wantSubstrs: []string{"Init", "baz", "fe"},
+		},
+		{
+			name:        "unknown_group_till_gdd",
+			payload:     `{"name":"foo","groups":["till-gdd"],"mcp":false}`,
+			wantSubstrs: []string{"invalid"},
 		},
 		{
 			name:        "unknown_group",
-			payload:     `{"name":"foo","group":"till-rust","mcp":false}`,
-			wantSubstrs: []string{"group must be one of"},
+			payload:     `{"name":"foo","groups":["till-rust"],"mcp":false}`,
+			wantSubstrs: []string{"invalid"},
 		},
 		{
 			name:        "malformed_json",
@@ -136,13 +145,13 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 		},
 		{
 			name:        "missing_name",
-			payload:     `{"group":"go"}`,
+			payload:     `{"groups":["go"]}`,
 			wantSubstrs: []string{"name", "required"},
 		},
 		{
-			name:        "missing_group",
+			name:        "missing_groups",
 			payload:     `{"name":"foo"}`,
-			wantSubstrs: []string{"group", "required"},
+			wantSubstrs: []string{"groups", "required"},
 		},
 	}
 
@@ -178,19 +187,19 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 }
 
 // TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo drives the bubbletea
-// walk shipped in D4: the user presses enter on the default name (which is
-// `filepath.Base(cwd)`), moves the group cursor down to `go` (was `till-go`
-// pre-W4.D1; now canonical name), and presses enter to confirm. The final
-// model exposes a Payload() that must equal `{Name: <cwd-base>, Group: "go",
-// MCP: false}` and Done() must be true.
+// walk: the user presses enter on the default name (filepath.Base(cwd)),
+// moves the group cursor down to `go` (row 1), and presses enter to confirm.
+// The final model must have Done() true, Payload().Groups = ["go"], and
+// MCPRegistration() false (TUI hardwires MCP=false until D4 adds the
+// confirm step).
 //
-// Drop 4c.6.1 W4.D1: `till-go` → `go`, `till-gen` → `gen` (canonical names).
-// The test still presses Down once from row 0 (`gen`) to land on row 1 (`go`).
+// Drop 4c.6.1 W2.D1: Groups replaces Group; initTUIGroupRows now has 3
+// all-enabled rows: gen (0), go (1), fe (2). One Down press moves from
+// gen to go.
 //
-// The test does NOT exercise the cobra wiring — `runInitTUI` itself depends
-// on `programFactory`, which writes to /dev/tty in production. Driving the
-// walk at the model level via teatest is the canonical pattern used in
-// `internal/tui/model_teatest_test.go` and keeps the test deterministic.
+// The test does NOT exercise the cobra wiring — runInitTUI depends on
+// programFactory which writes to /dev/tty in production. Driving at the
+// model level via teatest is the canonical pattern.
 func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -240,23 +249,23 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 	if got.Name != wantName {
 		t.Fatalf("Payload().Name = %q; want %q", got.Name, wantName)
 	}
-	if got.Group != "go" {
-		t.Fatalf("Payload().Group = %q; want %q", got.Group, "go")
+	if len(got.Groups) != 1 || got.Groups[0] != "go" {
+		t.Fatalf("Payload().Groups = %v; want [\"go\"]", got.Groups)
 	}
-	if got.MCP {
-		t.Fatalf("Payload().MCP = true; want false (TUI mode default)")
+	if got.MCPRegistration() {
+		t.Fatalf("Payload().MCPRegistration() = true; want false (TUI mode default until D4)")
 	}
 }
 
-// TestRunInitTUI_DisabledTillGddIsUnselectable verifies the SKETCH §9.3
-// rule that `till-gdd` is shown but unselectable. Pressing Down from
-// `go` must NOT land the cursor on `till-gdd` — the cursor must either
-// stay on `go` (skip past the disabled row) or wrap, NOT advance to
-// a disabled row. Pressing Enter while the cursor sits where the user last
-// landed (`go`) confirms the group selection and finishes the walk;
-// the final payload must report `go`, never `till-gdd`.
-// Drop 4c.6.1 W4.D1: `till-go` → `go`, `till-gen` → `gen`.
-func TestRunInitTUI_DisabledTillGddIsUnselectable(t *testing.T) {
+// TestRunInitTUI_SelectsFeRow verifies that the third row (`fe`) is
+// selectable after W2.D1 removes `till-gdd` and adds `fe` as a canonical
+// all-enabled group. Pressing Down twice from `gen` (row 0) lands on `fe`
+// (row 2); pressing Enter produces a payload with Groups = ["fe"].
+//
+// This replaces TestRunInitTUI_DisabledTillGddIsUnselectable which tested
+// the old disabled-row skip logic. W2.D1 removes the disabled row; all
+// three rows (gen/go/fe) are now enabled.
+func TestRunInitTUI_SelectsFeRow(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)
@@ -276,16 +285,14 @@ func TestRunInitTUI_DisabledTillGddIsUnselectable(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return strings.Contains(string(out), "till-gdd")
+		return strings.Contains(string(out), "fe")
 	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
 
-	// Cursor on `gen`. Move down to `go`, then move down again —
-	// `till-gdd` is disabled so the cursor must not advance onto it. After
-	// two Downs the cursor must still report `go`.
+	// Cursor starts on gen (row 0). Down -> go (row 1). Down -> fe (row 2).
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 
-	// Press Enter — should confirm `go`, NOT `till-gdd`.
+	// Press Enter — confirms `fe`.
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
@@ -295,10 +302,13 @@ func TestRunInitTUI_DisabledTillGddIsUnselectable(t *testing.T) {
 		t.Fatalf("FinalModel type = %T; want initTUIModel", tm.FinalModel(t))
 	}
 	if final.Cancelled() {
-		t.Fatalf("final.Cancelled() = true; want false (walk completed, just on a non-disabled row)")
+		t.Fatalf("final.Cancelled() = true; want false (walk completed with fe selection)")
 	}
-	if got := final.Payload().Group; got != "go" {
-		t.Fatalf("Payload().Group = %q; want %q (cursor must skip disabled till-gdd row)", got, "go")
+	if !final.Done() {
+		t.Fatalf("final.Done() = false; want true after enter on fe row")
+	}
+	if got := final.Payload().Groups; len(got) != 1 || got[0] != "fe" {
+		t.Fatalf("Payload().Groups = %v; want [\"fe\"]", got)
 	}
 }
 
@@ -369,7 +379,7 @@ func runInitJSONInTempDir(t *testing.T, payload string) (string, error) {
 //
 // **D7 update**: the pipeline now returns nil (project-DB record created).
 func TestInit_FreshDir_CopiesAllFiles(t *testing.T) {
-	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"go","mcp":false}`)
+	dir, err := runInitJSONInTempDir(t, `{"name":"foo","groups":["go"],"mcp":false}`)
 	if err != nil {
 		t.Fatalf("run(init --json) error = %v; want nil after D7 wiring", err)
 	}
@@ -421,7 +431,7 @@ func TestInit_RerunSafety_NoOverwrite(t *testing.T) {
 
 	// First run.
 	var out1 strings.Builder
-	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out1, io.Discard)
+	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":false}`}, &out1, io.Discard)
 
 	// Snapshot every file under the project dir after the first run.
 	type snapshot struct {
@@ -459,7 +469,7 @@ func TestInit_RerunSafety_NoOverwrite(t *testing.T) {
 
 	// Second run.
 	var out2 strings.Builder
-	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out2, io.Discard)
+	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":false}`}, &out2, io.Discard)
 
 	// Every pre-existing file must be byte-for-byte unchanged.
 	for path, before := range preState {
@@ -489,7 +499,7 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	}
 
 	var out strings.Builder
-	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out, io.Discard)
+	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":false}`}, &out, io.Discard)
 
 	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	if err != nil {
@@ -524,7 +534,7 @@ func TestInit_PreExistingGitignore_AppendsCleanly(t *testing.T) {
 			}
 
 			var out strings.Builder
-			_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out, io.Discard)
+			_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":false}`}, &out, io.Discard)
 
 			data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 			if err != nil {
@@ -582,7 +592,7 @@ func countGitignoreLine(body, want string) int {
 // surfaced error is the D7 project-DB stub, confirming the pipeline ran
 // through the D6 seam.
 func TestInit_MCPJSON_FreshFile(t *testing.T) {
-	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"go","mcp":true}`)
+	dir, err := runInitJSONInTempDir(t, `{"name":"foo","groups":["go"],"mcp":true}`)
 	if err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
@@ -634,7 +644,7 @@ func TestInit_MCPJSON_AppendsToExisting(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -680,7 +690,7 @@ func TestInit_MCPJSON_Idempotent(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -724,7 +734,7 @@ func TestInit_MCPJSON_Idempotent(t *testing.T) {
 // (registerMCPJSON returns immediately on includeMCP=false) and surfaces the
 // D7 project-DB stub. Drives end-to-end via run() (CONSUMER-TIE contract).
 func TestInit_MCPJSON_OptOut(t *testing.T) {
-	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"go","mcp":false}`)
+	dir, err := runInitJSONInTempDir(t, `{"name":"foo","groups":["go"],"mcp":false}`)
 	if err != nil {
 		t.Fatalf("run(init --json mcp:false) error = %v; want nil after D7 wiring", err)
 	}
@@ -762,7 +772,7 @@ func TestInit_MCPJSON_PreservesHTTPTransport(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -826,7 +836,7 @@ func TestInit_MCPJSON_PreservesTopLevelExtras(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -876,7 +886,7 @@ func TestInit_MCPJSON_NullMcpServersValue(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -929,7 +939,7 @@ func TestInit_MCPJSON_NullTopLevelFile(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","groups":["go"],"mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -971,7 +981,7 @@ func TestInit_CreatesProjectRecord(t *testing.T) {
 	const projectName = "my-init-project"
 	if err := run(context.Background(), []string{
 		"--app", "tillsyn-init", "init", "--json",
-		`{"name":"` + projectName + `","group":"go","mcp":false}`,
+		`{"name":"` + projectName + `","groups":["go"],"mcp":false}`,
 	}, nil, io.Discard); err != nil {
 		t.Fatalf("run(init --json) error = %v; want nil", err)
 	}
@@ -1017,7 +1027,7 @@ func TestInit_SuccessMessage_Format(t *testing.T) {
 	var out strings.Builder
 	if err := run(context.Background(), []string{
 		"--app", "tillsyn-init", "init", "--json",
-		`{"name":"format-check","group":"go","mcp":false}`,
+		`{"name":"format-check","groups":["go"],"mcp":false}`,
 	}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json) error = %v; want nil", err)
 	}
@@ -1028,6 +1038,178 @@ func TestInit_SuccessMessage_Format(t *testing.T) {
 			t.Fatalf("init stdout missing %q; full output = %q", want, stdout)
 		}
 	}
+}
+
+// TestMCPRegistration verifies the MCPRegistration() accessor on
+// initJSONPayload. A nil MCP pointer must default to true (opt-out model:
+// omitting the field enables MCP registration). Explicit false disables;
+// explicit true enables.
+func TestMCPRegistration(t *testing.T) {
+	cases := []struct {
+		name string
+		mcp  *bool
+		want bool
+	}{
+		{name: "nil_defaults_true", mcp: nil, want: true},
+		{name: "explicit_true", mcp: func() *bool { b := true; return &b }(), want: true},
+		{name: "explicit_false", mcp: func() *bool { b := false; return &b }(), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := initJSONPayload{Name: "x", Groups: []string{"go"}, MCP: tc.mcp}
+			if got := p.MCPRegistration(); got != tc.want {
+				t.Fatalf("MCPRegistration() = %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestValidateInitPayload_W2D1 verifies the updated validateInitPayload
+// logic: Groups required (non-empty), each element must be in
+// allowedInitGroups ([gen go fe]). This is a unit supplement to the
+// CONSUMER-TIE run() tests.
+func TestValidateInitPayload_W2D1(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload initJSONPayload
+		wantErr bool
+		wantSub string
+	}{
+		{
+			name:    "valid_single_go",
+			payload: initJSONPayload{Name: "x", Groups: []string{"go"}},
+			wantErr: false,
+		},
+		{
+			name:    "valid_multi_go_fe",
+			payload: initJSONPayload{Name: "x", Groups: []string{"go", "fe"}},
+			wantErr: false,
+		},
+		{
+			name:    "valid_gen",
+			payload: initJSONPayload{Name: "x", Groups: []string{"gen"}},
+			wantErr: false,
+		},
+		{
+			name:    "valid_fe",
+			payload: initJSONPayload{Name: "x", Groups: []string{"fe"}},
+			wantErr: false,
+		},
+		{
+			name:    "empty_groups",
+			payload: initJSONPayload{Name: "x", Groups: nil},
+			wantErr: true,
+			wantSub: "groups required",
+		},
+		{
+			name:    "invalid_till_gdd",
+			payload: initJSONPayload{Name: "x", Groups: []string{"till-gdd"}},
+			wantErr: true,
+			wantSub: "invalid",
+		},
+		{
+			name:    "invalid_till_go_old_name",
+			payload: initJSONPayload{Name: "x", Groups: []string{"till-go"}},
+			wantErr: true,
+			wantSub: "invalid",
+		},
+		{
+			name:    "missing_name",
+			payload: initJSONPayload{Name: "", Groups: []string{"go"}},
+			wantErr: true,
+			wantSub: "name required",
+		},
+		{
+			name:    "mixed_valid_invalid",
+			payload: initJSONPayload{Name: "x", Groups: []string{"go", "bogus"}},
+			wantErr: true,
+			wantSub: "invalid",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateInitPayload(tc.payload)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("validateInitPayload(%v) = nil; want error containing %q", tc.payload, tc.wantSub)
+				}
+				if !strings.Contains(err.Error(), tc.wantSub) {
+					t.Fatalf("validateInitPayload error = %q; want substring %q", err.Error(), tc.wantSub)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("validateInitPayload(%v) = %v; want nil", tc.payload, err)
+				}
+			}
+		})
+	}
+}
+
+// TestInit_ConsumerTie_W2D1 exercises the three CONSUMER-TIE cases mandated
+// by W2.D1 acceptance criteria via run() end-to-end:
+//
+//	(a) valid single-group no-mcp-key — omitting "mcp" defaults to true
+//	    (MCPRegistration() = true); verifies nil->true default in the pipeline.
+//	(b) valid multi-element groups=["go","fe"] with mcp:false — both groups
+//	    parse correctly; pipeline uses Groups[0] stub until D5.
+//	(c) invalid group "bogus" — expects non-zero exit with "invalid" substring.
+func TestInit_ConsumerTie_W2D1(t *testing.T) {
+	t.Run("valid_single_group_no_mcp_key", func(t *testing.T) {
+		// Omitting "mcp" entirely: MCPRegistration() must default to true.
+		// The pipeline runs through mcp registration (but may skip if till
+		// binary not found — that is acceptable; the test verifies the run
+		// succeeds and the output is a Laslig Init block).
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+		var out strings.Builder
+		err := run(context.Background(),
+			[]string{"--app", "tillsyn-init", "init", "--json", `{"name":"ct-a","groups":["go"]}`},
+			&out, io.Discard)
+		if err != nil {
+			t.Fatalf("run with no mcp key error = %v; want nil (nil->true default, pipeline must succeed)", err)
+		}
+		if !strings.Contains(out.String(), "Init") {
+			t.Fatalf("stdout = %q; want Laslig Init block", out.String())
+		}
+	})
+
+	t.Run("valid_multi_group_mcp_false", func(t *testing.T) {
+		// Multi-element groups; mcp explicitly false.
+		// D1 passes Groups[0] to copyAgentFiles stub — the parse succeeds
+		// and the pipeline runs (go agent files are embedded; fe is also
+		// embedded). D5 upgrades to the full multi-group loop.
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+		var out strings.Builder
+		err := run(context.Background(),
+			[]string{"--app", "tillsyn-init", "init", "--json", `{"name":"ct-b","groups":["go","fe"],"mcp":false}`},
+			&out, io.Discard)
+		if err != nil {
+			t.Fatalf("run with groups=[go,fe] mcp:false error = %v; want nil", err)
+		}
+		if !strings.Contains(out.String(), "Init") {
+			t.Fatalf("stdout = %q; want Laslig Init block", out.String())
+		}
+	})
+
+	t.Run("invalid_group_bogus", func(t *testing.T) {
+		// Invalid group must return non-zero exit with "invalid" in error.
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+		var out strings.Builder
+		err := run(context.Background(),
+			[]string{"--app", "tillsyn-init", "init", "--json", `{"name":"ct-c","groups":["bogus"],"mcp":false}`},
+			&out, io.Discard)
+		if err == nil {
+			t.Fatalf("run with invalid group returned nil; want error containing 'invalid'")
+		}
+		if !strings.Contains(err.Error(), "invalid") {
+			t.Fatalf("error = %q; want substring 'invalid'", err.Error())
+		}
+	})
 }
 
 // topKeys returns the keys of a map[string]json.RawMessage for use in

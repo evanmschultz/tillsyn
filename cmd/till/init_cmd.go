@@ -27,33 +27,38 @@ import (
 )
 
 // initJSONPayload is the schema for `till init --json '{...}'` headless
-// invocations. `Name` and `Group` are required; `MCP` defaults to false
-// (zero value). Group must be one of the W2-supported values (`gen`, `go`);
-// `till-gdd` is greyed-out per SKETCH §9.3 and rejected as reserved.
-// Drop 4c.6.1 W4.D1 renamed `till-gen` → `gen` and `till-go` → `go`.
+// invocations. `Name` and `Groups` are required; `MCP` is optional and
+// defaults to true when omitted (nil pointer). Groups must be a non-empty
+// slice of values from allowedInitGroups (`gen`, `go`, `fe`).
+// Drop 4c.6.1 W4.D1 renamed `till-gen` -> `gen` and `till-go` -> `go`;
+// `fe` added as a new canonical group. `till-gdd` removed entirely.
 type initJSONPayload struct {
-	Name  string `json:"name"`
-	Group string `json:"group"`
-	MCP   bool   `json:"mcp"`
+	Name   string   `json:"name"`
+	Groups []string `json:"groups"`
+	MCP    *bool    `json:"mcp,omitempty"`
 }
 
-// allowedInitGroups lists the active agent groups `till init` accepts in
-// W2. `till-gdd` is deliberately omitted — it is reserved per SKETCH §9.3
-// and will be re-enabled once GDD methodology lands post-dogfood. Order
-// is preserved for the validation error message. Drop 4c.6.1 W4.D1 renamed
-// `till-gen` → `gen` and `till-go` → `go` (canonical group names without
-// the `till-` prefix); the old group names are replaced here and in the
-// test fixtures so the embedded FS paths resolve.
-var allowedInitGroups = []string{"gen", "go"}
-
-// reservedInitGroups lists groups recognized in the schema but rejected
-// at validation time. Each entry returns a tailored "reserved" error so
-// callers can distinguish typos (unknown group) from intentional-but-not-
-// yet-shipped groups. `till-gdd` retains its `till-` prefix because it is
-// a template-family identifier, not a group name — see W4.D1 RiskNotes.
-var reservedInitGroups = map[string]string{
-	"till-gdd": "till-gdd",
+// MCPRegistration reports whether MCP server registration is requested.
+// A nil MCP pointer (omitted from the --json payload) defaults to true —
+// MCP registration is opt-out, not opt-in. This mirrors the
+// OrchSelfApprovalIsEnabled() accessor pattern on ProjectMetadata
+// (internal/domain/project.go) where a nil pointer also defaults to
+// the more-permissive true value.
+func (p initJSONPayload) MCPRegistration() bool {
+	if p.MCP == nil {
+		return true
+	}
+	return *p.MCP
 }
+
+// allowedInitGroups lists the active agent groups `till init` accepts.
+// Drop 4c.6.1 W4.D1 renamed `till-gen` -> `gen` and `till-go` -> `go`
+// (canonical group names without the `till-` prefix); `fe` is a new
+// canonical group added in the same drop. Order is load-bearing for the
+// validation error message. `till-gdd` is removed entirely — the GDD
+// reserved-group rationale evaporates with the new naming scheme; if a
+// reserved group is ever needed again, re-add it to validateInitPayload.
+var allowedInitGroups = []string{"gen", "go", "fe"}
 
 // newInitCommand returns the `till init` cobra command.
 //
@@ -80,7 +85,7 @@ files are skipped, never overwritten.
 `),
 		Example: strings.Join([]string{
 			"  till init",
-			"  till init --json '{\"name\":\"my-project\",\"group\":\"go\",\"mcp\":true}'",
+			"  till init --json '{\"name\":\"my-project\",\"groups\":[\"go\"],\"mcp\":true}'",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -94,7 +99,7 @@ files are skipped, never overwritten.
 			return runInitTUI(stdout, *rootOpts)
 		},
 	}
-	cmd.Flags().String("json", "", "Run init in headless mode with a JSON payload (e.g. --json '{\"name\":\"foo\",\"group\":\"till-go\",\"mcp\":false}')")
+	cmd.Flags().String("json", "", "Run init in headless mode with a JSON payload (e.g. --json '{\"name\":\"foo\",\"groups\":[\"go\"],\"mcp\":false}')")
 	return cmd
 }
 
@@ -123,10 +128,10 @@ const (
 	initTUIStepCancelled
 )
 
-// initTUIGroupRow models one row in the group picker. `Disabled` rows are
-// rendered (so the user sees them) but the cursor skips past them on
-// movement and Enter is a no-op while the cursor sits on one (per SKETCH
-// §9.3 — `till-gdd` is shown but unselectable until GDD methodology lands).
+// initTUIGroupRow models one row in the group picker. `Disabled` is kept
+// for the D1->D3 interim — all rows are currently enabled (Disabled: false)
+// and the field is inert. D3 removes this struct wholesale when the
+// picker_multi.go component takes over multi-select.
 type initTUIGroupRow struct {
 	Name     string
 	Disabled bool
@@ -134,13 +139,14 @@ type initTUIGroupRow struct {
 
 // initTUIGroupRows is the static picker model the walk renders. Order is
 // load-bearing — the cursor defaults to row 0 (`gen`) so the most
-// common pick is one Enter away. Drop 4c.6.1 W4.D1 renamed `till-gen` → `gen`
-// and `till-go` → `go`; `till-gdd` retains its `till-` prefix (template-family
-// identifier, not a group — see W4.D1 RiskNotes).
+// common pick is one Enter away. All three rows are enabled; `till-gdd`
+// was removed in Drop 4c.6.1 W2.D1 when the reserved-group rationale
+// evaporated. Drop 4c.6.1 W4.D1 established `gen`, `go`, and `fe` as the
+// canonical unprefixed group names.
 var initTUIGroupRows = []initTUIGroupRow{
 	{Name: "gen", Disabled: false},
 	{Name: "go", Disabled: false},
-	{Name: "till-gdd", Disabled: true},
+	{Name: "fe", Disabled: false},
 }
 
 // initTUIModel is the bubbletea model that drives the `till init` walk —
@@ -238,8 +244,13 @@ func (m initTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// rather than accepting a disabled selection.
 				return m, nil
 			}
-			m.finalPayload.Group = row.Name
-			m.finalPayload.MCP = false // TUI default per droplet acceptance.
+			// D1: single-value Groups slice as a bridge until D3 ships
+			// multi-select via picker_multi.go.
+			m.finalPayload.Groups = []string{row.Name}
+			// D1->D3 interim: TUI hardwires MCP to false. D4 removes this
+			// hardwire and adds the confirm step that sets MCP via user input.
+			mcpFalse := false
+			m.finalPayload.MCP = &mcpFalse
 			m.step = initTUIStepDone
 			return m, tea.Quit
 		default:
@@ -300,7 +311,7 @@ func (m initTUIModel) Cancelled() bool {
 
 // Payload returns the gathered initJSONPayload. Valid only when Done() is
 // true; reading Payload() on a cancelled or in-progress walk returns the
-// zero value (and the Group field will be empty).
+// zero value (and the Groups field will be nil/empty).
 func (m initTUIModel) Payload() initJSONPayload {
 	return m.finalPayload
 }
@@ -413,7 +424,9 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		return fmt.Errorf("till init: resolve cwd: %w", err)
 	}
 
-	agentsAdded, agentsSkipped, err := copyAgentFiles(destDir, payload.Group)
+	// D1: pass single group stub until D5 upgrades to the full multi-group
+	// loop (copyAgentFiles signature takes []string in D5).
+	agentsAdded, agentsSkipped, err := copyAgentFiles(destDir, payload.Groups[0])
 	if err != nil {
 		return fmt.Errorf("till init: copy agent files: %w", err)
 	}
@@ -425,7 +438,7 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		return fmt.Errorf("till init: ensure .gitignore: %w", err)
 	}
 
-	mcpAdded, mcpSkipped, err := registerMCPJSON(destDir, payload.MCP)
+	mcpAdded, mcpSkipped, err := registerMCPJSON(destDir, payload.MCPRegistration())
 	if err != nil {
 		return fmt.Errorf("till init: register .mcp.json: %w", err)
 	}
@@ -440,7 +453,7 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 	agentsTomlPath := filepath.Join(destDir, "agents.toml")
 	gitignoreStatus := "ensured"
 	mcpStatus := "skipped (mcp:false)"
-	if payload.MCP {
+	if payload.MCPRegistration() {
 		if mcpAdded > 0 {
 			mcpStatus = "added"
 		} else if mcpSkipped > 0 {
@@ -455,7 +468,7 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 
 	return writeCLIKV(stdout, "Init", [][2]string{
 		{"project name", payload.Name},
-		{"group", payload.Group},
+		{"group", payload.Groups[0]},
 		{"agents dir", agentsDir},
 		{"agents copied", agentsCopied},
 		{"agents.toml", agentsTOMLStatus + " — " + agentsTomlPath},
@@ -678,26 +691,34 @@ func gitignoreLinePresent(data []byte, want string) bool {
 }
 
 // validateInitPayload checks required fields and the group selection on
-// a parsed `initJSONPayload`. Returns a wrapped error pointing at the
-// first failed invariant; `Name` and `Group` are required, and `Group`
-// must be one of `allowedInitGroups` (reserved groups like `till-gdd`
-// surface a tailored "reserved" error).
+// a parsed initJSONPayload. Returns an error pointing at the first failed
+// invariant: Name is required; Groups must be non-empty with each element
+// in allowedInitGroups. Invalid groups surface a clear list of allowed
+// values and the first invalid group name encountered.
 func validateInitPayload(p initJSONPayload) error {
 	if strings.TrimSpace(p.Name) == "" {
 		return errors.New("till init: name required")
 	}
-	if strings.TrimSpace(p.Group) == "" {
-		return errors.New("till init: group required")
+	if len(p.Groups) == 0 {
+		return errors.New("till init: groups required (must supply at least one group)")
 	}
-	if reserved, ok := reservedInitGroups[p.Group]; ok {
-		return fmt.Errorf("till init: group must be one of %v; %q is reserved", allowedInitGroups, reserved)
-	}
-	for _, allowed := range allowedInitGroups {
-		if p.Group == allowed {
-			return nil
+	var invalid []string
+	for _, g := range p.Groups {
+		found := false
+		for _, allowed := range allowedInitGroups {
+			if g == allowed {
+				found = true
+				break
+			}
+		}
+		if !found {
+			invalid = append(invalid, g)
 		}
 	}
-	return fmt.Errorf("till init: group must be one of %v; got %q", allowedInitGroups, p.Group)
+	if len(invalid) > 0 {
+		return fmt.Errorf("till init: invalid group(s) %v; allowed: %v", invalid, allowedInitGroups)
+	}
+	return nil
 }
 
 // mcpServerEntry holds the configuration for the `tillsyn` stdio MCP server
