@@ -1,0 +1,25 @@
+# multigroup_single.toml — golden fixture for TestLoadMultiGroupRegistry_SingleGroup.
+#
+# Single [go] group with defaults and one per-kind override. Validates
+# the new multi-group decode path with a single group present.
+
+[go]
+client = "claude"
+model = "sonnet"
+effort = "medium"
+max_tries = 3
+max_budget_usd = 5.0
+max_turns = 40
+blocked_retries = 2
+blocked_retry_cooldown = "30s"
+auto_push = false
+env_set = { TILLSYN_DEV = "1" }
+env_from_shell = { GH_TOKEN = "GH_TOKEN" }
+cli_args = ["--strict-mcp-config"]
+tools_allow = ["Read", "Edit", "Bash"]
+tools_deny = ["WebFetch"]
+claude_md_addons = ["~/.claude/output-styles/tillsyn-flow.md"]
+
+[go.build]
+model = "sonnet"
+tools_allow = ["Read", "Edit", "Write", "Bash"]

@@ -1,0 +1,8 @@
+# multigroup_local_override.toml — golden fixture for TestMerge_LocalWins.
+#
+# Local registry sets [go.build].model = "opus" to be merged over a project
+# registry whose [go.build] block has model = "sonnet". After Merge, the
+# merged [go.build].model must reflect "opus" (local wins).
+
+[go.build]
+model = "opus"

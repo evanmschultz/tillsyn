@@ -1,6 +1,6 @@
-// Package config — tests for the agents.toml schema + decode wiring shipped
-// in agents.go (Drop 4c.6 W0.D1). Co-located with the production file per
-// CLAUDE.md § "Tests" discipline.
+// Package config — tests for the multi-group agents.toml schema + decode
+// wiring shipped in agents.go (Drop 4c.6.1 W0). Co-located with the
+// production file per CLAUDE.md § "Tests" discipline.
 package config
 
 import (
@@ -14,101 +14,143 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
-// TestLoadRegistry_Baseline loads the canonical baseline.toml golden fixture
-// and asserts every Preset field decoded with the expected value plus the
-// [agents.build] override surfaces with a non-nil tools_allow pointer pointing
-// at the expected slice. This is the golden-path proof that pelletier/go-toml/v2
-// decodes the schema as designed in SKETCH.md § 4.1.
-func TestLoadRegistry_Baseline(t *testing.T) {
+// ── LoadMultiGroupRegistry ────────────────────────────────────────────────────
+
+// TestLoadMultiGroupRegistry_SingleGroup loads the canonical single-group
+// golden fixture and asserts every Default field decoded correctly plus the
+// [go.build] override surfaces with the expected tools_allow override.
+func TestLoadMultiGroupRegistry_SingleGroup(t *testing.T) {
 	t.Parallel()
 
-	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "baseline.toml"))
+	registry, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "multigroup_single.toml"))
 	if err != nil {
-		t.Fatalf("LoadRegistry returned error: %v", err)
+		t.Fatalf("LoadMultiGroupRegistry returned error: %v", err)
 	}
 	if registry == nil {
-		t.Fatal("LoadRegistry returned nil registry without error")
+		t.Fatal("LoadMultiGroupRegistry returned nil registry without error")
 	}
 
-	preset := registry.Preset
-	if preset.Client != "claude" {
-		t.Errorf("Preset.Client = %q, want %q", preset.Client, "claude")
-	}
-	if preset.Model != "sonnet" {
-		t.Errorf("Preset.Model = %q, want %q", preset.Model, "sonnet")
-	}
-	if preset.Effort != "medium" {
-		t.Errorf("Preset.Effort = %q, want %q", preset.Effort, "medium")
-	}
-	if preset.MaxTries != 3 {
-		t.Errorf("Preset.MaxTries = %d, want 3", preset.MaxTries)
-	}
-	if preset.MaxBudgetUSD != 5.0 {
-		t.Errorf("Preset.MaxBudgetUSD = %v, want 5.0", preset.MaxBudgetUSD)
-	}
-	if preset.MaxTurns != 40 {
-		t.Errorf("Preset.MaxTurns = %d, want 40", preset.MaxTurns)
-	}
-	if preset.BlockedRetries != 2 {
-		t.Errorf("Preset.BlockedRetries = %d, want 2", preset.BlockedRetries)
-	}
-	if preset.BlockedRetryCooldown != "30s" {
-		t.Errorf("Preset.BlockedRetryCooldown = %q, want %q", preset.BlockedRetryCooldown, "30s")
-	}
-	if preset.AutoPush != false {
-		t.Errorf("Preset.AutoPush = %v, want false", preset.AutoPush)
-	}
-
-	if got, want := preset.EnvSet["TILLSYN_DEV"], "1"; got != want {
-		t.Errorf("Preset.EnvSet[TILLSYN_DEV] = %q, want %q", got, want)
-	}
-	if got, want := preset.EnvFromShell["GH_TOKEN"], "GH_TOKEN"; got != want {
-		t.Errorf("Preset.EnvFromShell[GH_TOKEN] = %q, want %q", got, want)
-	}
-
-	wantCLIArgs := []string{"--strict-mcp-config"}
-	if !equalStrings(preset.CliArgs, wantCLIArgs) {
-		t.Errorf("Preset.CliArgs = %v, want %v", preset.CliArgs, wantCLIArgs)
-	}
-	wantToolsAllow := []string{"Read", "Edit", "Bash"}
-	if !equalStrings(preset.ToolsAllow, wantToolsAllow) {
-		t.Errorf("Preset.ToolsAllow = %v, want %v", preset.ToolsAllow, wantToolsAllow)
-	}
-	wantToolsDeny := []string{"WebFetch"}
-	if !equalStrings(preset.ToolsDeny, wantToolsDeny) {
-		t.Errorf("Preset.ToolsDeny = %v, want %v", preset.ToolsDeny, wantToolsDeny)
-	}
-	wantAddons := []string{"~/.claude/output-styles/tillsyn-flow.md"}
-	if !equalStrings(preset.ClaudeMDAddons, wantAddons) {
-		t.Errorf("Preset.ClaudeMDAddons = %v, want %v", preset.ClaudeMDAddons, wantAddons)
-	}
-
-	override, ok := registry.Overrides[domain.KindBuild]
+	gc, ok := registry["go"]
 	if !ok {
-		t.Fatalf("Overrides[%q] missing", domain.KindBuild)
+		t.Fatal("registry missing [go] group")
 	}
-	if override.ToolsAllow == nil {
-		t.Fatal("Overrides[build].ToolsAllow is nil; want non-nil pointer")
+
+	d := gc.Default
+	if d.Client != "claude" {
+		t.Errorf("go Default.Client = %q, want %q", d.Client, "claude")
+	}
+	if d.Model != "sonnet" {
+		t.Errorf("go Default.Model = %q, want %q", d.Model, "sonnet")
+	}
+	if d.Effort != "medium" {
+		t.Errorf("go Default.Effort = %q, want %q", d.Effort, "medium")
+	}
+	if d.MaxTries != 3 {
+		t.Errorf("go Default.MaxTries = %d, want 3", d.MaxTries)
+	}
+	if d.MaxBudgetUSD != 5.0 {
+		t.Errorf("go Default.MaxBudgetUSD = %v, want 5.0", d.MaxBudgetUSD)
+	}
+	if d.MaxTurns != 40 {
+		t.Errorf("go Default.MaxTurns = %d, want 40", d.MaxTurns)
+	}
+	if d.BlockedRetries != 2 {
+		t.Errorf("go Default.BlockedRetries = %d, want 2", d.BlockedRetries)
+	}
+	if d.BlockedRetryCooldown != "30s" {
+		t.Errorf("go Default.BlockedRetryCooldown = %q, want %q", d.BlockedRetryCooldown, "30s")
+	}
+	if d.AutoPush != false {
+		t.Errorf("go Default.AutoPush = %v, want false", d.AutoPush)
+	}
+	if got := d.EnvSet["TILLSYN_DEV"]; got != "1" {
+		t.Errorf("go Default.EnvSet[TILLSYN_DEV] = %q, want %q", got, "1")
+	}
+	if got := d.EnvFromShell["GH_TOKEN"]; got != "GH_TOKEN" {
+		t.Errorf("go Default.EnvFromShell[GH_TOKEN] = %q, want %q", got, "GH_TOKEN")
+	}
+	if !equalStrings(d.CliArgs, []string{"--strict-mcp-config"}) {
+		t.Errorf("go Default.CliArgs = %v, want [--strict-mcp-config]", d.CliArgs)
+	}
+	if !equalStrings(d.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
+		t.Errorf("go Default.ToolsAllow = %v, want [Read Edit Bash]", d.ToolsAllow)
+	}
+	if !equalStrings(d.ToolsDeny, []string{"WebFetch"}) {
+		t.Errorf("go Default.ToolsDeny = %v, want [WebFetch]", d.ToolsDeny)
+	}
+	if !equalStrings(d.ClaudeMDAddons, []string{"~/.claude/output-styles/tillsyn-flow.md"}) {
+		t.Errorf("go Default.ClaudeMDAddons = %v, want [tillsyn-flow.md]", d.ClaudeMDAddons)
+	}
+
+	buildOv, ok := gc.Kinds[domain.KindBuild]
+	if !ok {
+		t.Fatalf("go Kinds[build] missing")
+	}
+	if buildOv.ToolsAllow == nil {
+		t.Fatal("go Kinds[build].ToolsAllow is nil; want non-nil pointer")
 	}
 	wantBuildAllow := []string{"Read", "Edit", "Write", "Bash"}
-	if !equalStrings(*override.ToolsAllow, wantBuildAllow) {
-		t.Errorf("Overrides[build].ToolsAllow = %v, want %v", *override.ToolsAllow, wantBuildAllow)
+	if !equalStrings(*buildOv.ToolsAllow, wantBuildAllow) {
+		t.Errorf("go Kinds[build].ToolsAllow = %v, want %v", *buildOv.ToolsAllow, wantBuildAllow)
 	}
-	if override.Model != nil {
-		t.Errorf("Overrides[build].Model = %q, want nil (absent)", *override.Model)
+	if buildOv.Model == nil {
+		// model was set to "sonnet" explicitly in the fixture.
+		t.Error("go Kinds[build].Model = nil; want non-nil (set to sonnet in fixture)")
 	}
 }
 
-// TestLoadRegistry_MalformedTOML feeds a fixture with a syntax error and
-// asserts the returned error wraps a *toml.DecodeError so callers can extract
-// position information via errors.As. The error message must include the
-// offending TOML line number.
-func TestLoadRegistry_MalformedTOML(t *testing.T) {
+// TestLoadMultiGroupRegistry_MultiGroup loads the multi-group go+fe fixture
+// and asserts both groups decoded independently with correct field isolation.
+func TestLoadMultiGroupRegistry_MultiGroup(t *testing.T) {
 	t.Parallel()
 
-	_, err := LoadRegistry(filepath.Join("testdata", "agents", "malformed.toml"))
+	registry, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "multigroup_go_fe.toml"))
+	if err != nil {
+		t.Fatalf("LoadMultiGroupRegistry returned error: %v", err)
+	}
+
+	if _, ok := registry["go"]; !ok {
+		t.Fatal("registry missing [go] group")
+	}
+	if _, ok := registry["fe"]; !ok {
+		t.Fatal("registry missing [fe] group")
+	}
+	if len(registry) != 2 {
+		t.Errorf("len(registry) = %d, want 2", len(registry))
+	}
+
+	goGC := registry["go"]
+	if goGC.Default.Model != "sonnet" {
+		t.Errorf("go Default.Model = %q, want %q", goGC.Default.Model, "sonnet")
+	}
+	if _, ok := goGC.Kinds[domain.KindBuild]; !ok {
+		t.Error("go Kinds[build] missing")
+	}
+	if _, ok := goGC.Kinds[domain.KindBuildQAProof]; ok {
+		t.Error("go Kinds[build-qa-proof] unexpectedly present")
+	}
+
+	feGC := registry["fe"]
+	if feGC.Default.Model != "sonnet" {
+		t.Errorf("fe Default.Model = %q, want %q", feGC.Default.Model, "sonnet")
+	}
+	if _, ok := feGC.Kinds[domain.KindBuildQAProof]; !ok {
+		t.Error("fe Kinds[build-qa-proof] missing")
+	}
+	feQAProof, _ := feGC.Kinds[domain.KindBuildQAProof]
+	if feQAProof.Model == nil || *feQAProof.Model != "opus" {
+		t.Errorf("fe Kinds[build-qa-proof].Model = %v, want %q", feQAProof.Model, "opus")
+	}
+}
+
+// TestLoadMultiGroupRegistry_MalformedTOML feeds a fixture with a syntax error
+// and asserts the returned error wraps a *toml.DecodeError.
+func TestLoadMultiGroupRegistry_MalformedTOML(t *testing.T) {
+	t.Parallel()
+
+	_, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "malformed.toml"))
 	if err == nil {
-		t.Fatal("LoadRegistry returned nil error for malformed input")
+		t.Fatal("LoadMultiGroupRegistry returned nil error for malformed input")
 	}
 
 	var decodeErr *toml.DecodeError
@@ -121,140 +163,84 @@ func TestLoadRegistry_MalformedTOML(t *testing.T) {
 	}
 }
 
-// TestLoadRegistry_UnknownTopLevelField asserts the strict decoder rejects
-// unknown top-level fields. Catches typos in user-facing TOML keys early
-// rather than silently dropping the value.
-func TestLoadRegistry_UnknownTopLevelField(t *testing.T) {
+// TestLoadMultiGroupRegistry_UnknownKindField asserts the strict decoder rejects
+// unknown kind-level fields within a group block. Catches typos early.
+func TestLoadMultiGroupRegistry_UnknownKindField(t *testing.T) {
 	t.Parallel()
 
-	_, err := LoadRegistry(filepath.Join("testdata", "agents", "unknown_field.toml"))
+	_, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "unknown_field.toml"))
 	if err == nil {
-		t.Fatal("LoadRegistry returned nil error for fixture with unknown field")
+		t.Fatal("LoadMultiGroupRegistry returned nil error for fixture with unknown field")
 	}
+	// The error should mention something about unknown / unexpected fields.
 	if !strings.Contains(strings.ToLower(err.Error()), "unknown") &&
 		!strings.Contains(strings.ToLower(err.Error()), "missing") {
 		t.Errorf("error message %q does not mention unknown/missing field", err.Error())
 	}
 }
 
-// TestLoadRegistry_FileNotFound asserts that a missing file produces a clear
-// error rather than panicking or returning a nil registry without an error.
-func TestLoadRegistry_FileNotFound(t *testing.T) {
+// TestLoadMultiGroupRegistry_FileNotFound asserts that a missing file produces
+// a clear error.
+func TestLoadMultiGroupRegistry_FileNotFound(t *testing.T) {
 	t.Parallel()
 
-	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "does_not_exist.toml"))
+	registry, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "does_not_exist.toml"))
 	if err == nil {
-		t.Fatal("LoadRegistry returned nil error for nonexistent path")
+		t.Fatal("LoadMultiGroupRegistry returned nil error for nonexistent path")
 	}
 	if registry != nil {
-		t.Errorf("LoadRegistry returned non-nil registry alongside error: %+v", registry)
+		t.Errorf("LoadMultiGroupRegistry returned non-nil registry alongside error: %+v", registry)
 	}
 }
 
-// TestLoadRegistry_AbsentBlocksNilSafe asserts that loading a TOML file with
-// only a [agents] block and no per-kind overrides yields a usable registry
-// where Overrides is initialized (non-nil) and lookups for absent kinds
-// return the zero Override.
-func TestLoadRegistry_AbsentBlocksNilSafe(t *testing.T) {
+// TestLoadMultiGroupRegistry_PositionWrapped asserts the *ConfigError envelope
+// wraps a malformed-TOML error with File set to the loaded path and Line > 0.
+func TestLoadMultiGroupRegistry_PositionWrapped(t *testing.T) {
 	t.Parallel()
 
-	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "preset_only.toml"))
-	if err != nil {
-		t.Fatalf("LoadRegistry returned error: %v", err)
+	path := filepath.Join("testdata", "agents", "malformed.toml")
+	_, err := LoadMultiGroupRegistry(path)
+	if err == nil {
+		t.Fatal("LoadMultiGroupRegistry returned nil error for malformed input")
 	}
-	if registry.Overrides == nil {
-		t.Fatal("Overrides map is nil; want initialized empty map")
+
+	var cerr *ConfigError
+	if !errors.As(err, &cerr) {
+		t.Fatalf("error chain does not contain *ConfigError: %v", err)
 	}
-	if _, ok := registry.Overrides[domain.KindBuild]; ok {
-		t.Errorf("Overrides[build] unexpectedly present for preset-only fixture")
+	if cerr.File != path {
+		t.Errorf("ConfigError.File = %q, want %q", cerr.File, path)
+	}
+	if cerr.Line <= 0 {
+		t.Errorf("ConfigError.Line = %d, want > 0", cerr.Line)
+	}
+
+	var decodeErr *toml.DecodeError
+	if !errors.As(err, &decodeErr) {
+		t.Errorf("errors.As(err, &*toml.DecodeError) = false; want true (unwrap chain preservation)")
 	}
 }
 
-// TestResolve_FullInherit loads a fixture with only an [agents] defaults block
-// and asserts Resolve(reg, KindBuild) returns the Preset values verbatim — no
-// per-kind block means pure inheritance.
+// ── Resolve ────────────────────────────────────────────────────────────────────
+
+// TestResolve_FullInherit asserts Resolve returns Default values verbatim
+// when the group exists but has no per-kind block for the requested kind.
 func TestResolve_FullInherit(t *testing.T) {
 	t.Parallel()
 
-	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "inheritance_full_inherit.toml"))
+	registry, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "multigroup_single.toml"))
 	if err != nil {
-		t.Fatalf("LoadRegistry returned error: %v", err)
+		t.Fatalf("LoadMultiGroupRegistry returned error: %v", err)
 	}
 
-	got, err := Resolve(registry, domain.KindBuild)
+	// Request KindPlan — no [go.plan] in the fixture; should inherit Default.
+	got, err := Resolve(registry, "go", string(domain.KindPlan))
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
 
 	if got.Client != "claude" {
 		t.Errorf("Client = %q, want %q", got.Client, "claude")
-	}
-	if got.Model != "sonnet" {
-		t.Errorf("Model = %q, want %q", got.Model, "sonnet")
-	}
-	if got.Effort != "medium" {
-		t.Errorf("Effort = %q, want %q", got.Effort, "medium")
-	}
-	if got.MaxTries != 3 {
-		t.Errorf("MaxTries = %d, want 3", got.MaxTries)
-	}
-	if got.MaxBudgetUSD != 5.0 {
-		t.Errorf("MaxBudgetUSD = %v, want 5.0", got.MaxBudgetUSD)
-	}
-	if got.MaxTurns != 40 {
-		t.Errorf("MaxTurns = %d, want 40", got.MaxTurns)
-	}
-	if got.BlockedRetries != 2 {
-		t.Errorf("BlockedRetries = %d, want 2", got.BlockedRetries)
-	}
-	if got.BlockedRetryCooldown != "30s" {
-		t.Errorf("BlockedRetryCooldown = %q, want %q", got.BlockedRetryCooldown, "30s")
-	}
-	if got.AutoPush {
-		t.Errorf("AutoPush = %v, want false", got.AutoPush)
-	}
-	if got.EnvSet["TILLSYN_DEV"] != "1" {
-		t.Errorf("EnvSet[TILLSYN_DEV] = %q, want %q", got.EnvSet["TILLSYN_DEV"], "1")
-	}
-	if got.EnvFromShell["GH_TOKEN"] != "GH_TOKEN" {
-		t.Errorf("EnvFromShell[GH_TOKEN] = %q, want %q", got.EnvFromShell["GH_TOKEN"], "GH_TOKEN")
-	}
-	if !equalStrings(got.CliArgs, []string{"--strict-mcp-config"}) {
-		t.Errorf("CliArgs = %v, want [--strict-mcp-config]", got.CliArgs)
-	}
-	if !equalStrings(got.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
-		t.Errorf("ToolsAllow = %v, want [Read Edit Bash]", got.ToolsAllow)
-	}
-	if !equalStrings(got.ToolsDeny, []string{"WebFetch"}) {
-		t.Errorf("ToolsDeny = %v, want [WebFetch]", got.ToolsDeny)
-	}
-	if !equalStrings(got.ClaudeMDAddons, []string{"~/.claude/output-styles/tillsyn-flow.md"}) {
-		t.Errorf("ClaudeMDAddons = %v, want [tillsyn-flow.md]", got.ClaudeMDAddons)
-	}
-}
-
-// TestResolve_PartialOverride asserts that a per-kind block overriding only
-// MaxBudgetUSD reflects that one override while every other field falls
-// through to the Preset.
-func TestResolve_PartialOverride(t *testing.T) {
-	t.Parallel()
-
-	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "inheritance_partial_override.toml"))
-	if err != nil {
-		t.Fatalf("LoadRegistry returned error: %v", err)
-	}
-
-	got, err := Resolve(registry, domain.KindBuild)
-	if err != nil {
-		t.Fatalf("Resolve returned error: %v", err)
-	}
-
-	if got.MaxBudgetUSD != 9.5 {
-		t.Errorf("MaxBudgetUSD = %v, want 9.5 (override)", got.MaxBudgetUSD)
-	}
-	// Every other field falls through to Preset.
-	if got.Client != "claude" {
-		t.Errorf("Client = %q, want %q (inherited)", got.Client, "claude")
 	}
 	if got.Model != "sonnet" {
 		t.Errorf("Model = %q, want %q (inherited)", got.Model, "sonnet")
@@ -273,18 +259,80 @@ func TestResolve_PartialOverride(t *testing.T) {
 	}
 }
 
+// TestResolve_KindOverride asserts that a per-kind override wins over the
+// group Default for the overridden fields, while non-overridden fields
+// inherit from Default. Covers acceptance criterion (c).
+func TestResolve_KindOverride(t *testing.T) {
+	t.Parallel()
+
+	registry, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "multigroup_kind_override.toml"))
+	if err != nil {
+		t.Fatalf("LoadMultiGroupRegistry returned error: %v", err)
+	}
+
+	got, err := Resolve(registry, "go", string(domain.KindPlanQAProof))
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	if got.Model != "opus" {
+		t.Errorf("Model = %q, want %q (per-kind override wins)", got.Model, "opus")
+	}
+	if got.MaxBudgetUSD != 10.0 {
+		t.Errorf("MaxBudgetUSD = %v, want 10.0 (per-kind override wins)", got.MaxBudgetUSD)
+	}
+	// ToolsAllow not overridden in [go.plan-qa-proof]; must inherit Default.
+	if !equalStrings(got.ToolsAllow, []string{"Read", "Bash"}) {
+		t.Errorf("ToolsAllow = %v, want [Read Bash] (inherited)", got.ToolsAllow)
+	}
+}
+
+// TestResolve_MissingGroupFallback asserts that Resolve returns an empty Preset
+// (no panic) when the requested group does not exist in the registry.
+// Covers acceptance criterion (e).
+func TestResolve_MissingGroupFallback(t *testing.T) {
+	t.Parallel()
+
+	registry, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "multigroup_single.toml"))
+	if err != nil {
+		t.Fatalf("LoadMultiGroupRegistry returned error: %v", err)
+	}
+
+	got, err := Resolve(registry, "rust", string(domain.KindBuild))
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if got.Model != "" {
+		t.Errorf("Model = %q, want empty string (missing group returns empty Preset)", got.Model)
+	}
+	if got.MaxTries != 0 {
+		t.Errorf("MaxTries = %d, want 0 (missing group returns empty Preset)", got.MaxTries)
+	}
+}
+
 // TestResolve_MapMerge asserts EnvSet and EnvFromShell merge per-key — the
-// per-kind block's keys add to the Preset's keys; neither side's keys are
-// dropped. SKETCH.md § 4.2.2.
+// per-kind block's keys add to the Default's keys; neither side's keys are
+// dropped.
 func TestResolve_MapMerge(t *testing.T) {
 	t.Parallel()
 
-	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "inheritance_map_merge.toml"))
-	if err != nil {
-		t.Fatalf("LoadRegistry returned error: %v", err)
+	// Construct registry in code for precise control.
+	registry := AgentsRegistry{
+		"go": {
+			Default: Preset{
+				EnvSet:       map[string]string{"A": "1"},
+				EnvFromShell: map[string]string{"SHELL_A": "SHELL_A"},
+			},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuild: {
+					EnvSet:       ptrMap(map[string]string{"B": "2"}),
+					EnvFromShell: ptrMap(map[string]string{"SHELL_B": "SHELL_B"}),
+				},
+			},
+		},
 	}
 
-	got, err := Resolve(registry, domain.KindBuild)
+	got, err := Resolve(registry, "go", string(domain.KindBuild))
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
@@ -300,59 +348,60 @@ func TestResolve_MapMerge(t *testing.T) {
 	}
 
 	if v, ok := got.EnvFromShell["SHELL_A"]; !ok || v != "SHELL_A" {
-		t.Errorf("EnvFromShell[SHELL_A] = %q (present=%v), want %q present", v, ok, "SHELL_A")
+		t.Errorf("EnvFromShell[SHELL_A] = %q (present=%v), want present", v, ok)
 	}
 	if v, ok := got.EnvFromShell["SHELL_B"]; !ok || v != "SHELL_B" {
-		t.Errorf("EnvFromShell[SHELL_B] = %q (present=%v), want %q present", v, ok, "SHELL_B")
-	}
-	if len(got.EnvFromShell) != 2 {
-		t.Errorf("len(EnvFromShell) = %d, want 2", len(got.EnvFromShell))
+		t.Errorf("EnvFromShell[SHELL_B] = %q (present=%v), want present", v, ok)
 	}
 }
 
-// TestResolve_MapMergeOverrideWins asserts that when the per-kind block sets
-// a key already present in the Preset map, the override value wins. Documents
-// the precedence half of the per-key merge semantics.
-func TestResolve_MapMergeOverrideWins(t *testing.T) {
+// TestResolve_MapOverrideWins asserts that when the per-kind block sets a key
+// already present in the Default map, the override value wins.
+func TestResolve_MapOverrideWins(t *testing.T) {
 	t.Parallel()
 
-	registry := &AgentsRegistry{
-		Preset: Preset{
-			EnvSet: map[string]string{"K": "preset"},
-		},
-		Overrides: map[domain.Kind]Override{
-			domain.KindBuild: {
-				EnvSet: ptrMap(map[string]string{"K": "override"}),
+	registry := AgentsRegistry{
+		"go": {
+			Default: Preset{EnvSet: map[string]string{"K": "preset"}},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuild: {EnvSet: ptrMap(map[string]string{"K": "override"})},
 			},
 		},
 	}
 
-	got, err := Resolve(registry, domain.KindBuild)
+	got, err := Resolve(registry, "go", string(domain.KindBuild))
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
-
 	if got.EnvSet["K"] != "override" {
 		t.Errorf("EnvSet[K] = %q, want %q (override wins on collision)", got.EnvSet["K"], "override")
 	}
 }
 
 // TestResolve_ListReplace asserts list fields full-replace when the per-kind
-// block sets them — Preset's list is dropped wholesale, the override list
-// replaces it. SKETCH.md § 4.2.3.
+// block sets them — Default's list is dropped wholesale.
 func TestResolve_ListReplace(t *testing.T) {
 	t.Parallel()
 
-	registry, err := LoadRegistry(filepath.Join("testdata", "agents", "inheritance_list_replace.toml"))
-	if err != nil {
-		t.Fatalf("LoadRegistry returned error: %v", err)
+	registry := AgentsRegistry{
+		"go": {
+			Default: Preset{
+				ToolsAllow: []string{"Read", "Edit", "Bash"},
+				CliArgs:    []string{"--strict-mcp-config"},
+			},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuild: {
+					ToolsAllow: ptrSlice([]string{"Read"}),
+					CliArgs:    ptrSlice([]string{"--quiet"}),
+				},
+			},
+		},
 	}
 
-	got, err := Resolve(registry, domain.KindBuild)
+	got, err := Resolve(registry, "go", string(domain.KindBuild))
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
-
 	if !equalStrings(got.ToolsAllow, []string{"Read"}) {
 		t.Errorf("ToolsAllow = %v, want [Read] (full replace)", got.ToolsAllow)
 	}
@@ -362,28 +411,23 @@ func TestResolve_ListReplace(t *testing.T) {
 }
 
 // TestResolve_ExplicitEmptyList asserts that an Override with a non-nil but
-// empty list (`&[]string{}`) explicitly replaces a non-empty Preset list with
-// an empty slice. The pointer-to-slice idiom carries the absent-vs-zero
-// discrimination chosen at D1 and honored here.
+// empty list explicitly replaces a non-empty Default list with an empty slice.
 func TestResolve_ExplicitEmptyList(t *testing.T) {
 	t.Parallel()
 
-	registry := &AgentsRegistry{
-		Preset: Preset{
-			ToolsDeny: []string{"rm", "WebFetch"},
-		},
-		Overrides: map[domain.Kind]Override{
-			domain.KindBuild: {
-				ToolsDeny: ptrSlice([]string{}),
+	registry := AgentsRegistry{
+		"go": {
+			Default: Preset{ToolsDeny: []string{"rm", "WebFetch"}},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuild: {ToolsDeny: ptrSlice([]string{})},
 			},
 		},
 	}
 
-	got, err := Resolve(registry, domain.KindBuild)
+	got, err := Resolve(registry, "go", string(domain.KindBuild))
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
-
 	if got.ToolsDeny == nil {
 		t.Error("ToolsDeny = nil; want non-nil empty slice (explicit empty replaces non-empty)")
 	}
@@ -392,33 +436,28 @@ func TestResolve_ExplicitEmptyList(t *testing.T) {
 	}
 }
 
-// TestResolve_AbsentKindReturnsPreset asserts that calling Resolve with a kind
-// for which the registry has no override block returns the Preset values
-// verbatim — no per-kind override means pure inheritance, same shape as the
-// "no per-kind blocks anywhere" case but probed via the per-kind absent-key
-// path rather than the empty-Overrides-map path.
-func TestResolve_AbsentKindReturnsPreset(t *testing.T) {
+// TestResolve_AbsentKindReturnsDefault asserts that calling Resolve with a kind
+// for which the group has no override block returns the Default values verbatim.
+func TestResolve_AbsentKindReturnsDefault(t *testing.T) {
 	t.Parallel()
 
-	registry := &AgentsRegistry{
-		Preset: Preset{
-			Model:        "sonnet",
-			MaxBudgetUSD: 5.0,
-			ToolsAllow:   []string{"Read", "Bash"},
-		},
-		Overrides: map[domain.Kind]Override{
-			// KindPlan has an override, but the test queries KindBuild.
-			domain.KindPlan: {
-				Model: ptrStr("opus"),
+	registry := AgentsRegistry{
+		"go": {
+			Default: Preset{
+				Model:        "sonnet",
+				MaxBudgetUSD: 5.0,
+				ToolsAllow:   []string{"Read", "Bash"},
+			},
+			Kinds: map[domain.Kind]Override{
+				domain.KindPlan: {Model: ptrStr("opus")},
 			},
 		},
 	}
 
-	got, err := Resolve(registry, domain.KindBuild)
+	got, err := Resolve(registry, "go", string(domain.KindBuild))
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
-
 	if got.Model != "sonnet" {
 		t.Errorf("Model = %q, want %q (inherit when kind absent)", got.Model, "sonnet")
 	}
@@ -430,348 +469,484 @@ func TestResolve_AbsentKindReturnsPreset(t *testing.T) {
 	}
 }
 
-// TestMergeLocal_OverrideModel loads `local_override_model.toml` over a project
-// registry whose [agents.build] block sets several fields including model. The
-// resulting registry must reflect local's model in the merged [agents.build]
-// block while project's other build-block fields survive — block-level
-// field-merge, not block-level replace.
-func TestMergeLocal_OverrideModel(t *testing.T) {
+// TestResolve_NilKindsMap asserts that a GroupConfig with a nil Kinds map
+// returns the Default values verbatim without panicking.
+func TestResolve_NilKindsMap(t *testing.T) {
 	t.Parallel()
 
-	project := &AgentsRegistry{
-		Preset: Preset{
-			Client: "claude",
-			Model:  "sonnet",
+	registry := AgentsRegistry{
+		"go": {
+			Default: Preset{Model: "sonnet"},
+			Kinds:   nil, // deliberately nil
 		},
-		Overrides: map[domain.Kind]Override{
-			domain.KindBuild: {
-				Model:        ptrStr("sonnet"),
-				MaxBudgetUSD: ptrFloat(5.0),
-				ToolsAllow:   ptrSlice([]string{"Read", "Edit", "Bash"}),
+	}
+
+	got, err := Resolve(registry, "go", string(domain.KindBuild))
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if got.Model != "sonnet" {
+		t.Errorf("Model = %q, want %q (Default with nil Kinds)", got.Model, "sonnet")
+	}
+}
+
+// ── Merge ──────────────────────────────────────────────────────────────────────
+
+// TestMerge_LocalWinsOverProject asserts that local's per-kind model override
+// wins over project's per-kind model, while project's other fields survive.
+// Covers acceptance criterion (d).
+func TestMerge_LocalWinsOverProject(t *testing.T) {
+	t.Parallel()
+
+	project := AgentsRegistry{
+		"go": {
+			Default: Preset{Client: "claude", Model: "sonnet"},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuild: {
+					Model:        ptrStr("sonnet"),
+					MaxBudgetUSD: ptrFloat(5.0),
+					ToolsAllow:   ptrSlice([]string{"Read", "Edit", "Bash"}),
+				},
 			},
 		},
 	}
 
-	local, err := LoadRegistry(filepath.Join("testdata", "agents", "local_override_model.toml"))
+	local, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "multigroup_local_override.toml"))
 	if err != nil {
-		t.Fatalf("LoadRegistry(local) returned error: %v", err)
+		t.Fatalf("LoadMultiGroupRegistry(local) returned error: %v", err)
 	}
 
-	merged, err := MergeLocal(project, local)
+	merged, err := Merge(local, project)
 	if err != nil {
-		t.Fatalf("MergeLocal returned error: %v", err)
+		t.Fatalf("Merge returned error: %v", err)
 	}
 
-	build, ok := merged.Overrides[domain.KindBuild]
+	gc, ok := merged["go"]
 	if !ok {
-		t.Fatal("merged Overrides[build] missing")
+		t.Fatal("merged registry missing [go] group")
 	}
-	if build.Model == nil || *build.Model != "opus" {
-		t.Errorf("merged Overrides[build].Model = %v, want %q (local override)", build.Model, "opus")
+	buildOv, ok := gc.Kinds[domain.KindBuild]
+	if !ok {
+		t.Fatal("merged go Kinds[build] missing")
 	}
-	if build.MaxBudgetUSD == nil || *build.MaxBudgetUSD != 5.0 {
-		t.Errorf("merged Overrides[build].MaxBudgetUSD = %v, want 5.0 (project survives)", build.MaxBudgetUSD)
+	if buildOv.Model == nil || *buildOv.Model != "opus" {
+		t.Errorf("merged go Kinds[build].Model = %v, want %q (local wins)", buildOv.Model, "opus")
 	}
-	if build.ToolsAllow == nil || !equalStrings(*build.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
-		t.Errorf("merged Overrides[build].ToolsAllow = %v, want [Read Edit Bash] (project survives)", build.ToolsAllow)
+	if buildOv.MaxBudgetUSD == nil || *buildOv.MaxBudgetUSD != 5.0 {
+		t.Errorf("merged go Kinds[build].MaxBudgetUSD = %v, want 5.0 (project survives)", buildOv.MaxBudgetUSD)
+	}
+	if buildOv.ToolsAllow == nil || !equalStrings(*buildOv.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
+		t.Errorf("merged go Kinds[build].ToolsAllow = %v, want [Read Edit Bash] (project survives)", buildOv.ToolsAllow)
 	}
 }
 
-// TestMergeLocal_ToolsDenyRejected asserts that `tools_deny` set anywhere in
-// the local registry returns the bare ErrToolsDenyNotOverridable sentinel.
-// D5 wraps this sentinel into a position-aware *ConfigError; D3 owns only the
-// sentinel-rejection contract.
-func TestMergeLocal_ToolsDenyRejected(t *testing.T) {
+// TestMerge_MultiGroupBothPreserved asserts that when local has a [go] group
+// and project has both [go] and [fe], the merged registry contains all three
+// groups correctly (local [go] merged; project [fe] cloned).
+func TestMerge_MultiGroupBothPreserved(t *testing.T) {
 	t.Parallel()
 
-	project := &AgentsRegistry{
-		Preset: Preset{
-			ToolsDeny: []string{"WebFetch"},
+	project := AgentsRegistry{
+		"go": {
+			Default: Preset{Model: "sonnet"},
+			Kinds:   map[domain.Kind]Override{},
 		},
-		Overrides: map[domain.Kind]Override{},
+		"fe": {
+			Default: Preset{Model: "sonnet"},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuildQAProof: {Model: ptrStr("opus")},
+			},
+		},
 	}
 
-	local, err := LoadRegistry(filepath.Join("testdata", "agents", "local_tools_deny_rejected.toml"))
+	local := AgentsRegistry{
+		"go": {
+			Default: Preset{Model: "haiku"},
+			Kinds:   map[domain.Kind]Override{},
+		},
+	}
+
+	merged, err := Merge(local, project)
 	if err != nil {
-		t.Fatalf("LoadRegistry(local) returned error: %v", err)
+		t.Fatalf("Merge returned error: %v", err)
 	}
 
-	_, err = MergeLocal(project, local)
+	if len(merged) != 2 {
+		t.Errorf("len(merged) = %d, want 2 (go + fe)", len(merged))
+	}
+	if goGC, ok := merged["go"]; !ok {
+		t.Error("merged missing [go]")
+	} else if goGC.Default.Model != "haiku" {
+		t.Errorf("merged[go].Default.Model = %q, want %q (local wins)", goGC.Default.Model, "haiku")
+	}
+	if feGC, ok := merged["fe"]; !ok {
+		t.Error("merged missing [fe]")
+	} else {
+		feOv, ok := feGC.Kinds[domain.KindBuildQAProof]
+		if !ok {
+			t.Error("merged[fe] Kinds[build-qa-proof] missing")
+		} else if feOv.Model == nil || *feOv.Model != "opus" {
+			t.Errorf("merged[fe] Kinds[build-qa-proof].Model = %v, want %q (project preserved)", feOv.Model, "opus")
+		}
+	}
+}
+
+// TestMerge_ToolsDenyRejected asserts that tools_deny set anywhere in the local
+// registry returns ErrToolsDenyNotOverridable. Covers SKETCH § 4.3.1.
+func TestMerge_ToolsDenyRejected(t *testing.T) {
+	t.Parallel()
+
+	project := AgentsRegistry{
+		"go": {
+			Default: Preset{ToolsDeny: []string{"WebFetch"}},
+			Kinds:   map[domain.Kind]Override{},
+		},
+	}
+
+	local, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "multigroup_tools_deny_rejected.toml"))
+	if err != nil {
+		t.Fatalf("LoadMultiGroupRegistry(local) returned error: %v", err)
+	}
+
+	_, err = Merge(local, project)
 	if err == nil {
-		t.Fatal("MergeLocal returned nil error for local tools_deny; want sentinel rejection")
+		t.Fatal("Merge returned nil error for local tools_deny; want sentinel rejection")
 	}
 	if !errors.Is(err, ErrToolsDenyNotOverridable) {
 		t.Errorf("error chain does not contain ErrToolsDenyNotOverridable: %v", err)
 	}
 }
 
-// TestMergeLocal_ToolsDenyDefaultsBlockRejected asserts that `tools_deny` set
-// in the local [agents] defaults block (not just per-kind) is also rejected.
-// SKETCH § 4.3.1: "MUST NOT override," not "MUST NOT override per-kind."
-func TestMergeLocal_ToolsDenyDefaultsBlockRejected(t *testing.T) {
+// TestMerge_ToolsDenyDefaultBlockRejected asserts that tools_deny set in a
+// group Default block (not just per-kind) is also rejected.
+func TestMerge_ToolsDenyDefaultBlockRejected(t *testing.T) {
 	t.Parallel()
 
-	project := &AgentsRegistry{
-		Preset:    Preset{ToolsDeny: []string{"WebFetch"}},
-		Overrides: map[domain.Kind]Override{},
+	project := AgentsRegistry{
+		"go": {Default: Preset{ToolsDeny: []string{"WebFetch"}}, Kinds: map[domain.Kind]Override{}},
+	}
+	local := AgentsRegistry{
+		"go": {
+			Default: Preset{ToolsDeny: []string{"AnotherTool"}},
+			Kinds:   map[domain.Kind]Override{},
+		},
 	}
 
-	// Construct local in code: tools_deny in the [agents] defaults block.
-	local := &AgentsRegistry{
-		Preset:    Preset{ToolsDeny: []string{"AnotherTool"}},
-		Overrides: map[domain.Kind]Override{},
-	}
-
-	_, err := MergeLocal(project, local)
+	_, err := Merge(local, project)
 	if err == nil {
-		t.Fatal("MergeLocal returned nil error for local defaults-block tools_deny; want sentinel rejection")
+		t.Fatal("Merge returned nil error for local Default tools_deny; want sentinel rejection")
 	}
 	if !errors.Is(err, ErrToolsDenyNotOverridable) {
 		t.Errorf("error chain does not contain ErrToolsDenyNotOverridable: %v", err)
 	}
+
+	var cerr *ConfigError
+	if !errors.As(err, &cerr) {
+		t.Fatalf("error chain does not contain *ConfigError: %v", err)
+	}
+	// Block should name the [go] group default.
+	if cerr.Block != "[go]" {
+		t.Errorf("ConfigError.Block = %q, want %q", cerr.Block, "[go]")
+	}
 }
 
-// TestMergeLocal_NilLocal asserts that calling MergeLocal with a nil local
-// registry returns the project registry equivalent — no local file is valid
-// (the .local.toml is optional per SKETCH § 4.3).
-func TestMergeLocal_NilLocal(t *testing.T) {
+// TestMerge_ToolsDenyPerKindBlockPositionWrapped asserts that a per-kind
+// tools_deny rejection wraps with the correct block context "[go.build]".
+func TestMerge_ToolsDenyPerKindBlockPositionWrapped(t *testing.T) {
 	t.Parallel()
 
-	project := &AgentsRegistry{
-		Preset: Preset{
-			Client:       "claude",
-			Model:        "sonnet",
-			MaxBudgetUSD: 5.0,
-			ToolsAllow:   []string{"Read", "Bash"},
-		},
-		Overrides: map[domain.Kind]Override{
-			domain.KindBuild: {Model: ptrStr("sonnet")},
+	project := AgentsRegistry{
+		"go": {Default: Preset{}, Kinds: map[domain.Kind]Override{}},
+	}
+	local, err := LoadMultiGroupRegistry(filepath.Join("testdata", "agents", "multigroup_tools_deny_rejected.toml"))
+	if err != nil {
+		t.Fatalf("LoadMultiGroupRegistry(local) returned error: %v", err)
+	}
+
+	_, err = Merge(local, project)
+	if err == nil {
+		t.Fatal("Merge returned nil error for local per-kind tools_deny; want envelope-wrapped sentinel")
+	}
+
+	if !errors.Is(err, ErrToolsDenyNotOverridable) {
+		t.Errorf("errors.Is(err, ErrToolsDenyNotOverridable) = false; want true")
+	}
+
+	var cerr *ConfigError
+	if !errors.As(err, &cerr) {
+		t.Fatalf("error chain does not contain *ConfigError: %v", err)
+	}
+	if cerr.File != "agents.local.toml" {
+		t.Errorf("ConfigError.File = %q, want %q", cerr.File, "agents.local.toml")
+	}
+	if cerr.Block != "[go.build]" {
+		t.Errorf("ConfigError.Block = %q, want %q", cerr.Block, "[go.build]")
+	}
+}
+
+// TestMerge_NilLocal asserts that Merge(nil, project) returns a deep-clone
+// of project — local is optional.
+func TestMerge_NilLocal(t *testing.T) {
+	t.Parallel()
+
+	project := AgentsRegistry{
+		"go": {
+			Default: Preset{Client: "claude", Model: "sonnet"},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuild: {Model: ptrStr("sonnet")},
+			},
 		},
 	}
 
-	merged, err := MergeLocal(project, nil)
+	merged, err := Merge(nil, project)
 	if err != nil {
-		t.Fatalf("MergeLocal(project, nil) returned error: %v", err)
+		t.Fatalf("Merge(nil, project) returned error: %v", err)
 	}
 	if merged == nil {
-		t.Fatal("MergeLocal returned nil registry for nil local")
+		t.Fatal("Merge returned nil registry for nil local")
 	}
-	if merged.Preset.Client != project.Preset.Client {
-		t.Errorf("merged.Preset.Client = %q, want %q", merged.Preset.Client, project.Preset.Client)
+	gc, ok := merged["go"]
+	if !ok {
+		t.Fatal("merged missing [go] from project")
 	}
-	if merged.Preset.Model != project.Preset.Model {
-		t.Errorf("merged.Preset.Model = %q, want %q", merged.Preset.Model, project.Preset.Model)
+	if gc.Default.Client != "claude" {
+		t.Errorf("merged[go].Default.Client = %q, want %q", gc.Default.Client, "claude")
 	}
-	if merged.Preset.MaxBudgetUSD != project.Preset.MaxBudgetUSD {
-		t.Errorf("merged.Preset.MaxBudgetUSD = %v, want %v", merged.Preset.MaxBudgetUSD, project.Preset.MaxBudgetUSD)
+	if gc.Default.Model != "sonnet" {
+		t.Errorf("merged[go].Default.Model = %q, want %q", gc.Default.Model, "sonnet")
 	}
-	if !equalStrings(merged.Preset.ToolsAllow, project.Preset.ToolsAllow) {
-		t.Errorf("merged.Preset.ToolsAllow = %v, want %v", merged.Preset.ToolsAllow, project.Preset.ToolsAllow)
-	}
-	if _, ok := merged.Overrides[domain.KindBuild]; !ok {
-		t.Errorf("merged.Overrides[build] missing; want preserved from project")
+	if _, ok := gc.Kinds[domain.KindBuild]; !ok {
+		t.Error("merged[go] Kinds[build] missing; want preserved from project")
 	}
 }
 
-// TestMergeLocal_NilProject asserts that calling MergeLocal with a nil project
-// registry returns an error — agents.toml is required per SKETCH § 3.3 and a
-// local file without a project is invalid.
-func TestMergeLocal_NilProject(t *testing.T) {
+// TestMerge_NilProject asserts that Merge(local, nil) returns a deep-clone
+// of local — project is optional.
+func TestMerge_NilProject(t *testing.T) {
 	t.Parallel()
 
-	local := &AgentsRegistry{Preset: Preset{Model: "sonnet"}, Overrides: map[domain.Kind]Override{}}
+	local := AgentsRegistry{
+		"go": {Default: Preset{Model: "sonnet"}, Kinds: map[domain.Kind]Override{}},
+	}
 
-	_, err := MergeLocal(nil, local)
-	if err == nil {
-		t.Fatal("MergeLocal(nil, local) returned nil error; want error for missing project")
+	merged, err := Merge(local, nil)
+	if err != nil {
+		t.Fatalf("Merge(local, nil) returned error: %v", err)
+	}
+	if _, ok := merged["go"]; !ok {
+		t.Fatal("merged missing [go] from local")
 	}
 }
 
-// TestMergeLocal_PartialBlock asserts that a local registry whose [agents.build]
-// block sets only one field (Model) merges field-by-field over project's
-// [agents.build] — project's other field overrides survive untouched.
-func TestMergeLocal_PartialBlock(t *testing.T) {
+// TestMerge_BothNil asserts that Merge(nil, nil) returns an empty initialized
+// registry without error.
+func TestMerge_BothNil(t *testing.T) {
 	t.Parallel()
 
-	project := &AgentsRegistry{
-		Preset: Preset{Client: "claude", Model: "sonnet"},
-		Overrides: map[domain.Kind]Override{
-			domain.KindBuild: {
-				Model:        ptrStr("sonnet"),
-				MaxBudgetUSD: ptrFloat(5.0),
-				MaxTurns:     ptrInt(40),
-				ToolsAllow:   ptrSlice([]string{"Read", "Edit", "Bash"}),
+	merged, err := Merge(nil, nil)
+	if err != nil {
+		t.Fatalf("Merge(nil, nil) returned error: %v", err)
+	}
+	if merged == nil {
+		t.Fatal("Merge(nil, nil) returned nil registry; want empty initialized map")
+	}
+	if len(merged) != 0 {
+		t.Errorf("len(merged) = %d, want 0", len(merged))
+	}
+}
+
+// TestMerge_NewGroupFromLocal asserts that a group present only in local lands
+// as a fresh group in the merged registry.
+func TestMerge_NewGroupFromLocal(t *testing.T) {
+	t.Parallel()
+
+	project := AgentsRegistry{
+		"go": {Default: Preset{Model: "sonnet"}, Kinds: map[domain.Kind]Override{}},
+	}
+	local := AgentsRegistry{
+		"fe": {
+			Default: Preset{Model: "sonnet"},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuild: {Model: ptrStr("haiku")},
 			},
 		},
 	}
 
-	local, err := LoadRegistry(filepath.Join("testdata", "agents", "local_partial_block.toml"))
+	merged, err := Merge(local, project)
 	if err != nil {
-		t.Fatalf("LoadRegistry(local) returned error: %v", err)
+		t.Fatalf("Merge returned error: %v", err)
 	}
-
-	merged, err := MergeLocal(project, local)
-	if err != nil {
-		t.Fatalf("MergeLocal returned error: %v", err)
+	if len(merged) != 2 {
+		t.Errorf("len(merged) = %d, want 2 (go + fe)", len(merged))
 	}
-
-	build, ok := merged.Overrides[domain.KindBuild]
+	feGC, ok := merged["fe"]
 	if !ok {
-		t.Fatal("merged Overrides[build] missing")
+		t.Fatal("merged missing [fe] from local")
 	}
-	if build.Model == nil || *build.Model != "haiku" {
-		t.Errorf("merged Overrides[build].Model = %v, want %q (local override)", build.Model, "haiku")
+	feBuild, ok := feGC.Kinds[domain.KindBuild]
+	if !ok {
+		t.Fatal("merged[fe] Kinds[build] missing")
 	}
-	if build.MaxBudgetUSD == nil || *build.MaxBudgetUSD != 5.0 {
-		t.Errorf("merged Overrides[build].MaxBudgetUSD = %v, want 5.0 (project survives)", build.MaxBudgetUSD)
-	}
-	if build.MaxTurns == nil || *build.MaxTurns != 40 {
-		t.Errorf("merged Overrides[build].MaxTurns = %v, want 40 (project survives)", build.MaxTurns)
-	}
-	if build.ToolsAllow == nil || !equalStrings(*build.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
-		t.Errorf("merged Overrides[build].ToolsAllow = %v, want [Read Edit Bash] (project survives)", build.ToolsAllow)
+	if feBuild.Model == nil || *feBuild.Model != "haiku" {
+		t.Errorf("merged[fe] Kinds[build].Model = %v, want %q", feBuild.Model, "haiku")
 	}
 }
 
-// TestMergeLocal_PresetFieldMerge asserts that local's [agents] defaults block
-// fields override project's [agents] block field-by-field — local's set fields
-// win, project's other fields survive. Top-level Preset is concrete (not
-// pointer-shaped), so "absent" in local can only be inferred from the zero
-// value; the merge therefore uses zero-value-as-absent semantics for Preset
-// scalars and zero-length-as-absent for Preset list/map fields. (Pointer-based
-// Override is layered on top via per-kind blocks for explicit-zero discrimination.)
-func TestMergeLocal_PresetFieldMerge(t *testing.T) {
+// TestMerge_DefaultFieldMerge asserts that local's non-zero Default fields
+// override project's Default fields, while local's zero-value fields preserve
+// project's values.
+func TestMerge_DefaultFieldMerge(t *testing.T) {
 	t.Parallel()
 
-	project := &AgentsRegistry{
-		Preset: Preset{
-			Client:       "claude",
-			Model:        "sonnet",
-			MaxBudgetUSD: 5.0,
-			MaxTurns:     40,
-			EnvSet:       map[string]string{"A": "1"},
-			CliArgs:      []string{"--strict-mcp-config"},
+	project := AgentsRegistry{
+		"go": {
+			Default: Preset{
+				Client:       "claude",
+				Model:        "sonnet",
+				MaxBudgetUSD: 5.0,
+				MaxTurns:     40,
+				EnvSet:       map[string]string{"A": "1"},
+				CliArgs:      []string{"--strict-mcp-config"},
+			},
+			Kinds: map[domain.Kind]Override{},
 		},
-		Overrides: map[domain.Kind]Override{},
+	}
+	local := AgentsRegistry{
+		"go": {
+			Default: Preset{
+				Model:  "opus",
+				EnvSet: map[string]string{"B": "2"},
+				// Client, MaxBudgetUSD, MaxTurns, CliArgs absent (zero) → project survives.
+			},
+			Kinds: map[domain.Kind]Override{},
+		},
 	}
 
-	// Local sets Model and adds an EnvSet entry; everything else absent.
-	local := &AgentsRegistry{
-		Preset: Preset{
-			Model:  "opus",
-			EnvSet: map[string]string{"B": "2"},
-		},
-		Overrides: map[domain.Kind]Override{},
-	}
-
-	merged, err := MergeLocal(project, local)
+	merged, err := Merge(local, project)
 	if err != nil {
-		t.Fatalf("MergeLocal returned error: %v", err)
+		t.Fatalf("Merge returned error: %v", err)
 	}
 
-	if merged.Preset.Client != "claude" {
-		t.Errorf("merged.Preset.Client = %q, want %q (project survives)", merged.Preset.Client, "claude")
+	gc := merged["go"]
+	if gc.Default.Client != "claude" {
+		t.Errorf("merged Client = %q, want %q (project survives)", gc.Default.Client, "claude")
 	}
-	if merged.Preset.Model != "opus" {
-		t.Errorf("merged.Preset.Model = %q, want %q (local wins)", merged.Preset.Model, "opus")
+	if gc.Default.Model != "opus" {
+		t.Errorf("merged Model = %q, want %q (local wins)", gc.Default.Model, "opus")
 	}
-	if merged.Preset.MaxBudgetUSD != 5.0 {
-		t.Errorf("merged.Preset.MaxBudgetUSD = %v, want 5.0 (project survives)", merged.Preset.MaxBudgetUSD)
+	if gc.Default.MaxBudgetUSD != 5.0 {
+		t.Errorf("merged MaxBudgetUSD = %v, want 5.0 (project survives)", gc.Default.MaxBudgetUSD)
 	}
-	if merged.Preset.MaxTurns != 40 {
-		t.Errorf("merged.Preset.MaxTurns = %d, want 40 (project survives)", merged.Preset.MaxTurns)
+	if gc.Default.MaxTurns != 40 {
+		t.Errorf("merged MaxTurns = %d, want 40 (project survives)", gc.Default.MaxTurns)
 	}
-	if v, ok := merged.Preset.EnvSet["A"]; !ok || v != "1" {
-		t.Errorf("merged.Preset.EnvSet[A] = %q (present=%v), want %q present (project survives)", v, ok, "1")
+	if v, ok := gc.Default.EnvSet["A"]; !ok || v != "1" {
+		t.Errorf("merged EnvSet[A] = %q present=%v, want present (project survives)", v, ok)
 	}
-	if v, ok := merged.Preset.EnvSet["B"]; !ok || v != "2" {
-		t.Errorf("merged.Preset.EnvSet[B] = %q (present=%v), want %q present (local merged)", v, ok, "2")
+	if v, ok := gc.Default.EnvSet["B"]; !ok || v != "2" {
+		t.Errorf("merged EnvSet[B] = %q present=%v, want present (local merged)", v, ok)
 	}
-	if !equalStrings(merged.Preset.CliArgs, []string{"--strict-mcp-config"}) {
-		t.Errorf("merged.Preset.CliArgs = %v, want [--strict-mcp-config] (project survives, local absent)", merged.Preset.CliArgs)
+	if !equalStrings(gc.Default.CliArgs, []string{"--strict-mcp-config"}) {
+		t.Errorf("merged CliArgs = %v, want [--strict-mcp-config] (project survives)", gc.Default.CliArgs)
 	}
 }
 
-// TestMergeLocal_NewKindBlock asserts that a [agents.<kind>] block present in
-// local but absent in project lands as a fresh override key in the merged
-// registry.
-func TestMergeLocal_NewKindBlock(t *testing.T) {
+// TestMerge_PartialKindBlock asserts that a local group whose [kind] block sets
+// only one field merges field-by-field over project's same [kind] block —
+// project's other kind-block fields survive.
+func TestMerge_PartialKindBlock(t *testing.T) {
 	t.Parallel()
 
-	project := &AgentsRegistry{
-		Preset:    Preset{Client: "claude", Model: "sonnet"},
-		Overrides: map[domain.Kind]Override{},
+	project := AgentsRegistry{
+		"go": {
+			Default: Preset{Model: "sonnet"},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuild: {
+					Model:        ptrStr("sonnet"),
+					MaxBudgetUSD: ptrFloat(5.0),
+					MaxTurns:     ptrInt(40),
+					ToolsAllow:   ptrSlice([]string{"Read", "Edit", "Bash"}),
+				},
+			},
+		},
 	}
-
-	local := &AgentsRegistry{
-		Preset: Preset{},
-		Overrides: map[domain.Kind]Override{
-			domain.KindCommit: {Model: ptrStr("haiku")},
+	local := AgentsRegistry{
+		"go": {
+			Default: Preset{},
+			Kinds: map[domain.Kind]Override{
+				domain.KindBuild: {Model: ptrStr("haiku")},
+			},
 		},
 	}
 
-	merged, err := MergeLocal(project, local)
+	merged, err := Merge(local, project)
 	if err != nil {
-		t.Fatalf("MergeLocal returned error: %v", err)
+		t.Fatalf("Merge returned error: %v", err)
 	}
-	commit, ok := merged.Overrides[domain.KindCommit]
+
+	gc := merged["go"]
+	buildOv, ok := gc.Kinds[domain.KindBuild]
 	if !ok {
-		t.Fatal("merged Overrides[commit] missing; want fresh kind from local")
+		t.Fatal("merged go Kinds[build] missing")
 	}
-	if commit.Model == nil || *commit.Model != "haiku" {
-		t.Errorf("merged Overrides[commit].Model = %v, want %q (local-only kind)", commit.Model, "haiku")
+	if buildOv.Model == nil || *buildOv.Model != "haiku" {
+		t.Errorf("merged Kinds[build].Model = %v, want %q (local wins)", buildOv.Model, "haiku")
+	}
+	if buildOv.MaxBudgetUSD == nil || *buildOv.MaxBudgetUSD != 5.0 {
+		t.Errorf("merged Kinds[build].MaxBudgetUSD = %v, want 5.0 (project survives)", buildOv.MaxBudgetUSD)
+	}
+	if buildOv.MaxTurns == nil || *buildOv.MaxTurns != 40 {
+		t.Errorf("merged Kinds[build].MaxTurns = %v, want 40 (project survives)", buildOv.MaxTurns)
+	}
+	if buildOv.ToolsAllow == nil || !equalStrings(*buildOv.ToolsAllow, []string{"Read", "Edit", "Bash"}) {
+		t.Errorf("merged Kinds[build].ToolsAllow = %v, want [Read Edit Bash] (project survives)", buildOv.ToolsAllow)
 	}
 }
 
-// TestConfigError_FormatsCorrectly asserts that the *ConfigError envelope's
-// Error() method produces the canonical "<file> <block>:<line>: <cause>"
-// shape when all fields are populated. The format is part of the public
-// surface (downstream W3 / W11 callers may match on it); document the
-// canonical shape via a fixed-point test.
+// ── ConfigError ───────────────────────────────────────────────────────────────
+
+// TestConfigError_FormatsCorrectly asserts the *ConfigError envelope's Error()
+// method produces the canonical "<file> <block>:<line>: <cause>" shape.
 func TestConfigError_FormatsCorrectly(t *testing.T) {
 	t.Parallel()
 
 	cause := errors.New("tools_deny is not user-overridable; remove the field")
 	cerr := &ConfigError{
 		File:  "agents.local.toml",
-		Block: "[agents.build]",
+		Block: "[go.build]",
 		Line:  42,
 		Cause: cause,
 	}
 
 	got := cerr.Error()
-	want := "agents.local.toml [agents.build]:42: tools_deny is not user-overridable; remove the field"
+	want := "agents.local.toml [go.build]:42: tools_deny is not user-overridable; remove the field"
 	if got != want {
 		t.Errorf("ConfigError.Error() = %q, want %q", got, want)
 	}
 }
 
-// TestConfigError_FormatsWithoutLine asserts that when Line == 0 (e.g.,
-// MergeLocal-side rejections that lack source-line context per the L2
-// PLAN.md RiskNotes), the envelope omits the colon-line suffix instead of
-// printing a misleading ":0" position. Keeps the format unambiguous.
+// TestConfigError_FormatsWithoutLine asserts that Line == 0 omits the
+// colon-line suffix instead of printing a misleading ":0".
 func TestConfigError_FormatsWithoutLine(t *testing.T) {
 	t.Parallel()
 
 	cause := errors.New("tools_deny is not user-overridable; remove the field")
 	cerr := &ConfigError{
 		File:  "agents.local.toml",
-		Block: "[agents.build]",
+		Block: "[go.build]",
 		Line:  0,
 		Cause: cause,
 	}
 
 	got := cerr.Error()
-	want := "agents.local.toml [agents.build]: tools_deny is not user-overridable; remove the field"
+	want := "agents.local.toml [go.build]: tools_deny is not user-overridable; remove the field"
 	if got != want {
 		t.Errorf("ConfigError.Error() with Line=0 = %q, want %q", got, want)
 	}
 }
 
-// TestConfigError_FormatsWithoutBlock asserts that when Block == "" (e.g.,
-// a top-level syntax error before any TOML key resolves), the envelope
-// renders "<file>:<line>: <cause>" without an empty bracket. Keeps the
-// format clean for the malformed-TOML path.
+// TestConfigError_FormatsWithoutBlock asserts that Block == "" renders
+// "<file>:<line>: <cause>" without an empty bracket.
 func TestConfigError_FormatsWithoutBlock(t *testing.T) {
 	t.Parallel()
 
@@ -790,141 +965,26 @@ func TestConfigError_FormatsWithoutBlock(t *testing.T) {
 	}
 }
 
-// TestConfigError_UnwrapPreservesSentinel asserts that errors.Is against the
-// closed sentinel ErrToolsDenyNotOverridable still succeeds when the sentinel
-// is wrapped inside a *ConfigError envelope. Load-bearing for D3's bare-
-// sentinel rejection contract surviving the D5 wrap — callers must continue
-// to be able to inspect the rejection contract via errors.Is.
+// TestConfigError_UnwrapPreservesSentinel asserts errors.Is against
+// ErrToolsDenyNotOverridable succeeds when wrapped inside a *ConfigError.
 func TestConfigError_UnwrapPreservesSentinel(t *testing.T) {
 	t.Parallel()
 
 	cerr := &ConfigError{
 		File:  "agents.local.toml",
-		Block: "[agents.build]",
+		Block: "[go.build]",
 		Cause: ErrToolsDenyNotOverridable,
 	}
 
 	if !errors.Is(cerr, ErrToolsDenyNotOverridable) {
 		t.Errorf("errors.Is(*ConfigError wrapping ErrToolsDenyNotOverridable, ErrToolsDenyNotOverridable) = false; want true")
 	}
-
-	// errors.Unwrap should yield the original sentinel directly.
 	if got := errors.Unwrap(cerr); got != ErrToolsDenyNotOverridable {
 		t.Errorf("errors.Unwrap(*ConfigError) = %v, want ErrToolsDenyNotOverridable", got)
 	}
 }
 
-// TestLoadRegistry_PositionWrapped asserts the D5 envelope contract on
-// LoadRegistry's malformed-TOML path: errors.As extracts a *ConfigError with
-// File set to the loaded path and Line > 0 (extracted from
-// *toml.DecodeError.Position()). This test REVISES (extends) the D1
-// TestLoadRegistry_MalformedTOML expectation — the inner *toml.DecodeError
-// remains reachable via the unwrap chain, which TestLoadRegistry_MalformedTOML
-// continues to assert.
-func TestLoadRegistry_PositionWrapped(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join("testdata", "agents", "malformed.toml")
-	_, err := LoadRegistry(path)
-	if err == nil {
-		t.Fatal("LoadRegistry returned nil error for malformed input")
-	}
-
-	var cerr *ConfigError
-	if !errors.As(err, &cerr) {
-		t.Fatalf("error chain does not contain *ConfigError: %v", err)
-	}
-	if cerr.File != path {
-		t.Errorf("ConfigError.File = %q, want %q", cerr.File, path)
-	}
-	if cerr.Line <= 0 {
-		t.Errorf("ConfigError.Line = %d, want > 0 (from *toml.DecodeError.Position())", cerr.Line)
-	}
-
-	// The inner *toml.DecodeError must remain extractable via the unwrap chain
-	// so existing callers using errors.As(*toml.DecodeError) continue working.
-	var decodeErr *toml.DecodeError
-	if !errors.As(err, &decodeErr) {
-		t.Errorf("errors.As(err, &*toml.DecodeError) = false; want true (unwrap chain preservation)")
-	}
-}
-
-// TestMergeLocal_ToolsDenyPositionWrapped asserts that MergeLocal wraps the
-// bare ErrToolsDenyNotOverridable sentinel into a *ConfigError envelope with
-// File = "agents.local.toml" and Block = "[agents.build]" (since the fixture
-// sets tools_deny inside the per-kind block). This is the D5-owned position-
-// wrapping behavior that D3's TestMergeLocal_ToolsDenyRejected deferred:
-// D3 owns the bare sentinel; D5 owns the envelope wrap.
-func TestMergeLocal_ToolsDenyPositionWrapped(t *testing.T) {
-	t.Parallel()
-
-	project := &AgentsRegistry{
-		Preset:    Preset{ToolsDeny: []string{"WebFetch"}},
-		Overrides: map[domain.Kind]Override{},
-	}
-
-	local, err := LoadRegistry(filepath.Join("testdata", "agents", "local_tools_deny_rejected.toml"))
-	if err != nil {
-		t.Fatalf("LoadRegistry(local) returned error: %v", err)
-	}
-
-	_, err = MergeLocal(project, local)
-	if err == nil {
-		t.Fatal("MergeLocal returned nil error for local tools_deny; want envelope-wrapped sentinel")
-	}
-
-	// Sentinel chain still walks through the envelope.
-	if !errors.Is(err, ErrToolsDenyNotOverridable) {
-		t.Errorf("errors.Is(err, ErrToolsDenyNotOverridable) = false; want true (chain preservation through ConfigError wrap)")
-	}
-
-	var cerr *ConfigError
-	if !errors.As(err, &cerr) {
-		t.Fatalf("error chain does not contain *ConfigError: %v", err)
-	}
-	if cerr.File != "agents.local.toml" {
-		t.Errorf("ConfigError.File = %q, want %q", cerr.File, "agents.local.toml")
-	}
-	if cerr.Block != "[agents.build]" {
-		t.Errorf("ConfigError.Block = %q, want %q", cerr.Block, "[agents.build]")
-	}
-}
-
-// TestMergeLocal_ToolsDenyDefaultsPositionWrapped asserts that tools_deny set
-// in the local [agents] defaults block (not just per-kind) is also wrapped
-// with the correct Block context — "[agents]" rather than "[agents.<kind>]".
-// Companion to TestMergeLocal_ToolsDenyDefaultsBlockRejected: D3 covers the
-// sentinel rejection; D5 covers the block-context wrapping.
-func TestMergeLocal_ToolsDenyDefaultsPositionWrapped(t *testing.T) {
-	t.Parallel()
-
-	project := &AgentsRegistry{
-		Preset:    Preset{ToolsDeny: []string{"WebFetch"}},
-		Overrides: map[domain.Kind]Override{},
-	}
-	// In-code local with tools_deny in the defaults block; Path left empty
-	// so the envelope falls back to "agents.local.toml" canonical label.
-	local := &AgentsRegistry{
-		Preset:    Preset{ToolsDeny: []string{"AnotherTool"}},
-		Overrides: map[domain.Kind]Override{},
-	}
-
-	_, err := MergeLocal(project, local)
-	if err == nil {
-		t.Fatal("MergeLocal returned nil error; want envelope-wrapped sentinel")
-	}
-
-	var cerr *ConfigError
-	if !errors.As(err, &cerr) {
-		t.Fatalf("error chain does not contain *ConfigError: %v", err)
-	}
-	if cerr.Block != "[agents]" {
-		t.Errorf("ConfigError.Block = %q, want %q", cerr.Block, "[agents]")
-	}
-	if !errors.Is(err, ErrToolsDenyNotOverridable) {
-		t.Errorf("errors.Is(err, ErrToolsDenyNotOverridable) = false; want true")
-	}
-}
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 // equalStrings compares two string slices element-by-element.
 func equalStrings(a, b []string) bool {
@@ -939,24 +999,17 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// ptrStr returns a pointer to s. Test helper for constructing Override
-// scalars in code rather than via TOML decode.
+// ptrStr returns a pointer to s.
 func ptrStr(s string) *string { return &s }
 
-// ptrSlice returns a pointer to s. Test helper for constructing Override
-// list fields in code rather than via TOML decode — load-bearing for the
-// empty-list-vs-nil edge case where TOML cannot express "explicit empty
-// list" disjoint from "absent."
+// ptrSlice returns a pointer to s.
 func ptrSlice(s []string) *[]string { return &s }
 
-// ptrMap returns a pointer to m. Test helper for constructing Override map
-// fields in code rather than via TOML decode.
+// ptrMap returns a pointer to m.
 func ptrMap(m map[string]string) *map[string]string { return &m }
 
-// ptrFloat returns a pointer to f. Test helper for constructing Override
-// numeric fields in code.
+// ptrFloat returns a pointer to f.
 func ptrFloat(f float64) *float64 { return &f }
 
-// ptrInt returns a pointer to n. Test helper for constructing Override
-// integer fields in code.
+// ptrInt returns a pointer to n.
 func ptrInt(n int) *int { return &n }

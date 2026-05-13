@@ -1,0 +1,13 @@
+# multigroup_kind_override.toml — golden fixture for TestResolveMultiGroup_KindOverride.
+#
+# [go] defaults set model=sonnet; [go.plan-qa-proof] overrides model=opus.
+# Validates per-kind override wins over group default in Resolve.
+
+[go]
+model = "sonnet"
+max_budget_usd = 5.0
+tools_allow = ["Read", "Bash"]
+
+[go.plan-qa-proof]
+model = "opus"
+max_budget_usd = 10.0

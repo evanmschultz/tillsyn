@@ -1,0 +1,20 @@
+# multigroup_go_fe.toml — golden fixture for TestLoadMultiGroupRegistry_MultiGroup.
+#
+# Two groups [go] and [fe] with different defaults. Validates multi-group
+# decode where both groups decode independently with correct field isolation.
+
+[go]
+model = "sonnet"
+tools_allow = ["Read", "Edit", "Bash"]
+
+[go.build]
+model = "sonnet"
+tools_allow = ["Read", "Edit", "Write", "Bash"]
+
+[fe]
+model = "sonnet"
+tools_allow = ["Read", "Edit", "Bash"]
+
+[fe.build-qa-proof]
+model = "opus"
+tools_allow = ["Read", "Grep", "Glob"]

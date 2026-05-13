@@ -1,17 +1,45 @@
 // Package config — agents.toml schema + decode wiring.
 //
-// agents.go ships the runtime-config foundation for Drop 4c.6 W0: the
-// `Preset` defaults block, per-kind `Override` partial-shape struct, the
-// merged-result `AgentRuntime`, and the loaded `AgentsRegistry`. Subsequent
-// W0 droplets (D2 Resolve, D3 MergeLocal, D5 ConfigError envelope) layer
-// inheritance, local-file deep-merge, and position-aware error wrapping
-// atop the types defined here. Frontmatter strip helper lives in the sibling
-// `frontmatter.go` (D4).
+// agents.go ships the runtime-config foundation for multi-group agents.toml
+// support (Drop 4c.6.1 W0). The schema shifts from the old single-group
+// [agents] / [agents.<kind>] layout to a multi-group [<group>] /
+// [<group>.<kind>] layout where each group has its own defaults block and
+// per-kind overrides.
 //
-// Schema source of truth: SKETCH.md § 4.1 (defaults) + § 4.2 (per-kind
-// overrides) + § 4.2.1-4.2.3 (inheritance semantics — applied in D2). The
-// pointer-based Override discriminates "absent" (nil) from "explicit zero
-// value" — load-bearing for D2's resolver.
+// Key types:
+//
+//   - [GroupConfig] — per-group config block: default Preset + per-kind Override map.
+//   - [AgentsRegistry] — the loaded agents.toml document: map[group]GroupConfig.
+//   - [LoadMultiGroupRegistry] — decodes a multi-group agents.toml file.
+//   - [Resolve] — returns the effective Preset for a group + kind combination.
+//   - [Merge] — deep-merges two AgentsRegistry values; local wins.
+//
+// TOML schema (multi-group):
+//
+//	[go]
+//	model = "sonnet"
+//	tools_allow = ["Read", "Edit"]
+//
+//	[go.build]
+//	model = "sonnet"
+//	tools_allow = ["Read", "Edit", "Write", "Bash"]
+//
+//	[fe]
+//	model = "sonnet"
+//
+//	[fe.build-qa-proof]
+//	model = "opus"
+//
+// Inheritance semantics inside a group (SKETCH.md § 4.2.1-4.2.3):
+//   - Scalars: per-kind Override pointer nil → inherit Default value.
+//   - Maps (EnvSet, EnvFromShell): per-key merge; Default first, then Override keys.
+//   - Lists (CliArgs, ToolsAllow, ToolsDeny, ClaudeMDAddons): full-replace if
+//     Override pointer is non-nil (including non-nil empty slice).
+//
+// Resolver fallback for missing group: returns empty Preset (no panic).
+//
+// Frontmatter strip helper lives in the sibling frontmatter.go.
+// Config envelope errors: [ConfigError] wraps decode + merge failures.
 package config
 
 import (
@@ -25,29 +53,22 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
-// ErrToolsDenyNotOverridable is the closed sentinel returned when an
-// agents.local.toml registry sets `tools_deny` (in either the [agents]
-// defaults block or any per-kind block). Per SKETCH.md § 4.3.1, tools_deny
-// is the safety floor: users CANNOT relax denials via .local.toml. D5's
-// *ConfigError envelope wraps this sentinel with file/line/block position
-// information; D3 raises only the bare sentinel.
+// ErrToolsDenyNotOverridable is the closed sentinel returned when a local
+// AgentsRegistry (the first argument to Merge) sets tools_deny in any group
+// default block or per-kind block. Per SKETCH.md § 4.3.1, tools_deny is the
+// safety floor: users CANNOT relax denials via a local registry.
 //
-// Callers inspect the rejection contract via errors.Is(err, ErrToolsDenyNotOverridable).
+// Callers inspect via errors.Is(err, ErrToolsDenyNotOverridable).
 var ErrToolsDenyNotOverridable = errors.New("tools_deny is not user-overridable; remove the field")
 
 // localPathLabel is the canonical user-facing file label for errors raised
-// from MergeLocal — independent of the actual on-disk path. Users care that
-// the offending content came from "their .local.toml," not the absolute
-// filesystem path the loader was invoked with. Hardcoded here so the format
-// stays stable across callers (`till init`, render-layer wiring, MCP boundary).
+// from Merge — independent of the actual on-disk path.
 const localPathLabel = "agents.local.toml"
 
 // deterministicKindOrder mirrors the closed 12-value Kind enum sequence in
 // internal/domain/kind.go. Used to iterate the per-kind override map in a
-// stable order so error messages naming the offending block (e.g. when
-// rejecting tools_deny in MergeLocal) are reproducible across runs — Go's
-// map iteration is intentionally randomized and would produce flaky test
-// fixtures + ambiguous user-facing diagnostics if used directly.
+// stable order so error messages naming the offending block are reproducible
+// across runs — Go's map iteration is intentionally randomized.
 var deterministicKindOrder = []domain.Kind{
 	domain.KindPlan,
 	domain.KindResearch,
@@ -64,10 +85,9 @@ var deterministicKindOrder = []domain.Kind{
 }
 
 // ConfigError is the unified envelope wrapping every error returned from
-// LoadRegistry and MergeLocal. It carries file/block/line position context
-// alongside the underlying cause so downstream consumers (W3 render layer,
-// W11 MCP boundary) get a single typed error to inspect via errors.As and
-// a stable user-facing format.
+// LoadMultiGroupRegistry and Merge. It carries file/block/line position
+// context alongside the underlying cause so downstream consumers get a single
+// typed error to inspect via errors.As and a stable user-facing format.
 //
 // Format produced by Error():
 //
@@ -76,26 +96,19 @@ var deterministicKindOrder = []domain.Kind{
 // When Block is "" the envelope renders "<file>:<line>: <cause>"; when Line
 // is 0 the envelope renders "<file> <block>: <cause>" (or "<file>: <cause>"
 // if Block is also empty). The canonical case (every field set) reads e.g.
-// "agents.local.toml [agents.build]:42: tools_deny is not user-overridable;
+// "agents.local.toml [go.build]:42: tools_deny is not user-overridable;
 // remove the field".
 //
-// Unwrap returns Cause so errors.Is and errors.As walk transitively against
-// sentinels like ErrToolsDenyNotOverridable and against the inner
-// *toml.DecodeError emitted by pelletier/go-toml/v2 on malformed input.
-//
-// Single-level wrapper by design — composing envelope-of-envelope is W0.5's
-// problem, not W0's. The format string is part of the public surface;
-// downstream tests may match on it. Avoid changing it lightly.
+// Unwrap returns Cause so errors.Is and errors.As walk transitively.
 type ConfigError struct {
 	File  string // user-facing file label (e.g. "agents.toml" or "agents.local.toml")
-	Block string // TOML table path in bracket form (e.g. "[agents.build]"); "" if no block context
-	Line  int    // 1-based source line (from *toml.DecodeError.Position()); 0 if unavailable
+	Block string // TOML table path in bracket form (e.g. "[go.build]"); "" if no block context
+	Line  int    // 1-based source line; 0 if unavailable
 	Cause error  // wrapped underlying error
 }
 
 // Error formats the envelope per the canonical "<file> <block>:<line>: <cause>"
-// shape. Empty Block / zero Line gracefully degrade to "<file>:<line>: <cause>"
-// or "<file> <block>: <cause>" or "<file>: <cause>" so the format is never
+// shape. Empty Block / zero Line gracefully degrade so the format is never
 // misleading (e.g. ":0:" appearing in user output).
 func (e *ConfigError) Error() string {
 	if e == nil {
@@ -106,7 +119,6 @@ func (e *ConfigError) Error() string {
 		cause = e.Cause.Error()
 	}
 
-	// Build the position prefix piece-by-piece based on which fields are set.
 	switch {
 	case e.Block != "" && e.Line > 0:
 		return fmt.Sprintf("%s %s:%d: %s", e.File, e.Block, e.Line, cause)
@@ -120,9 +132,6 @@ func (e *ConfigError) Error() string {
 }
 
 // Unwrap returns the wrapped cause so errors.Is / errors.As walk transitively.
-// Critical for callers that use errors.Is(err, ErrToolsDenyNotOverridable)
-// against MergeLocal's wrapped output and errors.As(err, &*toml.DecodeError)
-// against LoadRegistry's wrapped output.
 func (e *ConfigError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -135,7 +144,7 @@ func (e *ConfigError) Unwrap() error {
 // ConfigError.Block. Empty key returns "" so callers can omit the block
 // component for top-level syntax errors that don't resolve to any key.
 //
-// Example: Key{"agents", "build"} → "[agents.build]";  Key{} → "".
+// Example: Key{"go", "build"} → "[go.build]";  Key{} → "".
 func keyToBlock(key toml.Key) string {
 	if len(key) == 0 {
 		return ""
@@ -151,14 +160,10 @@ func keyToBlock(key toml.Key) string {
 	return out
 }
 
-// Preset captures the [agents] defaults block in agents.toml. Every field is
+// Preset captures the group-level defaults block in agents.toml. Every field is
 // a concrete value (not a pointer) — Preset is the floor that per-kind
-// Override pointers fall through to in D2's Resolve. Field naming follows
+// Override pointers fall through to in Resolve. Field naming follows
 // PascalCase Go convention with snake_case TOML keys.
-//
-// SKETCH.md § 4.1 schema ordering preserved: client/model/effort first
-// (identity), then caps (max_tries / max_budget_usd / max_turns / blocked_*),
-// then auto_push, then env maps, then list-typed knobs.
 type Preset struct {
 	Client               string            `toml:"client"`
 	Model                string            `toml:"model"`
@@ -179,13 +184,11 @@ type Preset struct {
 
 // Override is a per-kind partial-shape mirror of Preset. Every field is a
 // pointer so callers can distinguish "absent — inherit from Preset" (nil)
-// from "explicit zero value override" (non-nil pointer to zero). D2's
-// Resolve walks this 1-1 correspondence to merge.
+// from "explicit zero value override" (non-nil pointer to zero).
 //
-// Map fields (EnvSet, EnvFromShell) keep `*map` rather than just `map`
-// because nil-map vs empty-map carries semantic weight: nil = "inherit",
-// non-nil empty = "explicitly drop all defaults" (the latter only meaningful
-// once D2 lands and is documented there).
+// Map fields (EnvSet, EnvFromShell) keep *map rather than just map because
+// nil-map vs empty-map carries semantic weight: nil = "inherit", non-nil
+// empty = "explicitly drop all defaults."
 type Override struct {
 	Client               *string            `toml:"client"`
 	Model                *string            `toml:"model"`
@@ -204,64 +207,41 @@ type Override struct {
 	ClaudeMDAddons       *[]string          `toml:"claude_md_addons"`
 }
 
-// AgentRuntime is the effective per-kind config produced by D2's Resolve.
-// Same field set as Preset because every Override field falls through to a
-// Preset default at resolution time. Adapters (e.g. dispatcher CLI builder)
-// consume AgentRuntime, never the raw registry.
-type AgentRuntime struct {
-	Client               string
-	Model                string
-	Effort               string
-	MaxTries             int
-	MaxBudgetUSD         float64
-	MaxTurns             int
-	BlockedRetries       int
-	BlockedRetryCooldown string
-	AutoPush             bool
-	EnvSet               map[string]string
-	EnvFromShell         map[string]string
-	CliArgs              []string
-	ToolsAllow           []string
-	ToolsDeny            []string
-	ClaudeMDAddons       []string
-}
-
-// AgentsRegistry is the loaded agents.toml document: the [agents] defaults
-// block plus the map of per-kind override blocks keyed by domain.Kind. The
-// map is always non-nil after a successful LoadRegistry — absent per-kind
-// blocks simply do not appear as keys.
+// GroupConfig is the per-group configuration: a Default Preset that applies to
+// all kinds in the group, and a Kinds map of per-kind Override blocks that
+// layer on top of Default in Resolve.
 //
-// Path records the filesystem path LoadRegistry was invoked with, populated
-// at successful decode. Empty when the registry is constructed in code (e.g.
-// in tests) or via composition operations (e.g. MergeLocal returns a fresh
-// merged registry whose Path is set to the project's path). Used by D5's
-// *ConfigError envelope to populate the File field for downstream errors
-// surfaced by Resolve / future validators; MergeLocal hardcodes the canonical
-// "agents.local.toml" label rather than using local.Path so user-facing
-// messages remain stable regardless of the actual on-disk filesystem path.
-type AgentsRegistry struct {
-	Preset    Preset
-	Overrides map[domain.Kind]Override
-	Path      string
+// Kinds is always non-nil after a successful LoadMultiGroupRegistry — absent
+// per-kind blocks simply do not appear as keys. A GroupConfig constructed in
+// code with nil Kinds is treated as if it has an empty Kinds map (Resolve
+// handles nil safely).
+type GroupConfig struct {
+	// Default is the group-level defaults block (the [<group>] TOML section).
+	Default Preset
+	// Kinds is the per-kind override map (the [<group>.<kind>] TOML sections).
+	// Keyed by domain.Kind.
+	Kinds map[domain.Kind]Override
 }
 
-// agentsTOMLRoot is the on-disk shape pelletier/go-toml/v2 decodes into.
-// The [agents] block decodes into Agents; nested [agents.<kind>] subtables
-// decode into the per-kind pointer fields below.
-type agentsTOMLRoot struct {
-	Agents agentsTOMLBlock `toml:"agents"`
-}
+// AgentsRegistry is the loaded agents.toml document: a map from group name to
+// GroupConfig. The map is always non-nil after a successful
+// LoadMultiGroupRegistry — absent groups simply do not appear as keys.
+//
+// An AgentsRegistry constructed with a nil map is valid for reads (Go nil-map
+// reads return zero values) but callers should prefer an initialized empty
+// registry (use make(AgentsRegistry) or LoadMultiGroupRegistry).
+type AgentsRegistry map[string]GroupConfig
 
-// agentsTOMLBlock embeds Preset so the [agents] block's scalar/map/list
-// fields decode at this level, while [agents.<kind>] subtables decode into
-// the per-kind pointer fields. Each kind gets its own typed field rather
-// than a `map[string]Override` so DisallowUnknownFields() rejects typos in
-// kind names at decode time — silent drop on unknown kind names would be
-// a serious user-experience regression.
+// agentsTOMLGroupBlock embeds Preset so the [<group>] block's scalar/map/list
+// fields decode at this level, while [<group>.<kind>] subtables decode into
+// the per-kind pointer fields. Each kind gets its own typed field rather than
+// a map[string]Override so DisallowUnknownFields() rejects typos in kind names
+// at decode time — silent drop on unknown kind names would be a serious
+// user-experience regression.
 //
 // Adding a new kind requires updating the closed enum in
 // internal/domain/kind.go AND adding the matching field here.
-type agentsTOMLBlock struct {
+type agentsTOMLGroupBlock struct {
 	Preset
 	Plan                 *Override `toml:"plan"`
 	Research             *Override `toml:"research"`
@@ -277,31 +257,32 @@ type agentsTOMLBlock struct {
 	HumanVerify          *Override `toml:"human-verify"`
 }
 
-// LoadRegistry reads and decodes an agents.toml file at path. The decoder is
-// strict: unknown top-level fields are rejected so user-typos in field names
-// fail loud rather than silently drop. Returns a *ConfigError envelope
-// wrapping the underlying *toml.DecodeError on malformed input — callers can
-// recover the inner DecodeError via errors.As(err, &*toml.DecodeError) and
-// the envelope itself via errors.As(err, &*ConfigError) for File/Block/Line
-// position info. File-read failures (path missing, permission denied) are
-// returned via fmt.Errorf("%w") rather than the envelope because they have
-// no source-position to report.
+// LoadMultiGroupRegistry reads and decodes a multi-group agents.toml file at
+// path. The decoder is strict: unknown fields within each group block are
+// rejected so user-typos in field names fail loud rather than silently drop.
+// Group names (map keys) are user-defined and are not validated against a
+// closed enum.
+//
+// Returns a *ConfigError envelope wrapping the underlying *toml.DecodeError on
+// malformed input — callers can recover the inner DecodeError via
+// errors.As(err, &*toml.DecodeError) and the envelope itself via
+// errors.As(err, &*ConfigError) for File/Block/Line position info.
+// File-read failures (path missing, permission denied) are returned via
+// fmt.Errorf("%w") rather than the envelope because they have no source-
+// position to report.
 //
 // A nil registry is never returned alongside a nil error. On any error, the
 // returned registry is nil.
-func LoadRegistry(path string) (*AgentsRegistry, error) {
+func LoadMultiGroupRegistry(path string) (AgentsRegistry, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read agents.toml at %q: %w", path, err)
 	}
 
-	var root agentsTOMLRoot
+	var raw map[string]agentsTOMLGroupBlock
 	dec := toml.NewDecoder(bytes.NewReader(content))
 	dec = dec.DisallowUnknownFields()
-	if err := dec.Decode(&root); err != nil {
-		// Wrap *toml.DecodeError into the unified *ConfigError envelope so
-		// downstream callers get a single typed error to inspect. The inner
-		// DecodeError remains reachable via the Unwrap chain.
+	if err := dec.Decode(&raw); err != nil {
 		var decodeErr *toml.DecodeError
 		if errors.As(err, &decodeErr) {
 			row, _ := decodeErr.Position()
@@ -312,39 +293,39 @@ func LoadRegistry(path string) (*AgentsRegistry, error) {
 				Cause: decodeErr,
 			}
 		}
-		// Non-DecodeError decode failures (e.g. strict-decode rejections that
-		// aren't position-tagged) wrap into the envelope without a Line.
 		return nil, &ConfigError{
 			File:  path,
 			Cause: err,
 		}
 	}
 
-	overrides := make(map[domain.Kind]Override, 12)
-	addOverride(overrides, domain.KindPlan, root.Agents.Plan)
-	addOverride(overrides, domain.KindResearch, root.Agents.Research)
-	addOverride(overrides, domain.KindBuild, root.Agents.Build)
-	addOverride(overrides, domain.KindPlanQAProof, root.Agents.PlanQAProof)
-	addOverride(overrides, domain.KindPlanQAFalsification, root.Agents.PlanQAFalsification)
-	addOverride(overrides, domain.KindBuildQAProof, root.Agents.BuildQAProof)
-	addOverride(overrides, domain.KindBuildQAFalsification, root.Agents.BuildQAFalsification)
-	addOverride(overrides, domain.KindCloseout, root.Agents.Closeout)
-	addOverride(overrides, domain.KindCommit, root.Agents.Commit)
-	addOverride(overrides, domain.KindRefinement, root.Agents.Refinement)
-	addOverride(overrides, domain.KindDiscussion, root.Agents.Discussion)
-	addOverride(overrides, domain.KindHumanVerify, root.Agents.HumanVerify)
-
-	return &AgentsRegistry{
-		Preset:    root.Agents.Preset,
-		Overrides: overrides,
-		Path:      path,
-	}, nil
+	registry := make(AgentsRegistry, len(raw))
+	for group, block := range raw {
+		gc := GroupConfig{
+			Default: block.Preset,
+			Kinds:   make(map[domain.Kind]Override, 12),
+		}
+		addOverride(gc.Kinds, domain.KindPlan, block.Plan)
+		addOverride(gc.Kinds, domain.KindResearch, block.Research)
+		addOverride(gc.Kinds, domain.KindBuild, block.Build)
+		addOverride(gc.Kinds, domain.KindPlanQAProof, block.PlanQAProof)
+		addOverride(gc.Kinds, domain.KindPlanQAFalsification, block.PlanQAFalsification)
+		addOverride(gc.Kinds, domain.KindBuildQAProof, block.BuildQAProof)
+		addOverride(gc.Kinds, domain.KindBuildQAFalsification, block.BuildQAFalsification)
+		addOverride(gc.Kinds, domain.KindCloseout, block.Closeout)
+		addOverride(gc.Kinds, domain.KindCommit, block.Commit)
+		addOverride(gc.Kinds, domain.KindRefinement, block.Refinement)
+		addOverride(gc.Kinds, domain.KindDiscussion, block.Discussion)
+		addOverride(gc.Kinds, domain.KindHumanVerify, block.HumanVerify)
+		registry[group] = gc
+	}
+	return registry, nil
 }
 
 // addOverride records the override in the per-kind map only when the
-// pointer is non-nil, i.e. the user actually provided a [agents.<kind>]
-// block. Absent blocks remain absent in the map — D2's Resolve treats a
-// missing key as "no override, inherit Preset wholesale."
+// pointer is non-nil, i.e. the user actually provided a [<group>.<kind>]
+// block. Absent blocks remain absent in the map — Resolve treats a missing
+// key as "no override, inherit Default wholesale."
 func addOverride(out map[domain.Kind]Override, kind domain.Kind, ov *Override) {
 	if ov == nil {
 		return
@@ -352,61 +333,63 @@ func addOverride(out map[domain.Kind]Override, kind domain.Kind, ov *Override) {
 	out[kind] = *ov
 }
 
-// Resolve produces the effective per-kind AgentRuntime by merging
-// registry.Overrides[kind] over registry.Preset per the inheritance contract
-// in SKETCH.md § 4.2.1-4.2.3:
+// Resolve produces the effective Preset for the given group + kind by merging
+// registry[group].Kinds[kind] over registry[group].Default per the inheritance
+// contract in SKETCH.md § 4.2.1-4.2.3:
 //
-//   - Scalar fields (string / int / float / bool): if the Override pointer
-//     is nil the Preset value is used; otherwise the dereferenced override
-//     value wins (even if it is the zero value of the type — pointer-vs-
-//     dereference carries the absent-vs-zero discrimination).
-//   - Map fields (EnvSet, EnvFromShell): per-key merge. The Preset map is
-//     copied first; then each key in the override map is written into the
-//     copy, overwriting Preset entries on collision. Override-nil leaves
-//     the Preset map intact; override-empty contributes zero keys (so the
-//     resulting map equals the Preset map). Output is always a fresh map
-//     so callers cannot mutate Preset's storage through the AgentRuntime.
+//   - Scalar fields (string / int / float / bool): if the Override pointer is
+//     nil the Default value is used; otherwise the dereferenced override value
+//     wins (even if it is the zero value of the type).
+//   - Map fields (EnvSet, EnvFromShell): per-key merge. The Default map is
+//     copied first; then each key in the override map is written into the copy,
+//     overwriting Default entries on collision. Override-nil leaves the Default
+//     map intact. Output is always a fresh map.
 //   - List fields (CliArgs, ToolsAllow, ToolsDeny, ClaudeMDAddons): full
-//     replace if the override pointer is non-nil; inherit Preset otherwise.
-//     A non-nil empty slice (e.g. &[]string{}) replaces a non-empty Preset
-//     list with an empty slice — load-bearing for users who need to
-//     explicitly drop a default. Returned slice is the override's slice
-//     directly (no defensive copy); mutation by the caller is out of
-//     scope today, but D5's envelope or a future hardening pass may copy.
+//     replace if the override pointer is non-nil; inherit Default otherwise.
+//     A non-nil empty slice replaces a non-empty Default list with an empty
+//     slice — load-bearing for users who need to explicitly drop a default.
 //
-// A registry whose Overrides map has no entry for kind (or has the zero
-// Override) returns the Preset values verbatim — pure inheritance.
+// Missing group: if registry does not contain the requested group, Resolve
+// returns an empty Preset (no panic, no error). Callers requiring a group to
+// exist should validate before calling Resolve.
 //
-// Resolve currently never returns a non-nil error; the (AgentRuntime, error)
-// signature is reserved for D5's ConfigError envelope and future per-field
-// validators (e.g. unknown model name on a per-kind block). Callers that
-// strictly need an error-free resolution can use the result and ignore err
-// today, but should still wire errors.Is checks for forward-compat.
-func Resolve(registry *AgentsRegistry, kind domain.Kind) (AgentRuntime, error) {
-	if registry == nil {
-		return AgentRuntime{}, fmt.Errorf("Resolve: registry is nil")
+// Missing kind override: returns the group's Default values verbatim (pure
+// inheritance). This includes a registry with nil Kinds map.
+//
+// Resolve currently never returns a non-nil error; the (Preset, error)
+// signature is reserved for future per-field validators. Callers should still
+// wire errors.Is checks for forward-compat.
+func Resolve(registry AgentsRegistry, group, kind string) (Preset, error) {
+	gc, ok := registry[group]
+	if !ok {
+		// Unknown group — return empty Preset; no error.
+		return Preset{}, nil
 	}
 
-	// Start from Preset values — every field is the floor.
-	out := AgentRuntime{
-		Client:               registry.Preset.Client,
-		Model:                registry.Preset.Model,
-		Effort:               registry.Preset.Effort,
-		MaxTries:             registry.Preset.MaxTries,
-		MaxBudgetUSD:         registry.Preset.MaxBudgetUSD,
-		MaxTurns:             registry.Preset.MaxTurns,
-		BlockedRetries:       registry.Preset.BlockedRetries,
-		BlockedRetryCooldown: registry.Preset.BlockedRetryCooldown,
-		AutoPush:             registry.Preset.AutoPush,
-		EnvSet:               copyMap(registry.Preset.EnvSet),
-		EnvFromShell:         copyMap(registry.Preset.EnvFromShell),
-		CliArgs:              registry.Preset.CliArgs,
-		ToolsAllow:           registry.Preset.ToolsAllow,
-		ToolsDeny:            registry.Preset.ToolsDeny,
-		ClaudeMDAddons:       registry.Preset.ClaudeMDAddons,
+	// Start from Default values — every field is the floor.
+	out := Preset{
+		Client:               gc.Default.Client,
+		Model:                gc.Default.Model,
+		Effort:               gc.Default.Effort,
+		MaxTries:             gc.Default.MaxTries,
+		MaxBudgetUSD:         gc.Default.MaxBudgetUSD,
+		MaxTurns:             gc.Default.MaxTurns,
+		BlockedRetries:       gc.Default.BlockedRetries,
+		BlockedRetryCooldown: gc.Default.BlockedRetryCooldown,
+		AutoPush:             gc.Default.AutoPush,
+		EnvSet:               copyMap(gc.Default.EnvSet),
+		EnvFromShell:         copyMap(gc.Default.EnvFromShell),
+		CliArgs:              gc.Default.CliArgs,
+		ToolsAllow:           gc.Default.ToolsAllow,
+		ToolsDeny:            gc.Default.ToolsDeny,
+		ClaudeMDAddons:       gc.Default.ClaudeMDAddons,
 	}
 
-	ov, ok := registry.Overrides[kind]
+	if gc.Kinds == nil {
+		return out, nil
+	}
+
+	ov, ok := gc.Kinds[domain.Kind(kind)]
 	if !ok {
 		// No per-kind block: pure inheritance.
 		return out, nil
@@ -441,7 +424,7 @@ func Resolve(registry *AgentsRegistry, kind domain.Kind) (AgentRuntime, error) {
 		out.AutoPush = *ov.AutoPush
 	}
 
-	// Maps: per-key merge. Preset already copied above; layer override keys.
+	// Maps: per-key merge. Default already copied above; layer override keys.
 	if ov.EnvSet != nil {
 		if out.EnvSet == nil {
 			out.EnvSet = make(map[string]string, len(*ov.EnvSet))
@@ -477,9 +460,9 @@ func Resolve(registry *AgentsRegistry, kind domain.Kind) (AgentRuntime, error) {
 }
 
 // copyMap returns a shallow copy of m. Used by Resolve to give the caller a
-// fresh map they can mutate without aliasing into Preset's storage. Returns
+// fresh map they can mutate without aliasing into Default's storage. Returns
 // nil for nil input — preserves the absent-vs-empty distinction at the
-// AgentRuntime boundary.
+// Preset boundary.
 func copyMap(m map[string]string) map[string]string {
 	if m == nil {
 		return nil
@@ -491,120 +474,148 @@ func copyMap(m map[string]string) map[string]string {
 	return out
 }
 
-// MergeLocal deep-merges the local AgentsRegistry over the project
-// AgentsRegistry, returning a fresh registry whose contents reflect both
-// inputs per SKETCH.md § 4.3 + § 5. The merge runs at registry-level BEFORE
-// Resolve runs at kind-level — order is load-bearing: per-kind blocks in
-// local must field-merge into project's per-kind blocks; running Resolve
-// first would collapse each side to a flat AgentRuntime and lose the
-// pointer-vs-zero discrimination Override carries.
+// Merge deep-merges local on top of project, returning a fresh AgentsRegistry
+// whose contents reflect both inputs. The merge runs at registry-level BEFORE
+// Resolve runs at kind-level — order is load-bearing: per-kind blocks in local
+// must field-merge into project's per-kind blocks; running Resolve first would
+// collapse each side to a flat Preset and lose the pointer-vs-zero Override
+// discrimination.
 //
-// Field-merge semantics:
+// Per-group merge semantics:
 //
-//   - Top-level Preset (concrete fields, no pointer discrimination): zero
-//     values in local are treated as "absent" (project survives); non-zero
-//     values in local win. Map fields (EnvSet, EnvFromShell) merge per-key
-//     with local keys winning on collision. List fields (CliArgs,
-//     ToolsAllow, ClaudeMDAddons) full-replace if local sets a non-empty
-//     list; empty/nil local list preserves project. Concrete-field semantics
-//     necessarily collapse "absent" and "explicit zero" — users who need
-//     explicit-zero must use a per-kind override block, which carries
-//     pointer-based discrimination.
-//   - Per-kind Override blocks (pointer-shaped): local's non-nil pointers
-//     win field-by-field over project's pointers; nil pointers preserve
-//     project's pointers. Pointer-to-slice / pointer-to-map preserve the
-//     explicit-empty-vs-absent distinction inherited from D1.
+//   - Group exists in both local and project: merge Default fields (local
+//     non-zero wins; zero treated as absent) + merge Kinds map field-by-field
+//     (local Override pointers win over project pointers).
+//   - Group only in local: the local GroupConfig is deep-cloned into the output.
+//   - Group only in project: the project GroupConfig is deep-cloned into the output.
 //
-// tools_deny rejection: any non-empty tools_deny in local — whether in the
-// [agents] defaults block (Preset.ToolsDeny) or in a per-kind Override
-// (Override.ToolsDeny non-nil and non-empty) — returns the bare sentinel
-// ErrToolsDenyNotOverridable. D5's envelope wraps this with file/line/block
-// position info; D3 surfaces only the sentinel.
+// Default field-merge semantics:
 //
-// MergeLocal(project, nil) returns a deep-cloned copy of project — local
-// .toml is optional. MergeLocal(nil, _) returns an error: project agents.toml
-// is required per SKETCH § 3.3.
+//   - Top-level Default uses concrete (non-pointer) Preset fields. Zero values
+//     in local.Default are treated as "absent" (project survives); non-zero
+//     values in local.Default win. Map fields (EnvSet, EnvFromShell) merge
+//     per-key with local keys winning on collision. List fields (CliArgs,
+//     ToolsAllow, ClaudeMDAddons) full-replace if local sets a non-empty list.
 //
-// Usage:
+// Per-kind Override merge: local's non-nil pointers win field-by-field over
+// project's pointers. Pointer-to-slice / pointer-to-map preserve the
+// explicit-empty-vs-absent distinction.
 //
-//	merged, err := MergeLocal(project, local)
-//	if err != nil { return err }
-//	runtime, err := Resolve(merged, kind)
-func MergeLocal(project, local *AgentsRegistry) (*AgentsRegistry, error) {
-	if project == nil {
-		return nil, fmt.Errorf("MergeLocal: project registry is nil; agents.toml is required")
+// tools_deny rejection: any non-empty tools_deny in local — whether in a group
+// Default (Preset.ToolsDeny) or in a per-kind Override (Override.ToolsDeny
+// non-nil and non-empty) — returns the bare sentinel ErrToolsDenyNotOverridable
+// wrapped in a *ConfigError envelope with the offending block context.
+//
+// Merge(nil, project) returns a deep-clone of project — local is optional.
+// Merge(local, nil) returns a deep-clone of local — project is optional.
+// Merge(nil, nil) returns an initialized empty AgentsRegistry (no error).
+func Merge(local, project AgentsRegistry) (AgentsRegistry, error) {
+	// Validate local for tools_deny BEFORE merging — fail loud per SKETCH § 4.3.1.
+	if local != nil {
+		if err := rejectLocalToolsDeny(local); err != nil {
+			return nil, err
+		}
 	}
 
-	// Reject local tools_deny BEFORE merging — fail loud per SKETCH § 4.3.1.
-	// Wrap the bare ErrToolsDenyNotOverridable sentinel into a *ConfigError
-	// envelope so downstream callers get File + Block context. The sentinel
-	// remains reachable via errors.Is through the Unwrap chain. Source-line
-	// tracking is not threaded for MergeLocal-side rejections (Line stays 0)
-	// — pelletier/go-toml/v2 emits *toml.DecodeError only on decode failure;
-	// successful decode yields no per-field position metadata. Block context
-	// alone is sufficient to point users at the offending TOML table.
-	if local != nil {
-		if len(local.Preset.ToolsDeny) > 0 {
-			return nil, &ConfigError{
+	out := make(AgentsRegistry)
+
+	// Clone project into output first.
+	for group, gc := range project {
+		out[group] = cloneGroupConfig(gc)
+	}
+
+	// Merge local on top.
+	for group, localGC := range local {
+		existing, ok := out[group]
+		if !ok {
+			// Group only in local: clone into output.
+			out[group] = cloneGroupConfig(localGC)
+			continue
+		}
+		// Group in both: merge Default + Kinds.
+		mergePreset(&existing.Default, localGC.Default)
+		for kind, lov := range localGC.Kinds {
+			existingOv, ok := existing.Kinds[kind]
+			if !ok {
+				existing.Kinds[kind] = cloneOverride(lov)
+				continue
+			}
+			existing.Kinds[kind] = mergeOverride(existingOv, lov)
+		}
+		out[group] = existing
+	}
+
+	return out, nil
+}
+
+// rejectLocalToolsDeny checks all groups in the local registry for tools_deny
+// entries and returns the first *ConfigError wrapping ErrToolsDenyNotOverridable
+// it finds. Returns nil if no violations are found.
+//
+// Iterates groups in sorted order for deterministic error messages.
+func rejectLocalToolsDeny(local AgentsRegistry) error {
+	// Sort group names for deterministic iteration.
+	groups := make([]string, 0, len(local))
+	for g := range local {
+		groups = append(groups, g)
+	}
+	sortStrings(groups)
+
+	for _, group := range groups {
+		gc := local[group]
+		if len(gc.Default.ToolsDeny) > 0 {
+			return &ConfigError{
 				File:  localPathLabel,
-				Block: "[agents]",
+				Block: "[" + group + "]",
 				Cause: ErrToolsDenyNotOverridable,
 			}
 		}
-		// Iterate the closed Kind enum (not the map) so the rejected block name
-		// is deterministic across runs — map iteration order is randomized in
-		// Go and would produce unstable error messages when multiple per-kind
-		// blocks set tools_deny. Order mirrors the closed-12-enum sequence in
-		// internal/domain/kind.go.
 		for _, kind := range deterministicKindOrder {
-			ov, ok := local.Overrides[kind]
+			ov, ok := gc.Kinds[kind]
 			if !ok {
 				continue
 			}
 			if ov.ToolsDeny != nil && len(*ov.ToolsDeny) > 0 {
-				return nil, &ConfigError{
+				return &ConfigError{
 					File:  localPathLabel,
-					Block: "[agents." + string(kind) + "]",
+					Block: "[" + group + "." + string(kind) + "]",
 					Cause: ErrToolsDenyNotOverridable,
 				}
 			}
 		}
 	}
+	return nil
+}
 
-	out := &AgentsRegistry{
-		Preset:    project.Preset,
-		Overrides: make(map[domain.Kind]Override, len(project.Overrides)),
-		Path:      project.Path,
-	}
-	// Deep-clone project's Preset map fields so output never aliases inputs.
-	out.Preset.EnvSet = copyMap(project.Preset.EnvSet)
-	out.Preset.EnvFromShell = copyMap(project.Preset.EnvFromShell)
-	out.Preset.CliArgs = copySlice(project.Preset.CliArgs)
-	out.Preset.ToolsAllow = copySlice(project.Preset.ToolsAllow)
-	out.Preset.ToolsDeny = copySlice(project.Preset.ToolsDeny)
-	out.Preset.ClaudeMDAddons = copySlice(project.Preset.ClaudeMDAddons)
-	for kind, ov := range project.Overrides {
-		out.Overrides[kind] = cloneOverride(ov)
-	}
-
-	if local == nil {
-		return out, nil
-	}
-
-	// Preset field-merge: local non-zero wins; zero treated as absent.
-	mergePreset(&out.Preset, local.Preset)
-
-	// Per-kind Override merge: local pointers win field-by-field.
-	for kind, lov := range local.Overrides {
-		existing, ok := out.Overrides[kind]
-		if !ok {
-			out.Overrides[kind] = cloneOverride(lov)
-			continue
+// sortStrings sorts ss in-place using a simple insertion-style loop. Avoids
+// importing sort for a small slice common in this package.
+func sortStrings(ss []string) {
+	for i := 1; i < len(ss); i++ {
+		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {
+			ss[j], ss[j-1] = ss[j-1], ss[j]
 		}
-		out.Overrides[kind] = mergeOverride(existing, lov)
 	}
+}
 
-	return out, nil
+// cloneGroupConfig returns a deep-clone of gc so the merged AgentsRegistry
+// never aliases input maps.
+func cloneGroupConfig(gc GroupConfig) GroupConfig {
+	out := GroupConfig{
+		Default: gc.Default,
+		Kinds:   make(map[domain.Kind]Override, len(gc.Kinds)),
+	}
+	// Deep-clone Default map fields.
+	out.Default.EnvSet = copyMap(gc.Default.EnvSet)
+	out.Default.EnvFromShell = copyMap(gc.Default.EnvFromShell)
+	out.Default.CliArgs = copySlice(gc.Default.CliArgs)
+	out.Default.ToolsAllow = copySlice(gc.Default.ToolsAllow)
+	out.Default.ToolsDeny = copySlice(gc.Default.ToolsDeny)
+	out.Default.ClaudeMDAddons = copySlice(gc.Default.ClaudeMDAddons)
+	// Deep-clone Kinds.
+	for kind, ov := range gc.Kinds {
+		out.Kinds[kind] = cloneOverride(ov)
+	}
+	return out
 }
 
 // mergePreset overlays local's non-zero Preset fields onto out. Top-level
@@ -660,24 +671,22 @@ func mergePreset(out *Preset, local Preset) {
 		}
 	}
 	// Lists: full-replace if local sets a non-empty list. Empty/nil local
-	// preserves project's list (concrete-field layer cannot express
-	// "explicit empty replaces non-empty"; per-kind Override carries that).
+	// preserves project's list.
 	if len(local.CliArgs) > 0 {
 		out.CliArgs = copySlice(local.CliArgs)
 	}
 	if len(local.ToolsAllow) > 0 {
 		out.ToolsAllow = copySlice(local.ToolsAllow)
 	}
-	// ToolsDeny: rejected up-front via ErrToolsDenyNotOverridable; never
-	// reaches this branch under valid local registries.
+	// ToolsDeny: rejected up-front via ErrToolsDenyNotOverridable in
+	// rejectLocalToolsDeny; never reaches this branch under valid local registries.
 	if len(local.ClaudeMDAddons) > 0 {
 		out.ClaudeMDAddons = copySlice(local.ClaudeMDAddons)
 	}
 }
 
 // mergeOverride produces a fresh Override that combines existing (project)
-// with local, where local's non-nil pointers win field-by-field. Pointer-vs-
-// nil discrimination preserves the absent-vs-explicit-zero semantics from D1.
+// with local, where local's non-nil pointers win field-by-field.
 func mergeOverride(existing, local Override) Override {
 	out := cloneOverride(existing)
 	if local.Client != nil {
@@ -717,7 +726,6 @@ func mergeOverride(existing, local Override) Override {
 		out.AutoPush = &v
 	}
 	if local.EnvSet != nil {
-		// Per-key merge into existing map (or fresh map).
 		merged := make(map[string]string)
 		if out.EnvSet != nil {
 			for k, v := range *out.EnvSet {
@@ -758,9 +766,7 @@ func mergeOverride(existing, local Override) Override {
 }
 
 // cloneOverride returns a deep-clone of ov so the merged AgentsRegistry never
-// aliases input pointers. Pointer-shape preserved: a nil pointer in the input
-// stays nil in the output, a non-nil pointer is duplicated (fresh underlying
-// value, fresh pointer).
+// aliases input pointers.
 func cloneOverride(ov Override) Override {
 	out := Override{}
 	if ov.Client != nil {
@@ -828,7 +834,7 @@ func cloneOverride(ov Override) Override {
 
 // copySlice returns a fresh slice with the same elements as s, preserving
 // nil-vs-empty: nil input returns nil; empty non-nil input returns a fresh
-// empty slice (so callers cannot aliase into the input's backing array).
+// empty slice.
 func copySlice(s []string) []string {
 	if s == nil {
 		return nil

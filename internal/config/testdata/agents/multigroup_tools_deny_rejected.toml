@@ -1,0 +1,8 @@
+# multigroup_tools_deny_rejected.toml — golden fixture for TestMerge_ToolsDenyRejected.
+#
+# Local registry sets tools_deny in [go.build] — this must be rejected by
+# Merge with ErrToolsDenyNotOverridable per SKETCH § 4.3.1.
+
+[go.build]
+model = "opus"
+tools_deny = ["WebFetch"]
