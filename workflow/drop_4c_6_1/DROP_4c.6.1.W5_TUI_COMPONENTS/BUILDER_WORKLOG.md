@@ -158,3 +158,60 @@ All rows assert `cmd == nil` (no tea.Quit).
 - [x] `progress.go` compiles; `Progress` has `View() string` and `WithMessage(string) Progress`; no `Init()` or `Update()`; no import of `internal/tui/style`.
 - [x] Migration marker present in all 3 files as file-level comment before `package components`.
 - [x] `mage test-pkg ./internal/tui/components` passes.
+
+---
+
+## Round 5 — D5: Components: Header + Footer
+
+**Date:** 2026-05-13
+**Droplet:** D5 — `internal/tui/components/header.go` (NEW) + `header_test.go` (NEW) + `footer.go` (NEW) + `footer_test.go` (NEW)
+**Status:** DONE
+
+### Files Created
+
+- `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/internal/tui/components/header.go`
+- `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/internal/tui/components/header_test.go` (coverage rescue authority invoked)
+- `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/internal/tui/components/footer.go`
+- `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/internal/tui/components/footer_test.go` (coverage rescue authority invoked)
+
+### Design Decisions
+
+- `Header.View()` uses `lipgloss.Width()` to measure rendered widths of both sides (including ANSI escape sequences), then fills the gap with `strings.Repeat(" ", gap)`. Clamped to zero when combined width exceeds total `width`. This is correct for terminal rendering — raw `len()` would count ANSI bytes and produce wrong gaps.
+- Inline lipgloss styles used (not `internal/tui/style` package) to avoid any potential D1 `blocked_by` concern noted in the spec.
+- `Footer.View()` separates hints with " · " (interpunct, ASCII middot U+00B7) as the spec implies a visual separator. No `· ` separator in the spec text but standard for hint bars. Each hint rendered individually in muted style so ANSI wraps each; the raw `" · "` separator is unstyled (keeps it as a clean divider).
+- Coverage rescue authority invoked: existing D2/D3/D4 tests covered confirm, picker_single, picker_multi, textinput — but header.go and footer.go had no test files in the L1 paths. Added 5 smoke tests for Header and 6 for Footer. Recorded per spec authority grant.
+- Both structs use value receivers throughout — spec says "returns copy" for `WithWidth`. Value semantics are consistent with the rest of the components package.
+
+### TDD Cycle
+
+Per-function red→green confirmations:
+- `TestNewHeader`: GREEN immediately (NewHeader created before test run)
+- `TestHeaderWithWidth`: GREEN
+- `TestHeaderView_ContainsTitleAndSubtitle`: GREEN
+- `TestHeaderView_ZeroWidth`: GREEN
+- `TestHeaderView_WidthSmallerThanContent`: GREEN (gap clamp path exercised)
+- `TestNewFooter`: GREEN
+- `TestFooterWithWidth`: GREEN
+- `TestFooterView_ContainsHints`: GREEN
+- `TestFooterView_EmptyHints`: GREEN (nil slice handled)
+- `TestFooterView_EmptySlice`: GREEN
+- `TestFooterView_SingleHint`: GREEN
+
+### Test Summary
+
+57 total tests across 1 package — all pass (up from 46 pre-D5, +11 new).
+
+- 5 `TestHeader*` tests covering construction, WithWidth copy-semantics, View rendering, zero-width, and narrow-width clamp.
+- 6 `TestFooter*` tests covering construction, WithWidth copy-semantics, View rendering, nil hints, empty slice, single hint.
+
+### Acceptance Criteria Status
+
+- [x] Both `header.go` and `footer.go` compile with the full `internal/tui/components` package.
+- [x] `Header` has `View() string` and `WithWidth(int) Header`. No `Init()` or `Update()`.
+- [x] `Footer` has `View() string` and `WithWidth(int) Footer`. No `Init()` or `Update()`.
+- [x] Migration markers present in both files before `package components`.
+- [x] `mage test-pkg ./internal/tui/components` passes — 57 tests, all GREEN.
+
+### Hylla Feedback
+
+N/A — Hylla is OFF for this drop per spawn directive.
