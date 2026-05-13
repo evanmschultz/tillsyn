@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "tillsyn-bindings",
+  "description": "Tillsyn project-local vim bindings extension. ID-merges with stil baseline; local wins on collision.",
+  "extends": "stil-baseline",
+  "extends_path": "../../../stil/main/src/bindings/baseline.json",
+  "product_extensions": {
+    "tillsyn": {
+      "description": "Tillsyn-specific commands ADDED to baseline (ID-based deep merge; local wins on collision).",
+      "commands": [
+        { "id": "dispatch", "command": "dispatch", "description": "Trigger dispatcher on the focused action item -- accepts optional flags." },
+        { "id": "plan",     "command": "plan",     "description": "Open the planner for the focused project or sub-plan." },
+        { "id": "archive",  "command": "archive",  "description": "Archive the focused project or action item." },
+        { "id": "settings", "command": "settings", "description": "Open the settings panel (agents.toml + template.toml + groups)." },
+        { "id": "help",     "command": "help",     "description": "Open the help panel -- keybinding reference + tips." }
+      ]
+    }
+  }
+}
