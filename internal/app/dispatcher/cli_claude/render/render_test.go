@@ -1683,6 +1683,156 @@ func TestRenderValidatorAcceptsAllEmbeddedPlaceholders(t *testing.T) {
 	}
 }
 
+// TestRenderProjectTierOverridesEmbeddedDefault is the D21 smoke test.
+// It verifies that render.Render resolves a project-tier agent file over
+// the embedded default when the W1.D3 subdir-per-group path shape is in
+// place (binding.SystemPromptTemplatePath = "go/builder-agent.md").
+//
+// Table cases:
+//
+//  1. "project_tier_present" — a file seeded at
+//     <tmpdir>/.tillsyn/agents/go/builder-agent.md wins over the embedded
+//     default. Asserts the rendered agent file contains the fixture's
+//     post-frontmatter sentinel.
+//
+//  2. "project_tier_absent" — no project-tier file; user tier neutralised
+//     via t.Setenv(HOME). Resolver falls through to the embedded default
+//     whose body carries the canonical `# PLACEHOLDER` marker.
+//
+// Strip-then-inject note: both cases use a binding with nil ToolsAllowed +
+// ToolsDisallowed so the strip-then-inject pipeline removes no keys and
+// injects no new lines — the post-frontmatter body bytes from the fixture
+// survive verbatim into the rendered output. This is the simplest assertion
+// shape consistent with the pipeline semantics (W3-FF12: strip is always-on
+// for tool-gating keys; inject only fires when binding tool-gate slices are
+// non-empty).
+//
+// TestRenderProjectTierOverridesEmbeddedDefault does not call t.Parallel()
+// on the parent because the "project_tier_absent" sub-case calls t.Setenv —
+// Go panics if t.Setenv is called in a sub-test whose parent is parallel.
+// The "project_tier_present" sub-case calls t.Parallel() directly so it
+// still runs concurrently with other top-level tests.
+func TestRenderProjectTierOverridesEmbeddedDefault(t *testing.T) {
+	cases := []struct {
+		name              string
+		seedProjectTier   bool
+		wantSentinel      string
+		wantNotSentinel   string
+		requireSetenvHome bool
+	}{
+		{
+			name:            "project_tier_present",
+			seedProjectTier: true,
+			// Sentinel embedded in the fixture body — must appear in the
+			// rendered output when the project tier wins.
+			wantSentinel: "SENTINEL_D21_PROJECT_TIER",
+			// Embedded default carries `# PLACEHOLDER` — must NOT appear
+			// in the rendered output when the project tier wins.
+			wantNotSentinel:   "# PLACEHOLDER",
+			requireSetenvHome: false,
+		},
+		{
+			name:            "project_tier_absent",
+			seedProjectTier: false,
+			// Embedded default carries `# PLACEHOLDER` — must appear
+			// when the project tier is empty and the user tier is
+			// neutralised by t.Setenv(HOME).
+			wantSentinel:    "# PLACEHOLDER",
+			wantNotSentinel: "SENTINEL_D21_PROJECT_TIER",
+			// HOME must be neutralised so the user-tier resolver does not
+			// accidentally hit a real developer's ~/.tillsyn/agents.
+			requireSetenvHome: true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.requireSetenvHome {
+				// Case 1: project tier wins regardless of user tier —
+				// t.Parallel safe (no t.Setenv call).
+				t.Parallel()
+			}
+
+			if tc.requireSetenvHome {
+				// Case 2: neutralise the user tier so the render falls
+				// through to embedded. t.Setenv precludes t.Parallel.
+				t.Setenv("HOME", t.TempDir())
+			}
+
+			bundle := fixtureBundle(t)
+			project := fixtureProject()
+			project.RepoPrimaryWorktree = t.TempDir()
+
+			if tc.seedProjectTier {
+				// Fixture body: full frontmatter (Signal B), `## Role`
+				// marker (Signal C, per validateAgentBodyShape), body >
+				// 200 chars (Signal A via explicit filler), and the
+				// unique D21 sentinel in the post-frontmatter section.
+				//
+				// NOTE: validatorConformingBodySuffix() is intentionally
+				// NOT used here — it embeds a `# PLACEHOLDER` line that
+				// would cause the wantNotSentinel assertion for case 1 to
+				// fail (the wantNotSentinel checks that the EMBEDDED
+				// default's `# PLACEHOLDER` marker is absent, proving the
+				// project tier won). Using `## Role` + explicit filler
+				// satisfies Signals B + C + A without conflating the
+				// fixture body with the embedded default's marker.
+				fixtureBody := "---\nname: builder-agent\n---\n\n" +
+					"## Role\n\n" +
+					strings.Repeat("Project-tier D21 smoke-test filler to clear the 200-char Signal A floor. ", 4) +
+					"\nSENTINEL_D21_PROJECT_TIER\n"
+				agentTierProjectFixture(t,
+					project.RepoPrimaryWorktree,
+					"go",
+					"builder-agent.md",
+					fixtureBody)
+			}
+
+			// binding.SystemPromptTemplatePath = "go/builder-agent.md"
+			// drives resolveAgentGroup to return "go" (path.Dir) and
+			// resolveAgentBasename to return "builder-agent.md"
+			// (path.Base). The project-tier resolver then reads:
+			//   <RepoPrimaryWorktree>/.tillsyn/agents/go/builder-agent.md
+			//
+			// binding.AgentName = "builder-agent" drives the rendered
+			// filename to <bundle.Root>/plugin/agents/builder-agent.md
+			// (render.go:616). Omitting AgentName would land the file at
+			// a path that does not match the assertion below.
+			//
+			// Empty ToolsAllowed + ToolsDisallowed: strip-then-inject
+			// removes no keys and injects no new lines, so the fixture's
+			// post-frontmatter body bytes survive unchanged.
+			binding := dispatcher.BindingResolved{
+				AgentName:                "builder-agent",
+				CLIKind:                  dispatcher.CLIKindClaude,
+				SystemPromptTemplatePath: "go/builder-agent.md",
+				// nil tool-gate slices: strip removes any stale
+				// tool-gating keys from the fixture frontmatter
+				// (unconditional per W3-FF12); no inject because
+				// slices are empty. Post-frontmatter body untouched.
+				ToolsAllowed:    nil,
+				ToolsDisallowed: nil,
+			}
+
+			if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
+				t.Fatalf("Render() error = %v, want nil", err)
+			}
+
+			body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
+
+			if !strings.Contains(body, tc.wantSentinel) {
+				t.Errorf("rendered body missing %q sentinel\nbody:\n%s",
+					tc.wantSentinel, body)
+			}
+			if strings.Contains(body, tc.wantNotSentinel) {
+				t.Errorf("rendered body unexpectedly contains %q\nbody:\n%s",
+					tc.wantNotSentinel, body)
+			}
+		})
+	}
+}
+
 // TestReadProjectTierAgent_SubdirPerGroup pins the Drop 4c.6.1 W1.D3
 // contract: the project-tier resolver now uses subdir-per-group layout
 // (<project>/.tillsyn/agents/<group>/<basename>) rather than the
