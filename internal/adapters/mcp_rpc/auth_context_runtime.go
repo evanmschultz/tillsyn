@@ -1,4 +1,4 @@
-package mcpapi
+package mcprpc
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -72,22 +72,22 @@ func (s *mcpAuthContextStore) Bind(sessionID, sessionSecret string) (string, err
 
 func (s *mcpAuthContextStore) Resolve(authContextID, expectedSessionID string) (string, string, error) {
 	if s == nil || !s.enabled {
-		return "", "", fmt.Errorf("%w: auth contexts are unavailable on this MCP transport", common.ErrInvalidAuthentication)
+		return "", "", fmt.Errorf("%w: auth contexts are unavailable on this MCP transport", mcpcommon.ErrInvalidAuthentication)
 	}
 	authContextID = strings.TrimSpace(authContextID)
 	expectedSessionID = strings.TrimSpace(expectedSessionID)
 	if authContextID == "" {
-		return "", "", fmt.Errorf("%w: auth_context_id is required", common.ErrInvalidAuthentication)
+		return "", "", fmt.Errorf("%w: auth_context_id is required", mcpcommon.ErrInvalidAuthentication)
 	}
 
 	s.mu.RLock()
 	stored, ok := s.byID[authContextID]
 	s.mu.RUnlock()
 	if !ok {
-		return "", "", fmt.Errorf("%w: auth_context_id %q was not found", common.ErrInvalidAuthentication, authContextID)
+		return "", "", fmt.Errorf("%w: auth_context_id %q was not found", mcpcommon.ErrInvalidAuthentication, authContextID)
 	}
 	if expectedSessionID != "" && stored.sessionID != expectedSessionID {
-		return "", "", fmt.Errorf("%w: auth_context_id %q is bound to session %q, not %q", common.ErrInvalidAuthentication, authContextID, stored.sessionID, expectedSessionID)
+		return "", "", fmt.Errorf("%w: auth_context_id %q is bound to session %q, not %q", mcpcommon.ErrInvalidAuthentication, authContextID, stored.sessionID, expectedSessionID)
 	}
 	return stored.sessionID, stored.sessionSecret, nil
 }
@@ -134,7 +134,7 @@ func resolveMCPMutationAuth(ctx context.Context, auth mcpSessionAuthArgs) (mcpSe
 	}
 	store, _ := ctx.Value(mcpAuthContextStoreKey{}).(*mcpAuthContextStore)
 	if store == nil {
-		return mcpSessionAuthArgs{}, fmt.Errorf("%w: auth_context_id is unavailable on this MCP transport", common.ErrInvalidAuthentication)
+		return mcpSessionAuthArgs{}, fmt.Errorf("%w: auth_context_id is unavailable on this MCP transport", mcpcommon.ErrInvalidAuthentication)
 	}
 	sessionID, sessionSecret, err := store.Resolve(authContextID, auth.SessionID)
 	if err != nil {
@@ -158,7 +158,7 @@ func resolveMCPActingSessionAuth(ctx context.Context, sessionID, sessionSecret s
 	}
 	store, _ := ctx.Value(mcpAuthContextStoreKey{}).(*mcpAuthContextStore)
 	if store == nil {
-		return "", "", fmt.Errorf("%w: acting_auth_context_id is unavailable on this MCP transport", common.ErrInvalidAuthentication)
+		return "", "", fmt.Errorf("%w: acting_auth_context_id is unavailable on this MCP transport", mcpcommon.ErrInvalidAuthentication)
 	}
 	return store.Resolve(authContextID, sessionID)
 }

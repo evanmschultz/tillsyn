@@ -1,4 +1,7 @@
 // Package server composes HTTP API and MCP transports into one process handler.
+// W7.D2: non-HTTP symbols extracted to mcp_common/, mcp_rpc/, mcp_stdio/.
+// This file retains only HTTP-residue (Run, NewHandler, writeHealthStatus plus
+// the HTTP-only constants). W7.D3 deletes this package entirely.
 package server
 
 import (
@@ -6,51 +9,28 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
+	mcprpc "github.com/evanmschultz/tillsyn/internal/adapters/mcp_rpc"
 	"github.com/evanmschultz/tillsyn/internal/adapters/server/httpapi"
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/mcpapi"
 )
-
-// defaultBindAddress defines the localhost-first serve default.
-const defaultBindAddress = "127.0.0.1:5437"
 
 // defaultShutdownTimeout bounds graceful shutdown time once context cancellation starts.
 const defaultShutdownTimeout = 5 * time.Second
 
-// Config defines serve-mode endpoint configuration.
-type Config struct {
-	HTTPBind                      string
-	APIEndpoint                   string
-	MCPEndpoint                   string
-	ServerName                    string
-	ServerVersion                 string
-	ExposeLegacyLeaseTools        bool
-	ExposeLegacyCoordinationTools bool
-	ExposeLegacyProjectTools      bool
-	ExposeLegacyActionItemTools   bool
-}
-
-// Dependencies defines app-facing adapters required by server transports.
-type Dependencies struct {
-	CaptureState common.CaptureStateReader
-	Attention    common.AttentionService
-}
-
 // NewHandler composes one root HTTP mux containing health, REST API, and MCP endpoints.
-func NewHandler(cfg Config, deps Dependencies) (http.Handler, Config, error) {
-	normalizedCfg, err := normalizeConfig(cfg)
+func NewHandler(cfg mcpcommon.Config, deps mcpcommon.Dependencies) (http.Handler, mcpcommon.Config, error) {
+	normalizedCfg, err := mcpcommon.NormalizeConfig(cfg)
 	if err != nil {
-		return nil, Config{}, err
+		return nil, mcpcommon.Config{}, err
 	}
 	if deps.CaptureState == nil {
-		return nil, Config{}, fmt.Errorf("capture_state dependency is required")
+		return nil, mcpcommon.Config{}, fmt.Errorf("capture_state dependency is required")
 	}
 
-	mcpHandler, err := mcpapi.NewHandler(
-		mcpapi.Config{
+	mcpHandler, err := mcprpc.NewHandler(
+		mcprpc.Config{
 			ServerName:                    normalizedCfg.ServerName,
 			ServerVersion:                 normalizedCfg.ServerVersion,
 			EndpointPath:                  normalizedCfg.MCPEndpoint,
@@ -63,7 +43,7 @@ func NewHandler(cfg Config, deps Dependencies) (http.Handler, Config, error) {
 		deps.Attention,
 	)
 	if err != nil {
-		return nil, Config{}, fmt.Errorf("configure mcp handler: %w", err)
+		return nil, mcpcommon.Config{}, fmt.Errorf("configure mcp handler: %w", err)
 	}
 	apiHandler := httpapi.NewHandler(deps.CaptureState, deps.Attention)
 
@@ -77,7 +57,7 @@ func NewHandler(cfg Config, deps Dependencies) (http.Handler, Config, error) {
 }
 
 // Run starts the composed HTTP server and blocks until shutdown or startup failure.
-func Run(ctx context.Context, cfg Config, deps Dependencies) error {
+func Run(ctx context.Context, cfg mcpcommon.Config, deps mcpcommon.Dependencies) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -116,77 +96,6 @@ func Run(ctx context.Context, cfg Config, deps Dependencies) error {
 		}
 		return nil
 	}
-}
-
-// RunStdio starts the MCP server over stdio and blocks until shutdown or startup failure.
-func RunStdio(ctx context.Context, cfg Config, deps Dependencies) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	normalizedCfg, err := normalizeConfig(cfg)
-	if err != nil {
-		return err
-	}
-	if deps.CaptureState == nil {
-		return fmt.Errorf("capture_state dependency is required")
-	}
-	return mcpapi.ServeStdio(
-		mcpapi.Config{
-			ServerName:                    normalizedCfg.ServerName,
-			ServerVersion:                 normalizedCfg.ServerVersion,
-			EndpointPath:                  normalizedCfg.MCPEndpoint,
-			ExposeLegacyLeaseTools:        normalizedCfg.ExposeLegacyLeaseTools,
-			ExposeLegacyCoordinationTools: normalizedCfg.ExposeLegacyCoordinationTools,
-			ExposeLegacyProjectTools:      normalizedCfg.ExposeLegacyProjectTools,
-			ExposeLegacyActionItemTools:   normalizedCfg.ExposeLegacyActionItemTools,
-		},
-		deps.CaptureState,
-		deps.Attention,
-	)
-}
-
-// normalizeConfig applies defaults and validates endpoint collisions.
-func normalizeConfig(cfg Config) (Config, error) {
-	cfg.HTTPBind = strings.TrimSpace(cfg.HTTPBind)
-	if cfg.HTTPBind == "" {
-		cfg.HTTPBind = defaultBindAddress
-	}
-
-	cfg.APIEndpoint = normalizeEndpoint(cfg.APIEndpoint, "/api/v1")
-	cfg.MCPEndpoint = normalizeEndpoint(cfg.MCPEndpoint, "/mcp")
-	if cfg.APIEndpoint == cfg.MCPEndpoint {
-		return Config{}, fmt.Errorf("api and mcp endpoints must differ")
-	}
-
-	cfg.ServerName = strings.TrimSpace(cfg.ServerName)
-	if cfg.ServerName == "" {
-		cfg.ServerName = "tillsyn"
-	}
-	cfg.ServerVersion = strings.TrimSpace(cfg.ServerVersion)
-	if cfg.ServerVersion == "" {
-		cfg.ServerVersion = "dev"
-	}
-	return cfg, nil
-}
-
-// normalizeEndpoint normalizes one endpoint path and applies fallback defaults.
-func normalizeEndpoint(path string, fallback string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		path = fallback
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	path = "/" + strings.Trim(path, "/")
-	if path == "/" {
-		return fallback
-	}
-	return path
 }
 
 // writeHealthStatus responds with a deterministic readiness payload.

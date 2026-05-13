@@ -757,7 +757,7 @@ func authRequestResumeTokenMatches(continuation map[string]any, want string) boo
 // authRequestPathWithin reports whether candidate is equal to or narrower
 // than requested. Mirrors the helper used by the autent gateway and the MCP
 // adapter (`internal/adapters/auth/autentauth/service.go:1135` and
-// `internal/adapters/server/common/app_service_adapter_mcp.go:477`); kept
+// `internal/adapters/mcp_common/app_service_adapter_mcp.go:477`); kept
 // app-private so the orch-self-approval gate (Drop 4a Wave 3 W3.1) can run
 // without crossing the import boundary into either adapter. Future
 // refinement: lift this to `domain.AuthRequestPath.Encompasses(other)` once

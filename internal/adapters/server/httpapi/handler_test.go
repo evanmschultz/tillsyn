@@ -13,22 +13,22 @@ import (
 	"time"
 
 	charmLog "github.com/charmbracelet/log"
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // stubCaptureStateReader provides deterministic capture-state responses for handler tests.
 type stubCaptureStateReader struct {
-	captureState common.CaptureState
+	captureState mcpcommon.CaptureState
 	err          error
-	lastRequest  common.CaptureStateRequest
+	lastRequest  mcpcommon.CaptureStateRequest
 }
 
 // CaptureState records the request and returns the configured response.
-func (s *stubCaptureStateReader) CaptureState(_ context.Context, req common.CaptureStateRequest) (common.CaptureState, error) {
+func (s *stubCaptureStateReader) CaptureState(_ context.Context, req mcpcommon.CaptureStateRequest) (mcpcommon.CaptureState, error) {
 	s.lastRequest = req
 	if s.err != nil {
-		return common.CaptureState{}, s.err
+		return mcpcommon.CaptureState{}, s.err
 	}
 	return s.captureState, nil
 }
@@ -36,38 +36,38 @@ func (s *stubCaptureStateReader) CaptureState(_ context.Context, req common.Capt
 // stubAttentionService provides deterministic attention responses for handler tests.
 type stubAttentionService struct {
 	stubMutationAuthorizer
-	items       []common.AttentionItem
-	raised      common.AttentionItem
-	resolved    common.AttentionItem
+	items       []mcpcommon.AttentionItem
+	raised      mcpcommon.AttentionItem
+	resolved    mcpcommon.AttentionItem
 	err         error
-	lastList    common.ListAttentionItemsRequest
-	lastRaise   common.RaiseAttentionItemRequest
-	lastResolve common.ResolveAttentionItemRequest
+	lastList    mcpcommon.ListAttentionItemsRequest
+	lastRaise   mcpcommon.RaiseAttentionItemRequest
+	lastResolve mcpcommon.ResolveAttentionItemRequest
 }
 
 // ListAttentionItems returns deterministic fixture items.
-func (s *stubAttentionService) ListAttentionItems(_ context.Context, req common.ListAttentionItemsRequest) ([]common.AttentionItem, error) {
+func (s *stubAttentionService) ListAttentionItems(_ context.Context, req mcpcommon.ListAttentionItemsRequest) ([]mcpcommon.AttentionItem, error) {
 	s.lastList = req
 	if s.err != nil {
 		return nil, s.err
 	}
-	return append([]common.AttentionItem(nil), s.items...), nil
+	return append([]mcpcommon.AttentionItem(nil), s.items...), nil
 }
 
 // RaiseAttentionItem records and returns one fixture item.
-func (s *stubAttentionService) RaiseAttentionItem(_ context.Context, req common.RaiseAttentionItemRequest) (common.AttentionItem, error) {
+func (s *stubAttentionService) RaiseAttentionItem(_ context.Context, req mcpcommon.RaiseAttentionItemRequest) (mcpcommon.AttentionItem, error) {
 	s.lastRaise = req
 	if s.err != nil {
-		return common.AttentionItem{}, s.err
+		return mcpcommon.AttentionItem{}, s.err
 	}
 	return s.raised, nil
 }
 
 // ResolveAttentionItem records and returns one fixture item.
-func (s *stubAttentionService) ResolveAttentionItem(_ context.Context, req common.ResolveAttentionItemRequest) (common.AttentionItem, error) {
+func (s *stubAttentionService) ResolveAttentionItem(_ context.Context, req mcpcommon.ResolveAttentionItemRequest) (mcpcommon.AttentionItem, error) {
 	s.lastResolve = req
 	if s.err != nil {
-		return common.AttentionItem{}, s.err
+		return mcpcommon.AttentionItem{}, s.err
 	}
 	return s.resolved, nil
 }
@@ -76,17 +76,17 @@ func (s *stubAttentionService) ResolveAttentionItem(_ context.Context, req commo
 type stubMutationAuthorizer struct {
 	authErr         error
 	authCaller      domain.AuthenticatedCaller
-	lastAuthRequest common.MutationAuthorizationRequest
+	lastAuthRequest mcpcommon.MutationAuthorizationRequest
 }
 
 // AuthorizeMutation records one auth request and returns one deterministic caller/error.
-func (s *stubMutationAuthorizer) AuthorizeMutation(_ context.Context, req common.MutationAuthorizationRequest) (domain.AuthenticatedCaller, error) {
+func (s *stubMutationAuthorizer) AuthorizeMutation(_ context.Context, req mcpcommon.MutationAuthorizationRequest) (domain.AuthenticatedCaller, error) {
 	s.lastAuthRequest = req
 	if s.authErr != nil {
 		return domain.AuthenticatedCaller{}, s.authErr
 	}
 	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.SessionSecret) == "" {
-		return domain.AuthenticatedCaller{}, errors.Join(common.ErrSessionRequired, errors.New("missing session credentials"))
+		return domain.AuthenticatedCaller{}, errors.Join(mcpcommon.ErrSessionRequired, errors.New("missing session credentials"))
 	}
 	caller := domain.NormalizeAuthenticatedCaller(s.authCaller)
 	if caller.IsZero() {
@@ -130,14 +130,14 @@ func captureDefaultLoggerOutput(t *testing.T) (*bytes.Buffer, func()) {
 func TestHandlerCaptureStateSuccess(t *testing.T) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	capture := &stubCaptureStateReader{
-		captureState: common.CaptureState{
+		captureState: mcpcommon.CaptureState{
 			CapturedAt: now,
 			StateHash:  "abc123",
-			GoalOverview: common.GoalOverview{
+			GoalOverview: mcpcommon.GoalOverview{
 				ProjectID:   "p1",
 				ProjectName: "Roadmap",
 			},
-			WorkOverview: common.WorkOverview{TotalActionItems: 3},
+			WorkOverview: mcpcommon.WorkOverview{TotalActionItems: 3},
 		},
 	}
 	handler := NewHandler(capture, nil)
@@ -149,7 +149,7 @@ func TestHandlerCaptureStateSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	var got common.CaptureState
+	var got mcpcommon.CaptureState
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
@@ -174,13 +174,13 @@ func TestHandlerCaptureStateErrorMapping(t *testing.T) {
 	}{
 		{
 			name:       "invalid request",
-			err:        errors.Join(common.ErrInvalidCaptureStateRequest, errors.New("bad input")),
+			err:        errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, errors.New("bad input")),
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_request",
 		},
 		{
 			name:       "not found",
-			err:        errors.Join(common.ErrNotFound, errors.New("missing")),
+			err:        errors.Join(mcpcommon.ErrNotFound, errors.New("missing")),
 			wantStatus: http.StatusNotFound,
 			wantCode:   "not_found",
 		},
@@ -239,35 +239,35 @@ func TestHandlerAttentionUnavailable(t *testing.T) {
 func TestHandlerAttentionEndpoints(t *testing.T) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	attention := &stubAttentionService{
-		items: []common.AttentionItem{
+		items: []mcpcommon.AttentionItem{
 			{
 				ID:                 "a1",
 				ProjectID:          "p1",
-				ScopeType:          common.ScopeTypeProject,
+				ScopeType:          mcpcommon.ScopeTypeProject,
 				ScopeID:            "p1",
-				State:              common.AttentionStateOpen,
+				State:              mcpcommon.AttentionStateOpen,
 				Kind:               "blocker",
 				Summary:            "Needs approval",
 				RequiresUserAction: true,
 				CreatedAt:          now,
 			},
 		},
-		raised: common.AttentionItem{
+		raised: mcpcommon.AttentionItem{
 			ID:        "a2",
 			ProjectID: "p1",
-			ScopeType: common.ScopeTypeProject,
+			ScopeType: mcpcommon.ScopeTypeProject,
 			ScopeID:   "p1",
-			State:     common.AttentionStateOpen,
+			State:     mcpcommon.AttentionStateOpen,
 			Kind:      "risk_note",
 			Summary:   "Raised by API",
 			CreatedAt: now,
 		},
-		resolved: common.AttentionItem{
+		resolved: mcpcommon.AttentionItem{
 			ID:        "a1",
 			ProjectID: "p1",
-			ScopeType: common.ScopeTypeProject,
+			ScopeType: mcpcommon.ScopeTypeProject,
 			ScopeID:   "p1",
-			State:     common.AttentionStateResolved,
+			State:     mcpcommon.AttentionStateResolved,
 			Kind:      "blocker",
 			Summary:   "Needs approval",
 			CreatedAt: now,
@@ -283,7 +283,7 @@ func TestHandlerAttentionEndpoints(t *testing.T) {
 		t.Fatalf("list status = %d, want %d", listRec.Code, http.StatusOK)
 	}
 	var listed struct {
-		Items []common.AttentionItem `json:"items"`
+		Items []mcpcommon.AttentionItem `json:"items"`
 	}
 	if err := json.NewDecoder(listRec.Body).Decode(&listed); err != nil {
 		t.Fatalf("Decode(list) error = %v", err)
@@ -304,7 +304,7 @@ func TestHandlerAttentionEndpoints(t *testing.T) {
 	if raiseRec.Code != http.StatusCreated {
 		t.Fatalf("raise status = %d, want %d", raiseRec.Code, http.StatusCreated)
 	}
-	var raised common.AttentionItem
+	var raised mcpcommon.AttentionItem
 	if err := json.NewDecoder(raiseRec.Body).Decode(&raised); err != nil {
 		t.Fatalf("Decode(raise) error = %v", err)
 	}
@@ -330,12 +330,12 @@ func TestHandlerAttentionEndpoints(t *testing.T) {
 	if resolveRec.Code != http.StatusOK {
 		t.Fatalf("resolve status = %d, want %d", resolveRec.Code, http.StatusOK)
 	}
-	var resolved common.AttentionItem
+	var resolved mcpcommon.AttentionItem
 	if err := json.NewDecoder(resolveRec.Body).Decode(&resolved); err != nil {
 		t.Fatalf("Decode(resolve) error = %v", err)
 	}
-	if resolved.State != common.AttentionStateResolved {
-		t.Fatalf("resolved state = %q, want %q", resolved.State, common.AttentionStateResolved)
+	if resolved.State != mcpcommon.AttentionStateResolved {
+		t.Fatalf("resolved state = %q, want %q", resolved.State, mcpcommon.AttentionStateResolved)
 	}
 	if attention.lastResolve.ID != "a1" {
 		t.Fatalf("resolve request id = %q, want a1", attention.lastResolve.ID)
@@ -618,7 +618,7 @@ func TestHandlerAttentionAgentMutationsRequireGuardTuple(t *testing.T) {
 // TestHandlerRaiseAttentionScopeValidationErrorMapping verifies scope validation errors map to invalid_request responses.
 func TestHandlerRaiseAttentionScopeValidationErrorMapping(t *testing.T) {
 	attention := &stubAttentionService{
-		err: errors.Join(common.ErrUnsupportedScope, errors.New("scope_type is required")),
+		err: errors.Join(mcpcommon.ErrUnsupportedScope, errors.New("scope_type is required")),
 	}
 	handler := NewHandler(&stubCaptureStateReader{}, attention)
 	req := httptest.NewRequest(
@@ -660,9 +660,9 @@ func TestHandlerAttentionListRequiresProjectID(t *testing.T) {
 // TestHandlerResolveAttentionItemMinimalBody verifies resolve accepts the minimal authenticated payload.
 func TestHandlerResolveAttentionItemMinimalBody(t *testing.T) {
 	attention := &stubAttentionService{
-		resolved: common.AttentionItem{
+		resolved: mcpcommon.AttentionItem{
 			ID:    "a1",
-			State: common.AttentionStateResolved,
+			State: mcpcommon.AttentionStateResolved,
 		},
 	}
 	handler := NewHandler(&stubCaptureStateReader{}, attention)
@@ -693,12 +693,12 @@ func TestDecodeJSONBodyBranches(t *testing.T) {
 			"/attention/items",
 			strings.NewReader(`{"project_id":"p1","scope_type":"project","scope_id":"p1","kind":"risk","summary":"x"}{"next":true}`),
 		)
-		var payload common.RaiseAttentionItemRequest
+		var payload mcpcommon.RaiseAttentionItemRequest
 		err := decodeJSONBody(context.Background(), w, req, &payload)
 		if err == nil {
 			t.Fatalf("decodeJSONBody() error = nil, want non-nil")
 		}
-		if !errors.Is(err, common.ErrInvalidCaptureStateRequest) {
+		if !errors.Is(err, mcpcommon.ErrInvalidCaptureStateRequest) {
 			t.Fatalf("decodeJSONBody() error = %v, want ErrInvalidCaptureStateRequest", err)
 		}
 	})
@@ -711,7 +711,7 @@ func TestDecodeJSONBodyBranches(t *testing.T) {
 			"/attention/items",
 			strings.NewReader(`{"project_id":"p1","scope_type":"project","scope_id":"p1","kind":"risk","summary":"x"}`),
 		).WithContext(ctx)
-		var payload common.RaiseAttentionItemRequest
+		var payload mcpcommon.RaiseAttentionItemRequest
 		err := decodeJSONBody(req.Context(), w, req, &payload)
 		if err == nil {
 			t.Fatalf("decodeJSONBody() error = nil, want non-nil")
@@ -728,7 +728,7 @@ func TestDecodeOptionalJSONBodyBranches(t *testing.T) {
 
 	t.Run("empty body is accepted", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/attention/items/a1/resolve", strings.NewReader(""))
-		var payload common.ResolveAttentionItemRequest
+		var payload mcpcommon.ResolveAttentionItemRequest
 		if err := decodeOptionalJSONBody(context.Background(), w, req, &payload); err != nil {
 			t.Fatalf("decodeOptionalJSONBody() error = %v", err)
 		}
@@ -736,12 +736,12 @@ func TestDecodeOptionalJSONBodyBranches(t *testing.T) {
 
 	t.Run("malformed body maps to invalid capture request", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/attention/items/a1/resolve", strings.NewReader(`{"reason":"approved"`))
-		var payload common.ResolveAttentionItemRequest
+		var payload mcpcommon.ResolveAttentionItemRequest
 		err := decodeOptionalJSONBody(context.Background(), w, req, &payload)
 		if err == nil {
 			t.Fatalf("decodeOptionalJSONBody() error = nil, want non-nil")
 		}
-		if !errors.Is(err, common.ErrInvalidCaptureStateRequest) {
+		if !errors.Is(err, mcpcommon.ErrInvalidCaptureStateRequest) {
 			t.Fatalf("decodeOptionalJSONBody() error = %v, want ErrInvalidCaptureStateRequest", err)
 		}
 	})
@@ -750,7 +750,7 @@ func TestDecodeOptionalJSONBodyBranches(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		req := httptest.NewRequest(http.MethodPost, "/attention/items/a1/resolve", strings.NewReader(`{"reason":"approved"}`)).WithContext(ctx)
-		var payload common.ResolveAttentionItemRequest
+		var payload mcpcommon.ResolveAttentionItemRequest
 		err := decodeOptionalJSONBody(req.Context(), w, req, &payload)
 		if err == nil {
 			t.Fatalf("decodeOptionalJSONBody() error = nil, want non-nil")
@@ -781,7 +781,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		},
 		{
 			name:          "guardrail violation maps to conflict",
-			err:           errors.Join(common.ErrGuardrailViolation, errors.New("lease mismatch")),
+			err:           errors.Join(mcpcommon.ErrGuardrailViolation, errors.New("lease mismatch")),
 			wantStatus:    http.StatusConflict,
 			wantCode:      "guardrail_failed",
 			wantClass:     "guardrail",
@@ -789,7 +789,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		},
 		{
 			name:          "session required maps to unauthorized",
-			err:           errors.Join(common.ErrSessionRequired, errors.New("missing session")),
+			err:           errors.Join(mcpcommon.ErrSessionRequired, errors.New("missing session")),
 			wantStatus:    http.StatusUnauthorized,
 			wantCode:      "session_required",
 			wantClass:     "auth",
@@ -797,7 +797,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		},
 		{
 			name:          "invalid auth maps to unauthorized",
-			err:           errors.Join(common.ErrInvalidAuthentication, errors.New("bad secret")),
+			err:           errors.Join(mcpcommon.ErrInvalidAuthentication, errors.New("bad secret")),
 			wantStatus:    http.StatusUnauthorized,
 			wantCode:      "invalid_auth",
 			wantClass:     "auth",
@@ -805,7 +805,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		},
 		{
 			name:          "session expired maps to unauthorized",
-			err:           errors.Join(common.ErrSessionExpired, errors.New("expired")),
+			err:           errors.Join(mcpcommon.ErrSessionExpired, errors.New("expired")),
 			wantStatus:    http.StatusUnauthorized,
 			wantCode:      "session_expired",
 			wantClass:     "auth",
@@ -813,7 +813,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		},
 		{
 			name:          "auth denied maps to forbidden",
-			err:           errors.Join(common.ErrAuthorizationDenied, errors.New("policy deny")),
+			err:           errors.Join(mcpcommon.ErrAuthorizationDenied, errors.New("policy deny")),
 			wantStatus:    http.StatusForbidden,
 			wantCode:      "auth_denied",
 			wantClass:     "auth",
@@ -821,7 +821,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		},
 		{
 			name:          "grant required maps to forbidden",
-			err:           errors.Join(common.ErrGrantRequired, errors.New("approval needed")),
+			err:           errors.Join(mcpcommon.ErrGrantRequired, errors.New("approval needed")),
 			wantStatus:    http.StatusForbidden,
 			wantCode:      "grant_required",
 			wantClass:     "auth",
@@ -829,7 +829,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		},
 		{
 			name:          "unsupported scope is invalid request",
-			err:           errors.Join(common.ErrUnsupportedScope, errors.New("scope mismatch")),
+			err:           errors.Join(mcpcommon.ErrUnsupportedScope, errors.New("scope mismatch")),
 			wantStatus:    http.StatusBadRequest,
 			wantCode:      "invalid_request",
 			wantClass:     "invalid",
@@ -837,7 +837,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		},
 		{
 			name:          "not found maps to not found",
-			err:           errors.Join(common.ErrNotFound, errors.New("missing")),
+			err:           errors.Join(mcpcommon.ErrNotFound, errors.New("missing")),
 			wantStatus:    http.StatusNotFound,
 			wantCode:      "not_found",
 			wantClass:     "not_found",
@@ -845,7 +845,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		},
 		{
 			name:          "attention unavailable is not implemented",
-			err:           errors.Join(common.ErrAttentionUnavailable, errors.New("feature disabled")),
+			err:           errors.Join(mcpcommon.ErrAttentionUnavailable, errors.New("feature disabled")),
 			wantStatus:    http.StatusNotImplemented,
 			wantCode:      "not_implemented",
 			wantClass:     "not_implemented",

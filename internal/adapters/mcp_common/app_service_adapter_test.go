@@ -1,4 +1,4 @@
-package common
+package mcpcommon
 
 import (
 	"errors"

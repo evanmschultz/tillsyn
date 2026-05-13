@@ -20,8 +20,9 @@ import (
 	charmLog "github.com/charmbracelet/log"
 	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
 	fantasyembed "github.com/evanmschultz/tillsyn/internal/adapters/embeddings/fantasy"
+	mcpcommon "github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
+	mcpstdio "github.com/evanmschultz/tillsyn/internal/adapters/mcp_stdio"
 	serveradapter "github.com/evanmschultz/tillsyn/internal/adapters/server"
-	servercommon "github.com/evanmschultz/tillsyn/internal/adapters/server/common"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
@@ -53,7 +54,7 @@ var programFactory = func(m tea.Model) program {
 }
 
 // serveCommandRunner starts the HTTP+MCP serve flow.
-var serveCommandRunner = func(ctx context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
+var serveCommandRunner = func(ctx context.Context, cfg mcpcommon.Config, deps mcpcommon.Dependencies) error {
 	return serveradapter.Run(ctx, cfg, deps)
 }
 
@@ -78,8 +79,8 @@ var dispatcherFactoryFunc = func(svc *app.Service, broker app.LiveWaitBroker) (d
 }
 
 // mcpCommandRunner starts the stdio MCP flow.
-var mcpCommandRunner = func(ctx context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
-	return serveradapter.RunStdio(ctx, cfg, deps)
+var mcpCommandRunner = func(ctx context.Context, cfg mcpcommon.Config, deps mcpcommon.Dependencies) error {
+	return mcpstdio.RunStdio(ctx, cfg, deps)
 }
 
 // withInterruptEchoSuppressedFunc wraps long-running terminal commands so Ctrl-C does not render as ^C before clean shutdown logs.
@@ -2650,7 +2651,7 @@ func shouldMuteRuntimeConsole(command string) bool {
 // fails fast on misconfiguration — fail-loud is preferred for MVP. The
 // HTTP / MCP servers do NOT boot if the dispatcher cannot start.
 func runServe(ctx context.Context, svc *app.Service, auth *autentauth.Service, broker app.LiveWaitBroker, appName string, opts serveCommandOptions) error {
-	appAdapter := servercommon.NewAppServiceAdapter(svc, auth)
+	appAdapter := mcpcommon.NewAppServiceAdapter(svc, auth)
 
 	disp, err := dispatcherFactoryFunc(svc, broker)
 	if err != nil {
@@ -2665,13 +2666,13 @@ func runServe(ctx context.Context, svc *app.Service, auth *autentauth.Service, b
 		_ = disp.Stop(stopCtx)
 	}()
 
-	return serveCommandRunner(ctx, serveradapter.Config{
+	return serveCommandRunner(ctx, mcpcommon.Config{
 		HTTPBind:      opts.httpBind,
 		APIEndpoint:   opts.apiEndpoint,
 		MCPEndpoint:   opts.mcpEndpoint,
 		ServerName:    appName,
 		ServerVersion: version,
-	}, serveradapter.Dependencies{
+	}, mcpcommon.Dependencies{
 		CaptureState: appAdapter,
 		Attention:    appAdapter,
 	})
@@ -2679,12 +2680,12 @@ func runServe(ctx context.Context, svc *app.Service, auth *autentauth.Service, b
 
 // runMCP runs the stdio MCP subcommand flow.
 func runMCP(ctx context.Context, svc *app.Service, auth *autentauth.Service, appName string, opts serveCommandOptions) error {
-	appAdapter := servercommon.NewAppServiceAdapter(svc, auth)
-	return mcpCommandRunner(ctx, serveradapter.Config{
+	appAdapter := mcpcommon.NewAppServiceAdapter(svc, auth)
+	return mcpCommandRunner(ctx, mcpcommon.Config{
 		MCPEndpoint:   opts.mcpEndpoint,
 		ServerName:    appName,
 		ServerVersion: version,
-	}, serveradapter.Dependencies{
+	}, mcpcommon.Dependencies{
 		CaptureState: appAdapter,
 		Attention:    appAdapter,
 	})
@@ -2760,8 +2761,8 @@ func runCaptureState(ctx context.Context, svc *app.Service, authSvc *autentauth.
 	if err := requireProjectID("capture-state", opts.projectID); err != nil {
 		return err
 	}
-	adapter := servercommon.NewAppServiceAdapter(svc, authSvc)
-	capture, err := adapter.CaptureState(ctx, servercommon.CaptureStateRequest{
+	adapter := mcpcommon.NewAppServiceAdapter(svc, authSvc)
+	capture, err := adapter.CaptureState(ctx, mcpcommon.CaptureStateRequest{
 		ProjectID: strings.TrimSpace(opts.projectID),
 		ScopeType: strings.TrimSpace(opts.scopeType),
 		ScopeID:   strings.TrimSpace(opts.scopeID),

@@ -254,7 +254,7 @@ func (w *treeWalker) Promote(ctx context.Context, item domain.ActionItem) (domai
 // callers surface this as an error.
 //
 // The slug rules mirror the canonical normalizer in
-// internal/adapters/server/common (normalizeStateLikeID): trim, lowercase,
+// internal/adapters/mcp_common (normalizeStateLikeID): trim, lowercase,
 // collapse non-alphanumerics to underscores, then map "to_do" → "todo" and
 // the canonical state slugs through. Legacy aliases (done, completed,
 // progress, doing, in-progress) are intentionally rejected by returning

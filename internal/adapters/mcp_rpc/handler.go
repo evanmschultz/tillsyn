@@ -1,5 +1,5 @@
-// Package mcpapi provides stateless HTTP and stdio MCP adapters.
-package mcpapi
+// Package mcprpc provides stateless HTTP and stdio MCP adapters.
+package mcprpc
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/log"
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -36,12 +36,12 @@ type Handler struct {
 // authRequestCreateResult keeps create-time resume ownership proof available to the requester
 // without exposing private continuation metadata in general auth-request inventory reads.
 type authRequestCreateResult struct {
-	common.AuthRequestRecord
+	mcpcommon.AuthRequestRecord
 	ResumeToken string `json:"resume_token,omitempty"`
 }
 
 // NewServer builds one MCP server with the full tillsyn tool surface.
-func NewServer(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) (*mcpserver.MCPServer, Config, error) {
+func NewServer(cfg Config, captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) (*mcpserver.MCPServer, Config, error) {
 	if captureState == nil {
 		return nil, Config{}, fmt.Errorf("capture_state service is required")
 	}
@@ -90,7 +90,7 @@ func NewServer(cfg Config, captureState common.CaptureStateReader, attention com
 }
 
 // registerAuthRequestTools registers optional pre-session auth-request tools for MCP callers.
-func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.AuthRequestService, authContexts *mcpAuthContextStore) {
+func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests mcpcommon.AuthRequestService, authContexts *mcpAuthContextStore) {
 	if authRequests == nil {
 		return
 	}
@@ -194,7 +194,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				record, err := authRequests.CreateAuthRequest(ctx, common.CreateAuthRequestRequest{
+				record, err := authRequests.CreateAuthRequest(ctx, mcpcommon.CreateAuthRequestRequest{
 					Path:                args.Path,
 					PrincipalID:         args.PrincipalID,
 					PrincipalType:       args.PrincipalType,
@@ -231,7 +231,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				}
 				return result, nil
 			case "list":
-				requests, err := authRequests.ListAuthRequests(ctx, common.ListAuthRequestsRequest{
+				requests, err := authRequests.ListAuthRequests(ctx, mcpcommon.ListAuthRequestsRequest{
 					ProjectID: args.ProjectID,
 					State:     args.State,
 					Limit:     args.Limit,
@@ -281,7 +281,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 						return invalidRequestToolResult(fmt.Errorf("wait_timeout %q is invalid", trimmed)), nil
 					}
 				}
-				record, err := authRequests.ClaimAuthRequest(ctx, common.ClaimAuthRequestRequest{
+				record, err := authRequests.ClaimAuthRequest(ctx, mcpcommon.ClaimAuthRequestRequest{
 					RequestID:   requestID,
 					ResumeToken: resumeToken,
 					PrincipalID: principalID,
@@ -318,7 +318,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if clientID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "client_id" not found`), nil
 				}
-				record, err := authRequests.CancelAuthRequest(ctx, common.CancelAuthRequestRequest{
+				record, err := authRequests.CancelAuthRequest(ctx, mcpcommon.CancelAuthRequestRequest{
 					RequestID:      requestID,
 					ResumeToken:    resumeToken,
 					PrincipalID:    principalID,
@@ -365,7 +365,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if leaseToken == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "lease_token" not found`), nil
 				}
-				record, err := authRequests.ApproveAuthRequest(ctx, common.ApproveAuthRequestRequest{
+				record, err := authRequests.ApproveAuthRequest(ctx, mcpcommon.ApproveAuthRequestRequest{
 					RequestID:           requestID,
 					Path:                args.Path,
 					RequestedTTL:        args.RequestedTTL,
@@ -395,7 +395,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if actingSessionSecret == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
 				}
-				sessions, err := authRequests.ListAuthSessions(ctx, common.ListAuthSessionsRequest{
+				sessions, err := authRequests.ListAuthSessions(ctx, mcpcommon.ListAuthSessionsRequest{
 					ProjectID:           args.ProjectID,
 					SessionID:           args.SessionID,
 					PrincipalID:         args.PrincipalID,
@@ -422,7 +422,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if sessionSecret == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "session_secret" not found`), nil
 				}
-				session, err := authRequests.ValidateAuthSession(ctx, common.ValidateAuthSessionRequest{
+				session, err := authRequests.ValidateAuthSession(ctx, mcpcommon.ValidateAuthSessionRequest{
 					SessionID:     sessionID,
 					SessionSecret: sessionSecret,
 				})
@@ -455,7 +455,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if actingSessionSecret == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
 				}
-				decision, err := authRequests.CheckAuthSessionGovernance(ctx, common.CheckAuthSessionGovernanceRequest{
+				decision, err := authRequests.CheckAuthSessionGovernance(ctx, mcpcommon.CheckAuthSessionGovernanceRequest{
 					SessionID:           sessionID,
 					ActingSessionID:     actingSessionID,
 					ActingSessionSecret: actingSessionSecret,
@@ -484,7 +484,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 				if actingSessionSecret == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "acting_session_secret" not found`), nil
 				}
-				session, err := authRequests.RevokeAuthSession(ctx, common.RevokeAuthSessionRequest{
+				session, err := authRequests.RevokeAuthSession(ctx, mcpcommon.RevokeAuthSessionRequest{
 					SessionID:           sessionID,
 					Reason:              args.Reason,
 					ActingSessionID:     actingSessionID,
@@ -506,7 +506,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests common.Auth
 }
 
 // NewHandler builds one stateless MCP streamable HTTP adapter with capture_state, attention, and optional app-backed tools.
-func NewHandler(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) (*Handler, error) {
+func NewHandler(cfg Config, captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) (*Handler, error) {
 	cfg.EnableAuthContexts = false
 	mcpSrv, cfg, err := NewServer(cfg, captureState, attention)
 	if err != nil {
@@ -521,7 +521,7 @@ func NewHandler(cfg Config, captureState common.CaptureStateReader, attention co
 }
 
 // ServeStdio starts one MCP server over stdio for local tool integrations.
-func ServeStdio(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) error {
+func ServeStdio(cfg Config, captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) error {
 	cfg.EnableAuthContexts = true
 	mcpSrv, _, err := NewServer(cfg, captureState, attention)
 	if err != nil {
@@ -561,13 +561,13 @@ func normalizeConfig(cfg Config) Config {
 }
 
 // registerCaptureStateTool registers the `till.capture_state` tool.
-func registerCaptureStateTool(srv *mcpserver.MCPServer, captureState common.CaptureStateReader) {
+func registerCaptureStateTool(srv *mcpserver.MCPServer, captureState mcpcommon.CaptureStateReader) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.capture_state",
 			mcp.WithDescription("Return a summary-first state capture for one scoped level tuple. Use this first after client shutdown/restart to re-anchor project, scope, and recovery context before resuming waitable inbox/comment/handoff watchers."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("scope_type", mcp.Description("Scope type"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Description("Scope type"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier (defaults to project_id)")),
 			mcp.WithString("view", mcp.Description("summary or full"), mcp.Enum("summary", "full")),
 		),
@@ -576,7 +576,7 @@ func registerCaptureStateTool(srv *mcpserver.MCPServer, captureState common.Capt
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			capture, err := captureState.CaptureState(ctx, common.CaptureStateRequest{
+			capture, err := captureState.CaptureState(ctx, mcpcommon.CaptureStateRequest{
 				ProjectID: projectID,
 				ScopeType: req.GetString("scope_type", ""),
 				ScopeID:   req.GetString("scope_id", ""),
@@ -621,7 +621,7 @@ type attentionItemMutationArgs struct {
 }
 
 // registerAttentionTools registers optional attention list/raise/resolve tools.
-func registerAttentionTools(srv *mcpserver.MCPServer, attention common.AttentionService, authContexts *mcpAuthContextStore, exposeLegacyCoordinationTools bool) {
+func registerAttentionTools(srv *mcpserver.MCPServer, attention mcpcommon.AttentionService, authContexts *mcpAuthContextStore, exposeLegacyCoordinationTools bool) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.attention_item",
@@ -667,7 +667,7 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 	}
 }
 
-func registerLegacyAttentionListTool(srv *mcpserver.MCPServer, attention common.AttentionService) {
+func registerLegacyAttentionListTool(srv *mcpserver.MCPServer, attention mcpcommon.AttentionService) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.list_attention_items",
@@ -691,7 +691,7 @@ func registerLegacyAttentionListTool(srv *mcpserver.MCPServer, attention common.
 	)
 }
 
-func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention common.AttentionService) {
+func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention mcpcommon.AttentionService) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.raise_attention_item",
@@ -743,7 +743,7 @@ func registerLegacyAttentionMutationTools(srv *mcpserver.MCPServer, attention co
 	)
 }
 
-func handleAttentionItemMutation(ctx context.Context, attention common.AttentionService, args attentionItemMutationArgs) (*mcp.CallToolResult, error) {
+func handleAttentionItemMutation(ctx context.Context, attention mcpcommon.AttentionService, args attentionItemMutationArgs) (*mcp.CallToolResult, error) {
 	operation := strings.TrimSpace(args.Operation)
 	switch operation {
 	case "list":
@@ -751,7 +751,7 @@ func handleAttentionItemMutation(ctx context.Context, attention common.Attention
 		if projectID == "" {
 			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 		}
-		items, err := attention.ListAttentionItems(ctx, common.ListAttentionItemsRequest{
+		items, err := attention.ListAttentionItems(ctx, mcpcommon.ListAttentionItemsRequest{
 			ProjectID:   projectID,
 			ScopeType:   strings.TrimSpace(args.ScopeType),
 			ScopeID:     strings.TrimSpace(args.ScopeID),
@@ -817,7 +817,7 @@ func handleAttentionItemMutation(ctx context.Context, attention common.Attention
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		item, err := attention.RaiseAttentionItem(ctx, common.RaiseAttentionItemRequest{
+		item, err := attention.RaiseAttentionItem(ctx, mcpcommon.RaiseAttentionItemRequest{
 			ProjectID:          projectID,
 			ScopeType:          scopeType,
 			ScopeID:            scopeID,
@@ -865,7 +865,7 @@ func handleAttentionItemMutation(ctx context.Context, attention common.Attention
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		item, err := attention.ResolveAttentionItem(ctx, common.ResolveAttentionItemRequest{
+		item, err := attention.ResolveAttentionItem(ctx, mcpcommon.ResolveAttentionItemRequest{
 			ID:     itemID,
 			Reason: strings.TrimSpace(args.Reason),
 			Actor:  actor,
@@ -916,31 +916,31 @@ func mapToolError(err error) toolErrorMapping {
 			Code:  "internal_error",
 			Text:  "unknown error",
 		}
-	case errors.Is(err, common.ErrBootstrapRequired):
+	case errors.Is(err, mcpcommon.ErrBootstrapRequired):
 		return toolErrorMapping{
 			Class: "bootstrap",
 			Code:  "bootstrap_required",
 			Text:  "bootstrap_required: " + err.Error(),
 		}
-	case errors.Is(err, common.ErrGuardrailViolation):
+	case errors.Is(err, mcpcommon.ErrGuardrailViolation):
 		return toolErrorMapping{
 			Class: "guardrail",
 			Code:  "guardrail_failed",
 			Text:  "guardrail_failed: " + err.Error(),
 		}
-	case errors.Is(err, common.ErrSessionRequired):
+	case errors.Is(err, mcpcommon.ErrSessionRequired):
 		return toolErrorMapping{
 			Class: "auth",
 			Code:  "session_required",
 			Text:  "session_required: " + err.Error() + "; next step: call till.auth_request(operation=create) to request scoped access",
 		}
-	case errors.Is(err, common.ErrInvalidAuthentication):
+	case errors.Is(err, mcpcommon.ErrInvalidAuthentication):
 		return toolErrorMapping{
 			Class: "auth",
 			Code:  "invalid_auth",
 			Text:  "invalid_auth: " + err.Error(),
 		}
-	case errors.Is(err, common.ErrSessionExpired):
+	case errors.Is(err, mcpcommon.ErrSessionExpired):
 		return toolErrorMapping{
 			Class: "auth",
 			Code:  "session_expired",
@@ -960,31 +960,31 @@ func mapToolError(err error) toolErrorMapping {
 			Code:  "auth_denied",
 			Text:  "auth_denied: orch-self-approval disabled by project toggle: " + err.Error(),
 		}
-	case errors.Is(err, common.ErrAuthorizationDenied):
+	case errors.Is(err, mcpcommon.ErrAuthorizationDenied):
 		return toolErrorMapping{
 			Class: "auth",
 			Code:  "auth_denied",
 			Text:  "auth_denied: " + err.Error(),
 		}
-	case errors.Is(err, common.ErrGrantRequired):
+	case errors.Is(err, mcpcommon.ErrGrantRequired):
 		return toolErrorMapping{
 			Class: "auth",
 			Code:  "grant_required",
 			Text:  "grant_required: " + err.Error() + "; next step: call till.auth_request(operation=create) or wait for approval on the existing request",
 		}
-	case errors.Is(err, common.ErrInvalidCaptureStateRequest), errors.Is(err, common.ErrUnsupportedScope):
+	case errors.Is(err, mcpcommon.ErrInvalidCaptureStateRequest), errors.Is(err, mcpcommon.ErrUnsupportedScope):
 		return toolErrorMapping{
 			Class: "invalid",
 			Code:  "invalid_request",
 			Text:  "invalid_request: " + err.Error(),
 		}
-	case errors.Is(err, common.ErrNotFound):
+	case errors.Is(err, mcpcommon.ErrNotFound):
 		return toolErrorMapping{
 			Class: "not_found",
 			Code:  "not_found",
 			Text:  "not_found: " + err.Error(),
 		}
-	case errors.Is(err, common.ErrAttentionUnavailable):
+	case errors.Is(err, mcpcommon.ErrAttentionUnavailable):
 		return toolErrorMapping{
 			Class: "not_implemented",
 			Code:  "not_implemented",
@@ -1000,77 +1000,77 @@ func mapToolError(err error) toolErrorMapping {
 }
 
 // pickBootstrapGuideReader resolves one bootstrap-guide provider from available services.
-func pickBootstrapGuideReader(captureState common.CaptureStateReader, attention common.AttentionService) common.BootstrapGuideReader {
-	if svc, ok := captureState.(common.BootstrapGuideReader); ok {
+func pickBootstrapGuideReader(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.BootstrapGuideReader {
+	if svc, ok := captureState.(mcpcommon.BootstrapGuideReader); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.BootstrapGuideReader); ok {
+	if svc, ok := attention.(mcpcommon.BootstrapGuideReader); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickProjectService resolves one project-service provider from available services.
-func pickProjectService(captureState common.CaptureStateReader, attention common.AttentionService) common.ProjectService {
-	if svc, ok := captureState.(common.ProjectService); ok {
+func pickProjectService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.ProjectService {
+	if svc, ok := captureState.(mcpcommon.ProjectService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.ProjectService); ok {
+	if svc, ok := attention.(mcpcommon.ProjectService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickActionItemService resolves one actionItem-service provider from available services.
-func pickActionItemService(captureState common.CaptureStateReader, attention common.AttentionService) common.ActionItemService {
-	if svc, ok := captureState.(common.ActionItemService); ok {
+func pickActionItemService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.ActionItemService {
+	if svc, ok := captureState.(mcpcommon.ActionItemService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.ActionItemService); ok {
+	if svc, ok := attention.(mcpcommon.ActionItemService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickSearchService resolves one search-service provider from available services.
-func pickSearchService(captureState common.CaptureStateReader, attention common.AttentionService) common.SearchService {
-	if svc, ok := captureState.(common.SearchService); ok {
+func pickSearchService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.SearchService {
+	if svc, ok := captureState.(mcpcommon.SearchService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.SearchService); ok {
+	if svc, ok := attention.(mcpcommon.SearchService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickChangeFeedService resolves one change-feed provider from available services.
-func pickChangeFeedService(captureState common.CaptureStateReader, attention common.AttentionService) common.ChangeFeedService {
-	if svc, ok := captureState.(common.ChangeFeedService); ok {
+func pickChangeFeedService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.ChangeFeedService {
+	if svc, ok := captureState.(mcpcommon.ChangeFeedService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.ChangeFeedService); ok {
+	if svc, ok := attention.(mcpcommon.ChangeFeedService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickEmbeddingsService resolves one embeddings-operator provider from available services.
-func pickEmbeddingsService(captureState common.CaptureStateReader, attention common.AttentionService) common.EmbeddingsService {
-	if svc, ok := captureState.(common.EmbeddingsService); ok {
+func pickEmbeddingsService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.EmbeddingsService {
+	if svc, ok := captureState.(mcpcommon.EmbeddingsService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.EmbeddingsService); ok {
+	if svc, ok := attention.(mcpcommon.EmbeddingsService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickKindCatalogService resolves one kind-catalog provider from available services.
-func pickKindCatalogService(captureState common.CaptureStateReader, attention common.AttentionService) common.KindCatalogService {
-	if svc, ok := captureState.(common.KindCatalogService); ok {
+func pickKindCatalogService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.KindCatalogService {
+	if svc, ok := captureState.(mcpcommon.KindCatalogService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.KindCatalogService); ok {
+	if svc, ok := attention.(mcpcommon.KindCatalogService); ok {
 		return svc
 	}
 	return nil
@@ -1083,62 +1083,62 @@ func pickKindCatalogService(captureState common.CaptureStateReader, attention co
 // satisfies CaptureStateReader / AttentionService. Returning nil here
 // silently skips registration — the dispatcher handles the absent-service
 // case the same way it does for KindCatalogService.
-func pickTemplateService(captureState common.CaptureStateReader, attention common.AttentionService) common.TemplateService {
-	if svc, ok := captureState.(common.TemplateService); ok {
+func pickTemplateService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.TemplateService {
+	if svc, ok := captureState.(mcpcommon.TemplateService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.TemplateService); ok {
+	if svc, ok := attention.(mcpcommon.TemplateService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickCapabilityLeaseService resolves one lease-service provider from available services.
-func pickCapabilityLeaseService(captureState common.CaptureStateReader, attention common.AttentionService) common.CapabilityLeaseService {
-	if svc, ok := captureState.(common.CapabilityLeaseService); ok {
+func pickCapabilityLeaseService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.CapabilityLeaseService {
+	if svc, ok := captureState.(mcpcommon.CapabilityLeaseService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.CapabilityLeaseService); ok {
+	if svc, ok := attention.(mcpcommon.CapabilityLeaseService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickCommentService resolves one comment-service provider from available services.
-func pickCommentService(captureState common.CaptureStateReader, attention common.AttentionService) common.CommentService {
-	if svc, ok := captureState.(common.CommentService); ok {
+func pickCommentService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.CommentService {
+	if svc, ok := captureState.(mcpcommon.CommentService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.CommentService); ok {
+	if svc, ok := attention.(mcpcommon.CommentService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickHandoffService resolves one handoff-service provider from available services.
-func pickHandoffService(captureState common.CaptureStateReader, attention common.AttentionService) common.HandoffService {
-	if svc, ok := captureState.(common.HandoffService); ok {
+func pickHandoffService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.HandoffService {
+	if svc, ok := captureState.(mcpcommon.HandoffService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.HandoffService); ok {
+	if svc, ok := attention.(mcpcommon.HandoffService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickAuthRequestService resolves one auth-request service provider from available services.
-func pickAuthRequestService(captureState common.CaptureStateReader, attention common.AttentionService) common.AuthRequestService {
-	if svc, ok := captureState.(common.AuthRequestService); ok {
+func pickAuthRequestService(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) mcpcommon.AuthRequestService {
+	if svc, ok := captureState.(mcpcommon.AuthRequestService); ok {
 		return svc
 	}
-	if svc, ok := attention.(common.AuthRequestService); ok {
+	if svc, ok := attention.(mcpcommon.AuthRequestService); ok {
 		return svc
 	}
 	return nil
 }
 
 // pickMutationAuthorizer resolves one mutation authorizer from any service that supports auth-backed writes.
-func pickMutationAuthorizer(service any) common.MutationAuthorizer {
-	authorizer, _ := service.(common.MutationAuthorizer)
+func pickMutationAuthorizer(service any) mcpcommon.MutationAuthorizer {
+	authorizer, _ := service.(mcpcommon.MutationAuthorizer)
 	return authorizer
 }

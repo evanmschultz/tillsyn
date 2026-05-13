@@ -1,18 +1,18 @@
-package mcpapi
+package mcprpc
 
 import (
 	"context"
 	"strings"
 	"testing"
 
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 )
 
 // newInstructionsTestServices returns one deterministic scoped-instructions test service bundle.
 func newInstructionsTestServices() instructionsExplainServices {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	return instructionsExplainServices{

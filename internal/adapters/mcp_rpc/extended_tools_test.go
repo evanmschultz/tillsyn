@@ -1,4 +1,4 @@
-package mcpapi
+package mcprpc
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
@@ -34,8 +34,8 @@ const testActionItemUUID = "11111111-1111-1111-1111-111111111111"
 type stubExpandedService struct {
 	stubCaptureStateReader
 	stubMutationAuthorizer
-	lastCreateProjectReq         common.CreateProjectRequest
-	lastUpdateProjectReq         common.UpdateProjectRequest
+	lastCreateProjectReq         mcpcommon.CreateProjectRequest
+	lastUpdateProjectReq         mcpcommon.UpdateProjectRequest
 	lastListProjectsArchived     bool
 	lastGetActionItemID          string
 	lastListActionItemsProjectID string
@@ -43,35 +43,35 @@ type stubExpandedService struct {
 	lastListChildProjectID       string
 	lastListChildParentID        string
 	lastListChildArchived        bool
-	lastCreateActionItemReq      common.CreateActionItemRequest
-	lastUpdateActionItemReq      common.UpdateActionItemRequest
-	lastMoveActionItemReq        common.MoveActionItemRequest
-	lastMoveActionItemStateReq   common.MoveActionItemStateRequest
-	lastRestoreActionItemReq     common.RestoreActionItemRequest
-	lastIssueLeaseReq            common.IssueCapabilityLeaseRequest
-	lastListLeaseReq             common.ListCapabilityLeasesRequest
-	lastCreateCommentReq         common.CreateCommentRequest
-	lastListCommentReq           common.ListCommentsByTargetRequest
-	lastCreateHandoffReq         common.CreateHandoffRequest
-	lastUpdateHandoffReq         common.UpdateHandoffRequest
-	lastListHandoffsReq          common.ListHandoffsRequest
+	lastCreateActionItemReq      mcpcommon.CreateActionItemRequest
+	lastUpdateActionItemReq      mcpcommon.UpdateActionItemRequest
+	lastMoveActionItemReq        mcpcommon.MoveActionItemRequest
+	lastMoveActionItemStateReq   mcpcommon.MoveActionItemStateRequest
+	lastRestoreActionItemReq     mcpcommon.RestoreActionItemRequest
+	lastIssueLeaseReq            mcpcommon.IssueCapabilityLeaseRequest
+	lastListLeaseReq             mcpcommon.ListCapabilityLeasesRequest
+	lastCreateCommentReq         mcpcommon.CreateCommentRequest
+	lastListCommentReq           mcpcommon.ListCommentsByTargetRequest
+	lastCreateHandoffReq         mcpcommon.CreateHandoffRequest
+	lastUpdateHandoffReq         mcpcommon.UpdateHandoffRequest
+	lastListHandoffsReq          mcpcommon.ListHandoffsRequest
 	lastListKindsArchived        bool
-	lastUpsertKindReq            common.UpsertKindDefinitionRequest
-	lastSetAllowedKindsReq       common.SetProjectAllowedKindsRequest
-	lastSearchActionItemsReq     common.SearchActionItemsRequest
-	lastEmbeddingsStatusReq      common.EmbeddingsStatusRequest
-	lastEmbeddingsReindexReq     common.ReindexEmbeddingsRequest
-	lastCreateAuthRequestReq     common.CreateAuthRequestRequest
-	lastListAuthRequestsReq      common.ListAuthRequestsRequest
+	lastUpsertKindReq            mcpcommon.UpsertKindDefinitionRequest
+	lastSetAllowedKindsReq       mcpcommon.SetProjectAllowedKindsRequest
+	lastSearchActionItemsReq     mcpcommon.SearchActionItemsRequest
+	lastEmbeddingsStatusReq      mcpcommon.EmbeddingsStatusRequest
+	lastEmbeddingsReindexReq     mcpcommon.ReindexEmbeddingsRequest
+	lastCreateAuthRequestReq     mcpcommon.CreateAuthRequestRequest
+	lastListAuthRequestsReq      mcpcommon.ListAuthRequestsRequest
 	lastGetAuthRequestID         string
 	lastGetHandoffID             string
-	lastClaimAuthRequestReq      common.ClaimAuthRequestRequest
-	lastCancelAuthRequestReq     common.CancelAuthRequestRequest
-	lastApproveAuthRequestReq    common.ApproveAuthRequestRequest
-	lastListAuthSessionsReq      common.ListAuthSessionsRequest
-	lastValidateAuthSessionReq   common.ValidateAuthSessionRequest
-	lastCheckAuthSessionReq      common.CheckAuthSessionGovernanceRequest
-	lastRevokeAuthSessionReq     common.RevokeAuthSessionRequest
+	lastClaimAuthRequestReq      mcpcommon.ClaimAuthRequestRequest
+	lastCancelAuthRequestReq     mcpcommon.CancelAuthRequestRequest
+	lastApproveAuthRequestReq    mcpcommon.ApproveAuthRequestRequest
+	lastListAuthSessionsReq      mcpcommon.ListAuthSessionsRequest
+	lastValidateAuthSessionReq   mcpcommon.ValidateAuthSessionRequest
+	lastCheckAuthSessionReq      mcpcommon.CheckAuthSessionGovernanceRequest
+	lastRevokeAuthSessionReq     mcpcommon.RevokeAuthSessionRequest
 	lastResolveActionItemProject string
 	lastResolveActionItemID      string
 	resolveActionItemIDMap       map[string]string
@@ -79,21 +79,21 @@ type stubExpandedService struct {
 	lastGetProjectBySlug         string
 	getProjectBySlugMap          map[string]domain.Project
 	getProjectBySlugErr          error
-	lastGetProjectTemplateReq    common.GetProjectTemplateRequest
+	lastGetProjectTemplateReq    mcpcommon.GetProjectTemplateRequest
 	getProjectTemplateErr        error
 	listBuiltinTemplatesCalls    int
 	listBuiltinTemplatesErr      error
-	lastValidateCandidateReq     common.ValidateCandidateTemplateRequest
+	lastValidateCandidateReq     mcpcommon.ValidateCandidateTemplateRequest
 	validateCandidateCalls       int
-	validateCandidateResultFn    func(common.ValidateCandidateTemplateRequest) (common.ValidateCandidateTemplateResult, error)
-	lastSetProjectTemplateReq    common.SetProjectTemplateRequest
+	validateCandidateResultFn    func(mcpcommon.ValidateCandidateTemplateRequest) (mcpcommon.ValidateCandidateTemplateResult, error)
+	lastSetProjectTemplateReq    mcpcommon.SetProjectTemplateRequest
 	setProjectTemplateCalls      int
-	setProjectTemplateResultFn   func(common.SetProjectTemplateRequest) (common.SetProjectTemplateResult, error)
+	setProjectTemplateResultFn   func(mcpcommon.SetProjectTemplateRequest) (mcpcommon.SetProjectTemplateResult, error)
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
-func (s *stubExpandedService) GetBootstrapGuide(_ context.Context) (common.BootstrapGuide, error) {
-	return common.BootstrapGuide{
+func (s *stubExpandedService) GetBootstrapGuide(_ context.Context) (mcpcommon.BootstrapGuide, error) {
+	return mcpcommon.BootstrapGuide{
 		Mode:          "bootstrap_required",
 		Summary:       "No project context exists yet. Create an auth request, wait for approval, claim it, then create the project.",
 		WhatTillsynIs: "Tillsyn is a scoped planner with comments, handoffs, auth requests, capture-state recovery, and template workflow contracts.",
@@ -128,30 +128,30 @@ func (s *stubExpandedService) ListProjects(_ context.Context, includeArchived bo
 }
 
 // CreateProject returns one deterministic project row.
-func (s *stubExpandedService) CreateProject(_ context.Context, in common.CreateProjectRequest) (domain.Project, error) {
+func (s *stubExpandedService) CreateProject(_ context.Context, in mcpcommon.CreateProjectRequest) (domain.Project, error) {
 	s.lastCreateProjectReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.Project{ID: "p1", Slug: "proj-1", Name: "Project One", CreatedAt: now, UpdatedAt: now}, nil
 }
 
 // UpdateProject returns one deterministic updated project row.
-func (s *stubExpandedService) UpdateProject(_ context.Context, in common.UpdateProjectRequest) (domain.Project, error) {
+func (s *stubExpandedService) UpdateProject(_ context.Context, in mcpcommon.UpdateProjectRequest) (domain.Project, error) {
 	s.lastUpdateProjectReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.Project{ID: "p1", Slug: "proj-1", Name: "Project One Updated", CreatedAt: now, UpdatedAt: now}, nil
 }
 
 // CreateAuthRequest returns one deterministic auth-request row.
-func (s *stubExpandedService) CreateAuthRequest(_ context.Context, in common.CreateAuthRequestRequest) (common.AuthRequestRecord, error) {
+func (s *stubExpandedService) CreateAuthRequest(_ context.Context, in mcpcommon.CreateAuthRequestRequest) (mcpcommon.AuthRequestRecord, error) {
 	s.lastCreateAuthRequestReq = in
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	return common.AuthRequestRecord{
+	return mcpcommon.AuthRequestRecord{
 		ID:                  "req-1",
 		State:               "pending",
 		Path:                strings.TrimSpace(in.Path),
 		PrincipalRole:       strings.TrimSpace(in.PrincipalRole),
 		ProjectID:           "p1",
-		ScopeType:           common.ScopeTypeProject,
+		ScopeType:           mcpcommon.ScopeTypeProject,
 		ScopeID:             "p1",
 		PrincipalID:         strings.TrimSpace(in.PrincipalID),
 		PrincipalType:       strings.TrimSpace(in.PrincipalType),
@@ -165,15 +165,15 @@ func (s *stubExpandedService) CreateAuthRequest(_ context.Context, in common.Cre
 }
 
 // ListAuthRequests returns one deterministic auth-request inventory row.
-func (s *stubExpandedService) ListAuthRequests(_ context.Context, in common.ListAuthRequestsRequest) ([]common.AuthRequestRecord, error) {
+func (s *stubExpandedService) ListAuthRequests(_ context.Context, in mcpcommon.ListAuthRequestsRequest) ([]mcpcommon.AuthRequestRecord, error) {
 	s.lastListAuthRequestsReq = in
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	return []common.AuthRequestRecord{{
+	return []mcpcommon.AuthRequestRecord{{
 		ID:                  "req-1",
 		State:               "pending",
 		Path:                "project/p1",
 		ProjectID:           "p1",
-		ScopeType:           common.ScopeTypeProject,
+		ScopeType:           mcpcommon.ScopeTypeProject,
 		ScopeID:             "p1",
 		PrincipalID:         "review-agent",
 		PrincipalType:       "agent",
@@ -187,15 +187,15 @@ func (s *stubExpandedService) ListAuthRequests(_ context.Context, in common.List
 }
 
 // GetAuthRequest returns one deterministic auth-request record.
-func (s *stubExpandedService) GetAuthRequest(_ context.Context, requestID string) (common.AuthRequestRecord, error) {
+func (s *stubExpandedService) GetAuthRequest(_ context.Context, requestID string) (mcpcommon.AuthRequestRecord, error) {
 	s.lastGetAuthRequestID = requestID
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	return common.AuthRequestRecord{
+	return mcpcommon.AuthRequestRecord{
 		ID:                  strings.TrimSpace(requestID),
 		State:               "pending",
 		Path:                "project/p1",
 		ProjectID:           "p1",
-		ScopeType:           common.ScopeTypeProject,
+		ScopeType:           mcpcommon.ScopeTypeProject,
 		ScopeID:             "p1",
 		PrincipalID:         "review-agent",
 		PrincipalType:       "agent",
@@ -209,18 +209,18 @@ func (s *stubExpandedService) GetAuthRequest(_ context.Context, requestID string
 }
 
 // ClaimAuthRequest returns one deterministic approved continuation result.
-func (s *stubExpandedService) ClaimAuthRequest(_ context.Context, in common.ClaimAuthRequestRequest) (common.AuthRequestClaimResult, error) {
+func (s *stubExpandedService) ClaimAuthRequest(_ context.Context, in mcpcommon.ClaimAuthRequestRequest) (mcpcommon.AuthRequestClaimResult, error) {
 	s.lastClaimAuthRequestReq = in
 	expiresAt := time.Date(2026, 3, 20, 14, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	return common.AuthRequestClaimResult{
-		Request: common.AuthRequestRecord{
+	return mcpcommon.AuthRequestClaimResult{
+		Request: mcpcommon.AuthRequestRecord{
 			ID:                     strings.TrimSpace(in.RequestID),
 			State:                  "approved",
 			Path:                   "project/p1",
 			ApprovedPath:           "project/p1/branch/review",
 			ProjectID:              "p1",
-			ScopeType:              common.ScopeTypeProject,
+			ScopeType:              mcpcommon.ScopeTypeProject,
 			ScopeID:                "p1",
 			PrincipalID:            "review-agent",
 			PrincipalType:          "agent",
@@ -240,15 +240,15 @@ func (s *stubExpandedService) ClaimAuthRequest(_ context.Context, in common.Clai
 }
 
 // CancelAuthRequest returns one deterministic canceled auth-request result.
-func (s *stubExpandedService) CancelAuthRequest(_ context.Context, in common.CancelAuthRequestRequest) (common.AuthRequestRecord, error) {
+func (s *stubExpandedService) CancelAuthRequest(_ context.Context, in mcpcommon.CancelAuthRequestRequest) (mcpcommon.AuthRequestRecord, error) {
 	s.lastCancelAuthRequestReq = in
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	return common.AuthRequestRecord{
+	return mcpcommon.AuthRequestRecord{
 		ID:               strings.TrimSpace(in.RequestID),
 		State:            "canceled",
 		Path:             "project/p1",
 		ProjectID:        "p1",
-		ScopeType:        common.ScopeTypeProject,
+		ScopeType:        mcpcommon.ScopeTypeProject,
 		ScopeID:          "p1",
 		PrincipalID:      "review-agent",
 		PrincipalType:    "agent",
@@ -264,18 +264,18 @@ func (s *stubExpandedService) CancelAuthRequest(_ context.Context, in common.Can
 
 // ApproveAuthRequest returns one deterministic approved auth-request result.
 // Drop 4a Wave 3 W3.1 — exercises the orch-self-approval cascade path.
-func (s *stubExpandedService) ApproveAuthRequest(_ context.Context, in common.ApproveAuthRequestRequest) (common.ApproveAuthRequestResult, error) {
+func (s *stubExpandedService) ApproveAuthRequest(_ context.Context, in mcpcommon.ApproveAuthRequestRequest) (mcpcommon.ApproveAuthRequestResult, error) {
 	s.lastApproveAuthRequestReq = in
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(2 * time.Hour)
-	return common.ApproveAuthRequestResult{
-		Request: common.AuthRequestRecord{
+	return mcpcommon.ApproveAuthRequestResult{
+		Request: mcpcommon.AuthRequestRecord{
 			ID:                     strings.TrimSpace(in.RequestID),
 			State:                  "approved",
 			Path:                   "project/p1",
 			ApprovedPath:           "project/p1",
 			ProjectID:              "p1",
-			ScopeType:              common.ScopeTypeProject,
+			ScopeType:              mcpcommon.ScopeTypeProject,
 			ScopeID:                "p1",
 			PrincipalID:            "BUILDER_AGENT_99",
 			PrincipalType:          "agent",
@@ -294,10 +294,10 @@ func (s *stubExpandedService) ApproveAuthRequest(_ context.Context, in common.Ap
 }
 
 // ListAuthSessions returns one deterministic auth-session inventory row.
-func (s *stubExpandedService) ListAuthSessions(_ context.Context, in common.ListAuthSessionsRequest) ([]common.AuthSessionRecord, error) {
+func (s *stubExpandedService) ListAuthSessions(_ context.Context, in mcpcommon.ListAuthSessionsRequest) ([]mcpcommon.AuthSessionRecord, error) {
 	s.lastListAuthSessionsReq = in
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	return []common.AuthSessionRecord{{
+	return []mcpcommon.AuthSessionRecord{{
 		SessionID:     "sess-1",
 		State:         "active",
 		ProjectID:     "p1",
@@ -316,11 +316,11 @@ func (s *stubExpandedService) ListAuthSessions(_ context.Context, in common.List
 }
 
 // ValidateAuthSession returns one deterministic auth-session row.
-func (s *stubExpandedService) ValidateAuthSession(_ context.Context, in common.ValidateAuthSessionRequest) (common.AuthSessionRecord, error) {
+func (s *stubExpandedService) ValidateAuthSession(_ context.Context, in mcpcommon.ValidateAuthSessionRequest) (mcpcommon.AuthSessionRecord, error) {
 	s.lastValidateAuthSessionReq = in
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
 	lastValidatedAt := now.Add(5 * time.Minute)
-	return common.AuthSessionRecord{
+	return mcpcommon.AuthSessionRecord{
 		SessionID:       strings.TrimSpace(in.SessionID),
 		State:           "active",
 		ProjectID:       "p1",
@@ -340,17 +340,17 @@ func (s *stubExpandedService) ValidateAuthSession(_ context.Context, in common.V
 }
 
 // CheckAuthSessionGovernance returns one deterministic governance-check result.
-func (s *stubExpandedService) CheckAuthSessionGovernance(_ context.Context, in common.CheckAuthSessionGovernanceRequest) (common.AuthSessionGovernanceCheckResult, error) {
+func (s *stubExpandedService) CheckAuthSessionGovernance(_ context.Context, in mcpcommon.CheckAuthSessionGovernanceRequest) (mcpcommon.AuthSessionGovernanceCheckResult, error) {
 	s.lastCheckAuthSessionReq = in
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	return common.AuthSessionGovernanceCheckResult{
+	return mcpcommon.AuthSessionGovernanceCheckResult{
 		Authorized:          false,
 		DecisionReason:      "out_of_scope",
 		ActingSessionID:     strings.TrimSpace(in.ActingSessionID),
 		ActingPrincipalID:   "review-agent",
 		ActingPrincipalRole: "research",
 		ActingApprovedPath:  "project/p1",
-		TargetSession: common.AuthSessionRecord{
+		TargetSession: mcpcommon.AuthSessionRecord{
 			SessionID:     strings.TrimSpace(in.SessionID),
 			State:         "active",
 			ApprovedPath:  "global",
@@ -366,11 +366,11 @@ func (s *stubExpandedService) CheckAuthSessionGovernance(_ context.Context, in c
 }
 
 // RevokeAuthSession returns one deterministic revoked auth-session row.
-func (s *stubExpandedService) RevokeAuthSession(_ context.Context, in common.RevokeAuthSessionRequest) (common.AuthSessionRecord, error) {
+func (s *stubExpandedService) RevokeAuthSession(_ context.Context, in mcpcommon.RevokeAuthSessionRequest) (mcpcommon.AuthSessionRecord, error) {
 	s.lastRevokeAuthSessionReq = in
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
 	revokedAt := now.Add(10 * time.Minute)
-	return common.AuthSessionRecord{
+	return mcpcommon.AuthSessionRecord{
 		SessionID:        strings.TrimSpace(in.SessionID),
 		State:            "revoked",
 		ProjectID:        "p1",
@@ -462,7 +462,7 @@ func (s *stubExpandedService) GetActionItem(_ context.Context, actionItemID stri
 			ImplementationNotesAgent: "Use MCP surfaces and keep Go changes idiomatic.",
 			AcceptanceCriteria:       "The explainer shows project rules and node-local rules.",
 			DefinitionOfDone:         "Focused tests pass and docs are aligned.",
-			ValidationPlan:           "Run mage test-pkg ./internal/adapters/server/mcpapi and mage ci.",
+			ValidationPlan:           "Run mage test-pkg ./internal/adapters/mcp_rpc and mage ci.",
 			DependsOn:                []string{"phase-plan"},
 			BlockedBy:                []string{"actionItem-design-review"},
 			BlockedReason:            "Waiting for the design review actionItem to finish before implementation starts.",
@@ -476,7 +476,7 @@ func (s *stubExpandedService) GetActionItem(_ context.Context, actionItemID stri
 // the request carries a non-empty role that is not a member of the closed
 // Role enum, the stub returns the same wrapped error shape that the real
 // AppServiceAdapter.CreateActionItem produces via mapAppError (a
-// domain.ErrInvalidRole joined under common.ErrInvalidCaptureStateRequest)
+// domain.ErrInvalidRole joined under mcpcommon.ErrInvalidCaptureStateRequest)
 // so the MCP boundary's error mapping (invalid → invalid_request:) can be
 // exercised without a full app-service stack.
 //
@@ -488,16 +488,16 @@ func (s *stubExpandedService) GetActionItem(_ context.Context, actionItemID stri
 // TestActionItemMCPRejectsEmptyOrInvalidStructuralType. Non-empty
 // non-member values are still rejected here so the MCP boundary's error
 // mapping can be exercised without a full app-service stack.
-func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.CreateActionItemRequest) (domain.ActionItem, error) {
+func (s *stubExpandedService) CreateActionItem(_ context.Context, in mcpcommon.CreateActionItemRequest) (domain.ActionItem, error) {
 	s.lastCreateActionItemReq = in
 	if trimmed := strings.TrimSpace(in.Role); trimmed != "" && !domain.IsValidRole(domain.Role(trimmed)) {
-		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidRole)
+		return domain.ActionItem{}, errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, domain.ErrInvalidRole)
 	}
 	structuralType := domain.StructuralType(strings.TrimSpace(in.StructuralType))
 	if structuralType == "" {
 		structuralType = domain.StructuralTypeDroplet
 	} else if !domain.IsValidStructuralType(structuralType) {
-		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidStructuralType)
+		return domain.ActionItem{}, errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, domain.ErrInvalidStructuralType)
 	}
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
@@ -527,14 +527,14 @@ func (s *stubExpandedService) CreateActionItem(_ context.Context, in common.Crea
 // StructuralType empty in that case, since there is no persisted prior to
 // echo); non-empty non-member values are rejected with the same wrapped
 // error shape so the MCP boundary's invalid_request: mapping is exercised.
-func (s *stubExpandedService) UpdateActionItem(_ context.Context, in common.UpdateActionItemRequest) (domain.ActionItem, error) {
+func (s *stubExpandedService) UpdateActionItem(_ context.Context, in mcpcommon.UpdateActionItemRequest) (domain.ActionItem, error) {
 	s.lastUpdateActionItemReq = in
 	if trimmed := strings.TrimSpace(in.Role); trimmed != "" && !domain.IsValidRole(domain.Role(trimmed)) {
-		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidRole)
+		return domain.ActionItem{}, errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, domain.ErrInvalidRole)
 	}
 	structuralType := domain.StructuralType(strings.TrimSpace(in.StructuralType))
 	if structuralType != "" && !domain.IsValidStructuralType(structuralType) {
-		return domain.ActionItem{}, errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrInvalidStructuralType)
+		return domain.ActionItem{}, errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, domain.ErrInvalidStructuralType)
 	}
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
@@ -560,7 +560,7 @@ func (s *stubExpandedService) UpdateActionItem(_ context.Context, in common.Upda
 // "specify exactly one" and "neither supplied" lives at the handler layer
 // (and at the adapter layer in production), so the stub itself accepts both
 // shapes without further validation.
-func (s *stubExpandedService) MoveActionItem(_ context.Context, in common.MoveActionItemRequest) (domain.ActionItem, error) {
+func (s *stubExpandedService) MoveActionItem(_ context.Context, in mcpcommon.MoveActionItemRequest) (domain.ActionItem, error) {
 	s.lastMoveActionItemReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
@@ -579,7 +579,7 @@ func (s *stubExpandedService) MoveActionItem(_ context.Context, in common.MoveAc
 }
 
 // MoveActionItemState returns one deterministic moved-by-state actionItem row.
-func (s *stubExpandedService) MoveActionItemState(_ context.Context, in common.MoveActionItemStateRequest) (domain.ActionItem, error) {
+func (s *stubExpandedService) MoveActionItemState(_ context.Context, in mcpcommon.MoveActionItemStateRequest) (domain.ActionItem, error) {
 	s.lastMoveActionItemStateReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
@@ -598,12 +598,12 @@ func (s *stubExpandedService) MoveActionItemState(_ context.Context, in common.M
 }
 
 // DeleteActionItem reports deterministic success.
-func (s *stubExpandedService) DeleteActionItem(_ context.Context, _ common.DeleteActionItemRequest) error {
+func (s *stubExpandedService) DeleteActionItem(_ context.Context, _ mcpcommon.DeleteActionItemRequest) error {
 	return nil
 }
 
 // RestoreActionItem returns one deterministic restored row.
-func (s *stubExpandedService) RestoreActionItem(_ context.Context, in common.RestoreActionItemRequest) (domain.ActionItem, error) {
+func (s *stubExpandedService) RestoreActionItem(_ context.Context, in mcpcommon.RestoreActionItemRequest) (domain.ActionItem, error) {
 	s.lastRestoreActionItemReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
@@ -622,7 +622,7 @@ func (s *stubExpandedService) RestoreActionItem(_ context.Context, in common.Res
 }
 
 // ReparentActionItem returns one deterministic reparented row.
-func (s *stubExpandedService) ReparentActionItem(_ context.Context, _ common.ReparentActionItemRequest) (domain.ActionItem, error) {
+func (s *stubExpandedService) ReparentActionItem(_ context.Context, _ mcpcommon.ReparentActionItemRequest) (domain.ActionItem, error) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.ActionItem{
 		ID:             "t1",
@@ -665,11 +665,11 @@ func (s *stubExpandedService) ListChildActionItems(_ context.Context, projectID,
 }
 
 // SearchActionItems returns one deterministic match row plus search metadata.
-func (s *stubExpandedService) SearchActionItems(_ context.Context, in common.SearchActionItemsRequest) (common.SearchActionItemsResult, error) {
+func (s *stubExpandedService) SearchActionItems(_ context.Context, in mcpcommon.SearchActionItemsRequest) (mcpcommon.SearchActionItemsResult, error) {
 	s.lastSearchActionItemsReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return common.SearchActionItemsResult{
-		Matches: []common.SearchActionItemMatch{{
+	return mcpcommon.SearchActionItemsResult{
+		Matches: []mcpcommon.SearchActionItemMatch{{
 			Project: domain.Project{ID: "p1", Slug: "proj-1", Name: "Project One", CreatedAt: now, UpdatedAt: now},
 			ActionItem: domain.ActionItem{
 				ID:             "t1",
@@ -695,7 +695,7 @@ func (s *stubExpandedService) SearchActionItems(_ context.Context, in common.Sea
 		EffectiveMode:          "semantic",
 		SemanticAvailable:      true,
 		SemanticCandidateCount: 1,
-		EmbeddingSummary: common.EmbeddingSummary{
+		EmbeddingSummary: mcpcommon.EmbeddingSummary{
 			SubjectType: "work_item",
 			ProjectIDs:  []string{"p1"},
 			ReadyCount:  1,
@@ -704,12 +704,12 @@ func (s *stubExpandedService) SearchActionItems(_ context.Context, in common.Sea
 }
 
 // GetEmbeddingsStatus returns one deterministic embeddings status response.
-func (s *stubExpandedService) GetEmbeddingsStatus(_ context.Context, in common.EmbeddingsStatusRequest) (common.EmbeddingsStatusResult, error) {
+func (s *stubExpandedService) GetEmbeddingsStatus(_ context.Context, in mcpcommon.EmbeddingsStatusRequest) (mcpcommon.EmbeddingsStatusResult, error) {
 	s.lastEmbeddingsStatusReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
-	return common.EmbeddingsStatusResult{
+	return mcpcommon.EmbeddingsStatusResult{
 		ProjectIDs: []string{"p1"},
-		Summary: common.EmbeddingSummary{
+		Summary: mcpcommon.EmbeddingSummary{
 			SubjectType:  "mixed",
 			ProjectIDs:   []string{"p1"},
 			PendingCount: 1,
@@ -717,7 +717,7 @@ func (s *stubExpandedService) GetEmbeddingsStatus(_ context.Context, in common.E
 			FailedCount:  1,
 			StaleCount:   1,
 		},
-		Rows: []common.EmbeddingStatusRow{{
+		Rows: []mcpcommon.EmbeddingStatusRow{{
 			SubjectType:      "work_item",
 			SubjectID:        "t1",
 			ProjectID:        "p1",
@@ -744,9 +744,9 @@ func (s *stubExpandedService) GetEmbeddingsStatus(_ context.Context, in common.E
 }
 
 // ReindexEmbeddings returns one deterministic reindex response.
-func (s *stubExpandedService) ReindexEmbeddings(_ context.Context, in common.ReindexEmbeddingsRequest) (common.ReindexEmbeddingsResult, error) {
+func (s *stubExpandedService) ReindexEmbeddings(_ context.Context, in mcpcommon.ReindexEmbeddingsRequest) (mcpcommon.ReindexEmbeddingsResult, error) {
 	s.lastEmbeddingsReindexReq = in
-	return common.ReindexEmbeddingsResult{
+	return mcpcommon.ReindexEmbeddingsResult{
 		TargetProjects: []string{"p1"},
 		ScannedCount:   3,
 		QueuedCount:    2,
@@ -802,7 +802,7 @@ func (s *stubExpandedService) ListKindDefinitions(_ context.Context, includeArch
 }
 
 // UpsertKindDefinition returns one deterministic kind row.
-func (s *stubExpandedService) UpsertKindDefinition(_ context.Context, in common.UpsertKindDefinitionRequest) (domain.KindDefinition, error) {
+func (s *stubExpandedService) UpsertKindDefinition(_ context.Context, in mcpcommon.UpsertKindDefinitionRequest) (domain.KindDefinition, error) {
 	s.lastUpsertKindReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.KindDefinition{
@@ -815,7 +815,7 @@ func (s *stubExpandedService) UpsertKindDefinition(_ context.Context, in common.
 }
 
 // SetProjectAllowedKinds reports deterministic success.
-func (s *stubExpandedService) SetProjectAllowedKinds(_ context.Context, in common.SetProjectAllowedKindsRequest) error {
+func (s *stubExpandedService) SetProjectAllowedKinds(_ context.Context, in mcpcommon.SetProjectAllowedKindsRequest) error {
 	s.lastSetAllowedKindsReq = in
 	return nil
 }
@@ -842,26 +842,26 @@ func (s *stubExpandedService) ListProjectAllowedKinds(_ context.Context, _ strin
 // stub-bypassing path. Real TOML round-trip coverage lives in
 // internal/templates and internal/app where the production code paths exercise
 // the marshaller end-to-end.
-func (s *stubExpandedService) GetProjectTemplate(_ context.Context, in common.GetProjectTemplateRequest) (common.GetProjectTemplateResult, error) {
+func (s *stubExpandedService) GetProjectTemplate(_ context.Context, in mcpcommon.GetProjectTemplateRequest) (mcpcommon.GetProjectTemplateResult, error) {
 	s.lastGetProjectTemplateReq = in
 	if s.getProjectTemplateErr != nil {
-		return common.GetProjectTemplateResult{}, s.getProjectTemplateErr
+		return mcpcommon.GetProjectTemplateResult{}, s.getProjectTemplateErr
 	}
 	switch strings.TrimSpace(in.ProjectID) {
 	case "p-bareroot":
-		return common.GetProjectTemplateResult{
+		return mcpcommon.GetProjectTemplateResult{
 			ProjectID:    "p-bareroot",
 			BakeSource:   "<bare-root>",
 			TemplateTOML: "schema_version = \"v1\"\n# stub bare-root template\n",
 		}, nil
 	case "p1":
-		return common.GetProjectTemplateResult{
+		return mcpcommon.GetProjectTemplateResult{
 			ProjectID:    "p1",
 			BakeSource:   "embedded-default-go",
 			TemplateTOML: "schema_version = \"v1\"\n# stub embedded-go template\n",
 		}, nil
 	default:
-		return common.GetProjectTemplateResult{
+		return mcpcommon.GetProjectTemplateResult{
 			ProjectID:    strings.TrimSpace(in.ProjectID),
 			BakeSource:   "embedded-default-generic",
 			TemplateTOML: "schema_version = \"v1\"\n# stub embedded-generic template\n",
@@ -871,18 +871,19 @@ func (s *stubExpandedService) GetProjectTemplate(_ context.Context, in common.Ge
 
 // ListBuiltinTemplates is the test stub backing the till.template
 // `list_builtin` MCP operation (Drop 4c.5 droplet F.3.1). Returns the
-// closed list `["till-gen", "till-go"]` in stable lexical order
+// closed list `["till-fe", "till-gen", "till-go"]` in stable lexical order
 // (rebadged from `["default-generic", "default-go"]` in Drop 4c.6
-// W5.D1 + W5.D2), mirroring templates.BuiltinTemplateNames so tests
-// assert against the same wire vocabulary the production resolver
-// exposes.
-func (s *stubExpandedService) ListBuiltinTemplates(_ context.Context) (common.ListBuiltinTemplatesResult, error) {
+// W5.D1 + W5.D2; extended to include "till-fe" in Drop 4c.6.1 W4.D2
+// when till-fe.toml shipped), mirroring templates.BuiltinTemplateNames
+// so tests assert against the same wire vocabulary the production
+// resolver exposes.
+func (s *stubExpandedService) ListBuiltinTemplates(_ context.Context) (mcpcommon.ListBuiltinTemplatesResult, error) {
 	s.listBuiltinTemplatesCalls++
 	if s.listBuiltinTemplatesErr != nil {
-		return common.ListBuiltinTemplatesResult{}, s.listBuiltinTemplatesErr
+		return mcpcommon.ListBuiltinTemplatesResult{}, s.listBuiltinTemplatesErr
 	}
-	return common.ListBuiltinTemplatesResult{
-		Templates: []string{"till-gen", "till-go"},
+	return mcpcommon.ListBuiltinTemplatesResult{
+		Templates: []string{"till-fe", "till-gen", "till-go"},
 	}, nil
 }
 
@@ -896,13 +897,13 @@ func (s *stubExpandedService) ListBuiltinTemplates(_ context.Context) (common.Li
 // When validateCandidateResultFn is nil the stub falls back to a
 // deterministic "looks valid" envelope so tests that do not care about
 // the result body still get a well-formed JSON envelope.
-func (s *stubExpandedService) ValidateCandidateTemplate(_ context.Context, in common.ValidateCandidateTemplateRequest) (common.ValidateCandidateTemplateResult, error) {
+func (s *stubExpandedService) ValidateCandidateTemplate(_ context.Context, in mcpcommon.ValidateCandidateTemplateRequest) (mcpcommon.ValidateCandidateTemplateResult, error) {
 	s.validateCandidateCalls++
 	s.lastValidateCandidateReq = in
 	if s.validateCandidateResultFn != nil {
 		return s.validateCandidateResultFn(in)
 	}
-	return common.ValidateCandidateTemplateResult{Valid: true}, nil
+	return mcpcommon.ValidateCandidateTemplateResult{Valid: true}, nil
 }
 
 // SetProjectTemplate is the test stub backing the till.template `set`
@@ -916,13 +917,13 @@ func (s *stubExpandedService) ValidateCandidateTemplate(_ context.Context, in co
 // When setProjectTemplateResultFn is nil the stub falls back to a
 // deterministic "set succeeded" envelope so tests that do not care about
 // the result body still get a well-formed JSON envelope.
-func (s *stubExpandedService) SetProjectTemplate(_ context.Context, in common.SetProjectTemplateRequest) (common.SetProjectTemplateResult, error) {
+func (s *stubExpandedService) SetProjectTemplate(_ context.Context, in mcpcommon.SetProjectTemplateRequest) (mcpcommon.SetProjectTemplateResult, error) {
 	s.setProjectTemplateCalls++
 	s.lastSetProjectTemplateReq = in
 	if s.setProjectTemplateResultFn != nil {
 		return s.setProjectTemplateResultFn(in)
 	}
-	return common.SetProjectTemplateResult{
+	return mcpcommon.SetProjectTemplateResult{
 		Set:          true,
 		ProjectID:    in.ProjectID,
 		BakeSource:   "<bare-root>",
@@ -931,7 +932,7 @@ func (s *stubExpandedService) SetProjectTemplate(_ context.Context, in common.Se
 }
 
 // newStubCapabilityLease returns one deterministic lease row without mutating request capture state.
-func newStubCapabilityLease(in common.IssueCapabilityLeaseRequest) domain.CapabilityLease {
+func newStubCapabilityLease(in mcpcommon.IssueCapabilityLeaseRequest) domain.CapabilityLease {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(time.Hour)
 	return domain.CapabilityLease{
@@ -949,15 +950,15 @@ func newStubCapabilityLease(in common.IssueCapabilityLeaseRequest) domain.Capabi
 }
 
 // IssueCapabilityLease returns one deterministic lease row.
-func (s *stubExpandedService) IssueCapabilityLease(_ context.Context, in common.IssueCapabilityLeaseRequest) (domain.CapabilityLease, error) {
+func (s *stubExpandedService) IssueCapabilityLease(_ context.Context, in mcpcommon.IssueCapabilityLeaseRequest) (domain.CapabilityLease, error) {
 	s.lastIssueLeaseReq = in
 	return newStubCapabilityLease(in), nil
 }
 
 // ListCapabilityLeases returns one deterministic lease inventory row.
-func (s *stubExpandedService) ListCapabilityLeases(_ context.Context, in common.ListCapabilityLeasesRequest) ([]domain.CapabilityLease, error) {
+func (s *stubExpandedService) ListCapabilityLeases(_ context.Context, in mcpcommon.ListCapabilityLeasesRequest) ([]domain.CapabilityLease, error) {
 	s.lastListLeaseReq = in
-	lease := newStubCapabilityLease(common.IssueCapabilityLeaseRequest{})
+	lease := newStubCapabilityLease(mcpcommon.IssueCapabilityLeaseRequest{})
 	if in.IncludeRevoked {
 		revokedAt := time.Date(2026, 2, 24, 13, 0, 0, 0, time.UTC)
 		revoked := lease
@@ -971,18 +972,18 @@ func (s *stubExpandedService) ListCapabilityLeases(_ context.Context, in common.
 }
 
 // HeartbeatCapabilityLease returns one deterministic lease row.
-func (s *stubExpandedService) HeartbeatCapabilityLease(_ context.Context, _ common.HeartbeatCapabilityLeaseRequest) (domain.CapabilityLease, error) {
-	return newStubCapabilityLease(common.IssueCapabilityLeaseRequest{}), nil
+func (s *stubExpandedService) HeartbeatCapabilityLease(_ context.Context, _ mcpcommon.HeartbeatCapabilityLeaseRequest) (domain.CapabilityLease, error) {
+	return newStubCapabilityLease(mcpcommon.IssueCapabilityLeaseRequest{}), nil
 }
 
 // RenewCapabilityLease returns one deterministic lease row.
-func (s *stubExpandedService) RenewCapabilityLease(_ context.Context, _ common.RenewCapabilityLeaseRequest) (domain.CapabilityLease, error) {
-	return newStubCapabilityLease(common.IssueCapabilityLeaseRequest{}), nil
+func (s *stubExpandedService) RenewCapabilityLease(_ context.Context, _ mcpcommon.RenewCapabilityLeaseRequest) (domain.CapabilityLease, error) {
+	return newStubCapabilityLease(mcpcommon.IssueCapabilityLeaseRequest{}), nil
 }
 
 // RevokeCapabilityLease returns one deterministic lease row.
-func (s *stubExpandedService) RevokeCapabilityLease(_ context.Context, _ common.RevokeCapabilityLeaseRequest) (domain.CapabilityLease, error) {
-	lease := newStubCapabilityLease(common.IssueCapabilityLeaseRequest{})
+func (s *stubExpandedService) RevokeCapabilityLease(_ context.Context, _ mcpcommon.RevokeCapabilityLeaseRequest) (domain.CapabilityLease, error) {
+	lease := newStubCapabilityLease(mcpcommon.IssueCapabilityLeaseRequest{})
 	now := time.Date(2026, 2, 24, 13, 0, 0, 0, time.UTC)
 	lease.RevokedAt = &now
 	lease.RevokedReason = "test revoke"
@@ -990,19 +991,19 @@ func (s *stubExpandedService) RevokeCapabilityLease(_ context.Context, _ common.
 }
 
 // RevokeAllCapabilityLeases reports deterministic success.
-func (s *stubExpandedService) RevokeAllCapabilityLeases(_ context.Context, _ common.RevokeAllCapabilityLeasesRequest) error {
+func (s *stubExpandedService) RevokeAllCapabilityLeases(_ context.Context, _ mcpcommon.RevokeAllCapabilityLeasesRequest) error {
 	return nil
 }
 
 // CreateComment returns one deterministic comment row.
-func (s *stubExpandedService) CreateComment(_ context.Context, in common.CreateCommentRequest) (common.CommentRecord, error) {
+func (s *stubExpandedService) CreateComment(_ context.Context, in mcpcommon.CreateCommentRequest) (mcpcommon.CommentRecord, error) {
 	s.lastCreateCommentReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	targetType := domain.NormalizeCommentTargetType(domain.CommentTargetType(in.TargetType))
 	if targetType == "" {
 		targetType = domain.CommentTargetTypeActionItem
 	}
-	return common.CommentRecord{
+	return mcpcommon.CommentRecord{
 		ID:           "c1",
 		ProjectID:    in.ProjectID,
 		TargetType:   string(targetType),
@@ -1018,20 +1019,20 @@ func (s *stubExpandedService) CreateComment(_ context.Context, in common.CreateC
 }
 
 // ListCommentsByTarget returns one deterministic comment row.
-func (s *stubExpandedService) ListCommentsByTarget(_ context.Context, in common.ListCommentsByTargetRequest) ([]common.CommentRecord, error) {
+func (s *stubExpandedService) ListCommentsByTarget(_ context.Context, in mcpcommon.ListCommentsByTargetRequest) ([]mcpcommon.CommentRecord, error) {
 	s.lastListCommentReq = in
-	comment, _ := s.CreateComment(context.Background(), common.CreateCommentRequest{
+	comment, _ := s.CreateComment(context.Background(), mcpcommon.CreateCommentRequest{
 		ProjectID:    in.ProjectID,
 		TargetType:   in.TargetType,
 		TargetID:     in.TargetID,
 		Summary:      "Thread summary",
 		BodyMarkdown: "Thread summary\n\nDetails",
 	})
-	return []common.CommentRecord{comment}, nil
+	return []mcpcommon.CommentRecord{comment}, nil
 }
 
 // CreateHandoff returns one deterministic handoff row.
-func (s *stubExpandedService) CreateHandoff(_ context.Context, in common.CreateHandoffRequest) (domain.Handoff, error) {
+func (s *stubExpandedService) CreateHandoff(_ context.Context, in mcpcommon.CreateHandoffRequest) (domain.Handoff, error) {
 	s.lastCreateHandoffReq = in
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
 	return domain.Handoff{
@@ -1062,7 +1063,7 @@ func (s *stubExpandedService) CreateHandoff(_ context.Context, in common.CreateH
 // GetHandoff returns one deterministic handoff row by id.
 func (s *stubExpandedService) GetHandoff(_ context.Context, handoffID string) (domain.Handoff, error) {
 	s.lastGetHandoffID = handoffID
-	return s.CreateHandoff(context.Background(), common.CreateHandoffRequest{
+	return s.CreateHandoff(context.Background(), mcpcommon.CreateHandoffRequest{
 		ProjectID: "p1",
 		BranchID:  "branch-1",
 		ScopeType: "actionItem",
@@ -1072,9 +1073,9 @@ func (s *stubExpandedService) GetHandoff(_ context.Context, handoffID string) (d
 }
 
 // ListHandoffs returns one deterministic handoff inventory row.
-func (s *stubExpandedService) ListHandoffs(_ context.Context, in common.ListHandoffsRequest) ([]domain.Handoff, error) {
+func (s *stubExpandedService) ListHandoffs(_ context.Context, in mcpcommon.ListHandoffsRequest) ([]domain.Handoff, error) {
 	s.lastListHandoffsReq = in
-	handoff, _ := s.CreateHandoff(context.Background(), common.CreateHandoffRequest{
+	handoff, _ := s.CreateHandoff(context.Background(), mcpcommon.CreateHandoffRequest{
 		ProjectID:       strings.TrimSpace(in.ProjectID),
 		BranchID:        strings.TrimSpace(in.BranchID),
 		ScopeType:       strings.TrimSpace(in.ScopeType),
@@ -1094,9 +1095,9 @@ func (s *stubExpandedService) ListHandoffs(_ context.Context, in common.ListHand
 }
 
 // UpdateHandoff returns one deterministic updated handoff row.
-func (s *stubExpandedService) UpdateHandoff(_ context.Context, in common.UpdateHandoffRequest) (domain.Handoff, error) {
+func (s *stubExpandedService) UpdateHandoff(_ context.Context, in mcpcommon.UpdateHandoffRequest) (domain.Handoff, error) {
 	s.lastUpdateHandoffReq = in
-	handoff, _ := s.CreateHandoff(context.Background(), common.CreateHandoffRequest{
+	handoff, _ := s.CreateHandoff(context.Background(), mcpcommon.CreateHandoffRequest{
 		ProjectID:       "p1",
 		BranchID:        "branch-1",
 		ScopeType:       "actionItem",
@@ -1238,7 +1239,7 @@ func joinAnyStrings(values []any) string {
 func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -1483,7 +1484,7 @@ func TestHandlerActionItemCreateAcceptsStateOrColumnIDExclusively(t *testing.T) 
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -1596,7 +1597,7 @@ func TestHandlerActionItemMoveAcceptsStateOrColumnIDExclusively(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -1706,7 +1707,7 @@ func TestHandlerExpandedLeaseToolVisibility(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(cfg, service, nil)
@@ -1780,7 +1781,7 @@ func TestHandlerExpandedCoordinationToolVisibility(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(cfg, service, &stubAttentionService{})
@@ -1859,7 +1860,7 @@ func TestHandlerExpandedProjectToolVisibility(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(cfg, service, nil)
@@ -1954,7 +1955,7 @@ func TestHandlerExpandedActionItemToolVisibility(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(cfg, service, nil)
@@ -2030,7 +2031,7 @@ func TestHandlerExpandedLegacyActionItemMutationAliases(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		stubMutationAuthorizer: stubMutationAuthorizer{
 			authCaller: domain.AuthenticatedCaller{
@@ -2138,7 +2139,7 @@ func TestHandlerExpandedLegacyProjectMutationAliases(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		stubMutationAuthorizer: stubMutationAuthorizer{
 			authCaller: domain.AuthenticatedCaller{
@@ -2187,7 +2188,7 @@ func TestHandlerExpandedLegacyProjectReadAdminAliases(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		stubMutationAuthorizer: stubMutationAuthorizer{},
 	}
@@ -2241,7 +2242,7 @@ func TestHandlerExpandedActionItemReadOperations(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -2308,7 +2309,7 @@ func TestHandlerActionItemGetAcceptsDottedAddress(t *testing.T) {
 		t.Parallel()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		server := httptest.NewServer(mustNewHandler(t, service))
@@ -2334,7 +2335,7 @@ func TestHandlerActionItemGetAcceptsDottedAddress(t *testing.T) {
 		t.Parallel()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 			resolveActionItemIDMap: map[string]string{"2.1": resolvedUUID},
 		}
@@ -2365,7 +2366,7 @@ func TestHandlerActionItemGetAcceptsDottedAddress(t *testing.T) {
 		t.Parallel()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 			resolveActionItemIDMap: map[string]string{"tillsyn:1.5.2": resolvedUUID},
 			getProjectBySlugMap: map[string]domain.Project{
@@ -2398,7 +2399,7 @@ func TestHandlerActionItemGetAcceptsDottedAddress(t *testing.T) {
 		t.Parallel()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		server := httptest.NewServer(mustNewHandler(t, service))
@@ -2445,7 +2446,7 @@ func TestHandlerActionItemMutationsRejectDottedAddress(t *testing.T) {
 			t.Parallel()
 			service := &stubExpandedService{
 				stubCaptureStateReader: stubCaptureStateReader{
-					captureState: common.CaptureState{StateHash: "abc123"},
+					captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 				},
 			}
 			server := httptest.NewServer(mustNewHandler(t, service))
@@ -2505,7 +2506,7 @@ func TestHandlerInstructionsToolReturnsEmbeddedDocs(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -2565,7 +2566,7 @@ func TestHandlerInstructionsToolExplainsProjectScope(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -2641,7 +2642,7 @@ func TestHandlerInstructionsToolExplainsNodeScope(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -2712,7 +2713,7 @@ func TestHandlerInstructionsToolExplainsBootstrapTopic(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -2760,7 +2761,7 @@ func TestHandlerInstructionsToolExplainsBootstrapTopic(t *testing.T) {
 func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -2828,7 +2829,7 @@ func TestHandlerExpandedCommentToolSchema(t *testing.T) {
 func TestHandlerExpandedSearchToolSchemaOptions(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -2920,7 +2921,7 @@ func TestHandlerExpandedSearchToolSchemaOptions(t *testing.T) {
 func TestHandlerExpandedSearchToolForwardsExtendedFilters(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -3031,7 +3032,7 @@ func TestHandlerExpandedEmbeddingsToolsExposeMixedSubjectMetadata(t *testing.T) 
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -3105,7 +3106,7 @@ func TestHandlerExpandedEmbeddingsToolsExposeMixedSubjectMetadata(t *testing.T) 
 func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -3191,7 +3192,7 @@ func TestHandlerExpandedRecoveryToolsForwardScopeFilters(t *testing.T) {
 func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		stubMutationAuthorizer: stubMutationAuthorizer{
 			authCaller: domain.AuthenticatedCaller{
@@ -3419,7 +3420,7 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -3514,7 +3515,7 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -3574,7 +3575,7 @@ func TestHandlerExpandedMutationFamiliesAcceptAuthContextHandles(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		stubMutationAuthorizer: stubMutationAuthorizer{},
 	}
@@ -3644,7 +3645,7 @@ func TestHandlerExpandedMutationFamiliesAcceptAuthContextHandles(t *testing.T) {
 func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -3681,7 +3682,7 @@ func TestTillTemplate_Get_EmbeddedDefault(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -3719,13 +3720,13 @@ func TestTillTemplate_Get_EmbeddedDefault(t *testing.T) {
 // to the bare-root `<bare-root>/.tillsyn/template.toml` candidate. Asserts the
 // envelope's bake_source comment line names the bare-root sentinel
 // "<bare-root>" verbatim — the closed wire vocabulary defined in
-// common.GetProjectTemplateResult's doc-comment.
+// mcpcommon.GetProjectTemplateResult's doc-comment.
 func TestTillTemplate_Get_BareRootSourced(t *testing.T) {
 	t.Parallel()
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -3772,17 +3773,18 @@ func TestTillTemplate_Get_BareRootSourced(t *testing.T) {
 
 // TestTillTemplate_ListBuiltin verifies the Drop 4c.5 droplet F.3.1
 // `till.template list_builtin` operation. Asserts: (a) the JSON-OUT envelope
-// contains the closed list ["till-gen", "till-go"] in that lexical order
-// (rebadged from ["default-generic", "default-go"] in Drop 4c.6 W5.D1 +
-// W5.D2), (b) the call routes through the service stub (incrementing the
-// call counter), and (c) the operation does NOT require project_id
-// (read-only, project-context-free).
+// contains the closed list ["till-fe", "till-gen", "till-go"] in that
+// lexical order (rebadged from ["default-generic", "default-go"] in Drop
+// 4c.6 W5.D1 + W5.D2; extended to 3 entries in Drop 4c.6.1 W4.D2 when
+// till-fe.toml shipped), (b) the call routes through the service stub
+// (incrementing the call counter), and (c) the operation does NOT require
+// project_id (read-only, project-context-free).
 func TestTillTemplate_ListBuiltin(t *testing.T) {
 	t.Parallel()
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -3807,15 +3809,15 @@ func TestTillTemplate_ListBuiltin(t *testing.T) {
 	if !ok {
 		t.Fatalf("structured.templates missing or wrong type: %#v", structured)
 	}
-	if len(templatesRaw) != 2 {
-		t.Fatalf("templates len = %d, want 2 (closed list per F.3.1)", len(templatesRaw))
+	if len(templatesRaw) != 3 {
+		t.Fatalf("templates len = %d, want 3 (closed list per F.3.1 + W4.D2 FE addition)", len(templatesRaw))
 	}
 	names := make([]string, 0, len(templatesRaw))
 	for _, raw := range templatesRaw {
 		name, _ := raw.(string)
 		names = append(names, name)
 	}
-	want := []string{"till-gen", "till-go"}
+	want := []string{"till-fe", "till-gen", "till-go"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("templates = %v, want %v (closed lexical order)", names, want)
 	}
@@ -3859,11 +3861,11 @@ func TestTillTemplate_Validate_Valid(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
-	service.validateCandidateResultFn = func(in common.ValidateCandidateTemplateRequest) (common.ValidateCandidateTemplateResult, error) {
-		return common.ValidateCandidateTemplateResult{Valid: true}, nil
+	service.validateCandidateResultFn = func(in mcpcommon.ValidateCandidateTemplateRequest) (mcpcommon.ValidateCandidateTemplateResult, error) {
+		return mcpcommon.ValidateCandidateTemplateResult{Valid: true}, nil
 	}
 	handler, err := NewHandler(Config{}, service, nil)
 	if err != nil {
@@ -3916,7 +3918,7 @@ func TestTillTemplate_Validate_UnknownKey(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = repo.Close() })
 	svc := app.NewService(repo, func() string { return "real-id-001" }, nil, app.ServiceConfig{})
-	adapter := common.NewAppServiceAdapter(svc, nil)
+	adapter := mcpcommon.NewAppServiceAdapter(svc, nil)
 	handler, err := NewHandler(Config{}, adapter, nil)
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
@@ -3966,7 +3968,7 @@ func TestTillTemplate_Validate_BadSchemaVersion(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = repo.Close() })
 	svc := app.NewService(repo, func() string { return "real-id-001" }, nil, app.ServiceConfig{})
-	adapter := common.NewAppServiceAdapter(svc, nil)
+	adapter := mcpcommon.NewAppServiceAdapter(svc, nil)
 	handler, err := NewHandler(Config{}, adapter, nil)
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
@@ -4014,12 +4016,12 @@ func TestTillTemplate_Validate_AgentBindingMissingWarn(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	wantWarn := `agent_bindings["build"]: agent_name="go-builder-agent" referenced by template but /tmp/agents/go-builder-agent.md not found`
-	service.validateCandidateResultFn = func(in common.ValidateCandidateTemplateRequest) (common.ValidateCandidateTemplateResult, error) {
-		return common.ValidateCandidateTemplateResult{
+	service.validateCandidateResultFn = func(in mcpcommon.ValidateCandidateTemplateRequest) (mcpcommon.ValidateCandidateTemplateResult, error) {
+		return mcpcommon.ValidateCandidateTemplateResult{
 			Valid:    true,
 			Warnings: []string{wantWarn},
 		}, nil
@@ -4066,7 +4068,7 @@ func TestTillTemplate_Validate_OversizedRejected(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -4243,10 +4245,10 @@ func TestTillTemplate_Set_AuthRejected(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		stubMutationAuthorizer: stubMutationAuthorizer{
-			authErr: errors.Join(common.ErrInvalidAuthentication, errors.New("bad secret")),
+			authErr: errors.Join(mcpcommon.ErrInvalidAuthentication, errors.New("bad secret")),
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -4292,12 +4294,12 @@ func TestTillTemplate_Set_RebakeFailureRollback(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	wantErrMsg := `persist project after template install: simulated persist failure; on-disk file moved aside to /tmp/test/.tillsyn/template.toml.tillsyn-set-failed-abc.toml for manual recovery`
-	service.setProjectTemplateResultFn = func(in common.SetProjectTemplateRequest) (common.SetProjectTemplateResult, error) {
-		return common.SetProjectTemplateResult{
+	service.setProjectTemplateResultFn = func(in mcpcommon.SetProjectTemplateRequest) (mcpcommon.SetProjectTemplateResult, error) {
+		return mcpcommon.SetProjectTemplateResult{
 			Set:   false,
 			Error: wantErrMsg,
 		}, nil
@@ -4391,7 +4393,7 @@ func TestTillTemplate_Set_OversizedRejected(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -4481,7 +4483,7 @@ func TestHandlerExpandedToolRejectsUnknownJSONKeys(t *testing.T) {
 
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, service, nil)
@@ -4547,7 +4549,7 @@ func TestHandlerExpandedGlobalAdminMutationsUseRootedProjectAuthScope(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			service := &stubExpandedService{
 				stubCaptureStateReader: stubCaptureStateReader{
-					captureState: common.CaptureState{StateHash: "abc123"},
+					captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 				},
 				stubMutationAuthorizer: stubMutationAuthorizer{},
 			}
@@ -4589,22 +4591,22 @@ func TestHandlerExpandedMutationAuthErrorsMap(t *testing.T) {
 	}{
 		{
 			name:       "invalid auth",
-			authErr:    errors.Join(common.ErrInvalidAuthentication, errors.New("bad secret")),
+			authErr:    errors.Join(mcpcommon.ErrInvalidAuthentication, errors.New("bad secret")),
 			wantPrefix: "invalid_auth:",
 		},
 		{
 			name:       "session expired",
-			authErr:    errors.Join(common.ErrSessionExpired, errors.New("expired")),
+			authErr:    errors.Join(mcpcommon.ErrSessionExpired, errors.New("expired")),
 			wantPrefix: "session_expired:",
 		},
 		{
 			name:       "auth denied",
-			authErr:    errors.Join(common.ErrAuthorizationDenied, errors.New("policy deny")),
+			authErr:    errors.Join(mcpcommon.ErrAuthorizationDenied, errors.New("policy deny")),
 			wantPrefix: "auth_denied:",
 		},
 		{
 			name:       "grant required",
-			authErr:    errors.Join(common.ErrGrantRequired, errors.New("approval needed")),
+			authErr:    errors.Join(mcpcommon.ErrGrantRequired, errors.New("approval needed")),
 			wantPrefix: "grant_required:",
 		},
 	}
@@ -4613,7 +4615,7 @@ func TestHandlerExpandedMutationAuthErrorsMap(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			service := &stubExpandedService{
 				stubCaptureStateReader: stubCaptureStateReader{
-					captureState: common.CaptureState{StateHash: "abc123"},
+					captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 				},
 				stubMutationAuthorizer: stubMutationAuthorizer{
 					authErr: tc.authErr,
@@ -4657,7 +4659,7 @@ func TestHandlerExpandedActionItemRoleRoundTrip(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -4780,7 +4782,7 @@ func TestHandlerExpandedActionItemRoleRoundTrip(t *testing.T) {
 // per droplet 3.4 acceptance:
 //
 //   - Empty structural_type is rejected on create AT THE PRODUCTION BOUNDARY —
-//     the real common.AppServiceAdapter chain (sqlite + app.Service +
+//     the real mcpcommon.AppServiceAdapter chain (sqlite + app.Service +
 //     domain.NewActionItem) rejects with ErrInvalidStructuralType. The MCP-
 //     layer stub used elsewhere in this file is intentionally permissive to
 //     keep legacy fixtures round-tripping; production is the canonical gate.
@@ -4818,13 +4820,13 @@ func TestActionItemMCPRejectsEmptyOrInvalidStructuralType(t *testing.T) {
 		if len(columns) == 0 {
 			t.Fatal("expected auto-created project columns, got none")
 		}
-		adapter := common.NewAppServiceAdapter(svc, nil)
-		actor := common.ActorLeaseTuple{
+		adapter := mcpcommon.NewAppServiceAdapter(svc, nil)
+		actor := mcpcommon.ActorLeaseTuple{
 			ActorID:   "user-1",
 			ActorName: "User One",
 			ActorType: string(domain.ActorTypeUser),
 		}
-		_, err = adapter.CreateActionItem(context.Background(), common.CreateActionItemRequest{
+		_, err = adapter.CreateActionItem(context.Background(), mcpcommon.CreateActionItemRequest{
 			ProjectID: project.ID,
 			ColumnID:  columns[0].ID,
 			Title:     "Empty structural type",
@@ -4844,7 +4846,7 @@ func TestActionItemMCPRejectsEmptyOrInvalidStructuralType(t *testing.T) {
 		t.Parallel()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -4876,7 +4878,7 @@ func TestActionItemMCPRejectsEmptyOrInvalidStructuralType(t *testing.T) {
 		t.Parallel()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -4926,7 +4928,7 @@ func TestActionItemMCPOwnerDropNumberPersistentDevGatedRoundTrip(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -5073,7 +5075,7 @@ func TestActionItemMCPPathsRoundTrip(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -5214,7 +5216,7 @@ func TestActionItemMCPPackagesRoundTrip(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -5354,7 +5356,7 @@ func TestActionItemMCPFilesRoundTrip(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -5491,7 +5493,7 @@ func TestActionItemMCPStartCommitRoundTrip(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -5621,7 +5623,7 @@ func TestActionItemMCPEndCommitRoundTrip(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -5756,7 +5758,7 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 		t.Helper()
 		service := &stubExpandedService{
 			stubCaptureStateReader: stubCaptureStateReader{
-				captureState: common.CaptureState{StateHash: "abc123"},
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 			},
 		}
 		handler, err := NewHandler(Config{}, service, nil)
@@ -5886,7 +5888,7 @@ func newRealAdapterSetServer(t *testing.T) (*app.Service, *autentauth.Service, *
 	}, nil, app.ServiceConfig{
 		AuthBackend: auth,
 	})
-	adapter := common.NewAppServiceAdapter(svc, auth)
+	adapter := mcpcommon.NewAppServiceAdapter(svc, auth)
 	handler, err := NewHandler(Config{}, adapter, adapter)
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)

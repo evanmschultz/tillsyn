@@ -1,4 +1,4 @@
-package mcpapi
+package mcprpc
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	charmLog "github.com/charmbracelet/log"
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -22,16 +22,16 @@ import (
 
 // stubCaptureStateReader provides deterministic capture-state responses for MCP tool tests.
 type stubCaptureStateReader struct {
-	captureState common.CaptureState
+	captureState mcpcommon.CaptureState
 	err          error
-	lastRequest  common.CaptureStateRequest
+	lastRequest  mcpcommon.CaptureStateRequest
 }
 
 // CaptureState records the latest request and returns one fixture result.
-func (s *stubCaptureStateReader) CaptureState(_ context.Context, req common.CaptureStateRequest) (common.CaptureState, error) {
+func (s *stubCaptureStateReader) CaptureState(_ context.Context, req mcpcommon.CaptureStateRequest) (mcpcommon.CaptureState, error) {
 	s.lastRequest = req
 	if s.err != nil {
-		return common.CaptureState{}, s.err
+		return mcpcommon.CaptureState{}, s.err
 	}
 	return s.captureState, nil
 }
@@ -39,22 +39,22 @@ func (s *stubCaptureStateReader) CaptureState(_ context.Context, req common.Capt
 // stubAttentionService provides deterministic attention responses for MCP tool tests.
 type stubAttentionService struct {
 	stubMutationAuthorizer
-	items          []common.AttentionItem
-	raised         common.AttentionItem
-	resolved       common.AttentionItem
-	authRequests   []common.AuthRequestRecord
-	authRequest    common.AuthRequestRecord
-	authSessions   []common.AuthSessionRecord
-	authSession    common.AuthSessionRecord
+	items          []mcpcommon.AttentionItem
+	raised         mcpcommon.AttentionItem
+	resolved       mcpcommon.AttentionItem
+	authRequests   []mcpcommon.AuthRequestRecord
+	authRequest    mcpcommon.AuthRequestRecord
+	authSessions   []mcpcommon.AuthSessionRecord
+	authSession    mcpcommon.AuthSessionRecord
 	listErr        error
 	raiseErr       error
 	resolveErr     error
 	authRequestErr error
-	lastList       common.ListAttentionItemsRequest
-	lastRaise      common.RaiseAttentionItemRequest
-	lastResolve    common.ResolveAttentionItemRequest
-	lastCreateAuth common.CreateAuthRequestRequest
-	lastListAuth   common.ListAuthRequestsRequest
+	lastList       mcpcommon.ListAttentionItemsRequest
+	lastRaise      mcpcommon.RaiseAttentionItemRequest
+	lastResolve    mcpcommon.ResolveAttentionItemRequest
+	lastCreateAuth mcpcommon.CreateAuthRequestRequest
+	lastListAuth   mcpcommon.ListAuthRequestsRequest
 	lastGetAuthID  string
 }
 
@@ -69,22 +69,22 @@ type stubProjectService struct {
 	createErr           error
 	updateErr           error
 	lastIncludeArchived bool
-	lastCreate          common.CreateProjectRequest
-	lastUpdate          common.UpdateProjectRequest
+	lastCreate          mcpcommon.CreateProjectRequest
+	lastUpdate          mcpcommon.UpdateProjectRequest
 }
 
 // stubAuthRequestService provides deterministic auth-request responses for MCP tool tests.
 type stubAuthRequestService struct {
 	stubCaptureStateReader
-	created             common.AuthRequestRecord
-	requests            []common.AuthRequestRecord
-	getResult           common.AuthRequestRecord
-	claimResult         common.AuthRequestClaimResult
-	cancelResult        common.AuthRequestRecord
-	approveResult       common.ApproveAuthRequestResult
-	sessionRows         []common.AuthSessionRecord
-	sessionResult       common.AuthSessionRecord
-	checkResult         common.AuthSessionGovernanceCheckResult
+	created             mcpcommon.AuthRequestRecord
+	requests            []mcpcommon.AuthRequestRecord
+	getResult           mcpcommon.AuthRequestRecord
+	claimResult         mcpcommon.AuthRequestClaimResult
+	cancelResult        mcpcommon.AuthRequestRecord
+	approveResult       mcpcommon.ApproveAuthRequestResult
+	sessionRows         []mcpcommon.AuthSessionRecord
+	sessionResult       mcpcommon.AuthSessionRecord
+	checkResult         mcpcommon.AuthSessionGovernanceCheckResult
 	createErr           error
 	listErr             error
 	getErr              error
@@ -95,33 +95,33 @@ type stubAuthRequestService struct {
 	validateSessionErr  error
 	checkErr            error
 	revokeSessionErr    error
-	lastCreate          common.CreateAuthRequestRequest
-	lastList            common.ListAuthRequestsRequest
+	lastCreate          mcpcommon.CreateAuthRequestRequest
+	lastList            mcpcommon.ListAuthRequestsRequest
 	lastGetID           string
-	lastClaim           common.ClaimAuthRequestRequest
-	lastCancel          common.CancelAuthRequestRequest
-	lastApprove         common.ApproveAuthRequestRequest
-	lastListSessions    common.ListAuthSessionsRequest
-	lastValidateSession common.ValidateAuthSessionRequest
-	lastCheckSession    common.CheckAuthSessionGovernanceRequest
-	lastRevokeSession   common.RevokeAuthSessionRequest
+	lastClaim           mcpcommon.ClaimAuthRequestRequest
+	lastCancel          mcpcommon.CancelAuthRequestRequest
+	lastApprove         mcpcommon.ApproveAuthRequestRequest
+	lastListSessions    mcpcommon.ListAuthSessionsRequest
+	lastValidateSession mcpcommon.ValidateAuthSessionRequest
+	lastCheckSession    mcpcommon.CheckAuthSessionGovernanceRequest
+	lastRevokeSession   mcpcommon.RevokeAuthSessionRequest
 }
 
 // stubMutationAuthorizer provides deterministic session-auth results for mutating MCP tool tests.
 type stubMutationAuthorizer struct {
 	authErr         error
 	authCaller      domain.AuthenticatedCaller
-	lastAuthRequest common.MutationAuthorizationRequest
+	lastAuthRequest mcpcommon.MutationAuthorizationRequest
 }
 
 // AuthorizeMutation records one auth request and returns one deterministic caller/error.
-func (s *stubMutationAuthorizer) AuthorizeMutation(_ context.Context, req common.MutationAuthorizationRequest) (domain.AuthenticatedCaller, error) {
+func (s *stubMutationAuthorizer) AuthorizeMutation(_ context.Context, req mcpcommon.MutationAuthorizationRequest) (domain.AuthenticatedCaller, error) {
 	s.lastAuthRequest = req
 	if s.authErr != nil {
 		return domain.AuthenticatedCaller{}, s.authErr
 	}
 	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.SessionSecret) == "" {
-		return domain.AuthenticatedCaller{}, errors.Join(common.ErrSessionRequired, errors.New("missing session credentials"))
+		return domain.AuthenticatedCaller{}, errors.Join(mcpcommon.ErrSessionRequired, errors.New("missing session credentials"))
 	}
 	caller := domain.NormalizeAuthenticatedCaller(s.authCaller)
 	if caller.IsZero() {
@@ -145,7 +145,7 @@ func (s *stubProjectService) ListProjects(_ context.Context, includeArchived boo
 }
 
 // CreateProject records and returns deterministic project creation results.
-func (s *stubProjectService) CreateProject(_ context.Context, req common.CreateProjectRequest) (domain.Project, error) {
+func (s *stubProjectService) CreateProject(_ context.Context, req mcpcommon.CreateProjectRequest) (domain.Project, error) {
 	s.lastCreate = req
 	if s.createErr != nil {
 		return domain.Project{}, s.createErr
@@ -154,7 +154,7 @@ func (s *stubProjectService) CreateProject(_ context.Context, req common.CreateP
 }
 
 // UpdateProject records and returns deterministic project update results.
-func (s *stubProjectService) UpdateProject(_ context.Context, req common.UpdateProjectRequest) (domain.Project, error) {
+func (s *stubProjectService) UpdateProject(_ context.Context, req mcpcommon.UpdateProjectRequest) (domain.Project, error) {
 	s.lastUpdate = req
 	if s.updateErr != nil {
 		return domain.Project{}, s.updateErr
@@ -163,181 +163,181 @@ func (s *stubProjectService) UpdateProject(_ context.Context, req common.UpdateP
 }
 
 // CreateAuthRequest records and returns one deterministic auth-request row.
-func (s *stubAuthRequestService) CreateAuthRequest(_ context.Context, req common.CreateAuthRequestRequest) (common.AuthRequestRecord, error) {
+func (s *stubAuthRequestService) CreateAuthRequest(_ context.Context, req mcpcommon.CreateAuthRequestRequest) (mcpcommon.AuthRequestRecord, error) {
 	s.lastCreate = req
 	if s.createErr != nil {
-		return common.AuthRequestRecord{}, s.createErr
+		return mcpcommon.AuthRequestRecord{}, s.createErr
 	}
 	return s.created, nil
 }
 
 // ListAuthRequests records and returns deterministic auth-request rows.
-func (s *stubAuthRequestService) ListAuthRequests(_ context.Context, req common.ListAuthRequestsRequest) ([]common.AuthRequestRecord, error) {
+func (s *stubAuthRequestService) ListAuthRequests(_ context.Context, req mcpcommon.ListAuthRequestsRequest) ([]mcpcommon.AuthRequestRecord, error) {
 	s.lastList = req
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
-	return append([]common.AuthRequestRecord(nil), s.requests...), nil
+	return append([]mcpcommon.AuthRequestRecord(nil), s.requests...), nil
 }
 
 // GetAuthRequest records and returns one deterministic auth-request row.
-func (s *stubAuthRequestService) GetAuthRequest(_ context.Context, requestID string) (common.AuthRequestRecord, error) {
+func (s *stubAuthRequestService) GetAuthRequest(_ context.Context, requestID string) (mcpcommon.AuthRequestRecord, error) {
 	s.lastGetID = requestID
 	if s.getErr != nil {
-		return common.AuthRequestRecord{}, s.getErr
+		return mcpcommon.AuthRequestRecord{}, s.getErr
 	}
 	return s.getResult, nil
 }
 
 // ClaimAuthRequest records one continuation claim and returns one deterministic claim result.
-func (s *stubAuthRequestService) ClaimAuthRequest(_ context.Context, req common.ClaimAuthRequestRequest) (common.AuthRequestClaimResult, error) {
+func (s *stubAuthRequestService) ClaimAuthRequest(_ context.Context, req mcpcommon.ClaimAuthRequestRequest) (mcpcommon.AuthRequestClaimResult, error) {
 	s.lastClaim = req
 	if s.claimErr != nil {
-		return common.AuthRequestClaimResult{}, s.claimErr
+		return mcpcommon.AuthRequestClaimResult{}, s.claimErr
 	}
 	return s.claimResult, nil
 }
 
 // CancelAuthRequest records one cancellation request and returns one deterministic canceled auth-request row.
-func (s *stubAuthRequestService) CancelAuthRequest(_ context.Context, req common.CancelAuthRequestRequest) (common.AuthRequestRecord, error) {
+func (s *stubAuthRequestService) CancelAuthRequest(_ context.Context, req mcpcommon.CancelAuthRequestRequest) (mcpcommon.AuthRequestRecord, error) {
 	s.lastCancel = req
 	if s.cancelErr != nil {
-		return common.AuthRequestRecord{}, s.cancelErr
+		return mcpcommon.AuthRequestRecord{}, s.cancelErr
 	}
 	return s.cancelResult, nil
 }
 
 // ApproveAuthRequest records one approval request and returns one deterministic approved-auth-request result.
 // Drop 4a Wave 3 W3.1 — exercises the orch-self-approval cascade path.
-func (s *stubAuthRequestService) ApproveAuthRequest(_ context.Context, req common.ApproveAuthRequestRequest) (common.ApproveAuthRequestResult, error) {
+func (s *stubAuthRequestService) ApproveAuthRequest(_ context.Context, req mcpcommon.ApproveAuthRequestRequest) (mcpcommon.ApproveAuthRequestResult, error) {
 	s.lastApprove = req
 	if s.approveErr != nil {
-		return common.ApproveAuthRequestResult{}, s.approveErr
+		return mcpcommon.ApproveAuthRequestResult{}, s.approveErr
 	}
 	return s.approveResult, nil
 }
 
 // ListAuthSessions records session filters and returns deterministic auth-session rows.
-func (s *stubAuthRequestService) ListAuthSessions(_ context.Context, req common.ListAuthSessionsRequest) ([]common.AuthSessionRecord, error) {
+func (s *stubAuthRequestService) ListAuthSessions(_ context.Context, req mcpcommon.ListAuthSessionsRequest) ([]mcpcommon.AuthSessionRecord, error) {
 	s.lastListSessions = req
 	if s.listSessionsErr != nil {
 		return nil, s.listSessionsErr
 	}
-	return append([]common.AuthSessionRecord(nil), s.sessionRows...), nil
+	return append([]mcpcommon.AuthSessionRecord(nil), s.sessionRows...), nil
 }
 
 // ValidateAuthSession records one validate request and returns one deterministic auth-session row.
-func (s *stubAuthRequestService) ValidateAuthSession(_ context.Context, req common.ValidateAuthSessionRequest) (common.AuthSessionRecord, error) {
+func (s *stubAuthRequestService) ValidateAuthSession(_ context.Context, req mcpcommon.ValidateAuthSessionRequest) (mcpcommon.AuthSessionRecord, error) {
 	s.lastValidateSession = req
 	if s.validateSessionErr != nil {
-		return common.AuthSessionRecord{}, s.validateSessionErr
+		return mcpcommon.AuthSessionRecord{}, s.validateSessionErr
 	}
 	return s.sessionResult, nil
 }
 
 // CheckAuthSessionGovernance records one governance-check request and returns one deterministic decision.
-func (s *stubAuthRequestService) CheckAuthSessionGovernance(_ context.Context, req common.CheckAuthSessionGovernanceRequest) (common.AuthSessionGovernanceCheckResult, error) {
+func (s *stubAuthRequestService) CheckAuthSessionGovernance(_ context.Context, req mcpcommon.CheckAuthSessionGovernanceRequest) (mcpcommon.AuthSessionGovernanceCheckResult, error) {
 	s.lastCheckSession = req
 	if s.checkErr != nil {
-		return common.AuthSessionGovernanceCheckResult{}, s.checkErr
+		return mcpcommon.AuthSessionGovernanceCheckResult{}, s.checkErr
 	}
 	return s.checkResult, nil
 }
 
 // RevokeAuthSession records one revoke request and returns one deterministic auth-session row.
-func (s *stubAuthRequestService) RevokeAuthSession(_ context.Context, req common.RevokeAuthSessionRequest) (common.AuthSessionRecord, error) {
+func (s *stubAuthRequestService) RevokeAuthSession(_ context.Context, req mcpcommon.RevokeAuthSessionRequest) (mcpcommon.AuthSessionRecord, error) {
 	s.lastRevokeSession = req
 	if s.revokeSessionErr != nil {
-		return common.AuthSessionRecord{}, s.revokeSessionErr
+		return mcpcommon.AuthSessionRecord{}, s.revokeSessionErr
 	}
 	return s.sessionResult, nil
 }
 
 // ListAttentionItems returns deterministic list data.
-func (s *stubAttentionService) ListAttentionItems(_ context.Context, req common.ListAttentionItemsRequest) ([]common.AttentionItem, error) {
+func (s *stubAttentionService) ListAttentionItems(_ context.Context, req mcpcommon.ListAttentionItemsRequest) ([]mcpcommon.AttentionItem, error) {
 	s.lastList = req
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
-	return append([]common.AttentionItem(nil), s.items...), nil
+	return append([]mcpcommon.AttentionItem(nil), s.items...), nil
 }
 
 // RaiseAttentionItem records and returns one fixture item.
-func (s *stubAttentionService) RaiseAttentionItem(_ context.Context, req common.RaiseAttentionItemRequest) (common.AttentionItem, error) {
+func (s *stubAttentionService) RaiseAttentionItem(_ context.Context, req mcpcommon.RaiseAttentionItemRequest) (mcpcommon.AttentionItem, error) {
 	s.lastRaise = req
 	if s.raiseErr != nil {
-		return common.AttentionItem{}, s.raiseErr
+		return mcpcommon.AttentionItem{}, s.raiseErr
 	}
 	return s.raised, nil
 }
 
 // ResolveAttentionItem records and returns one fixture item.
-func (s *stubAttentionService) ResolveAttentionItem(_ context.Context, req common.ResolveAttentionItemRequest) (common.AttentionItem, error) {
+func (s *stubAttentionService) ResolveAttentionItem(_ context.Context, req mcpcommon.ResolveAttentionItemRequest) (mcpcommon.AttentionItem, error) {
 	s.lastResolve = req
 	if s.resolveErr != nil {
-		return common.AttentionItem{}, s.resolveErr
+		return mcpcommon.AttentionItem{}, s.resolveErr
 	}
 	return s.resolved, nil
 }
 
 // CreateAuthRequest records and returns one deterministic auth request row.
-func (s *stubAttentionService) CreateAuthRequest(_ context.Context, req common.CreateAuthRequestRequest) (common.AuthRequestRecord, error) {
+func (s *stubAttentionService) CreateAuthRequest(_ context.Context, req mcpcommon.CreateAuthRequestRequest) (mcpcommon.AuthRequestRecord, error) {
 	s.lastCreateAuth = req
 	if s.authRequestErr != nil {
-		return common.AuthRequestRecord{}, s.authRequestErr
+		return mcpcommon.AuthRequestRecord{}, s.authRequestErr
 	}
 	if s.authRequest.ID != "" {
 		return s.authRequest, nil
 	}
-	return common.AuthRequestRecord{}, nil
+	return mcpcommon.AuthRequestRecord{}, nil
 }
 
 // ListAuthRequests records list filters and returns deterministic auth request rows.
-func (s *stubAttentionService) ListAuthRequests(_ context.Context, req common.ListAuthRequestsRequest) ([]common.AuthRequestRecord, error) {
+func (s *stubAttentionService) ListAuthRequests(_ context.Context, req mcpcommon.ListAuthRequestsRequest) ([]mcpcommon.AuthRequestRecord, error) {
 	s.lastListAuth = req
 	if s.authRequestErr != nil {
 		return nil, s.authRequestErr
 	}
-	return append([]common.AuthRequestRecord(nil), s.authRequests...), nil
+	return append([]mcpcommon.AuthRequestRecord(nil), s.authRequests...), nil
 }
 
 // GetAuthRequest records the requested id and returns one deterministic auth request row.
-func (s *stubAttentionService) GetAuthRequest(_ context.Context, requestID string) (common.AuthRequestRecord, error) {
+func (s *stubAttentionService) GetAuthRequest(_ context.Context, requestID string) (mcpcommon.AuthRequestRecord, error) {
 	s.lastGetAuthID = requestID
 	if s.authRequestErr != nil {
-		return common.AuthRequestRecord{}, s.authRequestErr
+		return mcpcommon.AuthRequestRecord{}, s.authRequestErr
 	}
 	return s.authRequest, nil
 }
 
 // ListAuthSessions returns deterministic auth-session rows for interface compatibility.
-func (s *stubAttentionService) ListAuthSessions(_ context.Context, _ common.ListAuthSessionsRequest) ([]common.AuthSessionRecord, error) {
+func (s *stubAttentionService) ListAuthSessions(_ context.Context, _ mcpcommon.ListAuthSessionsRequest) ([]mcpcommon.AuthSessionRecord, error) {
 	if s.authRequestErr != nil {
 		return nil, s.authRequestErr
 	}
-	return append([]common.AuthSessionRecord(nil), s.authSessions...), nil
+	return append([]mcpcommon.AuthSessionRecord(nil), s.authSessions...), nil
 }
 
 // ValidateAuthSession returns one deterministic auth-session row for interface compatibility.
-func (s *stubAttentionService) ValidateAuthSession(_ context.Context, _ common.ValidateAuthSessionRequest) (common.AuthSessionRecord, error) {
+func (s *stubAttentionService) ValidateAuthSession(_ context.Context, _ mcpcommon.ValidateAuthSessionRequest) (mcpcommon.AuthSessionRecord, error) {
 	if s.authRequestErr != nil {
-		return common.AuthSessionRecord{}, s.authRequestErr
+		return mcpcommon.AuthSessionRecord{}, s.authRequestErr
 	}
 	return s.authSession, nil
 }
 
 // CheckAuthSessionGovernance returns one deterministic governance decision for interface compatibility.
-func (s *stubAttentionService) CheckAuthSessionGovernance(_ context.Context, _ common.CheckAuthSessionGovernanceRequest) (common.AuthSessionGovernanceCheckResult, error) {
+func (s *stubAttentionService) CheckAuthSessionGovernance(_ context.Context, _ mcpcommon.CheckAuthSessionGovernanceRequest) (mcpcommon.AuthSessionGovernanceCheckResult, error) {
 	if s.authRequestErr != nil {
-		return common.AuthSessionGovernanceCheckResult{}, s.authRequestErr
+		return mcpcommon.AuthSessionGovernanceCheckResult{}, s.authRequestErr
 	}
-	return common.AuthSessionGovernanceCheckResult{}, nil
+	return mcpcommon.AuthSessionGovernanceCheckResult{}, nil
 }
 
 // RevokeAuthSession returns one deterministic auth-session row for interface compatibility.
-func (s *stubAttentionService) RevokeAuthSession(_ context.Context, _ common.RevokeAuthSessionRequest) (common.AuthSessionRecord, error) {
+func (s *stubAttentionService) RevokeAuthSession(_ context.Context, _ mcpcommon.RevokeAuthSessionRequest) (mcpcommon.AuthSessionRecord, error) {
 	if s.authRequestErr != nil {
-		return common.AuthSessionRecord{}, s.authRequestErr
+		return mcpcommon.AuthSessionRecord{}, s.authRequestErr
 	}
 	return s.authSession, nil
 }
@@ -492,7 +492,7 @@ func captureDefaultLoggerOutput(t *testing.T) (*bytes.Buffer, func()) {
 // TestHandlerUsesStatelessTransport verifies MCP transport does not issue session ids.
 func TestHandlerUsesStatelessTransport(t *testing.T) {
 	capture := &stubCaptureStateReader{
-		captureState: common.CaptureState{
+		captureState: mcpcommon.CaptureState{
 			StateHash: "abc123",
 		},
 	}
@@ -519,7 +519,7 @@ func TestHandlerUsesStatelessTransport(t *testing.T) {
 // TestHandlerRegistersCaptureStateTool verifies MCP tool discovery includes till.capture_state.
 func TestHandlerRegistersCaptureStateTool(t *testing.T) {
 	capture := &stubCaptureStateReader{
-		captureState: common.CaptureState{
+		captureState: mcpcommon.CaptureState{
 			StateHash: "abc123",
 		},
 	}
@@ -561,7 +561,7 @@ func TestHandlerRegistersCaptureStateTool(t *testing.T) {
 // TestHandlerRegistersAttentionToolsWhenAvailable verifies optional attention tools are exposed.
 func TestHandlerRegistersAttentionToolsWhenAvailable(t *testing.T) {
 	capture := &stubCaptureStateReader{
-		captureState: common.CaptureState{
+		captureState: mcpcommon.CaptureState{
 			StateHash: "abc123",
 		},
 	}
@@ -612,7 +612,7 @@ func TestHandlerRegistersAttentionToolsWhenAvailable(t *testing.T) {
 func TestHandlerRegistersAuthRequestToolsWhenAvailable(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -654,7 +654,7 @@ func TestHandlerRegistersAuthRequestToolsWhenAvailable(t *testing.T) {
 // TestHandlerAttentionItemToolSchemaGuidance verifies markdown-rich summary/details guidance on attention_item raise args.
 func TestHandlerAttentionItemToolSchemaGuidance(t *testing.T) {
 	capture := &stubCaptureStateReader{
-		captureState: common.CaptureState{
+		captureState: mcpcommon.CaptureState{
 			StateHash: "abc123",
 		},
 	}
@@ -690,7 +690,7 @@ func TestHandlerAttentionItemToolSchemaGuidance(t *testing.T) {
 func TestHandlerRegistersProjectToolsWhenAvailable(t *testing.T) {
 	capture := &stubProjectService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -735,7 +735,7 @@ func TestHandlerProjectToolCall(t *testing.T) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	capture := &stubProjectService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		projects: []domain.Project{
 			{
@@ -774,10 +774,10 @@ func TestHandlerProjectToolCall(t *testing.T) {
 func TestHandlerCaptureStateToolCall(t *testing.T) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	capture := &stubCaptureStateReader{
-		captureState: common.CaptureState{
+		captureState: mcpcommon.CaptureState{
 			CapturedAt: now,
 			StateHash:  "abc123",
-			GoalOverview: common.GoalOverview{
+			GoalOverview: mcpcommon.GoalOverview{
 				ProjectID:   "p1",
 				ProjectName: "Roadmap",
 			},
@@ -941,77 +941,77 @@ func TestToolResultFromErrorMapping(t *testing.T) {
 		},
 		{
 			name:         "bootstrap required",
-			err:          errors.Join(common.ErrBootstrapRequired, errors.New("no projects")),
+			err:          errors.Join(mcpcommon.ErrBootstrapRequired, errors.New("no projects")),
 			wantPrefix:   "bootstrap_required:",
 			wantLogCode:  "bootstrap_required",
 			wantLogClass: "bootstrap",
 		},
 		{
 			name:         "guardrail violation",
-			err:          errors.Join(common.ErrGuardrailViolation, errors.New("lease mismatch")),
+			err:          errors.Join(mcpcommon.ErrGuardrailViolation, errors.New("lease mismatch")),
 			wantPrefix:   "guardrail_failed:",
 			wantLogCode:  "guardrail_failed",
 			wantLogClass: "guardrail",
 		},
 		{
 			name:         "session required",
-			err:          errors.Join(common.ErrSessionRequired, errors.New("missing session")),
+			err:          errors.Join(mcpcommon.ErrSessionRequired, errors.New("missing session")),
 			wantPrefix:   "session_required:",
 			wantLogCode:  "session_required",
 			wantLogClass: "auth",
 		},
 		{
 			name:         "invalid auth",
-			err:          errors.Join(common.ErrInvalidAuthentication, errors.New("bad secret")),
+			err:          errors.Join(mcpcommon.ErrInvalidAuthentication, errors.New("bad secret")),
 			wantPrefix:   "invalid_auth:",
 			wantLogCode:  "invalid_auth",
 			wantLogClass: "auth",
 		},
 		{
 			name:         "session expired",
-			err:          errors.Join(common.ErrSessionExpired, errors.New("expired")),
+			err:          errors.Join(mcpcommon.ErrSessionExpired, errors.New("expired")),
 			wantPrefix:   "session_expired:",
 			wantLogCode:  "session_expired",
 			wantLogClass: "auth",
 		},
 		{
 			name:         "auth denied",
-			err:          errors.Join(common.ErrAuthorizationDenied, errors.New("policy deny")),
+			err:          errors.Join(mcpcommon.ErrAuthorizationDenied, errors.New("policy deny")),
 			wantPrefix:   "auth_denied:",
 			wantLogCode:  "auth_denied",
 			wantLogClass: "auth",
 		},
 		{
 			name:         "grant required",
-			err:          errors.Join(common.ErrGrantRequired, errors.New("approval needed")),
+			err:          errors.Join(mcpcommon.ErrGrantRequired, errors.New("approval needed")),
 			wantPrefix:   "grant_required:",
 			wantLogCode:  "grant_required",
 			wantLogClass: "auth",
 		},
 		{
 			name:         "invalid capture request",
-			err:          errors.Join(common.ErrInvalidCaptureStateRequest, errors.New("bad request")),
+			err:          errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, errors.New("bad request")),
 			wantPrefix:   "invalid_request:",
 			wantLogCode:  "invalid_request",
 			wantLogClass: "invalid",
 		},
 		{
 			name:         "unsupported scope",
-			err:          errors.Join(common.ErrUnsupportedScope, errors.New("scope mismatch")),
+			err:          errors.Join(mcpcommon.ErrUnsupportedScope, errors.New("scope mismatch")),
 			wantPrefix:   "invalid_request:",
 			wantLogCode:  "invalid_request",
 			wantLogClass: "invalid",
 		},
 		{
 			name:         "not found",
-			err:          errors.Join(common.ErrNotFound, errors.New("missing")),
+			err:          errors.Join(mcpcommon.ErrNotFound, errors.New("missing")),
 			wantPrefix:   "not_found:",
 			wantLogCode:  "not_found",
 			wantLogClass: "not_found",
 		},
 		{
 			name:         "attention unavailable",
-			err:          errors.Join(common.ErrAttentionUnavailable, errors.New("disabled")),
+			err:          errors.Join(mcpcommon.ErrAttentionUnavailable, errors.New("disabled")),
 			wantPrefix:   "not_implemented:",
 			wantLogCode:  "not_implemented",
 			wantLogClass: "not_implemented",
@@ -1056,7 +1056,7 @@ func TestToolResultFromErrorMapping(t *testing.T) {
 // TestHandlerCaptureStateToolCallErrorPaths verifies required-arg and mapped-service errors.
 func TestHandlerCaptureStateToolCallErrorPaths(t *testing.T) {
 	capture := &stubCaptureStateReader{
-		err: errors.Join(common.ErrUnsupportedScope, errors.New("scope mismatch")),
+		err: errors.Join(mcpcommon.ErrUnsupportedScope, errors.New("scope mismatch")),
 	}
 	handler, err := NewHandler(Config{}, capture, nil)
 	if err != nil {
@@ -1090,39 +1090,39 @@ func TestHandlerCaptureStateToolCallErrorPaths(t *testing.T) {
 func TestHandlerAttentionToolCalls(t *testing.T) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	capture := &stubCaptureStateReader{
-		captureState: common.CaptureState{StateHash: "abc123"},
+		captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 	}
 	attention := &stubAttentionService{
-		items: []common.AttentionItem{
+		items: []mcpcommon.AttentionItem{
 			{
 				ID:        "a1",
 				ProjectID: "p1",
-				ScopeType: common.ScopeTypeProject,
+				ScopeType: mcpcommon.ScopeTypeProject,
 				ScopeID:   "p1",
-				State:     common.AttentionStateOpen,
+				State:     mcpcommon.AttentionStateOpen,
 				Kind:      "risk_note",
 				Summary:   "Need user action",
 				CreatedAt: now,
 			},
 		},
-		raised: common.AttentionItem{
+		raised: mcpcommon.AttentionItem{
 			ID:                 "a2",
 			ProjectID:          "p1",
-			ScopeType:          common.ScopeTypeProject,
+			ScopeType:          mcpcommon.ScopeTypeProject,
 			ScopeID:            "p1",
-			State:              common.AttentionStateOpen,
+			State:              mcpcommon.AttentionStateOpen,
 			Kind:               "blocker",
 			Summary:            "Raised by tool",
 			BodyMarkdown:       "Details",
 			RequiresUserAction: true,
 			CreatedAt:          now,
 		},
-		resolved: common.AttentionItem{
+		resolved: mcpcommon.AttentionItem{
 			ID:        "a1",
 			ProjectID: "p1",
-			ScopeType: common.ScopeTypeProject,
+			ScopeType: mcpcommon.ScopeTypeProject,
 			ScopeID:   "p1",
-			State:     common.AttentionStateResolved,
+			State:     mcpcommon.AttentionStateResolved,
 			Kind:      "risk_note",
 			Summary:   "Need user action",
 			CreatedAt: now,
@@ -1222,8 +1222,8 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 		"lease_token":       "lease-1",
 	})))
 	resolveStructured := toolResultStructured(t, resolveResp.Result)
-	if got, _ := resolveStructured["state"].(string); got != common.AttentionStateResolved {
-		t.Fatalf("resolved state = %q, want %q", got, common.AttentionStateResolved)
+	if got, _ := resolveStructured["state"].(string); got != mcpcommon.AttentionStateResolved {
+		t.Fatalf("resolved state = %q, want %q", got, mcpcommon.AttentionStateResolved)
 	}
 	if attention.lastResolve.ID != "a1" {
 		t.Fatalf("resolve id = %q, want a1", attention.lastResolve.ID)
@@ -1241,14 +1241,14 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
-		created: common.AuthRequestRecord{
+		created: mcpcommon.AuthRequestRecord{
 			ID:                  "req-1",
 			State:               "pending",
 			Path:                "project/p1",
 			ProjectID:           "p1",
-			ScopeType:           common.ScopeTypeProject,
+			ScopeType:           mcpcommon.ScopeTypeProject,
 			ScopeID:             "p1",
 			PrincipalID:         "review-agent",
 			PrincipalType:       "agent",
@@ -1264,13 +1264,13 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			CreatedAt:           now,
 			ExpiresAt:           now.Add(30 * time.Minute),
 		},
-		requests: []common.AuthRequestRecord{
+		requests: []mcpcommon.AuthRequestRecord{
 			{
 				ID:                  "req-1",
 				State:               "pending",
 				Path:                "project/p1",
 				ProjectID:           "p1",
-				ScopeType:           common.ScopeTypeProject,
+				ScopeType:           mcpcommon.ScopeTypeProject,
 				ScopeID:             "p1",
 				PrincipalID:         "review-agent",
 				PrincipalType:       "agent",
@@ -1286,12 +1286,12 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 				ExpiresAt:           now.Add(30 * time.Minute),
 			},
 		},
-		getResult: common.AuthRequestRecord{
+		getResult: mcpcommon.AuthRequestRecord{
 			ID:                  "req-1",
 			State:               "pending",
 			Path:                "project/p1",
 			ProjectID:           "p1",
-			ScopeType:           common.ScopeTypeProject,
+			ScopeType:           mcpcommon.ScopeTypeProject,
 			ScopeID:             "p1",
 			PrincipalID:         "review-agent",
 			PrincipalType:       "agent",
@@ -1307,14 +1307,14 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			CreatedAt:           now,
 			ExpiresAt:           now.Add(30 * time.Minute),
 		},
-		claimResult: common.AuthRequestClaimResult{
-			Request: common.AuthRequestRecord{
+		claimResult: mcpcommon.AuthRequestClaimResult{
+			Request: mcpcommon.AuthRequestRecord{
 				ID:                     "req-1",
 				State:                  "approved",
 				Path:                   "project/p1",
 				ApprovedPath:           "project/p1/branch/review",
 				ProjectID:              "p1",
-				ScopeType:              common.ScopeTypeProject,
+				ScopeType:              mcpcommon.ScopeTypeProject,
 				ScopeID:                "p1",
 				PrincipalID:            "review-agent",
 				PrincipalType:          "agent",
@@ -1334,12 +1334,12 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			},
 			SessionSecret: "secret-1",
 		},
-		cancelResult: common.AuthRequestRecord{
+		cancelResult: mcpcommon.AuthRequestRecord{
 			ID:               "req-1",
 			State:            "canceled",
 			Path:             "project/p1",
 			ProjectID:        "p1",
-			ScopeType:        common.ScopeTypeProject,
+			ScopeType:        mcpcommon.ScopeTypeProject,
 			ScopeID:          "p1",
 			PrincipalID:      "review-agent",
 			PrincipalType:    "agent",
@@ -1351,7 +1351,7 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			CreatedAt:        now,
 			ExpiresAt:        now.Add(30 * time.Minute),
 		},
-		sessionRows: []common.AuthSessionRecord{{
+		sessionRows: []mcpcommon.AuthSessionRecord{{
 			SessionID:     "sess-1",
 			State:         "active",
 			ProjectID:     "p1",
@@ -1367,7 +1367,7 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			IssuedAt:      now,
 			ExpiresAt:     now.Add(2 * time.Hour),
 		}},
-		sessionResult: common.AuthSessionRecord{
+		sessionResult: mcpcommon.AuthSessionRecord{
 			SessionID:        "sess-1",
 			State:            "revoked",
 			ProjectID:        "p1",
@@ -1386,14 +1386,14 @@ func TestHandlerAuthRequestToolCalls(t *testing.T) {
 			RevokedAt:        ptrTime(now.Add(10 * time.Minute)),
 			RevocationReason: "operator cleanup",
 		},
-		checkResult: common.AuthSessionGovernanceCheckResult{
+		checkResult: mcpcommon.AuthSessionGovernanceCheckResult{
 			Authorized:          false,
 			DecisionReason:      "out_of_scope",
 			ActingSessionID:     "acting-sess-1",
 			ActingPrincipalID:   "review-agent",
 			ActingPrincipalRole: "research",
 			ActingApprovedPath:  "project/p1/branch/review",
-			TargetSession: common.AuthSessionRecord{
+			TargetSession: mcpcommon.AuthSessionRecord{
 				SessionID:     "sess-global-1",
 				State:         "active",
 				ApprovedPath:  "global",
@@ -1720,14 +1720,14 @@ func TestHandlerAuthRequestCreateOverridesAgentSuppliedClientType(t *testing.T) 
 			now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
 			capture := &stubAuthRequestService{
 				stubCaptureStateReader: stubCaptureStateReader{
-					captureState: common.CaptureState{StateHash: "abc123"},
+					captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 				},
-				created: common.AuthRequestRecord{
+				created: mcpcommon.AuthRequestRecord{
 					ID:                  "req-1",
 					State:               "pending",
 					Path:                "project/p1",
 					ProjectID:           "p1",
-					ScopeType:           common.ScopeTypeProject,
+					ScopeType:           mcpcommon.ScopeTypeProject,
 					ScopeID:             "p1",
 					PrincipalID:         "review-agent",
 					PrincipalType:       "agent",
@@ -1784,16 +1784,16 @@ func TestAuthRequestToolAuthContextHandles(t *testing.T) {
 
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
-		claimResult: common.AuthRequestClaimResult{
-			Request: common.AuthRequestRecord{
+		claimResult: mcpcommon.AuthRequestClaimResult{
+			Request: mcpcommon.AuthRequestRecord{
 				ID:              "req-1",
 				State:           "approved",
 				Path:            "project/p1",
 				ApprovedPath:    "project/p1",
 				ProjectID:       "p1",
-				ScopeType:       common.ScopeTypeProject,
+				ScopeType:       mcpcommon.ScopeTypeProject,
 				ScopeID:         "p1",
 				PrincipalID:     "review-agent",
 				PrincipalType:   "agent",
@@ -1804,7 +1804,7 @@ func TestAuthRequestToolAuthContextHandles(t *testing.T) {
 			},
 			SessionSecret: "secret-1",
 		},
-		sessionRows: []common.AuthSessionRecord{{
+		sessionRows: []mcpcommon.AuthSessionRecord{{
 			SessionID:     "sess-child-1",
 			State:         "active",
 			ProjectID:     "p1",
@@ -1817,14 +1817,14 @@ func TestAuthRequestToolAuthContextHandles(t *testing.T) {
 			IssuedAt:      time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC),
 			ExpiresAt:     time.Date(2026, 4, 1, 14, 0, 0, 0, time.UTC),
 		}},
-		checkResult: common.AuthSessionGovernanceCheckResult{
+		checkResult: mcpcommon.AuthSessionGovernanceCheckResult{
 			Authorized:          false,
 			DecisionReason:      "out_of_scope",
 			ActingSessionID:     "sess-1",
 			ActingPrincipalID:   "review-agent",
 			ActingPrincipalRole: "builder",
 			ActingApprovedPath:  "project/p1",
-			TargetSession: common.AuthSessionRecord{
+			TargetSession: mcpcommon.AuthSessionRecord{
 				SessionID:     "sess-global-1",
 				State:         "active",
 				ApprovedPath:  "global",
@@ -1911,7 +1911,7 @@ func TestAuthRequestToolAuthContextHandles(t *testing.T) {
 func TestAuthRequestApproveToolSchemaHasNoConfigurabilityKnobs(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	mcpSrv, cfg, err := NewServer(Config{EnableAuthContexts: true}, capture, nil)
@@ -1992,7 +1992,7 @@ func TestAuthRequestApproveToolSchemaHasNoConfigurabilityKnobs(t *testing.T) {
 func TestHandlerAuthRequestToolSchemaExplainsDelegatedAgentRules(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 
@@ -2037,15 +2037,15 @@ func TestHandlerAuthRequestToolSchemaExplainsDelegatedAgentRules(t *testing.T) {
 func TestHandlerClaimAuthRequestWaitingPayload(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
-		claimResult: common.AuthRequestClaimResult{
-			Request: common.AuthRequestRecord{
+		claimResult: mcpcommon.AuthRequestClaimResult{
+			Request: mcpcommon.AuthRequestRecord{
 				ID:                  "req-2",
 				State:               "pending",
 				Path:                "project/p1",
 				ProjectID:           "p1",
-				ScopeType:           common.ScopeTypeProject,
+				ScopeType:           mcpcommon.ScopeTypeProject,
 				ScopeID:             "p1",
 				PrincipalID:         "review-agent",
 				PrincipalType:       "agent",
@@ -2095,7 +2095,7 @@ func TestHandlerClaimAuthRequestWaitingPayload(t *testing.T) {
 func TestHandlerCancelAuthRequestRequiresRequesterArgs(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 
@@ -2126,9 +2126,9 @@ func TestHandlerCancelAuthRequestRequiresRequesterArgs(t *testing.T) {
 func TestHandlerCancelAuthRequestRejectsRequesterMismatch(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
-		cancelErr: errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrAuthRequestClaimMismatch),
+		cancelErr: errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, domain.ErrAuthRequestClaimMismatch),
 	}
 
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -2159,9 +2159,9 @@ func TestHandlerCancelAuthRequestRejectsRequesterMismatch(t *testing.T) {
 func TestHandlerClaimAuthRequestErrorMapping(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
-		claimErr: errors.Join(common.ErrInvalidCaptureStateRequest, errors.New("invalid auth request continuation")),
+		claimErr: errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, errors.New("invalid auth request continuation")),
 	}
 
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -2192,7 +2192,7 @@ func TestHandlerClaimAuthRequestErrorMapping(t *testing.T) {
 func TestHandlerClaimAuthRequestRejectsNegativeWaitTimeout(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 
@@ -2228,9 +2228,9 @@ func TestHandlerClaimAuthRequestRejectsNegativeWaitTimeout(t *testing.T) {
 func TestHandlerClaimAuthRequestRejectsRequesterMismatch(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
-		claimErr: errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrAuthRequestClaimMismatch),
+		claimErr: errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, domain.ErrAuthRequestClaimMismatch),
 	}
 
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -2261,9 +2261,9 @@ func TestHandlerClaimAuthRequestRejectsRequesterMismatch(t *testing.T) {
 func TestHandlerClaimAuthRequestRequesterMismatchMapping(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
-		claimErr: errors.Join(common.ErrInvalidCaptureStateRequest, domain.ErrAuthRequestClaimMismatch),
+		claimErr: errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, domain.ErrAuthRequestClaimMismatch),
 	}
 
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -2294,15 +2294,15 @@ func TestHandlerClaimAuthRequestRequesterMismatchMapping(t *testing.T) {
 func TestHandlerClaimAuthRequestWaitingResult(t *testing.T) {
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
-		claimResult: common.AuthRequestClaimResult{
-			Request: common.AuthRequestRecord{
+		claimResult: mcpcommon.AuthRequestClaimResult{
+			Request: mcpcommon.AuthRequestRecord{
 				ID:                  "req-1",
 				State:               "pending",
 				Path:                "project/p1",
 				ProjectID:           "p1",
-				ScopeType:           common.ScopeTypeProject,
+				ScopeType:           mcpcommon.ScopeTypeProject,
 				ScopeID:             "p1",
 				PrincipalID:         "review-agent",
 				PrincipalType:       "agent",
@@ -2346,10 +2346,10 @@ func TestHandlerClaimAuthRequestWaitingResult(t *testing.T) {
 // TestHandlerAttentionToolCallErrorMapping verifies attention tool errors surface as tool-result errors.
 func TestHandlerAttentionToolCallErrorMapping(t *testing.T) {
 	capture := &stubCaptureStateReader{
-		captureState: common.CaptureState{StateHash: "abc123"},
+		captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 	}
 	attention := &stubAttentionService{
-		listErr: errors.Join(common.ErrNotFound, errors.New("attention missing")),
+		listErr: errors.Join(mcpcommon.ErrNotFound, errors.New("attention missing")),
 	}
 
 	handler, err := NewHandler(Config{}, capture, attention)
@@ -2376,10 +2376,10 @@ func TestHandlerAttentionToolCallErrorMapping(t *testing.T) {
 // TestHandlerAttentionListForwardsWaitTimeout verifies attention list waits are forwarded.
 func TestHandlerAttentionListForwardsWaitTimeout(t *testing.T) {
 	capture := &stubCaptureStateReader{
-		captureState: common.CaptureState{StateHash: "abc123"},
+		captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 	}
 	attention := &stubAttentionService{
-		items: []common.AttentionItem{{
+		items: []mcpcommon.AttentionItem{{
 			ID:        "att-1",
 			ProjectID: "p1",
 			ScopeType: string(domain.ScopeLevelProject),
@@ -2471,20 +2471,20 @@ func unitOrchSession(_ *testing.T, branchID string) orchSessionTuple {
 	}
 }
 
-// stubPendingSubagentRequest produces one common.AuthRequestRecord shaped
+// stubPendingSubagentRequest produces one mcpcommon.AuthRequestRecord shaped
 // like a pending subagent request the stub would have stored. Used to seed
 // the stub's getResult / requests rows. branchID is encoded into the path
 // the same way the production gate would.
-func stubPendingSubagentRequest(projectID, branchID, requestID, principalID, role string) common.AuthRequestRecord {
+func stubPendingSubagentRequest(projectID, branchID, requestID, principalID, role string) mcpcommon.AuthRequestRecord {
 	path := "project/" + projectID
-	scopeType := common.ScopeTypeProject
+	scopeType := mcpcommon.ScopeTypeProject
 	scopeID := projectID
 	if strings.TrimSpace(branchID) != "" {
 		path = path + "/branch/" + branchID
-		scopeType = common.ScopeTypeBranch
+		scopeType = mcpcommon.ScopeTypeBranch
 		scopeID = branchID
 	}
-	return common.AuthRequestRecord{
+	return mcpcommon.AuthRequestRecord{
 		ID:            requestID,
 		State:         "pending",
 		Path:          path,
@@ -2504,7 +2504,7 @@ func stubPendingSubagentRequest(projectID, branchID, requestID, principalID, rol
 // into the corresponding approved-state record carrying the orch's audit
 // trail. Used by case (a) to populate the stub's approveResult — the
 // handler then re-emits this record on the JSON-RPC response.
-func approvedAuthRequestRecord(pending common.AuthRequestRecord, orch orchSessionTuple) common.AuthRequestRecord {
+func approvedAuthRequestRecord(pending mcpcommon.AuthRequestRecord, orch orchSessionTuple) mcpcommon.AuthRequestRecord {
 	approved := pending
 	approved.State = "approved"
 	approved.ApprovedPath = pending.Path
@@ -2543,9 +2543,9 @@ func TestAuthRequestApproveOrchInSubtreeApprovesNonOrchSucceeds(t *testing.T) {
 
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
-		approveResult: common.ApproveAuthRequestResult{
+		approveResult: mcpcommon.ApproveAuthRequestResult{
 			Request:       approved,
 			SessionSecret: "issued-subagent-secret-w34-a",
 		},
@@ -2616,11 +2616,11 @@ func TestAuthRequestApproveOrchOfOrchestratorRejected(t *testing.T) {
 	orch := unitOrchSession(t, "B")
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		// Stub the service-layer rejection. The real gate path that fires here
 		// is auth_requests.go:449 — request principal_role==orchestrator.
-		approveErr: fmt.Errorf("orch cannot approve another orchestrator's auth request: %w", common.ErrAuthorizationDenied),
+		approveErr: fmt.Errorf("orch cannot approve another orchestrator's auth request: %w", mcpcommon.ErrAuthorizationDenied),
 	}
 
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -2662,12 +2662,12 @@ func TestAuthRequestApproveCrossOrchSubtreeRejected(t *testing.T) {
 	orchA := unitOrchSession(t, "A") // approver
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		// Stub the service-layer rejection. The real gate path that fires here
 		// is auth_requests.go:520 — cross-orch (RequestedByActor != approver)
 		// AND approver is not STEWARD.
-		approveErr: fmt.Errorf("cross-orch approval requires steward approver (request requested_by %q, approver %q): %w", "ORCH_B_W34", orchA.principalID, common.ErrAuthorizationDenied),
+		approveErr: fmt.Errorf("cross-orch approval requires steward approver (request requested_by %q, approver %q): %w", "ORCH_B_W34", orchA.principalID, mcpcommon.ErrAuthorizationDenied),
 	}
 
 	handler, err := NewHandler(Config{}, capture, nil)
@@ -2718,7 +2718,7 @@ func TestAuthRequestApproveProjectToggleDisabledRejected(t *testing.T) {
 	orch := unitOrchSession(t, "B")
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 		// Stub the service-layer rejection. The real gate path that fires here
 		// is auth_requests.go:443 — project metadata opt-out.
@@ -2759,7 +2759,7 @@ func TestAuthRequestApproveProjectToggleDisabledRejected(t *testing.T) {
 //     internal/app/auth_requests.go:454 (`fmt.Errorf("project %q ...: %w",
 //     ..., domain.ErrOrchSelfApprovalDisabled)`); the new case fires via
 //     errors.Is and the wrapped error message is preserved in Text.
-//  3. Regression protection — bare common.ErrAuthorizationDenied (NOT the
+//  3. Regression protection — bare mcpcommon.ErrAuthorizationDenied (NOT the
 //     orch-self-approval sentinel) still maps to the generic auth_denied
 //     case with the prior text shape (`auth_denied: <err.Error()>`),
 //     proving the new case did not shadow the generic sentinel.
@@ -2810,7 +2810,7 @@ func TestMapToolErrorOrchSelfApprovalDisabled(t *testing.T) {
 		// Regression guard: the new case is placed BEFORE the generic
 		// ErrAuthorizationDenied case but must not swallow bare
 		// ErrAuthorizationDenied sentinels.
-		mapped := mapToolError(common.ErrAuthorizationDenied)
+		mapped := mapToolError(mcpcommon.ErrAuthorizationDenied)
 		if mapped.Class != "auth" {
 			t.Fatalf("Class = %q, want auth", mapped.Class)
 		}
@@ -2839,7 +2839,7 @@ func TestAuthRequestToolSchemaApproveAcceptsOnlyDocumentedArgs(t *testing.T) {
 
 	capture := &stubAuthRequestService{
 		stubCaptureStateReader: stubCaptureStateReader{
-			captureState: common.CaptureState{StateHash: "abc123"},
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
 		},
 	}
 	mcpSrv, cfg, err := NewServer(Config{EnableAuthContexts: true}, capture, nil)

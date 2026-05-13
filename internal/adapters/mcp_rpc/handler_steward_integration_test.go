@@ -1,4 +1,4 @@
-package mcpapi
+package mcprpc
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
-	servercommon "github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	mcpcommon "github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
@@ -26,7 +26,7 @@ import (
 // fixture (no parallel sharing) so the per-fixture sqlite tempdir keeps
 // state isolated.
 type stewardIntegrationFixture struct {
-	adapter   *servercommon.AppServiceAdapter
+	adapter   *mcpcommon.AppServiceAdapter
 	repo      *sqlite.Repository
 	svc       *app.Service
 	projectID string
@@ -88,15 +88,15 @@ func newStewardIntegrationFixture(t *testing.T) stewardIntegrationFixture {
 		AutoCreateProjectColumns: true,
 		AutoSeedStewardAnchors:   true,
 	})
-	adapter := servercommon.NewAppServiceAdapter(svc, auth)
+	adapter := mcpcommon.NewAppServiceAdapter(svc, auth)
 
-	bootstrap := servercommon.ActorLeaseTuple{
+	bootstrap := mcpcommon.ActorLeaseTuple{
 		ActorID:                  "bootstrap-user",
 		ActorName:                "Bootstrap User",
 		ActorType:                string(domain.ActorTypeUser),
 		AuthRequestPrincipalType: "user",
 	}
-	project, err := adapter.CreateProject(ctx, servercommon.CreateProjectRequest{
+	project, err := adapter.CreateProject(ctx, mcpcommon.CreateProjectRequest{
 		Name:        "Drop 3 STEWARD integration",
 		Description: "fixture project for droplet 3.22",
 		Actor:       bootstrap,
@@ -122,7 +122,7 @@ func newStewardIntegrationFixture(t *testing.T) stewardIntegrationFixture {
 	}
 
 	dropOrch := stewardIntegrationDropOrchActor()
-	drop, err := adapter.CreateActionItem(ctx, servercommon.CreateActionItemRequest{
+	drop, err := adapter.CreateActionItem(ctx, mcpcommon.CreateActionItemRequest{
 		ProjectID:      project.ID,
 		ColumnID:       columnIDs[domain.StateTodo],
 		Kind:           string(domain.KindPlan),
@@ -181,7 +181,7 @@ func newStewardIntegrationFixture(t *testing.T) stewardIntegrationFixture {
 // stewardIntegrationColumnState maps an auto-created column name onto its
 // canonical lifecycle state. The package-private helper
 // actionItemLifecycleStateForColumnName lives in
-// internal/adapters/server/common; mirroring the four canonical mappings
+// internal/adapters/mcp_common; mirroring the four canonical mappings
 // here keeps this file's column lookups self-contained without exporting
 // the original.
 func stewardIntegrationColumnState(name string) domain.LifecycleState {
@@ -206,8 +206,8 @@ func stewardIntegrationColumnState(name string) domain.LifecycleState {
 // is an agent-principal session (AuthRequestPrincipalType="agent") which
 // the STEWARD owner-state-lock REJECTS for state-affecting mutations on
 // STEWARD-owned items.
-func stewardIntegrationDropOrchActor() servercommon.ActorLeaseTuple {
-	return servercommon.ActorLeaseTuple{
+func stewardIntegrationDropOrchActor() mcpcommon.ActorLeaseTuple {
+	return mcpcommon.ActorLeaseTuple{
 		ActorID:                  "drop-orch-1",
 		ActorName:                "DROP_3_ORCH",
 		ActorType:                string(domain.ActorTypeUser),
@@ -218,8 +218,8 @@ func stewardIntegrationDropOrchActor() servercommon.ActorLeaseTuple {
 // stewardIntegrationStewardActor returns the canonical STEWARD actor tuple
 // — a steward-principal session (AuthRequestPrincipalType="steward")
 // authorized to move STEWARD-owned items through state.
-func stewardIntegrationStewardActor() servercommon.ActorLeaseTuple {
-	return servercommon.ActorLeaseTuple{
+func stewardIntegrationStewardActor() mcpcommon.ActorLeaseTuple {
+	return mcpcommon.ActorLeaseTuple{
 		ActorID:                  "STEWARD",
 		ActorName:                "STEWARD orch",
 		ActorType:                string(domain.ActorTypeUser),
@@ -290,7 +290,7 @@ func TestStewardIntegrationDropOrchCreateAndUpdateAllowedButCannotMoveState(t *t
 	// Description-only update by drop-orch on STEWARD-owned finding SUCCEEDS.
 	titleSnap := "DROP_3_HYLLA_FINDINGS"
 	descSnap := "Drop-orch updated body — Hylla feedback rollup for Drop 3."
-	updated, err := fixture.adapter.UpdateActionItem(ctx, servercommon.UpdateActionItemRequest{
+	updated, err := fixture.adapter.UpdateActionItem(ctx, mcpcommon.UpdateActionItemRequest{
 		ActionItemID: hyllaFindingsID,
 		Title:        &titleSnap,
 		Description:  &descSnap,
@@ -305,12 +305,12 @@ func TestStewardIntegrationDropOrchCreateAndUpdateAllowedButCannotMoveState(t *t
 
 	// move_state(complete) by drop-orch on the same STEWARD-owned finding
 	// REJECTS.
-	moved, moveErr := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+	moved, moveErr := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 		ActionItemID: hyllaFindingsID,
 		State:        string(domain.StateComplete),
 		Actor:        dropOrch,
 	})
-	if !errors.Is(moveErr, servercommon.ErrAuthorizationDenied) {
+	if !errors.Is(moveErr, mcpcommon.ErrAuthorizationDenied) {
 		t.Fatalf("MoveActionItemState(drop-orch complete on STEWARD-owned) error = %v, want ErrAuthorizationDenied (item=%#v)", moveErr, moved)
 	}
 	// State unchanged.
@@ -332,7 +332,7 @@ func TestStewardIntegrationStewardCanMoveStateThroughComplete(t *testing.T) {
 	steward := stewardIntegrationStewardActor()
 
 	hyllaFindingsID := fixture.findingIDs["DROP_3_HYLLA_FINDINGS"]
-	moved, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+	moved, err := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 		ActionItemID: hyllaFindingsID,
 		State:        string(domain.StateComplete),
 		Actor:        steward,
@@ -357,7 +357,7 @@ func TestStewardIntegrationRefinementsGateCloseSucceedsWhenAllBlockersClear(t *t
 
 	// Close all 5 STEWARD-owned level_2 findings.
 	for suffix, id := range fixture.findingIDs {
-		if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+		if _, err := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 			ActionItemID: id,
 			State:        string(domain.StateComplete),
 			Actor:        steward,
@@ -371,7 +371,7 @@ func TestStewardIntegrationRefinementsGateCloseSucceedsWhenAllBlockersClear(t *t
 	// state — the always-on parent-blocks-on-incomplete-child invariant
 	// (Drop 4a Wave 1.7) finds no non-archived non-Complete children to
 	// block on.
-	gate, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+	gate, err := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 		ActionItemID: fixture.gateID,
 		State:        string(domain.StateComplete),
 		Actor:        steward,
@@ -405,7 +405,7 @@ func TestStewardIntegrationRefinementsGateCloseSucceedsWhenAllBlockersClear(t *t
 	// Close DROP_3 itself. SUCCEEDS — every direct child (the gate) is
 	// complete; the always-on parent-blocks-on-incomplete-child invariant
 	// (Drop 4a Wave 1.7) is satisfied by the gate's terminal state.
-	if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+	if _, err := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 		ActionItemID: fixture.dropID,
 		State:        string(domain.StateComplete),
 		Actor:        steward,
@@ -425,7 +425,7 @@ func TestStewardIntegrationDropOrchReparentRejected(t *testing.T) {
 	// Build a sibling target parent under DROP_3 that the drop-orch could
 	// (in principle) try to reparent the finding under. The sibling itself
 	// is non-STEWARD-owned so its creation bypasses the gate.
-	sibling, err := fixture.adapter.CreateActionItem(ctx, servercommon.CreateActionItemRequest{
+	sibling, err := fixture.adapter.CreateActionItem(ctx, mcpcommon.CreateActionItemRequest{
 		ProjectID:      fixture.projectID,
 		ParentID:       fixture.dropID,
 		ColumnID:       fixture.columnIDs[domain.StateTodo],
@@ -439,11 +439,11 @@ func TestStewardIntegrationDropOrchReparentRejected(t *testing.T) {
 	}
 
 	hyllaFindingsID := fixture.findingIDs["DROP_3_HYLLA_FINDINGS"]
-	if _, err := fixture.adapter.ReparentActionItem(ctx, servercommon.ReparentActionItemRequest{
+	if _, err := fixture.adapter.ReparentActionItem(ctx, mcpcommon.ReparentActionItemRequest{
 		ActionItemID: hyllaFindingsID,
 		ParentID:     sibling.ID,
 		Actor:        dropOrch,
-	}); !errors.Is(err, servercommon.ErrAuthorizationDenied) {
+	}); !errors.Is(err, mcpcommon.ErrAuthorizationDenied) {
 		t.Fatalf("ReparentActionItem(drop-orch on STEWARD-owned) error = %v, want ErrAuthorizationDenied", err)
 	}
 }
@@ -483,7 +483,7 @@ func TestStewardIntegrationDropOrchSupersedeRejected(t *testing.T) {
 	}
 	updatedMeta := finding.Metadata
 	updatedMeta.Outcome = "failure"
-	if _, err := fixture.adapter.UpdateActionItem(ctx, servercommon.UpdateActionItemRequest{
+	if _, err := fixture.adapter.UpdateActionItem(ctx, mcpcommon.UpdateActionItemRequest{
 		ActionItemID: hyllaFindingsID,
 		Metadata:     &updatedMeta,
 		Actor:        steward,
@@ -492,7 +492,7 @@ func TestStewardIntegrationDropOrchSupersedeRejected(t *testing.T) {
 	}
 	// Steward moves the finding into failed (L1 lock would reject a
 	// drop-orch on a STEWARD-owned item).
-	if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+	if _, err := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 		ActionItemID: hyllaFindingsID,
 		State:        string(domain.StateFailed),
 		Actor:        steward,
@@ -503,11 +503,11 @@ func TestStewardIntegrationDropOrchSupersedeRejected(t *testing.T) {
 	// Drop-orch supersede attempt on the now-failed STEWARD-owned finding
 	// MUST reject with ErrAuthorizationDenied — this is the L1 gate firing
 	// identically to MoveActionItem per finding 5.C.13.
-	if _, err := fixture.adapter.SupersedeActionItem(ctx, servercommon.SupersedeActionItemRequest{
+	if _, err := fixture.adapter.SupersedeActionItem(ctx, mcpcommon.SupersedeActionItemRequest{
 		ActionItemID: hyllaFindingsID,
 		Reason:       "drop-orch attempt to clear STEWARD-owned finding",
 		Actor:        dropOrch,
-	}); !errors.Is(err, servercommon.ErrAuthorizationDenied) {
+	}); !errors.Is(err, mcpcommon.ErrAuthorizationDenied) {
 		t.Fatalf("SupersedeActionItem(drop-orch on STEWARD-owned) error = %v, want ErrAuthorizationDenied", err)
 	}
 
@@ -537,12 +537,12 @@ func TestStewardIntegrationDropOrchOwnerMutationRejected(t *testing.T) {
 	hyllaFindingsID := fixture.findingIDs["DROP_3_HYLLA_FINDINGS"]
 	clearedOwner := ""
 	titleSnap := "DROP_3_HYLLA_FINDINGS"
-	if _, err := fixture.adapter.UpdateActionItem(ctx, servercommon.UpdateActionItemRequest{
+	if _, err := fixture.adapter.UpdateActionItem(ctx, mcpcommon.UpdateActionItemRequest{
 		ActionItemID: hyllaFindingsID,
 		Title:        &titleSnap,
 		Owner:        &clearedOwner,
 		Actor:        dropOrch,
-	}); !errors.Is(err, servercommon.ErrAuthorizationDenied) {
+	}); !errors.Is(err, mcpcommon.ErrAuthorizationDenied) {
 		t.Fatalf("UpdateActionItem(drop-orch clearing Owner on STEWARD-owned) error = %v, want ErrAuthorizationDenied", err)
 	}
 
@@ -591,7 +591,7 @@ func TestStewardIntegrationRefinementsGateForgottenRegression(t *testing.T) {
 	// drop_number=3 AFTER the gate has been seeded. The drop-orch is
 	// agent-principal and the rogue item is non-STEWARD-owned, so the
 	// gate does not fire on its create.
-	rogue, err := fixture.adapter.CreateActionItem(ctx, servercommon.CreateActionItemRequest{
+	rogue, err := fixture.adapter.CreateActionItem(ctx, mcpcommon.CreateActionItemRequest{
 		ProjectID:      fixture.projectID,
 		ParentID:       fixture.dropID,
 		ColumnID:       fixture.columnIDs[domain.StateTodo],
@@ -607,7 +607,7 @@ func TestStewardIntegrationRefinementsGateForgottenRegression(t *testing.T) {
 	}
 	// Move the rogue item into in_progress so it is non-terminal at
 	// gate-close + drop-close.
-	if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+	if _, err := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 		ActionItemID: rogue.ID,
 		State:        string(domain.StateInProgress),
 		Actor:        dropOrch,
@@ -632,7 +632,7 @@ func TestStewardIntegrationRefinementsGateForgottenRegression(t *testing.T) {
 	// Close all 5 STEWARD-owned level_2 findings so the gate's pinned
 	// blocked_by entries clear.
 	for suffix, id := range fixture.findingIDs {
-		if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+		if _, err := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 			ActionItemID: id,
 			State:        string(domain.StateComplete),
 			Actor:        steward,
@@ -645,7 +645,7 @@ func TestStewardIntegrationRefinementsGateForgottenRegression(t *testing.T) {
 	// the gate closes despite the in_progress drop_number=3 child. This
 	// is the failure mode Test 7 documents: gate close paper-overs the
 	// straggler.
-	if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+	if _, err := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 		ActionItemID: fixture.gateID,
 		State:        string(domain.StateComplete),
 		Actor:        steward,
@@ -699,7 +699,7 @@ func TestStewardIntegrationRefinementsGateForgottenRegression(t *testing.T) {
 	// independently of the safety-net warning (per QA falsification §1.5
 	// — the warning surface alone is insufficient evidence; the invariant
 	// must reject the close on its own merits).
-	if _, err := fixture.adapter.MoveActionItemState(ctx, servercommon.MoveActionItemStateRequest{
+	if _, err := fixture.adapter.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 		ActionItemID: fixture.dropID,
 		State:        string(domain.StateComplete),
 		Actor:        steward,
@@ -728,7 +728,7 @@ func TestStewardIntegrationRefinementsGateForgottenRegression(t *testing.T) {
 // real STEWARD session, persistent STEWARD-owned ancestor, pending cross-orch
 // subagent request rooted under it, and a live MCP handler over httptest.
 type stewardApproveFixture struct {
-	adapter        *servercommon.AppServiceAdapter
+	adapter        *mcpcommon.AppServiceAdapter
 	repo           *sqlite.Repository
 	auth           *autentauth.Service
 	server         *httptest.Server
@@ -835,7 +835,7 @@ func newStewardApproveFixture(t *testing.T) stewardApproveFixture {
 		AuthRequests: auth,
 		AuthBackend:  auth,
 	})
-	adapter := servercommon.NewAppServiceAdapter(svc, auth)
+	adapter := mcpcommon.NewAppServiceAdapter(svc, auth)
 
 	// Create the cross-orch pending subagent request whose path roots under
 	// the persistent ancestor. RequestedBy is a DIFFERENT orchestrator —

@@ -1,4 +1,4 @@
-package mcpapi
+package mcprpc
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -41,7 +41,7 @@ type mcpMutationGuardArgs struct {
 // authorizeMCPMutation validates the caller session for one mutating tool.
 func authorizeMCPMutation(
 	ctx context.Context,
-	authorizer common.MutationAuthorizer,
+	authorizer mcpcommon.MutationAuthorizer,
 	auth mcpSessionAuthArgs,
 	action string,
 	namespace string,
@@ -56,7 +56,7 @@ func authorizeMCPMutation(
 	if err != nil {
 		return domain.AuthenticatedCaller{}, err
 	}
-	return authorizer.AuthorizeMutation(ctx, common.MutationAuthorizationRequest{
+	return authorizer.AuthorizeMutation(ctx, mcpcommon.MutationAuthorizationRequest{
 		SessionID:     strings.TrimSpace(resolvedAuth.SessionID),
 		SessionSecret: strings.TrimSpace(resolvedAuth.SessionSecret),
 		Action:        strings.TrimSpace(action),
@@ -68,15 +68,15 @@ func authorizeMCPMutation(
 }
 
 // buildAuthenticatedMutationActor converts one authenticated caller plus optional guard tuple into the app adapter actor contract.
-func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mcpMutationGuardArgs, allowUnguardedAgent bool) (common.ActorLeaseTuple, error) {
+func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mcpMutationGuardArgs, allowUnguardedAgent bool) (mcpcommon.ActorLeaseTuple, error) {
 	caller = domain.NormalizeAuthenticatedCaller(caller)
 	if caller.IsZero() {
-		return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: authenticated caller is required for mutating MCP tools")
+		return mcpcommon.ActorLeaseTuple{}, fmt.Errorf("invalid_request: authenticated caller is required for mutating MCP tools")
 	}
 	// Drop 3 droplet 3.19: thread AuthRequestPrincipalType through the
 	// MCP-layer actor tuple so the STEWARD owner-state-lock survives the
 	// trip into withMutationGuardContext. Mirrors the HTTP transport.
-	actor := common.ActorLeaseTuple{
+	actor := mcpcommon.ActorLeaseTuple{
 		ActorID:                  caller.PrincipalID,
 		ActorName:                caller.PrincipalName,
 		ActorType:                string(caller.PrincipalType),
@@ -90,7 +90,7 @@ func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mc
 
 	if caller.PrincipalType != domain.ActorTypeAgent {
 		if hasGuardTuple {
-			return common.ActorLeaseTuple{}, fmt.Errorf(
+			return mcpcommon.ActorLeaseTuple{}, fmt.Errorf(
 				"invalid_request: guarded mutation tuple requires an authenticated agent session; current session principal_type=%s. Remove agent_instance_id/lease_token to act as a human, or claim/validate a project-scoped approved agent session before retrying",
 				caller.PrincipalType,
 			)
@@ -101,7 +101,7 @@ func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mc
 		return actor, nil
 	}
 	if guard.AgentInstanceID == "" || guard.LeaseToken == "" {
-		return common.ActorLeaseTuple{}, fmt.Errorf("invalid_request: agent_instance_id and lease_token are required for authenticated agent mutations; agent identity comes from the authenticated session")
+		return mcpcommon.ActorLeaseTuple{}, fmt.Errorf("invalid_request: agent_instance_id and lease_token are required for authenticated agent mutations; agent identity comes from the authenticated session")
 	}
 
 	// Lease identity must stay tied to the stable principal id; display name remains
@@ -173,7 +173,7 @@ type capabilityLeaseMutationArgs struct {
 // handleCapabilityLeaseMutation routes one lease lifecycle operation through the shared tool surface.
 func handleCapabilityLeaseMutation(
 	ctx context.Context,
-	leases common.CapabilityLeaseService,
+	leases mcpcommon.CapabilityLeaseService,
 	args capabilityLeaseMutationArgs,
 ) (*mcp.CallToolResult, error) {
 	projectID := strings.TrimSpace(args.ProjectID)
@@ -191,7 +191,7 @@ func handleCapabilityLeaseMutation(
 		if projectID == "" {
 			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 		}
-		leasesRows, err := leases.ListCapabilityLeases(ctx, common.ListCapabilityLeasesRequest{
+		leasesRows, err := leases.ListCapabilityLeases(ctx, mcpcommon.ListCapabilityLeasesRequest{
 			ProjectID:      projectID,
 			ScopeType:      scopeType,
 			ScopeID:        scopeID,
@@ -238,7 +238,7 @@ func handleCapabilityLeaseMutation(
 		} else if agentName == "" {
 			return mcp.NewToolResultError(`invalid_request: required argument "agent_name" not found`), nil
 		}
-		lease, err := leases.IssueCapabilityLease(ctx, common.IssueCapabilityLeaseRequest{
+		lease, err := leases.IssueCapabilityLease(ctx, mcpcommon.IssueCapabilityLeaseRequest{
 			ProjectID:                 projectID,
 			ScopeType:                 scopeType,
 			ScopeID:                   args.ScopeID,
@@ -277,7 +277,7 @@ func handleCapabilityLeaseMutation(
 		); err != nil {
 			return toolResultFromError(err), nil
 		}
-		lease, err := leases.HeartbeatCapabilityLease(ctx, common.HeartbeatCapabilityLeaseRequest{
+		lease, err := leases.HeartbeatCapabilityLease(ctx, mcpcommon.HeartbeatCapabilityLeaseRequest{
 			AgentInstanceID: instanceID,
 			LeaseToken:      leaseToken,
 		})
@@ -308,7 +308,7 @@ func handleCapabilityLeaseMutation(
 		); err != nil {
 			return toolResultFromError(err), nil
 		}
-		lease, err := leases.RenewCapabilityLease(ctx, common.RenewCapabilityLeaseRequest{
+		lease, err := leases.RenewCapabilityLease(ctx, mcpcommon.RenewCapabilityLeaseRequest{
 			AgentInstanceID: instanceID,
 			LeaseToken:      leaseToken,
 			TTLSeconds:      args.TTLSeconds,
@@ -337,7 +337,7 @@ func handleCapabilityLeaseMutation(
 		); err != nil {
 			return toolResultFromError(err), nil
 		}
-		lease, err := leases.RevokeCapabilityLease(ctx, common.RevokeCapabilityLeaseRequest{
+		lease, err := leases.RevokeCapabilityLease(ctx, mcpcommon.RevokeCapabilityLeaseRequest{
 			AgentInstanceID: instanceID,
 			Reason:          reason,
 		})
@@ -368,7 +368,7 @@ func handleCapabilityLeaseMutation(
 		); err != nil {
 			return toolResultFromError(err), nil
 		}
-		if err := leases.RevokeAllCapabilityLeases(ctx, common.RevokeAllCapabilityLeasesRequest{
+		if err := leases.RevokeAllCapabilityLeases(ctx, mcpcommon.RevokeAllCapabilityLeasesRequest{
 			ProjectID: projectID,
 			ScopeType: scopeType,
 			ScopeID:   args.ScopeID,
@@ -392,7 +392,7 @@ func handleCapabilityLeaseMutation(
 }
 
 // registerBootstrapTool registers the onboarding guidance tool for empty-instance flows.
-func registerBootstrapTool(srv *mcpserver.MCPServer, guide common.BootstrapGuideReader) {
+func registerBootstrapTool(srv *mcpserver.MCPServer, guide mcpcommon.BootstrapGuideReader) {
 	if guide == nil {
 		return
 	}
@@ -418,9 +418,9 @@ func registerBootstrapTool(srv *mcpserver.MCPServer, guide common.BootstrapGuide
 // registerProjectTools registers list/read project tools plus the reduced project mutation family.
 func registerProjectTools(
 	srv *mcpserver.MCPServer,
-	projects common.ProjectService,
-	kinds common.KindCatalogService,
-	changes common.ChangeFeedService,
+	projects mcpcommon.ProjectService,
+	kinds mcpcommon.KindCatalogService,
+	changes mcpcommon.ChangeFeedService,
 	authContexts *mcpAuthContextStore,
 	exposeLegacyProjectTools bool,
 ) {
@@ -531,7 +531,7 @@ func registerProjectTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				project, err := projects.CreateProject(ctx, common.CreateProjectRequest{
+				project, err := projects.CreateProject(ctx, mcpcommon.CreateProjectRequest{
 					Name:                args.Name,
 					Description:         args.Description,
 					HyllaArtifactRef:    args.HyllaArtifactRef,
@@ -585,7 +585,7 @@ func registerProjectTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				project, err := projects.UpdateProject(ctx, common.UpdateProjectRequest{
+				project, err := projects.UpdateProject(ctx, mcpcommon.UpdateProjectRequest{
 					ProjectID:           args.ProjectID,
 					Name:                args.Name,
 					Description:         args.Description,
@@ -632,7 +632,7 @@ func registerProjectTools(
 				); err != nil {
 					return toolResultFromError(err), nil
 				}
-				if err := kinds.SetProjectAllowedKinds(ctx, common.SetProjectAllowedKindsRequest{
+				if err := kinds.SetProjectAllowedKinds(ctx, mcpcommon.SetProjectAllowedKindsRequest{
 					ProjectID: projectID,
 					KindIDs:   append([]string(nil), args.KindIDs...),
 				}); err != nil {
@@ -733,9 +733,9 @@ func registerProjectTools(
 // registerActionItemTools registers actionItem reads plus the reduced action-item mutation family.
 func registerActionItemTools(
 	srv *mcpserver.MCPServer,
-	tasks common.ActionItemService,
-	search common.SearchService,
-	embeddings common.EmbeddingsService,
+	tasks mcpcommon.ActionItemService,
+	search mcpcommon.SearchService,
+	embeddings mcpcommon.EmbeddingsService,
 	authContexts *mcpAuthContextStore,
 	exposeLegacyActionItemTools bool,
 ) {
@@ -865,7 +865,7 @@ func registerActionItemTools(
 				if searchMode == "" {
 					searchMode = strings.TrimSpace(req.GetString("mode", ""))
 				}
-				searchReq := common.SearchActionItemsRequest{
+				searchReq := mcpcommon.SearchActionItemsRequest{
 					ProjectID:       strings.TrimSpace(args.ProjectID),
 					Query:           strings.TrimSpace(args.Query),
 					CrossProject:    args.CrossProject,
@@ -978,7 +978,7 @@ func registerActionItemTools(
 				if args.Labels != nil {
 					labelsValue = append([]string(nil), (*args.Labels)...)
 				}
-				createReq := common.CreateActionItemRequest{
+				createReq := mcpcommon.CreateActionItemRequest{
 					ProjectID:      args.ProjectID,
 					ParentID:       args.ParentID,
 					Kind:           args.Kind,
@@ -1114,7 +1114,7 @@ func registerActionItemTools(
 					copied := append([]string(nil), (*args.Labels)...)
 					labelsArg = &copied
 				}
-				actionItem, err := tasks.UpdateActionItem(ctx, common.UpdateActionItemRequest{
+				actionItem, err := tasks.UpdateActionItem(ctx, mcpcommon.UpdateActionItemRequest{
 					ActionItemID:   args.ActionItemID,
 					Title:          args.Title,
 					Description:    args.Description,
@@ -1230,7 +1230,7 @@ func registerActionItemTools(
 				// adapter resolves State to a destination column id when
 				// ToColumnID is empty; both-non-empty and both-empty rejects
 				// are enforced one layer up at the handler boundary.
-				actionItem, err := tasks.MoveActionItem(ctx, common.MoveActionItemRequest{
+				actionItem, err := tasks.MoveActionItem(ctx, mcpcommon.MoveActionItemRequest{
 					ActionItemID: actionItemID,
 					ToColumnID:   toColumnID,
 					State:        stateArg,
@@ -1281,7 +1281,7 @@ func registerActionItemTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				actionItem, err := tasks.MoveActionItemState(ctx, common.MoveActionItemStateRequest{
+				actionItem, err := tasks.MoveActionItemState(ctx, mcpcommon.MoveActionItemStateRequest{
 					ActionItemID: actionItemID,
 					State:        state,
 					Actor:        actor,
@@ -1326,7 +1326,7 @@ func registerActionItemTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				if err := tasks.DeleteActionItem(ctx, common.DeleteActionItemRequest{
+				if err := tasks.DeleteActionItem(ctx, mcpcommon.DeleteActionItemRequest{
 					ActionItemID: actionItemID,
 					Mode:         args.Mode,
 					Actor:        actor,
@@ -1374,7 +1374,7 @@ func registerActionItemTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				actionItem, err := tasks.RestoreActionItem(ctx, common.RestoreActionItemRequest{
+				actionItem, err := tasks.RestoreActionItem(ctx, mcpcommon.RestoreActionItemRequest{
 					ActionItemID: actionItemID,
 					Actor:        actor,
 				})
@@ -1418,7 +1418,7 @@ func registerActionItemTools(
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				actionItem, err := tasks.ReparentActionItem(ctx, common.ReparentActionItemRequest{
+				actionItem, err := tasks.ReparentActionItem(ctx, mcpcommon.ReparentActionItemRequest{
 					ActionItemID: actionItemID,
 					ParentID:     args.ParentID,
 					Actor:        actor,
@@ -1450,7 +1450,7 @@ func registerActionItemTools(
 				mcp.WithString("title", mcp.Description("Title. Required for operation=create. On operation=update, omit to preserve the existing title; sending an empty string is rejected (ErrInvalidTitle — title invariant).")),
 				mcp.WithString("parent_id", mcp.Description("Optional parent action-item id for operation=create, new parent id for operation=reparent, or child root for operation=list")),
 				mcp.WithString("kind", mcp.Description("Kind identifier for operation=create")),
-				mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+				mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 				mcp.WithString("role", mcp.Description("Optional role tag for operation=create|update — see allowed values (closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research). Empty string preserves the existing value on update.")),
 				mcp.WithString("structural_type", mcp.Description("Required for operation=create — closed enum: drop|segment|confluence|droplet (waterfall metaphor — see WIKI.md §Cascade Vocabulary). Empty rejects on create. Empty preserves prior value on update."), mcp.Enum("drop", "segment", "confluence", "droplet")),
 				mcp.WithString("owner", mcp.Description("Optional Owner principal-name string for operation=create|update (e.g. \"STEWARD\"). Free-form, whitespace-trimmed; domain primitive — not STEWARD-specific. On update, omit to preserve the existing value; supplying any value (including empty string) triggers the L1 STEWARD field-level guard at the adapter boundary.")),
@@ -1514,7 +1514,7 @@ func registerActionItemTools(
 					mcp.WithString("title", mcp.Required(), mcp.Description("ActionItem title")),
 					mcp.WithString("parent_id", mcp.Description("Optional parent actionItem id")),
 					mcp.WithString("kind", mcp.Description("Kind identifier")),
-					mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+					mcp.WithString("scope", mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 					mcp.WithString("role", mcp.Description("Optional role tag — closed enum: builder|qa-proof|qa-falsification|qa-a11y|qa-visual|design|commit|planner|research")),
 					mcp.WithString("structural_type", mcp.Description("Required for operation=create — closed enum: drop|segment|confluence|droplet (waterfall metaphor — see WIKI.md §Cascade Vocabulary). Empty rejects on create. Empty preserves prior value on update."), mcp.Enum("drop", "segment", "confluence", "droplet")),
 					mcp.WithString("description", mcp.Description("ActionItem details in markdown-rich text")),
@@ -1682,7 +1682,7 @@ func registerActionItemTools(
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				switch strings.TrimSpace(req.GetString("operation", "")) {
 				case "status":
-					resultPayload, err := embeddings.GetEmbeddingsStatus(ctx, common.EmbeddingsStatusRequest{
+					resultPayload, err := embeddings.GetEmbeddingsStatus(ctx, mcpcommon.EmbeddingsStatusRequest{
 						ProjectID:       req.GetString("project_id", ""),
 						CrossProject:    req.GetBool("cross_project", false),
 						IncludeArchived: req.GetBool("include_archived", false),
@@ -1706,7 +1706,7 @@ func registerActionItemTools(
 					if err != nil {
 						return mcp.NewToolResultError(err.Error()), nil
 					}
-					resultPayload, err := embeddings.ReindexEmbeddings(ctx, common.ReindexEmbeddingsRequest{
+					resultPayload, err := embeddings.ReindexEmbeddings(ctx, mcpcommon.ReindexEmbeddingsRequest{
 						ProjectID:        req.GetString("project_id", ""),
 						CrossProject:     req.GetBool("cross_project", false),
 						IncludeArchived:  req.GetBool("include_archived", false),
@@ -1732,7 +1732,7 @@ func registerActionItemTools(
 }
 
 // registerKindTools registers kind catalog and project allowlist tools.
-func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService, authContexts *mcpAuthContextStore, exposeLegacyProjectTools bool) {
+func registerKindTools(srv *mcpserver.MCPServer, kinds mcpcommon.KindCatalogService, authContexts *mcpAuthContextStore, exposeLegacyProjectTools bool) {
 	if kinds == nil {
 		return
 	}
@@ -1837,7 +1837,7 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 				); err != nil {
 					return toolResultFromError(err), nil
 				}
-				if err := kinds.SetProjectAllowedKinds(ctx, common.SetProjectAllowedKindsRequest{
+				if err := kinds.SetProjectAllowedKinds(ctx, mcpcommon.SetProjectAllowedKindsRequest{
 					ProjectID: projectID,
 					KindIDs:   append([]string(nil), args.KindIDs...),
 				}); err != nil {
@@ -1887,9 +1887,9 @@ const templateInputMaxBytes = 1 << 20
 //     skipped because TOML is not JSON-friendly inside the MCP envelope's
 //     structuredContent slot.
 //   - `list_builtin` returns a JSON object via mcp.NewToolResultJSON; the
-//     payload is a closed-shape map matching common.ListBuiltinTemplatesResult.
+//     payload is a closed-shape map matching mcpcommon.ListBuiltinTemplatesResult.
 //   - `validate` returns a JSON object via mcp.NewToolResultJSON; the
-//     payload matches common.ValidateCandidateTemplateResult. Validation
+//     payload matches mcpcommon.ValidateCandidateTemplateResult. Validation
 //     failures are surfaced IN-BAND via Valid == false rather than as
 //     transport-level tool errors so adopters route on a uniform shape
 //     regardless of which validator inside templates.LoadWithOptions
@@ -1897,7 +1897,7 @@ const templateInputMaxBytes = 1 << 20
 //     (templateInputMaxBytes) before the request reaches the service
 //     layer; oversized inputs reject as `invalid_request`.
 //   - `set` returns a JSON object via mcp.NewToolResultJSON; the payload
-//     matches common.SetProjectTemplateResult. The operation is
+//     matches mcpcommon.SetProjectTemplateResult. The operation is
 //     auth-gated via authorizeMCPMutation (project-scoped); the same
 //     1 MiB input cap applies. Atomicity is the four-step ordering
 //     documented on app.Service.SetProjectTemplate (validate →
@@ -1911,7 +1911,7 @@ const templateInputMaxBytes = 1 << 20
 // bindArgumentsStrict (post-A.2) so unknown JSON keys reject with the
 // canonical `invalid_request: unknown field "<name>" on tool "till.template"`
 // error.
-func registerTemplateTools(srv *mcpserver.MCPServer, templatesSvc common.TemplateService) {
+func registerTemplateTools(srv *mcpserver.MCPServer, templatesSvc mcpcommon.TemplateService) {
 	if templatesSvc == nil {
 		return
 	}
@@ -1948,7 +1948,7 @@ func registerTemplateTools(srv *mcpserver.MCPServer, templatesSvc common.Templat
 				if projectID == "" {
 					return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 				}
-				out, err := templatesSvc.GetProjectTemplate(ctx, common.GetProjectTemplateRequest{
+				out, err := templatesSvc.GetProjectTemplate(ctx, mcpcommon.GetProjectTemplateRequest{
 					ProjectID: projectID,
 				})
 				if err != nil {
@@ -1987,7 +1987,7 @@ func registerTemplateTools(srv *mcpserver.MCPServer, templatesSvc common.Templat
 				if len(args.TemplateTOML) > templateInputMaxBytes {
 					return mcp.NewToolResultError(fmt.Sprintf("invalid_request: template_toml exceeds %d-byte cap (got %d bytes)", templateInputMaxBytes, len(args.TemplateTOML))), nil
 				}
-				out, err := templatesSvc.ValidateCandidateTemplate(ctx, common.ValidateCandidateTemplateRequest{
+				out, err := templatesSvc.ValidateCandidateTemplate(ctx, mcpcommon.ValidateCandidateTemplateRequest{
 					TemplateTOML: args.TemplateTOML,
 				})
 				if err != nil {
@@ -2037,7 +2037,7 @@ func registerTemplateTools(srv *mcpserver.MCPServer, templatesSvc common.Templat
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				out, err := templatesSvc.SetProjectTemplate(ctx, common.SetProjectTemplateRequest{
+				out, err := templatesSvc.SetProjectTemplate(ctx, mcpcommon.SetProjectTemplateRequest{
 					ProjectID:    projectID,
 					TemplateTOML: args.TemplateTOML,
 					Actor:        actor,
@@ -2058,7 +2058,7 @@ func registerTemplateTools(srv *mcpserver.MCPServer, templatesSvc common.Templat
 }
 
 // registerCapabilityLeaseTools registers lease visibility and lifecycle tools.
-func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService, authContexts *mcpAuthContextStore, exposeLegacyLeaseTools bool) {
+func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases mcpcommon.CapabilityLeaseService, authContexts *mcpAuthContextStore, exposeLegacyLeaseTools bool) {
 	if leases == nil {
 		return
 	}
@@ -2069,7 +2069,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 			mcp.WithDescription("List or mutate capability lease lifecycle state. Use operation=list|issue|heartbeat|renew|revoke|revoke_all."+mcpCapabilityLeaseToolSuffix),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Capability lease operation"), mcp.Enum("list", "issue", "heartbeat", "renew", "revoke", "revoke_all")),
 			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|issue|revoke_all")),
-			mcp.WithString("scope_type", mcp.Description("project|branch|phase|actionItem|subtask. Optional for operation=list; required for operation=issue|revoke_all"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Description("project|branch|phase|actionItem|subtask. Optional for operation=list; required for operation=issue|revoke_all"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier. Optional for operation=list and for project scope; otherwise used by operation=issue|revoke_all")),
 			mcp.WithBoolean("include_revoked", mcp.Description("Include revoked leases in addition to active leases when operation=list")),
 			mcp.WithString("role", mcp.Description("orchestrator|builder|qa|research. Required for operation=issue"), mcp.Enum("orchestrator", "builder", "qa", "research")),
@@ -2102,13 +2102,13 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 	}
 }
 
-func registerLegacyCapabilityLeaseReadTool(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService) {
+func registerLegacyCapabilityLeaseReadTool(srv *mcpserver.MCPServer, leases mcpcommon.CapabilityLeaseService) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.list_capability_leases",
 			mcp.WithDescription("List active or historical capability leases for one project scope."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("scope_type", mcp.Description("Optional scope level filter"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Description("Optional scope level filter"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Optional scope identifier; defaults to the project id for project scope")),
 			mcp.WithBoolean("include_revoked", mcp.Description("Include revoked leases in addition to active leases")),
 		),
@@ -2123,13 +2123,13 @@ func registerLegacyCapabilityLeaseReadTool(srv *mcpserver.MCPServer, leases comm
 	)
 }
 
-func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases common.CapabilityLeaseService) {
+func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases mcpcommon.CapabilityLeaseService) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.issue_capability_lease",
 			mcp.WithDescription("Issue one capability lease."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
 			mcp.WithString("role", mcp.Required(), mcp.Description("orchestrator|builder|qa|research"), mcp.Enum("orchestrator", "builder", "qa", "research")),
 			mcp.WithString("agent_name", mcp.Description("Agent display/name identifier. Optional when issuing under an authenticated agent session because the live lease identity is derived from that session. Issuing a lease under a user session does not convert that user session into an authenticated agent session for later guarded mutations.")),
@@ -2214,7 +2214,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 			"till.revoke_all_capability_leases",
 			mcp.WithDescription("Revoke all capability leases for one project scope."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
-			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|actionItem|subtask"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Scope identifier")),
 			mcp.WithString("reason", mcp.Description("Optional revocation reason")),
 			mcp.WithString("session_id", mcp.Required(), mcp.Description(mcpMutationSessionDescription)),
@@ -2232,7 +2232,7 @@ func registerLegacyCapabilityLeaseMutationTools(srv *mcpserver.MCPServer, leases
 }
 
 // registerCommentTools registers comment create/list tools.
-func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentService, authContexts *mcpAuthContextStore) {
+func registerCommentTools(srv *mcpserver.MCPServer, comments mcpcommon.CommentService, authContexts *mcpAuthContextStore) {
 	if comments == nil {
 		return
 	}
@@ -2328,7 +2328,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				comment, err := comments.CreateComment(ctx, common.CreateCommentRequest{
+				comment, err := comments.CreateComment(ctx, mcpcommon.CreateCommentRequest{
 					ProjectID:    projectID,
 					TargetType:   targetType,
 					TargetID:     targetID,
@@ -2345,7 +2345,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 				}
 				return result, nil
 			case "list":
-				rows, err := comments.ListCommentsByTarget(ctx, common.ListCommentsByTargetRequest{
+				rows, err := comments.ListCommentsByTarget(ctx, mcpcommon.ListCommentsByTargetRequest{
 					ProjectID:   projectID,
 					TargetType:  targetType,
 					TargetID:    targetID,
@@ -2401,7 +2401,7 @@ func invalidRequestToolResult(err error) *mcp.CallToolResult {
 // If neither source yields a projectID, an invalid_request error is returned
 // naming the missing input. Resolver errors (not-found / invalid-syntax) flow
 // through tasks.ResolveActionItemID's transport-mapped error sentinels.
-func resolveActionItemIDForRead(ctx context.Context, tasks common.ActionItemService, projectID, idOrDotted string) (string, error) {
+func resolveActionItemIDForRead(ctx context.Context, tasks mcpcommon.ActionItemService, projectID, idOrDotted string) (string, error) {
 	idOrDotted = strings.TrimSpace(idOrDotted)
 	if idOrDotted == "" {
 		return "", fmt.Errorf(`invalid_request: required argument "action_item_id" not found`)
@@ -2428,7 +2428,7 @@ func resolveActionItemIDForRead(ctx context.Context, tasks common.ActionItemServ
 // this helper at the start of a mutation case sends an invalid_request error
 // back to the caller before any auth or service work is attempted. Empty input
 // returns nil so the existing required-argument check still owns that error
-// surface. The returned error is wrapped under common.ErrInvalidCaptureStateRequest
+// surface. The returned error is wrapped under mcpcommon.ErrInvalidCaptureStateRequest
 // so toolResultFromError maps it to the `invalid_request:` 400-class.
 func rejectMutationDottedActionItemID(actionItemID string) error {
 	actionItemID = strings.TrimSpace(actionItemID)
@@ -2436,7 +2436,7 @@ func rejectMutationDottedActionItemID(actionItemID string) error {
 		return nil
 	}
 	if err := app.ValidateActionItemIDForMutation(actionItemID); err != nil {
-		return fmt.Errorf("%w: %w", common.ErrInvalidCaptureStateRequest, err)
+		return fmt.Errorf("%w: %w", mcpcommon.ErrInvalidCaptureStateRequest, err)
 	}
 	return nil
 }

@@ -19,8 +19,7 @@ import (
 	charmLog "github.com/charmbracelet/log"
 	autentdomain "github.com/evanmschultz/autent/domain"
 	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
-	serveradapter "github.com/evanmschultz/tillsyn/internal/adapters/server"
-	servercommon "github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	mcpcommon "github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/buildinfo"
@@ -126,7 +125,7 @@ func writeConfigExample(t *testing.T, workspace, content string) {
 }
 
 // newAuthAdapterForTest constructs one shared-DB auth adapter for mutation authorization tests.
-func newAuthAdapterForTest(t *testing.T) (*servercommon.AppServiceAdapter, *autentauth.Service) {
+func newAuthAdapterForTest(t *testing.T) (*mcpcommon.AppServiceAdapter, *autentauth.Service) {
 	t.Helper()
 
 	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
@@ -140,7 +139,7 @@ func newAuthAdapterForTest(t *testing.T) (*servercommon.AppServiceAdapter, *aute
 	if err != nil {
 		t.Fatalf("NewSharedDB() error = %v", err)
 	}
-	return servercommon.NewAppServiceAdapter(nil, auth), auth
+	return mcpcommon.NewAppServiceAdapter(nil, auth), auth
 }
 
 // mustIssueUserSessionForAdapterTest issues one deterministic session for adapter authorization tests.
@@ -490,7 +489,7 @@ func TestRunRootHelp(t *testing.T) {
 func TestRunSubcommandHelp(t *testing.T) {
 	origRunner := serveCommandRunner
 	t.Cleanup(func() { serveCommandRunner = origRunner })
-	serveCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+	serveCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		t.Fatal("serve command runner should not execute for --help")
 		return nil
 	}
@@ -1347,7 +1346,7 @@ func TestRunAuthIssueSessionCredentialsAuthorizeMutation(t *testing.T) {
 	if err := authService.EnsureDogfoodPolicy(context.Background()); err != nil {
 		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
 	}
-	auth, err := servercommon.NewAppServiceAdapter(nil, authService).AuthorizeMutation(context.Background(), servercommon.MutationAuthorizationRequest{
+	auth, err := mcpcommon.NewAppServiceAdapter(nil, authService).AuthorizeMutation(context.Background(), mcpcommon.MutationAuthorizationRequest{
 		SessionID:     issuedSessionID,
 		SessionSecret: issuedSessionSecret,
 		Action:        "create_task",
@@ -1377,7 +1376,7 @@ func TestAuthorizeMutationRevokedSessionReturnsInvalidAuthentication(t *testing.
 		t.Fatalf("RevokeSession() error = %v", err)
 	}
 
-	_, err := adapter.AuthorizeMutation(context.Background(), servercommon.MutationAuthorizationRequest{
+	_, err := adapter.AuthorizeMutation(context.Background(), mcpcommon.MutationAuthorizationRequest{
 		SessionID:     sessionID,
 		SessionSecret: sessionSecret,
 		Action:        "create_task",
@@ -1385,7 +1384,7 @@ func TestAuthorizeMutationRevokedSessionReturnsInvalidAuthentication(t *testing.
 		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
-	if !errors.Is(err, servercommon.ErrInvalidAuthentication) {
+	if !errors.Is(err, mcpcommon.ErrInvalidAuthentication) {
 		t.Fatalf("AuthorizeMutation() error = %v, want ErrInvalidAuthentication", err)
 	}
 }
@@ -1414,7 +1413,7 @@ func TestAuthorizeMutationDenyRuleReturnsAuthorizationDenied(t *testing.T) {
 	}
 	sessionID, sessionSecret := mustIssueUserSessionForAdapterTest(t, auth)
 
-	_, err := adapter.AuthorizeMutation(context.Background(), servercommon.MutationAuthorizationRequest{
+	_, err := adapter.AuthorizeMutation(context.Background(), mcpcommon.MutationAuthorizationRequest{
 		SessionID:     sessionID,
 		SessionSecret: sessionSecret,
 		Action:        "create_task",
@@ -1422,7 +1421,7 @@ func TestAuthorizeMutationDenyRuleReturnsAuthorizationDenied(t *testing.T) {
 		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
-	if !errors.Is(err, servercommon.ErrAuthorizationDenied) {
+	if !errors.Is(err, mcpcommon.ErrAuthorizationDenied) {
 		t.Fatalf("AuthorizeMutation() error = %v, want ErrAuthorizationDenied", err)
 	}
 }
@@ -1452,7 +1451,7 @@ func TestAuthorizeMutationGrantRequiredReturnsGrantRequired(t *testing.T) {
 	}
 	sessionID, sessionSecret := mustIssueUserSessionForAdapterTest(t, auth)
 
-	_, err := adapter.AuthorizeMutation(context.Background(), servercommon.MutationAuthorizationRequest{
+	_, err := adapter.AuthorizeMutation(context.Background(), mcpcommon.MutationAuthorizationRequest{
 		SessionID:     sessionID,
 		SessionSecret: sessionSecret,
 		Action:        "create_task",
@@ -1460,7 +1459,7 @@ func TestAuthorizeMutationGrantRequiredReturnsGrantRequired(t *testing.T) {
 		ResourceType:  "actionItem",
 		ResourceID:    "new",
 	})
-	if !errors.Is(err, servercommon.ErrGrantRequired) {
+	if !errors.Is(err, mcpcommon.ErrGrantRequired) {
 		t.Fatalf("AuthorizeMutation() error = %v, want ErrGrantRequired", err)
 	}
 }
@@ -2321,9 +2320,9 @@ func TestRunMCPCommandWiresStdioAndSharedRuntime(t *testing.T) {
 	origRunner := mcpCommandRunner
 	t.Cleanup(func() { mcpCommandRunner = origRunner })
 
-	var gotCfg serveradapter.Config
-	var gotDeps serveradapter.Dependencies
-	mcpCommandRunner = func(_ context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
+	var gotCfg mcpcommon.Config
+	var gotDeps mcpcommon.Dependencies
+	mcpCommandRunner = func(_ context.Context, cfg mcpcommon.Config, deps mcpcommon.Dependencies) error {
 		gotCfg = cfg
 		gotDeps = deps
 		return nil
@@ -2369,7 +2368,7 @@ func TestRunMCPCommandWiresStdioAndSharedRuntime(t *testing.T) {
 func TestRunMCPCommandConfigOverrideUsesConfiguredDB(t *testing.T) {
 	origRunner := mcpCommandRunner
 	t.Cleanup(func() { mcpCommandRunner = origRunner })
-	mcpCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+	mcpCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		return nil
 	}
 
@@ -2399,7 +2398,7 @@ func TestRunMCPCommandTreatsCanceledRunnerAsCleanShutdown(t *testing.T) {
 	origRunner := mcpCommandRunner
 	t.Cleanup(func() { mcpCommandRunner = origRunner })
 	started := make(chan struct{})
-	mcpCommandRunner = func(ctx context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+	mcpCommandRunner = func(ctx context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
@@ -2439,7 +2438,7 @@ func TestRunMCPCommandUsesInterruptEchoSuppression(t *testing.T) {
 		}
 		return runFn()
 	}
-	mcpCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+	mcpCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		return nil
 	}
 
@@ -2471,9 +2470,9 @@ func TestRunServeCommandWiresDefaults(t *testing.T) {
 	origRunner := serveCommandRunner
 	t.Cleanup(func() { serveCommandRunner = origRunner })
 
-	var gotCfg serveradapter.Config
-	var gotDeps serveradapter.Dependencies
-	serveCommandRunner = func(_ context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
+	var gotCfg mcpcommon.Config
+	var gotDeps mcpcommon.Dependencies
+	serveCommandRunner = func(_ context.Context, cfg mcpcommon.Config, deps mcpcommon.Dependencies) error {
 		gotCfg = cfg
 		gotDeps = deps
 		return nil
@@ -2519,7 +2518,7 @@ func TestRunServeCommandUsesInterruptEchoSuppression(t *testing.T) {
 		}
 		return runFn()
 	}
-	serveCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+	serveCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		return nil
 	}
 
@@ -2539,8 +2538,8 @@ func TestRunServeCommandWiresFlags(t *testing.T) {
 	origRunner := serveCommandRunner
 	t.Cleanup(func() { serveCommandRunner = origRunner })
 
-	var gotCfg serveradapter.Config
-	serveCommandRunner = func(_ context.Context, cfg serveradapter.Config, _ serveradapter.Dependencies) error {
+	var gotCfg mcpcommon.Config
+	serveCommandRunner = func(_ context.Context, cfg mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		gotCfg = cfg
 		return nil
 	}
@@ -2575,7 +2574,7 @@ func TestRunServeCommandTreatsCanceledRunnerAsCleanShutdown(t *testing.T) {
 	origRunner := serveCommandRunner
 	t.Cleanup(func() { serveCommandRunner = origRunner })
 	started := make(chan struct{})
-	serveCommandRunner = func(ctx context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+	serveCommandRunner = func(ctx context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
@@ -2613,7 +2612,7 @@ func TestRunServeIntegrationStartsAndStopsDispatcher(t *testing.T) {
 		return stub, nil
 	}
 	started := make(chan struct{})
-	serveCommandRunner = func(ctx context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+	serveCommandRunner = func(ctx context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
@@ -2658,7 +2657,7 @@ func TestRunServeIntegrationFailsOnDispatcherStartError(t *testing.T) {
 		return stub, nil
 	}
 	runnerInvoked := false
-	serveCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+	serveCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		runnerInvoked = true
 		return nil
 	}
@@ -2711,7 +2710,7 @@ func TestRunServeCommandPropagatesErrors(t *testing.T) {
 	origRunner := serveCommandRunner
 	t.Cleanup(func() { serveCommandRunner = origRunner })
 
-	serveCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+	serveCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
 		return errors.New("listen failed")
 	}
 

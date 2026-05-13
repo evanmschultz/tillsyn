@@ -1,4 +1,4 @@
-package mcpapi
+package mcprpc
 
 import "testing"
 

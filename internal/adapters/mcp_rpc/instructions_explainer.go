@@ -1,4 +1,4 @@
-package mcpapi
+package mcprpc
 
 import (
 	"context"
@@ -6,16 +6,16 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // instructionsExplainServices stores the runtime readers used for scoped explanations.
 type instructionsExplainServices struct {
-	bootstrap common.BootstrapGuideReader
-	projects  common.ProjectService
-	tasks     common.ActionItemService
-	kinds     common.KindCatalogService
+	bootstrap mcpcommon.BootstrapGuideReader
+	projects  mcpcommon.ProjectService
+	tasks     mcpcommon.ActionItemService
+	kinds     mcpcommon.KindCatalogService
 }
 
 // instructionsExplainRequest stores one scoped explanation request.
@@ -103,7 +103,7 @@ func explainTopicInstructions(ctx context.Context, services instructionsExplainS
 }
 
 // explainBootstrapTopic lifts the lightweight bootstrap guide into the richer instructions explanation shape.
-func explainBootstrapTopic(guide common.BootstrapGuide) instructionsExplainResult {
+func explainBootstrapTopic(guide mcpcommon.BootstrapGuide) instructionsExplainResult {
 	scopedRules := []string{
 		"Bootstrap is for empty-instance and first-project setup; after work already exists, prefer till.capture_state plus scoped coordination reads instead of re-running bootstrap.",
 		"Keep active tasks, actions, blockers, comments, handoffs, and worklogs in Tillsyn itself; do not create markdown actionItem trackers, worklogs, or temporary execution plans for the run.",
@@ -372,7 +372,7 @@ func explainNodeInstructions(ctx context.Context, services instructionsExplainSe
 }
 
 // findProjectByID loads one project by id through the project service.
-func findProjectByID(ctx context.Context, service common.ProjectService, projectID string) (domain.Project, error) {
+func findProjectByID(ctx context.Context, service mcpcommon.ProjectService, projectID string) (domain.Project, error) {
 	if service == nil {
 		return domain.Project{}, fmt.Errorf("not found: project service is unavailable")
 	}
@@ -390,7 +390,7 @@ func findProjectByID(ctx context.Context, service common.ProjectService, project
 }
 
 // findKindByID loads one kind definition by id through the catalog service.
-func findKindByID(ctx context.Context, service common.KindCatalogService, kindID domain.KindID) (domain.KindDefinition, error) {
+func findKindByID(ctx context.Context, service mcpcommon.KindCatalogService, kindID domain.KindID) (domain.KindDefinition, error) {
 	kind, found, err := tryFindKindByID(ctx, service, kindID)
 	if err != nil {
 		return domain.KindDefinition{}, err
@@ -402,7 +402,7 @@ func findKindByID(ctx context.Context, service common.KindCatalogService, kindID
 }
 
 // tryFindKindByID loads one kind definition when it exists.
-func tryFindKindByID(ctx context.Context, service common.KindCatalogService, kindID domain.KindID) (domain.KindDefinition, bool, error) {
+func tryFindKindByID(ctx context.Context, service mcpcommon.KindCatalogService, kindID domain.KindID) (domain.KindDefinition, bool, error) {
 	if service == nil {
 		return domain.KindDefinition{}, false, nil
 	}
@@ -423,7 +423,7 @@ func tryFindKindByID(ctx context.Context, service common.KindCatalogService, kin
 }
 
 // listProjectAllowedKinds loads one project allowlist when the kind service is available.
-func listProjectAllowedKinds(ctx context.Context, service common.KindCatalogService, projectID string) ([]string, error) {
+func listProjectAllowedKinds(ctx context.Context, service mcpcommon.KindCatalogService, projectID string) ([]string, error) {
 	if service == nil {
 		return nil, nil
 	}
@@ -443,7 +443,7 @@ func listProjectAllowedKinds(ctx context.Context, service common.KindCatalogServ
 }
 
 // loadActionItemLineage loads the root-to-leaf lineage for one node using repeated GetActionItem reads.
-func loadActionItemLineage(ctx context.Context, service common.ActionItemService, leaf domain.ActionItem) ([]domain.ActionItem, error) {
+func loadActionItemLineage(ctx context.Context, service mcpcommon.ActionItemService, leaf domain.ActionItem) ([]domain.ActionItem, error) {
 	if service == nil {
 		return nil, fmt.Errorf("not found: actionItem service is unavailable")
 	}

@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/log"
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
@@ -20,9 +20,9 @@ const maxRequestBodyBytes int64 = 1 << 20
 
 // Handler serves the versioned API subrouter mounted under `/api/v1`.
 type Handler struct {
-	captureState common.CaptureStateReader
-	attention    common.AttentionService
-	auth         common.MutationAuthorizer
+	captureState mcpcommon.CaptureStateReader
+	attention    mcpcommon.AttentionService
+	auth         mcpcommon.MutationAuthorizer
 }
 
 // APIError represents one structured API failure response.
@@ -72,9 +72,9 @@ type httpMutationGuardArgs struct {
 }
 
 // NewHandler constructs one HTTP API adapter from capture and optional attention services.
-func NewHandler(captureState common.CaptureStateReader, attention common.AttentionService) *Handler {
-	var auth common.MutationAuthorizer
-	if authorizer, ok := attention.(common.MutationAuthorizer); ok {
+func NewHandler(captureState mcpcommon.CaptureStateReader, attention mcpcommon.AttentionService) *Handler {
+	var auth mcpcommon.MutationAuthorizer
+	if authorizer, ok := attention.(mcpcommon.MutationAuthorizer); ok {
 		auth = authorizer
 	}
 	return &Handler{
@@ -131,7 +131,7 @@ func (h *Handler) handleCaptureState(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	req := common.CaptureStateRequest{
+	req := mcpcommon.CaptureStateRequest{
 		ProjectID: r.URL.Query().Get("project_id"),
 		ScopeType: r.URL.Query().Get("scope_type"),
 		ScopeID:   r.URL.Query().Get("scope_id"),
@@ -154,7 +154,7 @@ func (h *Handler) handleListAttentionItems(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
-	req := common.ListAttentionItemsRequest{
+	req := mcpcommon.ListAttentionItemsRequest{
 		ProjectID: strings.TrimSpace(r.URL.Query().Get("project_id")),
 		ScopeType: strings.TrimSpace(r.URL.Query().Get("scope_type")),
 		ScopeID:   strings.TrimSpace(r.URL.Query().Get("scope_id")),
@@ -221,7 +221,7 @@ func (h *Handler) handleRaiseAttentionItem(w http.ResponseWriter, r *http.Reques
 		writeErrorFrom(w, err)
 		return
 	}
-	req := common.RaiseAttentionItemRequest{
+	req := mcpcommon.RaiseAttentionItemRequest{
 		ProjectID:          strings.TrimSpace(payload.ProjectID),
 		ScopeType:          strings.TrimSpace(payload.ScopeType),
 		ScopeID:            strings.TrimSpace(payload.ScopeID),
@@ -249,7 +249,7 @@ func (h *Handler) handleResolveAttentionItem(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	req := common.ResolveAttentionItemRequest{
+	req := mcpcommon.ResolveAttentionItemRequest{
 		ID: itemID,
 	}
 	var payload resolveAttentionItemPayload
@@ -297,7 +297,7 @@ func (h *Handler) handleResolveAttentionItem(w http.ResponseWriter, r *http.Requ
 // authorizeHTTPMutation validates one authenticated session for HTTP write routes.
 func authorizeHTTPMutation(
 	ctx context.Context,
-	authorizer common.MutationAuthorizer,
+	authorizer mcpcommon.MutationAuthorizer,
 	sessionID string,
 	sessionSecret string,
 	action string,
@@ -309,7 +309,7 @@ func authorizeHTTPMutation(
 	if authorizer == nil {
 		return domain.AuthenticatedCaller{}, fmt.Errorf("mutation authorizer is unavailable")
 	}
-	return authorizer.AuthorizeMutation(ctx, common.MutationAuthorizationRequest{
+	return authorizer.AuthorizeMutation(ctx, mcpcommon.MutationAuthorizationRequest{
 		SessionID:     strings.TrimSpace(sessionID),
 		SessionSecret: strings.TrimSpace(sessionSecret),
 		Action:        strings.TrimSpace(action),
@@ -321,16 +321,16 @@ func authorizeHTTPMutation(
 }
 
 // buildAuthenticatedHTTPActor derives the app-level actor tuple from one authenticated caller.
-func buildAuthenticatedHTTPActor(caller domain.AuthenticatedCaller, guard httpMutationGuardArgs) (common.ActorLeaseTuple, error) {
+func buildAuthenticatedHTTPActor(caller domain.AuthenticatedCaller, guard httpMutationGuardArgs) (mcpcommon.ActorLeaseTuple, error) {
 	caller = domain.NormalizeAuthenticatedCaller(caller)
 	if caller.IsZero() {
-		return common.ActorLeaseTuple{}, fmt.Errorf("authenticated caller is required: %w", common.ErrInvalidCaptureStateRequest)
+		return mcpcommon.ActorLeaseTuple{}, fmt.Errorf("authenticated caller is required: %w", mcpcommon.ErrInvalidCaptureStateRequest)
 	}
 	// Drop 3 droplet 3.19: thread AuthRequestPrincipalType through the
 	// transport-layer actor tuple so the STEWARD owner-state-lock survives
 	// the trip into withMutationGuardContext (which rebuilds the
 	// AuthenticatedCaller from the actor tuple).
-	actor := common.ActorLeaseTuple{
+	actor := mcpcommon.ActorLeaseTuple{
 		ActorID:                  caller.PrincipalID,
 		ActorName:                caller.PrincipalName,
 		ActorType:                string(caller.PrincipalType),
@@ -342,12 +342,12 @@ func buildAuthenticatedHTTPActor(caller domain.AuthenticatedCaller, guard httpMu
 	hasGuardTuple := guard.AgentInstanceID != "" || guard.LeaseToken != "" || guard.OverrideToken != ""
 	if caller.PrincipalType != domain.ActorTypeAgent {
 		if hasGuardTuple {
-			return common.ActorLeaseTuple{}, fmt.Errorf("guarded mutation tuple requires an authenticated agent session; remove agent_instance_id/lease_token to act as a human or claim/validate an approved agent session first: %w", common.ErrInvalidCaptureStateRequest)
+			return mcpcommon.ActorLeaseTuple{}, fmt.Errorf("guarded mutation tuple requires an authenticated agent session; remove agent_instance_id/lease_token to act as a human or claim/validate an approved agent session first: %w", mcpcommon.ErrInvalidCaptureStateRequest)
 		}
 		return actor, nil
 	}
 	if guard.AgentInstanceID == "" || guard.LeaseToken == "" {
-		return common.ActorLeaseTuple{}, fmt.Errorf("agent_instance_id and lease_token are required for authenticated agent mutations: %w", common.ErrInvalidCaptureStateRequest)
+		return mcpcommon.ActorLeaseTuple{}, fmt.Errorf("agent_instance_id and lease_token are required for authenticated agent mutations: %w", mcpcommon.ErrInvalidCaptureStateRequest)
 	}
 	actor.AgentName = firstNonEmptyString(caller.PrincipalName, caller.PrincipalID)
 	actor.AgentInstanceID = guard.AgentInstanceID
@@ -417,7 +417,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: "unknown error",
 			},
 		}
-	case errors.Is(err, common.ErrBootstrapRequired):
+	case errors.Is(err, mcpcommon.ErrBootstrapRequired):
 		return httpErrorMapping{
 			Class:      "bootstrap",
 			StatusCode: http.StatusConflict,
@@ -427,7 +427,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Hint:    "Create the first project before calling capture_state.",
 			},
 		}
-	case errors.Is(err, common.ErrGuardrailViolation):
+	case errors.Is(err, mcpcommon.ErrGuardrailViolation):
 		return httpErrorMapping{
 			Class:      "guardrail",
 			StatusCode: http.StatusConflict,
@@ -436,7 +436,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: err.Error(),
 			},
 		}
-	case errors.Is(err, common.ErrSessionRequired):
+	case errors.Is(err, mcpcommon.ErrSessionRequired):
 		return httpErrorMapping{
 			Class:      "auth",
 			StatusCode: http.StatusUnauthorized,
@@ -445,7 +445,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: err.Error(),
 			},
 		}
-	case errors.Is(err, common.ErrInvalidAuthentication):
+	case errors.Is(err, mcpcommon.ErrInvalidAuthentication):
 		return httpErrorMapping{
 			Class:      "auth",
 			StatusCode: http.StatusUnauthorized,
@@ -454,7 +454,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: err.Error(),
 			},
 		}
-	case errors.Is(err, common.ErrSessionExpired):
+	case errors.Is(err, mcpcommon.ErrSessionExpired):
 		return httpErrorMapping{
 			Class:      "auth",
 			StatusCode: http.StatusUnauthorized,
@@ -463,7 +463,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: err.Error(),
 			},
 		}
-	case errors.Is(err, common.ErrAuthorizationDenied):
+	case errors.Is(err, mcpcommon.ErrAuthorizationDenied):
 		return httpErrorMapping{
 			Class:      "auth",
 			StatusCode: http.StatusForbidden,
@@ -472,7 +472,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: err.Error(),
 			},
 		}
-	case errors.Is(err, common.ErrGrantRequired):
+	case errors.Is(err, mcpcommon.ErrGrantRequired):
 		return httpErrorMapping{
 			Class:      "auth",
 			StatusCode: http.StatusForbidden,
@@ -481,7 +481,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: err.Error(),
 			},
 		}
-	case errors.Is(err, common.ErrNotFound):
+	case errors.Is(err, mcpcommon.ErrNotFound):
 		return httpErrorMapping{
 			Class:      "not_found",
 			StatusCode: http.StatusNotFound,
@@ -490,7 +490,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: err.Error(),
 			},
 		}
-	case errors.Is(err, common.ErrInvalidCaptureStateRequest), errors.Is(err, common.ErrUnsupportedScope):
+	case errors.Is(err, mcpcommon.ErrInvalidCaptureStateRequest), errors.Is(err, mcpcommon.ErrUnsupportedScope):
 		return httpErrorMapping{
 			Class:      "invalid",
 			StatusCode: http.StatusBadRequest,
@@ -499,7 +499,7 @@ func mapHTTPError(err error) httpErrorMapping {
 				Message: err.Error(),
 			},
 		}
-	case errors.Is(err, common.ErrAttentionUnavailable):
+	case errors.Is(err, mcpcommon.ErrAttentionUnavailable):
 		return httpErrorMapping{
 			Class:      "not_implemented",
 			StatusCode: http.StatusNotImplemented,
@@ -563,11 +563,11 @@ func decodeJSONBody(ctx context.Context, w http.ResponseWriter, r *http.Request,
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(out); err != nil {
-		return fmt.Errorf("decode request body: %w", errors.Join(common.ErrInvalidCaptureStateRequest, err))
+		return fmt.Errorf("decode request body: %w", errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, err))
 	}
 	// Reject trailing payloads so malformed JSON bodies fail closed.
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("decode request body: trailing content: %w", common.ErrInvalidCaptureStateRequest)
+		return fmt.Errorf("decode request body: trailing content: %w", mcpcommon.ErrInvalidCaptureStateRequest)
 	}
 	select {
 	case <-ctx.Done():
@@ -596,5 +596,5 @@ func decodeOptionalJSONBody(ctx context.Context, w http.ResponseWriter, r *http.
 	if errors.Is(err, io.EOF) {
 		return nil
 	}
-	return fmt.Errorf("decode request body: %w", errors.Join(common.ErrInvalidCaptureStateRequest, err))
+	return fmt.Errorf("decode request body: %w", errors.Join(mcpcommon.ErrInvalidCaptureStateRequest, err))
 }

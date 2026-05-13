@@ -14,7 +14,7 @@ import (
 // stewardOwner is the canonical Owner string the auto-generator stamps on
 // every STEWARD-owned anchor seed and every drop-end finding it materializes.
 // Mirrors the constant in
-// internal/adapters/server/common/app_service_adapter_mcp.go (kept duplicated
+// internal/adapters/mcp_common/app_service_adapter_mcp.go (kept duplicated
 // rather than imported to avoid a cross-package coupling between the app
 // service and the MCP adapter — both packages are stable consumers of the
 // same string literal). Per fix L13 this string is a domain primitive value,

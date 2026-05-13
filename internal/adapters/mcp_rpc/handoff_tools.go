@@ -1,17 +1,17 @@
-package mcpapi
+package mcprpc
 
 import (
 	"context"
 	"fmt"
 	"strings"
 
-	"github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	"github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
 // registerHandoffTools registers durable handoff create/read/update/list tools.
-func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffService, authContexts *mcpAuthContextStore, exposeLegacyCoordinationTools bool) {
+func registerHandoffTools(srv *mcpserver.MCPServer, handoffs mcpcommon.HandoffService, authContexts *mcpAuthContextStore, exposeLegacyCoordinationTools bool) {
 	if handoffs == nil {
 		return
 	}
@@ -28,11 +28,11 @@ func registerHandoffTools(srv *mcpserver.MCPServer, handoffs common.HandoffServi
 			mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=create|list")),
 			mcp.WithString("handoff_id", mcp.Description("Handoff identifier. Required for operation=update|get")),
 			mcp.WithString("branch_id", mcp.Description("Optional source branch identifier when operation=create|list")),
-			mcp.WithString("scope_type", mcp.Description("Optional source scope level when operation=create|list"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Description("Optional source scope level when operation=create|list"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Optional source scope identifier; defaults to the project id for project scope when operation=create|list")),
 			mcp.WithString("source_role", mcp.Description("Optional source role label, for example orchestrator, builder, qa, or research")),
 			mcp.WithString("target_branch_id", mcp.Description("Optional target branch identifier")),
-			mcp.WithString("target_scope_type", mcp.Description("Optional target scope level"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("target_scope_type", mcp.Description("Optional target scope level"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("target_scope_id", mcp.Description("Optional target scope identifier")),
 			mcp.WithString("target_role", mcp.Description("Optional target role label, for example orchestrator, builder, qa, or research")),
 			mcp.WithString("status", mcp.Description("Optional handoff status"), mcp.Enum("ready", "waiting", "blocked", "failed", "returned", "superseded", "resolved")),
@@ -99,7 +99,7 @@ type handoffMutationArgs struct {
 	OverrideToken   string `json:"override_token"`
 }
 
-func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs common.HandoffService) {
+func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs mcpcommon.HandoffService) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.get_handoff",
@@ -122,7 +122,7 @@ func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs common.Ha
 			mcp.WithDescription("List durable handoffs for one scope tuple. After a client restart, rerun this to recover durable coordination state before resuming live watchers."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("branch_id", mcp.Description("Optional source branch identifier")),
-			mcp.WithString("scope_type", mcp.Description("Optional source scope level"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Description("Optional source scope level"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Optional source scope identifier; defaults to the project id for project scope")),
 			mcp.WithArray("statuses", mcp.Description("Optional handoff status filter"), mcp.WithStringItems()),
 			mcp.WithNumber("limit", mcp.Description("Optional maximum rows to return")),
@@ -139,18 +139,18 @@ func registerLegacyHandoffReadTools(srv *mcpserver.MCPServer, handoffs common.Ha
 	)
 }
 
-func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs common.HandoffService) {
+func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs mcpcommon.HandoffService) {
 	srv.AddTool(
 		mcp.NewTool(
 			"till.create_handoff",
 			mcp.WithDescription("Create one durable handoff for structured next-action routing. Open handoffs should be treated as Action Required items."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("branch_id", mcp.Description("Optional source branch identifier")),
-			mcp.WithString("scope_type", mcp.Description("Optional source scope level"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("scope_type", mcp.Description("Optional source scope level"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("scope_id", mcp.Description("Optional source scope identifier; defaults to the project id for project scope")),
 			mcp.WithString("source_role", mcp.Description("Optional source role label, for example orchestrator, builder, qa, or research")),
 			mcp.WithString("target_branch_id", mcp.Description("Optional target branch identifier")),
-			mcp.WithString("target_scope_type", mcp.Description("Optional target scope level"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("target_scope_type", mcp.Description("Optional target scope level"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("target_scope_id", mcp.Description("Optional target scope identifier")),
 			mcp.WithString("target_role", mcp.Description("Optional target role label, for example orchestrator, builder, qa, or research")),
 			mcp.WithString("status", mcp.Description("Optional handoff status"), mcp.Enum("ready", "waiting", "blocked", "failed", "returned", "superseded", "resolved")),
@@ -182,7 +182,7 @@ func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs commo
 			mcp.WithString("status", mcp.Description("Optional handoff status"), mcp.Enum("ready", "waiting", "blocked", "failed", "returned", "superseded", "resolved")),
 			mcp.WithString("source_role", mcp.Description("Optional source role label, for example orchestrator, builder, qa, or research")),
 			mcp.WithString("target_branch_id", mcp.Description("Optional target branch identifier")),
-			mcp.WithString("target_scope_type", mcp.Description("Optional target scope level"), mcp.Enum(common.SupportedScopeTypes()...)),
+			mcp.WithString("target_scope_type", mcp.Description("Optional target scope level"), mcp.Enum(mcpcommon.SupportedScopeTypes()...)),
 			mcp.WithString("target_scope_id", mcp.Description("Optional target scope identifier")),
 			mcp.WithString("target_role", mcp.Description("Optional target role label, for example orchestrator, builder, qa, or research")),
 			mcp.WithString("summary", mcp.Required(), mcp.Description("Short action-oriented handoff summary")),
@@ -207,7 +207,7 @@ func registerLegacyHandoffMutationTools(srv *mcpserver.MCPServer, handoffs commo
 	)
 }
 
-func handleHandoffMutation(ctx context.Context, handoffs common.HandoffService, args handoffMutationArgs) (*mcp.CallToolResult, error) {
+func handleHandoffMutation(ctx context.Context, handoffs mcpcommon.HandoffService, args handoffMutationArgs) (*mcp.CallToolResult, error) {
 	operation := strings.TrimSpace(args.Operation)
 	switch operation {
 	case "get":
@@ -229,7 +229,7 @@ func handleHandoffMutation(ctx context.Context, handoffs common.HandoffService, 
 		if projectID == "" {
 			return mcp.NewToolResultError(`invalid_request: required argument "project_id" not found`), nil
 		}
-		handoffRows, err := handoffs.ListHandoffs(ctx, common.ListHandoffsRequest{
+		handoffRows, err := handoffs.ListHandoffs(ctx, mcpcommon.ListHandoffsRequest{
 			ProjectID:   projectID,
 			BranchID:    strings.TrimSpace(args.BranchID),
 			ScopeType:   strings.TrimSpace(args.ScopeType),
@@ -284,7 +284,7 @@ func handleHandoffMutation(ctx context.Context, handoffs common.HandoffService, 
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		handoff, err := handoffs.CreateHandoff(ctx, common.CreateHandoffRequest{
+		handoff, err := handoffs.CreateHandoff(ctx, mcpcommon.CreateHandoffRequest{
 			ProjectID:       projectID,
 			BranchID:        strings.TrimSpace(args.BranchID),
 			ScopeType:       strings.TrimSpace(args.ScopeType),
@@ -342,7 +342,7 @@ func handleHandoffMutation(ctx context.Context, handoffs common.HandoffService, 
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		handoff, err := handoffs.UpdateHandoff(ctx, common.UpdateHandoffRequest{
+		handoff, err := handoffs.UpdateHandoff(ctx, mcpcommon.UpdateHandoffRequest{
 			HandoffID:       handoffID,
 			Status:          strings.TrimSpace(args.Status),
 			SourceRole:      strings.TrimSpace(args.SourceRole),

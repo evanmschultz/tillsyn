@@ -85,7 +85,7 @@ var (
 	ErrAuthRequestExpired     = errors.New("auth request is expired")
 	// ErrAuthorizationDenied reports that a valid caller was denied by auth
 	// policy. Drop 4a Wave 3 W3.1 lifted this from the
-	// `internal/adapters/server/common` package into `domain` so the app
+	// `internal/adapters/mcp_common` package into `domain` so the app
 	// layer's orch-self-approval gate can return it without crossing into
 	// the adapter import boundary. The `common.ErrAuthorizationDenied`
 	// alias is preserved for source compatibility — both values are equal,

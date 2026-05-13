@@ -1,4 +1,4 @@
-package mcpapi
+package mcprpc
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 	autent "github.com/evanmschultz/autent"
 	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
-	servercommon "github.com/evanmschultz/tillsyn/internal/adapters/server/common"
+	mcpcommon "github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
@@ -48,7 +48,7 @@ func newRealMCPAttentionHandlerForTest(t *testing.T) (*Handler, *sqlite.Reposito
 		t.Fatalf("CreateProject() error = %v", err)
 	}
 
-	adapter := servercommon.NewAppServiceAdapter(svc, auth)
+	adapter := mcpcommon.NewAppServiceAdapter(svc, auth)
 	handler, err := NewHandler(Config{}, adapter, adapter)
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)
@@ -165,7 +165,7 @@ func newApprovedPathHandoffFixture(t *testing.T) approvedPathHandoffFixture {
 		t.Fatalf("CreateHandoff(out of scope) error = %v", err)
 	}
 
-	adapter := servercommon.NewAppServiceAdapter(service, auth)
+	adapter := mcpcommon.NewAppServiceAdapter(service, auth)
 	handler, err := NewHandler(Config{}, adapter, adapter)
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)

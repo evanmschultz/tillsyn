@@ -1,5 +1,5 @@
-// Package common provides transport-agnostic server contracts used by HTTP and MCP adapters.
-package common
+// Package mcpcommon provides transport-agnostic server contracts used by HTTP and MCP adapters.
+package mcpcommon
 
 import (
 	"context"
