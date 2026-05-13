@@ -15051,6 +15051,13 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		// Classified internal for the same reason as OrchSelfApprovalEnabled.
 		"DispatcherCommitEnabled": {},
 		"DispatcherPushEnabled":   {},
+		// Groups is the Drop 4c.6.1 W1.D2 multi-group template-resolution
+		// field. It carries the list of template-group identifiers a project
+		// belongs to (e.g. ["go", "fe"]). Admin / policy field — set via
+		// till.project(operation=update) Metadata payload, never edited
+		// through the project form TUI surface today. Classified internal
+		// for the same reason as DispatcherCommitEnabled.
+		"Groups": {},
 	}
 	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.ProjectMetadata{}), projectMetadataEditable, nil, projectMetadataInternal)
 }

@@ -152,6 +152,20 @@ type ProjectMetadata struct {
 	// proven safe in dogfood. Same nil-means-disabled three-state shape
 	// as DispatcherCommitEnabled above. Master PLAN.md L20.
 	DispatcherPushEnabled *bool `toml:"dispatcher_push_enabled,omitempty" json:"dispatcher_push_enabled,omitempty"`
+	// Groups is the ordered list of template-group identifiers this project
+	// belongs to (e.g. ["go", "fe"]). When non-empty, bakeProjectKindCatalog
+	// walks the HOME tier (~/.tillsyn/templates/<group>.toml) for each group
+	// and aggregates the resulting templates via mergeTemplates. When nil or
+	// empty, the existing single-group path (project.Language → single HOME
+	// tier candidate) is used unchanged.
+	//
+	// Per Go encoding/json semantics, omitempty on []string omits BOTH nil
+	// AND empty-non-nil slices (len(s) == 0 is treated as empty for slices).
+	// Only non-empty slices like ["go","fe"] appear in marshaled output. The
+	// zero value in Go is nil, so freshly created projects marshal correctly
+	// without explicit initialization. No migration needed: absent = nil =
+	// single-group path preserved.
+	Groups []string `json:"groups,omitempty"`
 }
 
 // OrchSelfApprovalIsEnabled reports whether orch-self-approval is currently

@@ -6967,6 +6967,188 @@ func TestLoadProjectTemplate_UnsupportedLanguagePropagatesError(t *testing.T) {
 	}
 }
 
+// writeHomeGroupTemplateFixture writes <homeDir>/.tillsyn/templates/<group>.toml
+// with a minimal valid v1 template containing one AgentBinding entry. Used
+// exclusively by TestBakeProjectKindCatalog_MultiGroup to seed per-group HOME
+// tier candidates without touching the test-process's real HOME directory.
+//
+// The fixture is a self-contained minimal TOML (NOT derived from till-go.toml)
+// so it does not collide with any existing [agent_bindings.<kind>] tables that
+// till-go.toml already declares. The [tillsyn] max_context_bundle_chars marker
+// uniquely identifies which group's template was loaded; the single
+// [agent_bindings.<kindKey>] entry drives per-key last-group-wins assertions.
+func writeHomeGroupTemplateFixture(t *testing.T, homeDir, group string, markerChars int, kindKey domain.Kind, agentName string) string {
+	t.Helper()
+	content := []byte(fmt.Sprintf(
+		"schema_version = \"v1\"\n\n[tillsyn]\nmax_context_bundle_chars = %d\n\n[agent_bindings.%s]\nagent_name = %q\nmodel = \"sonnet\"\nmax_tries = 3\nmax_budget_usd = 0.0\nmax_turns = 50\n",
+		markerChars, kindKey, agentName,
+	))
+	return writeHomeTemplateFixture(t, homeDir, group, content)
+}
+
+// TestBakeProjectKindCatalog_MultiGroup covers Drop 4c.6.1 W1.D2 acceptance
+// criteria for the multi-group branch in bakeProjectKindCatalog:
+//
+//   - AC5: when Groups non-empty, bakeProjectKindCatalog routes to
+//     loadProjectTemplatesForGroups instead of loadProjectTemplate.
+//   - AC3: per-group loadProjectTemplateWithHome + mergeTemplates aggregation.
+//   - AC4 AgentBindings: per-key last-group-wins collision resolution.
+//   - AC3 empty-group guard: empty-string entries in Groups are skipped.
+//
+// Tests call bakeProjectKindCatalogWithHome (the testability seam) with a
+// fake homeDir so the real $HOME is never consulted.
+func TestBakeProjectKindCatalog_MultiGroup(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func(t *testing.T)
+	}{
+		{
+			// AC5 + AC3 (a): 2 groups, both HOME files present.
+			// AgentBindings for each group carry a different kind key so
+			// both are present in the merged catalog (no collision).
+			name: "both_groups_present_aggregated",
+			fn: func(t *testing.T) {
+				fakeHome := t.TempDir()
+				writeHomeGroupTemplateFixture(t, fakeHome, "go", 1001, domain.KindBuild, "builder-agent")
+				writeHomeGroupTemplateFixture(t, fakeHome, "fe", 1002, domain.KindResearch, "research-agent")
+				project := domain.Project{
+					Language: "go",
+					Metadata: domain.ProjectMetadata{Groups: []string{"go", "fe"}},
+				}
+				if err := bakeProjectKindCatalogWithHome(&project, fakeHome); err != nil {
+					t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v", err)
+				}
+				if len(project.KindCatalogJSON) == 0 {
+					t.Fatal("KindCatalogJSON is empty after multi-group bake")
+				}
+				var catalog templates.KindCatalog
+				if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
+					t.Fatalf("json.Unmarshal(KindCatalogJSON): error = %v", err)
+				}
+				// Both groups contributed an AgentBinding entry under different kinds.
+				if _, ok := catalog.AgentBindings[domain.KindBuild]; !ok {
+					t.Fatal("catalog.AgentBindings missing KindBuild (go group contribution)")
+				}
+				if _, ok := catalog.AgentBindings[domain.KindResearch]; !ok {
+					t.Fatal("catalog.AgentBindings missing KindResearch (fe group contribution)")
+				}
+				if catalog.AgentBindings[domain.KindBuild].AgentName != "builder-agent" {
+					t.Fatalf("AgentBindings[build].AgentName = %q; want %q", catalog.AgentBindings[domain.KindBuild].AgentName, "builder-agent")
+				}
+				if catalog.AgentBindings[domain.KindResearch].AgentName != "research-agent" {
+					t.Fatalf("AgentBindings[research].AgentName = %q; want %q", catalog.AgentBindings[domain.KindResearch].AgentName, "research-agent")
+				}
+			},
+		},
+		{
+			// AC3 (b): 2 groups, one HOME file absent. Absent group falls
+			// through to embedded default (no error). Both groups produce a
+			// template; merge proceeds normally.
+			name: "one_group_absent_uses_embedded_fallback",
+			fn: func(t *testing.T) {
+				fakeHome := t.TempDir()
+				// Only "go" has a HOME file; "fe" is absent.
+				writeHomeGroupTemplateFixture(t, fakeHome, "go", 2001, domain.KindBuild, "builder-agent")
+				// No file for "fe" group.
+				project := domain.Project{
+					Language: "go",
+					Metadata: domain.ProjectMetadata{Groups: []string{"go", "fe"}},
+				}
+				if err := bakeProjectKindCatalogWithHome(&project, fakeHome); err != nil {
+					t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v (absent HOME file must not error)", err)
+				}
+				if len(project.KindCatalogJSON) == 0 {
+					t.Fatal("KindCatalogJSON is empty; absent-group fallback to embedded must still produce a catalog")
+				}
+				var catalog templates.KindCatalog
+				if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
+					t.Fatalf("json.Unmarshal(KindCatalogJSON): error = %v", err)
+				}
+				// go group contributed its AgentBinding entry.
+				if _, ok := catalog.AgentBindings[domain.KindBuild]; !ok {
+					t.Fatal("catalog.AgentBindings missing KindBuild (go group contribution)")
+				}
+			},
+		},
+		{
+			// AC4 AgentBindings (c): collision on same kind key → last group wins.
+			// Both "go" and "fe" groups write an AgentBinding under KindBuild but
+			// with different model strings so the test can verify which entry won.
+			// "fe" is the second (later) group, so its entry's model must win.
+			// Using different models (not different agent names) because agent name
+			// must be an embedded-floor-resolvable value and both groups use the
+			// same valid "builder-agent". The model string is unconstrained and
+			// uniquely identifies each group's contribution.
+			name: "collision_same_kind_key_last_group_wins",
+			fn: func(t *testing.T) {
+				fakeHome := t.TempDir()
+				// Write "go" group with model "sonnet" (first group).
+				goContent := []byte(
+					"schema_version = \"v1\"\n\n" +
+						"[agent_bindings.build]\nagent_name = \"builder-agent\"\nmodel = \"sonnet\"\nmax_tries = 3\nmax_budget_usd = 0.0\nmax_turns = 50\n",
+				)
+				writeHomeTemplateFixture(t, fakeHome, "go", goContent)
+				// Write "fe" group with model "opus" (second group — must win).
+				feContent := []byte(
+					"schema_version = \"v1\"\n\n" +
+						"[agent_bindings.build]\nagent_name = \"builder-agent\"\nmodel = \"opus\"\nmax_tries = 3\nmax_budget_usd = 0.0\nmax_turns = 50\n",
+				)
+				writeHomeTemplateFixture(t, fakeHome, "fe", feContent)
+				project := domain.Project{
+					Language: "go",
+					Metadata: domain.ProjectMetadata{Groups: []string{"go", "fe"}},
+				}
+				if err := bakeProjectKindCatalogWithHome(&project, fakeHome); err != nil {
+					t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v", err)
+				}
+				var catalog templates.KindCatalog
+				if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
+					t.Fatalf("json.Unmarshal(KindCatalogJSON): error = %v", err)
+				}
+				// "fe" is last in Groups; its AgentBinding model must win.
+				if catalog.AgentBindings[domain.KindBuild].Model != "opus" {
+					t.Fatalf("AgentBindings[build].Model = %q; want %q (last group wins)", catalog.AgentBindings[domain.KindBuild].Model, "opus")
+				}
+			},
+		},
+		{
+			// AC3 empty-group guard (d): empty-string in Groups is skipped.
+			// The bake must not error and must produce a valid catalog from
+			// the non-empty group entries (or embedded fallback if none match).
+			name: "empty_string_in_groups_skipped_without_error",
+			fn: func(t *testing.T) {
+				fakeHome := t.TempDir()
+				writeHomeGroupTemplateFixture(t, fakeHome, "go", 4001, domain.KindBuild, "builder-agent")
+				// Groups contains an empty string that must be skipped.
+				project := domain.Project{
+					Language: "go",
+					Metadata: domain.ProjectMetadata{Groups: []string{"go", "", "  "}},
+				}
+				if err := bakeProjectKindCatalogWithHome(&project, fakeHome); err != nil {
+					t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v (empty-string groups must be silently skipped)", err)
+				}
+				if len(project.KindCatalogJSON) == 0 {
+					t.Fatal("KindCatalogJSON is empty after skipping empty groups")
+				}
+				var catalog templates.KindCatalog
+				if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
+					t.Fatalf("json.Unmarshal(KindCatalogJSON): error = %v", err)
+				}
+				// "go" was the only non-empty group; its entry must be present.
+				if _, ok := catalog.AgentBindings[domain.KindBuild]; !ok {
+					t.Fatal("catalog.AgentBindings missing KindBuild (go group contribution after skipping empty entries)")
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			tc.fn(t)
+		})
+	}
+}
+
 // TestBakeProjectKindCatalog_EmbeddedFallbackPopulatesCatalog covers Drop
 // 4c.5 droplet F.1.1's downstream effect at the bake-helper boundary:
 // post-F.1.1 a project with empty repo paths receives a non-empty
@@ -6977,8 +7159,8 @@ func TestLoadProjectTemplate_UnsupportedLanguagePropagatesError(t *testing.T) {
 // exercised here: the test name names the change explicitly.
 func TestBakeProjectKindCatalog_EmbeddedFallbackPopulatesCatalog(t *testing.T) {
 	project := domain.Project{Language: "go"}
-	if err := bakeProjectKindCatalog(&project); err != nil {
-		t.Fatalf("bakeProjectKindCatalog(): unexpected error = %v", err)
+	if err := bakeProjectKindCatalogWithHome(&project, ""); err != nil {
+		t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v", err)
 	}
 	if len(project.KindCatalogJSON) == 0 {
 		t.Fatalf("project.KindCatalogJSON is empty; F.1.1 must populate from embedded default for empty-path projects")
@@ -7009,8 +7191,8 @@ func TestBakeProjectKindCatalog_NonEmptyPathFallsThroughToEmbedded(t *testing.T)
 		RepoPrimaryWorktree: t.TempDir(),
 		Language:            "go",
 	}
-	if err := bakeProjectKindCatalog(&project); err != nil {
-		t.Fatalf("bakeProjectKindCatalog(): unexpected error = %v", err)
+	if err := bakeProjectKindCatalogWithHome(&project, ""); err != nil {
+		t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v", err)
 	}
 	if len(project.KindCatalogJSON) == 0 {
 		t.Fatalf("project.KindCatalogJSON is empty; F.1.2 walk must fall through to embedded default when no on-disk candidate matches")

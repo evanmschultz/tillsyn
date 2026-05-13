@@ -413,11 +413,47 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 // Per Drop 3 finding 5.B.14: edits to <project_root>/.tillsyn/template.toml
 // AFTER project creation are ignored — the catalog is the create-time
 // snapshot. Re-baking on every project lookup is explicitly out of scope.
+//
+// Drop 4c.6.1 W1.D2: when project.Metadata.Groups is non-empty,
+// bakeProjectKindCatalog routes through bakeProjectKindCatalogWithHome to
+// loadProjectTemplatesForGroups, which walks the HOME tier per group and
+// aggregates results via mergeTemplates. Single-group projects (Groups nil or
+// empty) continue through loadProjectTemplate unchanged.
 func bakeProjectKindCatalog(project *domain.Project) error {
 	if project == nil {
 		return nil
 	}
-	tpl, ok, err := loadProjectTemplate(project)
+	homeDir := ""
+	if h, err := os.UserHomeDir(); err == nil && strings.TrimSpace(h) != "" {
+		homeDir = h
+	}
+	return bakeProjectKindCatalogWithHome(project, homeDir)
+}
+
+// bakeProjectKindCatalogWithHome is the testability seam for
+// bakeProjectKindCatalog. bakeProjectKindCatalog calls it with the real
+// os.UserHomeDir() result; tests call it with a t.TempDir() fake homeDir so
+// the real $HOME is never consulted. This mirrors the loadProjectTemplateWithHome
+// seam introduced by Drop 4c.6.1 W1.D1.
+//
+// When project.Metadata.Groups is non-empty, the multi-group coordinator
+// loadProjectTemplatesForGroups walks the HOME tier for each group and merges
+// the resulting templates. When Groups is nil or empty, the existing
+// single-group path via loadProjectTemplate is used unchanged.
+func bakeProjectKindCatalogWithHome(project *domain.Project, homeDir string) error {
+	if project == nil {
+		return nil
+	}
+	var (
+		tpl templates.Template
+		ok  bool
+		err error
+	)
+	if len(project.Metadata.Groups) > 0 {
+		tpl, ok, err = loadProjectTemplatesForGroups(project, homeDir)
+	} else {
+		tpl, ok, err = loadProjectTemplate(project)
+	}
 	if err != nil {
 		return err
 	}
@@ -431,6 +467,177 @@ func bakeProjectKindCatalog(project *domain.Project) error {
 	}
 	project.KindCatalogJSON = encoded
 	return nil
+}
+
+// loadProjectTemplatesForGroups is the multi-group coordinator for
+// bakeProjectKindCatalogWithHome. It iterates project.Metadata.Groups, calls
+// loadProjectTemplateWithHome per non-empty group, and merges all resulting
+// templates via mergeTemplates (last-group-wins on key collisions for map
+// fields, append for slice fields).
+//
+// Empty-group guard: entries where strings.TrimSpace(group) == "" are skipped
+// silently. A bare empty string would produce a malformed HOME tier path
+// (~/.tillsyn/templates/.toml). Whitespace-only entries are also skipped.
+//
+// The homeDir parameter is the testability injection point. The caller
+// (bakeProjectKindCatalogWithHome) passes the real os.UserHomeDir() result;
+// tests pass t.TempDir() to avoid touching the real $HOME.
+//
+// Returns (zero, false, err) if any non-empty group's template load fails.
+// Returns (merged, true, nil) on success. The embedded fallback inside
+// loadProjectTemplateWithHome ensures every group produces a non-zero template
+// even when its HOME file is absent, so ok is always true on nil-error return.
+func loadProjectTemplatesForGroups(project *domain.Project, homeDir string) (templates.Template, bool, error) {
+	merged := templates.Template{}
+	hasMerged := false
+	for _, group := range project.Metadata.Groups {
+		if strings.TrimSpace(group) == "" {
+			continue
+		}
+		tpl, _, err := loadProjectTemplateWithHome(project, homeDir, group)
+		if err != nil {
+			return templates.Template{}, false, err
+		}
+		if !hasMerged {
+			merged = tpl
+			hasMerged = true
+		} else {
+			merged = mergeTemplates(merged, tpl)
+		}
+	}
+	if !hasMerged {
+		// All groups were empty or whitespace-only strings. Fall through to
+		// the embedded default for the project's language, consistent with
+		// the single-group path.
+		tpl, err := templates.LoadDefaultTemplateForLanguage(project.Language)
+		if err != nil {
+			return templates.Template{}, false, fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)
+		}
+		return tpl, true, nil
+	}
+	return merged, true, nil
+}
+
+// mergeTemplates merges overlay on top of base and returns the combined
+// Template. The merge strategy is per-field as documented below (Drop
+// 4c.6.1 W1.D2 acceptance criterion #4):
+//
+//   - SchemaVersion: last-group-wins (overlay overwrites base when non-empty).
+//   - Kinds: per-key last-group-wins (overlay key replaces base key on collision).
+//   - ChildRules: append base + overlay; dedup on (WhenParentKind,
+//     CreateChildKind) tuple, overlay entry wins on collision.
+//   - AgentBindings: per-key last-group-wins (primary multi-group use case).
+//   - Agents: per-key last-group-wins.
+//   - Gates: per-key last-group-wins (overlay slice replaces base slice for
+//     same kind key; NOT concat). Gate ordering within a kind is the overlay
+//     author's responsibility.
+//   - GateRulesRaw: per-key shallow merge, last-group-wins on collision.
+//   - Tillsyn: whole-struct last-group-wins; overlay Tillsyn replaces base if
+//     overlay is non-zero (MaxContextBundleChars != 0 ||
+//     MaxAggregatorDuration != 0 || SpawnTempRoot != ""). RequiresPlugins
+//     does NOT contribute to the non-zero check per the spec-enumerated
+//     condition; the three named fields are the semantically meaningful
+//     non-zero signals.
+//   - StewardSeeds: append base + overlay (no dedup; seeds are
+//     project-unique and append order is significant).
+//
+// Refinement MERGE-FIELD-AXIS-R1: revisit per-field semantics for Tillsyn,
+// StewardSeeds, Gates, GateRulesRaw, ChildRules, Kinds, Agents when
+// multi-group projects start exercising these fields in dogfood. Pre-MVP,
+// last-group-wins / append is the pragmatic default.
+func mergeTemplates(base, overlay templates.Template) templates.Template {
+	out := base
+
+	// SchemaVersion: last-group-wins.
+	if overlay.SchemaVersion != "" {
+		out.SchemaVersion = overlay.SchemaVersion
+	}
+
+	// Kinds: per-key last-group-wins.
+	if len(overlay.Kinds) > 0 {
+		if out.Kinds == nil {
+			out.Kinds = make(map[domain.Kind]templates.KindRule, len(overlay.Kinds))
+		}
+		for k, v := range overlay.Kinds {
+			out.Kinds[k] = v
+		}
+	}
+
+	// ChildRules: append base + overlay with dedup on
+	// (WhenParentKind, CreateChildKind) tuple; overlay wins on collision.
+	if len(overlay.ChildRules) > 0 {
+		type childRuleKey struct {
+			WhenParentKind  domain.Kind
+			CreateChildKind domain.Kind
+		}
+		idx := make(map[childRuleKey]int, len(out.ChildRules))
+		for i, r := range out.ChildRules {
+			idx[childRuleKey{r.WhenParentKind, r.CreateChildKind}] = i
+		}
+		for _, r := range overlay.ChildRules {
+			key := childRuleKey{r.WhenParentKind, r.CreateChildKind}
+			if i, exists := idx[key]; exists {
+				out.ChildRules[i] = r
+			} else {
+				out.ChildRules = append(out.ChildRules, r)
+				idx[key] = len(out.ChildRules) - 1
+			}
+		}
+	}
+
+	// AgentBindings: per-key last-group-wins.
+	if len(overlay.AgentBindings) > 0 {
+		if out.AgentBindings == nil {
+			out.AgentBindings = make(map[domain.Kind]templates.AgentBinding, len(overlay.AgentBindings))
+		}
+		for k, v := range overlay.AgentBindings {
+			out.AgentBindings[k] = v
+		}
+	}
+
+	// Agents: per-key last-group-wins.
+	if len(overlay.Agents) > 0 {
+		if out.Agents == nil {
+			out.Agents = make(map[domain.Kind]templates.AgentRuntime, len(overlay.Agents))
+		}
+		for k, v := range overlay.Agents {
+			out.Agents[k] = v
+		}
+	}
+
+	// Gates: per-key last-group-wins (slice replaces, NOT concat).
+	if len(overlay.Gates) > 0 {
+		if out.Gates == nil {
+			out.Gates = make(map[domain.Kind][]templates.GateKind, len(overlay.Gates))
+		}
+		for k, v := range overlay.Gates {
+			out.Gates[k] = v
+		}
+	}
+
+	// GateRulesRaw: per-key shallow merge, last-group-wins on collision.
+	if len(overlay.GateRulesRaw) > 0 {
+		if out.GateRulesRaw == nil {
+			out.GateRulesRaw = make(map[string]any, len(overlay.GateRulesRaw))
+		}
+		for k, v := range overlay.GateRulesRaw {
+			out.GateRulesRaw[k] = v
+		}
+	}
+
+	// Tillsyn: whole-struct last-group-wins if overlay is non-zero.
+	if overlay.Tillsyn.MaxContextBundleChars != 0 ||
+		overlay.Tillsyn.MaxAggregatorDuration != 0 ||
+		overlay.Tillsyn.SpawnTempRoot != "" {
+		out.Tillsyn = overlay.Tillsyn
+	}
+
+	// StewardSeeds: append base + overlay (no dedup).
+	if len(overlay.StewardSeeds) > 0 {
+		out.StewardSeeds = append(out.StewardSeeds, overlay.StewardSeeds...)
+	}
+
+	return out
 }
 
 // projectTemplateFilename is the canonical filename loadProjectTemplate

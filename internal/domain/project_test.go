@@ -263,6 +263,87 @@ func TestProjectMetadataDispatcherTogglesJSONRoundTrip(t *testing.T) {
 	}
 }
 
+// TestProjectMetadata_Groups_RoundTrip verifies the Groups []string field
+// added by Drop 4c.6.1 W1.D2 round-trips through JSON correctly.
+//
+// Per Go encoding/json semantics, omitempty on []string omits BOTH nil AND
+// empty-non-nil slices (len(s) == 0 is treated as empty for slices). Only
+// non-empty slices like ["go","fe"] appear in marshaled output.
+//
+// Three cases:
+//   - Groups nil    → field omitted from JSON
+//   - Groups ["go","fe"] → field present in JSON, decodes back correctly
+//   - Groups []string{} → field omitted from JSON (len==0 per omitempty semantics)
+func TestProjectMetadata_Groups_RoundTrip(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		input      ProjectMetadata
+		mustHave   []string // substrings that MUST appear in marshaled JSON
+		mustOmit   []string // substrings that MUST NOT appear in marshaled JSON
+		wantGroups []string // expected decoded Groups value (nil is checked explicitly)
+		wantNil    bool     // true if decoded Groups must be nil
+	}{
+		{
+			name:     "nil_groups_omitted",
+			input:    ProjectMetadata{},
+			mustOmit: []string{"groups"},
+			wantNil:  true,
+		},
+		{
+			name:       "non_empty_groups_present",
+			input:      ProjectMetadata{Groups: []string{"go", "fe"}},
+			mustHave:   []string{`"groups":["go","fe"]`},
+			wantGroups: []string{"go", "fe"},
+		},
+		{
+			name:     "empty_slice_groups_omitted",
+			input:    ProjectMetadata{Groups: []string{}},
+			mustOmit: []string{"groups"},
+			wantNil:  true,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw, err := json.Marshal(tc.input)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
+			rawStr := string(raw)
+			for _, want := range tc.mustHave {
+				if !strings.Contains(rawStr, want) {
+					t.Fatalf("marshaled JSON %q missing expected substring %q", rawStr, want)
+				}
+			}
+			for _, forbidden := range tc.mustOmit {
+				if strings.Contains(rawStr, forbidden) {
+					t.Fatalf("marshaled JSON %q unexpectedly contains %q", rawStr, forbidden)
+				}
+			}
+			var decoded ProjectMetadata
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatalf("json.Unmarshal() error = %v", err)
+			}
+			if tc.wantNil {
+				if decoded.Groups != nil {
+					t.Fatalf("decoded.Groups = %v; want nil (omitempty round-trip must produce nil, not empty slice)", decoded.Groups)
+				}
+			} else {
+				if len(decoded.Groups) != len(tc.wantGroups) {
+					t.Fatalf("decoded.Groups = %v; want %v (length mismatch)", decoded.Groups, tc.wantGroups)
+				}
+				for i, g := range tc.wantGroups {
+					if decoded.Groups[i] != g {
+						t.Fatalf("decoded.Groups[%d] = %q; want %q", i, decoded.Groups[i], g)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestProjectMetadataDispatcherTogglesTOMLRoundTrip verifies both new
 // pointer-bool fields survive TOML marshal/unmarshal cycles. Templates
 // declare project metadata in TOML form (per CLAUDE.md template-binding
