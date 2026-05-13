@@ -492,12 +492,29 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		return err
 	}
 
+	// Resolve homeDir for HOME-tier template lookups. opts.homeDir is the
+	// --home flag value (empty when not set); fall back to os.UserHomeDir().
+	homeDir := strings.TrimSpace(opts.homeDir)
+	if homeDir == "" {
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("till init: resolve home dir: %w", err)
+		}
+	}
+
 	// D5: multi-group subdir copy. copyAgentFiles iterates over all groups
 	// and writes to .tillsyn/agents/<group>/<name>.md.
 	agentsAdded, agentsSkipped, err := copyAgentFiles(destDir, payload.Groups)
 	if err != nil {
 		return fmt.Errorf("till init: copy agent files: %w", err)
 	}
+
+	// D6: aggregate template.toml from HOME tier or embedded defaults.
+	templateAdded, templateSkipped, err := writeTemplateTOML(stdout, destDir, payload.Groups, homeDir)
+	if err != nil {
+		return fmt.Errorf("till init: write template.toml: %w", err)
+	}
+
 	tomlAdded, _, err := copyAgentsTOML(destDir)
 	if err != nil {
 		return fmt.Errorf("till init: copy agents.toml: %w", err)
@@ -533,6 +550,11 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 	if tomlAdded > 0 {
 		agentsTOMLStatus = "added"
 	}
+	templateTOMLStatus := "skipped (already exists)"
+	if templateAdded > 0 {
+		templateTOMLStatus = "added"
+	}
+	_ = templateSkipped // counter unused beyond status string; retained for symmetry with other (added,skipped,err) returns.
 
 	return writeCLIKV(stdout, "Init", [][2]string{
 		{"project name", payload.Name},
@@ -540,6 +562,7 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		{"agents dir", agentsDir},
 		{"agents copied", agentsCopied},
 		{"agents.toml", agentsTOMLStatus + " — " + agentsTomlPath},
+		{"template.toml", templateTOMLStatus},
 		{".gitignore", gitignoreStatus},
 		{".mcp.json", mcpStatus},
 		{"project DB", dbStatus},
@@ -603,10 +626,117 @@ func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, project
 }
 
 // agentFileInitPerm is the permission applied to every freshly copied
-// agent .md, agents.toml, and .gitignore write. Matches the conventional
-// 0o644 (user rw, group r, other r) the embedded fixtures themselves
-// ship with under git.
+// agent .md, agents.toml, .gitignore, and template.toml write. Matches the
+// conventional 0o644 (user rw, group r, other r) the embedded fixtures
+// themselves ship with under git.
 const agentFileInitPerm os.FileMode = 0o644
+
+// writeTemplateTOML aggregates template TOML content for each group in
+// `groups` and writes the result to `<destDir>/.tillsyn/template.toml`.
+//
+// Source resolution per group (HOME-first, embedded fallback):
+//  1. HOME tier: `<homeDir>/.tillsyn/templates/<group>.toml` — if this file
+//     exists it is used as-is. This lets users override the shipped defaults
+//     with project-specific or org-specific templates.
+//  2. Embedded fallback: `builtin/till-<group>.toml` from
+//     `templates.DefaultTemplateFS` — used when the HOME-tier file is absent.
+//
+// Each group's content is written under a `[<group>]` section header unless
+// the content already starts with `[<group>]`. This produces a file where
+// `[<group>]` is present as a string, enabling the partial-state check.
+//
+// Blanket skip: if `<destDir>/.tillsyn/template.toml` already exists the
+// function does NOT overwrite it (returns added=0, skipped=1, err=nil) — users
+// may have customized the file. Partial-state warning: if the existing file
+// is missing `[<group>]` or `[<group>.` for one or more selected groups, a
+// WARN line is printed to stdout (non-fatal — exits zero).
+//
+// The partial-state check is a simple string presence heuristic (NOT a full
+// TOML parse): `strings.Contains(content, "[<group>]")` OR
+// `strings.Contains(content, "[<group>.")`. A section header appearing only
+// in a TOML comment line (e.g., `# [go] group`) would suppress the warning;
+// this is the documented and accepted tradeoff per W2.D6 RiskNotes.
+//
+// `homeDir` must be an absolute path. The caller (`runInitPipeline`) resolves
+// it via `os.UserHomeDir()` when `rootOpts.homeDir` is empty, so by the time
+// `writeTemplateTOML` is called `homeDir` is always absolute.
+//
+// Returns `(added, skipped, err)`: added=1 when the file was written,
+// skipped=1 when the file already existed. On error the error is wrapped.
+func writeTemplateTOML(stdout io.Writer, destDir string, groups []string, homeDir string) (int, int, error) {
+	target := filepath.Join(destDir, ".tillsyn", "template.toml")
+
+	// Blanket skip with optional partial-state warning.
+	existing, statErr := os.ReadFile(target)
+	if statErr == nil {
+		// File exists — check for missing group sections.
+		content := string(existing)
+		var missing []string
+		for _, group := range groups {
+			if !strings.Contains(content, "["+group+"]") && !strings.Contains(content, "["+group+".") {
+				missing = append(missing, group)
+			}
+		}
+		if len(missing) > 0 {
+			fmt.Fprintf(stdout, "WARN: %s already exists but is missing sections for group(s): %v. Remove it and re-run to regenerate.\n",
+				target, missing)
+		}
+		return 0, 1, nil
+	}
+	if !errors.Is(statErr, fs.ErrNotExist) {
+		return 0, 0, fmt.Errorf("stat %q: %w", target, statErr)
+	}
+
+	// File absent — aggregate content from all groups.
+	var buf strings.Builder
+	for _, group := range groups {
+		data, err := readTemplateForGroup(homeDir, group)
+		if err != nil {
+			return 0, 0, fmt.Errorf("read template for group %q: %w", group, err)
+		}
+
+		// Prepend [<group>] header if the content does not already start with it.
+		content := strings.TrimRight(string(data), "\n")
+		header := "[" + group + "]"
+		if !strings.HasPrefix(content, header) {
+			buf.WriteString(header)
+			buf.WriteString("\n")
+		}
+		buf.WriteString(content)
+		buf.WriteString("\n\n")
+	}
+
+	// Ensure the .tillsyn directory exists.
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return 0, 0, fmt.Errorf("mkdir %q: %w", filepath.Dir(target), err)
+	}
+
+	if err := fsatomic.WriteFile(target, []byte(buf.String()), agentFileInitPerm); err != nil {
+		return 0, 0, fmt.Errorf("write %q: %w", target, err)
+	}
+	return 1, 0, nil
+}
+
+// readTemplateForGroup returns the TOML content for `group` from the HOME
+// tier (`<homeDir>/.tillsyn/templates/<group>.toml`) if present, otherwise
+// falls back to the embedded `builtin/till-<group>.toml`.
+func readTemplateForGroup(homeDir, group string) ([]byte, error) {
+	homePath := filepath.Join(homeDir, ".tillsyn", "templates", group+".toml")
+	data, err := os.ReadFile(homePath)
+	if err == nil {
+		return data, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("read HOME template %q: %w", homePath, err)
+	}
+	// HOME tier absent — fall back to embedded.
+	embeddedPath := path.Join("builtin", "till-"+group+".toml")
+	embedded, readErr := fs.ReadFile(templates.DefaultTemplateFS, embeddedPath)
+	if readErr != nil {
+		return nil, fmt.Errorf("read embedded template %q: %w", embeddedPath, readErr)
+	}
+	return embedded, nil
+}
 
 // copyAgentFiles reads the embedded `internal/templates/builtin/agents/<group>/*.md`
 // set via `templates.DefaultTemplateFS` for each group in `groups` and writes

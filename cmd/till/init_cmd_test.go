@@ -1896,3 +1896,170 @@ func topKeys(m map[string]json.RawMessage) []string {
 	}
 	return keys
 }
+
+// TestWriteTemplateTOML_HOMETierPresent verifies that writeTemplateTOML reads
+// from the HOME tier (~/.tillsyn/templates/<group>.toml) when it exists, and
+// writes the content with a [<group>] section header to template.toml.
+// CONSUMER-TIE TEST CONTRACT (W2.D6) — drives through run() end-to-end so
+// the full runInitPipeline → writeTemplateTOML chain is exercised.
+func TestWriteTemplateTOML_HOMETierPresent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Chdir(dir)
+
+	// Seed the HOME-tier template for the "go" group.
+	homeTemplatesDir := filepath.Join(dir, ".tillsyn", "templates")
+	if err := os.MkdirAll(homeTemplatesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll HOME templates dir: %v", err)
+	}
+	customContent := "# custom go template\nmy_custom_key = \"home-tier-value\"\n"
+	if err := os.WriteFile(filepath.Join(homeTemplatesDir, "go.toml"), []byte(customContent), 0o644); err != nil {
+		t.Fatalf("WriteFile HOME go.toml: %v", err)
+	}
+
+	var out strings.Builder
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"home-tier","groups":["go"],"mcp":false}`}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json) error = %v; want nil", err)
+	}
+
+	// template.toml must exist and contain the HOME-tier custom content.
+	tplPath := filepath.Join(dir, ".tillsyn", "template.toml")
+	data, readErr := os.ReadFile(tplPath)
+	if readErr != nil {
+		t.Fatalf("os.ReadFile(%q): %v — template.toml not created", tplPath, readErr)
+	}
+	body := string(data)
+
+	// The [go] section header must be present.
+	if !strings.Contains(body, "[go]") {
+		t.Fatalf("template.toml = %q; want [go] section header", body)
+	}
+	// The HOME-tier custom content must be present (not the embedded default).
+	if !strings.Contains(body, "home-tier-value") {
+		t.Fatalf("template.toml = %q; want HOME-tier custom content (my_custom_key = home-tier-value)", body)
+	}
+
+	// Laslig summary must include "template.toml" row.
+	if !strings.Contains(out.String(), "template.toml") {
+		t.Fatalf("Laslig stdout = %q; want 'template.toml' row", out.String())
+	}
+}
+
+// TestWriteTemplateTOML_HOMETierAbsent verifies that writeTemplateTOML falls
+// back to the embedded builtin/till-<group>.toml when the HOME-tier file does
+// not exist. CONSUMER-TIE TEST CONTRACT (W2.D6).
+func TestWriteTemplateTOML_HOMETierAbsent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Chdir(dir)
+	// No HOME-tier template created — fall back to embedded.
+
+	var out strings.Builder
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"fallback","groups":["go"],"mcp":false}`}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init --json) error = %v; want nil", err)
+	}
+
+	tplPath := filepath.Join(dir, ".tillsyn", "template.toml")
+	data, readErr := os.ReadFile(tplPath)
+	if readErr != nil {
+		t.Fatalf("os.ReadFile(%q): %v — template.toml not created on HOME-absent fallback", tplPath, readErr)
+	}
+	body := string(data)
+
+	// [go] section header must be present (written by writeTemplateTOML).
+	if !strings.Contains(body, "[go]") {
+		t.Fatalf("template.toml = %q; want [go] section header from embedded fallback", body)
+	}
+	// File must have non-trivial content from the embedded till-go.toml.
+	if len(body) < 100 {
+		t.Fatalf("template.toml length = %d; want >= 100 bytes (embedded template has substantial content)", len(body))
+	}
+}
+
+// TestWriteTemplateTOML_Idempotent verifies that a second `till init` run with
+// template.toml already present skips writing it (blanket skip) and reports
+// "skipped" in the Laslig output. No error expected.
+// CONSUMER-TIE TEST CONTRACT (W2.D6).
+func TestWriteTemplateTOML_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Chdir(dir)
+
+	// First run — creates template.toml.
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"idem","groups":["go"],"mcp":false}`}, nil, io.Discard); err != nil {
+		t.Fatalf("first run error = %v; want nil", err)
+	}
+
+	// Capture content after first run.
+	tplPath := filepath.Join(dir, ".tillsyn", "template.toml")
+	firstData, readErr := os.ReadFile(tplPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile after first run: %v", readErr)
+	}
+
+	// Second run — must skip template.toml (blanket skip).
+	var out strings.Builder
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"idem","groups":["go"],"mcp":false}`}, &out, io.Discard); err != nil {
+		t.Fatalf("second run error = %v; want nil (idempotent re-run)", err)
+	}
+
+	// File content must be unchanged.
+	secondData, readErr2 := os.ReadFile(tplPath)
+	if readErr2 != nil {
+		t.Fatalf("ReadFile after second run: %v", readErr2)
+	}
+	if string(firstData) != string(secondData) {
+		t.Fatalf("template.toml mutated on second run; first=%q second=%q", string(firstData), string(secondData))
+	}
+
+	// Laslig row must say "skipped" (already exists).
+	if !strings.Contains(out.String(), "skipped") {
+		t.Fatalf("Laslig stdout = %q; want 'skipped' in template.toml row on re-run", out.String())
+	}
+}
+
+// TestWriteTemplateTOML_PartialStateWarning verifies that when template.toml
+// already exists but is missing the [<group>] section for a selected group,
+// a warning is printed to stdout but the run exits zero (non-fatal). The
+// template.toml file must NOT be modified.
+// CONSUMER-TIE TEST CONTRACT (W2.D6).
+func TestWriteTemplateTOML_PartialStateWarning(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Chdir(dir)
+
+	// Pre-create template.toml with only [gen] section — missing [go].
+	tillsynDir := filepath.Join(dir, ".tillsyn")
+	if err := os.MkdirAll(tillsynDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll .tillsyn: %v", err)
+	}
+	existingContent := "[gen]\n# gen content only\n"
+	tplPath := filepath.Join(tillsynDir, "template.toml")
+	if err := os.WriteFile(tplPath, []byte(existingContent), 0o644); err != nil {
+		t.Fatalf("WriteFile template.toml: %v", err)
+	}
+
+	// Run init with groups=["go"] — template.toml exists but missing [go].
+	var stdout strings.Builder
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"partial","groups":["go"],"mcp":false}`}, &stdout, io.Discard); err != nil {
+		t.Fatalf("run error = %v; want nil (partial-state warning is non-fatal)", err)
+	}
+
+	// The WARN message must appear in stdout.
+	outStr := stdout.String()
+	if !strings.Contains(outStr, "WARN") {
+		t.Fatalf("stdout = %q; want WARN message about missing [go] section", outStr)
+	}
+	if !strings.Contains(outStr, "go") {
+		t.Fatalf("stdout = %q; want WARN mentioning missing group 'go'", outStr)
+	}
+
+	// template.toml must NOT be modified — content must be unchanged.
+	afterData, readErr := os.ReadFile(tplPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile template.toml after partial-state run: %v", readErr)
+	}
+	if string(afterData) != existingContent {
+		t.Fatalf("template.toml was modified; want unchanged\nbefore=%q\nafter=%q", existingContent, string(afterData))
+	}
+}
