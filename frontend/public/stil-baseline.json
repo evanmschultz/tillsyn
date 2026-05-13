@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "name": "stil-baseline",
+  "description": "Comprehensive vim baseline shared across every Hylla product. Adapters (stil-swift, stil-solid, lykta, ro-vim) consume this file directly. Per-app overrides extend, never replace.",
+  "modes": {
+    "nav": "Default. Letter and arrow keys move between items; modifier keys trigger commands.",
+    "insert": "Active while typing in any text field. Disables single-key bindings; enables Esc to return to nav.",
+    "visual": "Selection mode for items in a list (e.g. multi-select email rows).",
+    "visual-block": "Selection mode for blocks in a rendered document (e.g. paragraphs in an email body).",
+    "command": "After `:` — run a registered command from the palette.",
+    "hint": "After `f` or `F` — overlays two-letter codes on clickable elements; type code to click."
+  },
+  "categories": {
+    "navigation": "Move focus / cursor between items.",
+    "selection": "Mark items / blocks for batch action.",
+    "action": "Mutate state (archive, delete, snooze, label, yank, paste).",
+    "search": "Find content (text or commands).",
+    "modes": "Switch between vim modes.",
+    "chrome": "Show / hide app chrome (sidebars, topbar, focus mode).",
+    "panel": "Switch between side-panel modes."
+  },
+  "bindings": [
+    { "id": "next-item",     "keys": ["j"],         "modes": ["nav", "visual"],         "category": "navigation", "description": "Next item." },
+    { "id": "prev-item",     "keys": ["k"],         "modes": ["nav", "visual"],         "category": "navigation", "description": "Previous item." },
+    { "id": "first-item",    "keys": ["g", "g"],    "modes": ["nav", "visual"],         "category": "navigation", "description": "First item." },
+    { "id": "last-item",     "keys": ["G"],         "modes": ["nav", "visual"],         "category": "navigation", "description": "Last item." },
+    { "id": "page-down",     "keys": ["Ctrl+d"],    "modes": ["nav"],                   "category": "navigation", "description": "Half page down." },
+    { "id": "page-up",       "keys": ["Ctrl+u"],    "modes": ["nav"],                   "category": "navigation", "description": "Half page up." },
+    { "id": "full-down",     "keys": ["Ctrl+f"],    "modes": ["nav"],                   "category": "navigation", "description": "Full page down." },
+    { "id": "full-up",       "keys": ["Ctrl+b"],    "modes": ["nav"],                   "category": "navigation", "description": "Full page up." },
+
+    { "id": "next-pane",     "keys": ["Ctrl+w", "l"],"modes": ["nav"],                  "category": "navigation", "description": "Focus pane to the right." },
+    { "id": "prev-pane",     "keys": ["Ctrl+w", "h"],"modes": ["nav"],                  "category": "navigation", "description": "Focus pane to the left." },
+    { "id": "below-pane",    "keys": ["Ctrl+w", "j"],"modes": ["nav"],                  "category": "navigation", "description": "Focus pane below." },
+    { "id": "above-pane",    "keys": ["Ctrl+w", "k"],"modes": ["nav"],                  "category": "navigation", "description": "Focus pane above." },
+
+    { "id": "open-item",     "keys": ["Enter"],     "modes": ["nav"],                   "category": "action",     "description": "Open / activate the focused item." },
+    { "id": "back",          "keys": ["Escape"],    "modes": ["nav"],                   "category": "action",     "description": "Back / dismiss / close panel." },
+    { "id": "destroy",       "keys": ["d", "d"],    "modes": ["nav", "visual"],         "category": "action",     "description": "Destructive default — archive in email, close tab in browser, delete drop in tillsyn." },
+    { "id": "delete",        "keys": ["x"],         "modes": ["nav", "visual"],         "category": "action",     "description": "Hard delete." },
+    { "id": "undo",          "keys": ["u"],         "modes": ["nav"],                   "category": "action",     "description": "Undo last action." },
+    { "id": "redo",          "keys": ["Ctrl+r"],    "modes": ["nav"],                   "category": "action",     "description": "Redo." },
+    { "id": "yank",          "keys": ["y"],         "modes": ["nav", "visual", "visual-block"], "category": "action", "description": "Copy selected text / item reference to clipboard." },
+    { "id": "paste",         "keys": ["p"],         "modes": ["nav"],                   "category": "action",     "description": "Paste from clipboard." },
+
+    { "id": "enter-visual",       "keys": ["v"],    "modes": ["nav"],                   "category": "modes",      "description": "Enter visual (item-selection) mode." },
+    { "id": "enter-visual-block", "keys": ["V"],    "modes": ["nav"],                   "category": "modes",      "description": "Enter visual-block mode (DOM blocks in rendered content)." },
+    { "id": "enter-block-add",    "keys": ["Ctrl+v"], "modes": ["visual-block"],        "category": "modes",      "description": "Toggle non-contiguous block selection." },
+    { "id": "enter-insert",       "keys": ["i"],    "modes": ["nav"],                   "category": "modes",      "description": "Enter insert mode — focus the active panel's input." },
+    { "id": "exit-mode",          "keys": ["Escape"],"modes": ["insert", "visual", "visual-block", "command", "hint"], "category": "modes", "description": "Return to nav mode." },
+
+    { "id": "search",        "keys": ["/"],         "modes": ["nav"],                   "category": "search",     "description": "Open inline search for the current view." },
+    { "id": "search-next",   "keys": ["n"],         "modes": ["nav"],                   "category": "search",     "description": "Next search result." },
+    { "id": "search-prev",   "keys": ["N"],         "modes": ["nav"],                   "category": "search",     "description": "Previous search result." },
+    { "id": "command",       "keys": [":"],         "modes": ["nav"],                   "category": "search",     "description": "Open command palette." },
+    { "id": "search-all",    "keys": ["Cmd+k"],     "modes": ["nav", "insert"],         "category": "search",     "description": "Global command + content search (overrides modal context)." },
+
+    { "id": "hint",          "keys": ["f"],         "modes": ["nav"],                   "category": "modes",      "description": "Hint mode — overlay codes on clickable elements; type to click." },
+    { "id": "hint-new",      "keys": ["F"],         "modes": ["nav"],                   "category": "modes",      "description": "Hint mode — open clicked element in a new tab/window." },
+
+    { "id": "toggle-aside-right", "keys": ["Cmd+ArrowRight"], "modes": ["nav", "insert"], "category": "chrome",   "description": "Toggle the right side panel." },
+    { "id": "toggle-aside-left",  "keys": ["Cmd+ArrowLeft"],  "modes": ["nav", "insert"], "category": "chrome",   "description": "Toggle the left side panel (rail + sidebar)." },
+    { "id": "toggle-topbar",      "keys": ["Cmd+ArrowUp"],    "modes": ["nav", "insert"], "category": "chrome",   "description": "Toggle the topbar." },
+    { "id": "toggle-focus",       "keys": ["Cmd+."],          "modes": ["nav", "insert"], "category": "chrome",   "description": "Toggle Focus mode — hides every chrome panel." },
+
+    { "id": "panel-shortcuts", "keys": ["1"],       "modes": ["nav"],                   "category": "panel",      "description": "Switch right panel to Shortcuts." },
+    { "id": "panel-tips",      "keys": ["2"],       "modes": ["nav"],                   "category": "panel",      "description": "Switch right panel to Tips." },
+    { "id": "panel-ai",        "keys": ["3"],       "modes": ["nav"],                   "category": "panel",      "description": "Switch right panel to AI." },
+    { "id": "panel-settings",  "keys": ["4"],       "modes": ["nav"],                   "category": "panel",      "description": "Switch right panel to Settings." },
+    { "id": "panel-cycle-next","keys": ["ArrowRight"],"modes": ["nav"],                 "category": "panel",      "description": "Cycle to next panel mode (when right aside is open and focused)." },
+    { "id": "panel-cycle-prev","keys": ["ArrowLeft"], "modes": ["nav"],                 "category": "panel",      "description": "Cycle to previous panel mode." },
+
+    { "id": "leader",        "keys": ["Space"],     "modes": ["nav"],                   "category": "navigation", "description": "Leader key — opens product-specific quick switcher (split inbox in email, workspace switcher in browser, project picker in tillsyn)." }
+  ],
+  "product_extensions": {
+    "ro-email": {
+      "description": "Email-specific commands registered with the command palette.",
+      "extends": "stil-baseline",
+      "commands": [
+        { "id": "snooze",        "command": "snooze",       "description": "Snooze the focused message — accepts an interval (e.g. `:snooze 3d`)." },
+        { "id": "label",         "command": "label",        "description": "Apply a label — accepts a label name (e.g. `:label work`)." },
+        { "id": "mute",          "command": "mute",         "description": "Mute the thread." },
+        { "id": "archive",       "command": "archive",      "description": "Archive the focused message." },
+        { "id": "ask",           "command": "ask",          "description": "Send the current selection to the AI panel with the page-context template." },
+        { "id": "split-switch",  "keys": ["Space", "h"],    "description": "Switch to next split inbox (leader+h)." }
+      ]
+    },
+    "ro-browse": {
+      "description": "Browser-specific commands.",
+      "extends": "stil-baseline",
+      "commands": [
+        { "id": "new-tab",       "keys": ["Cmd+t"],         "description": "Open a new tab." },
+        { "id": "close-tab",     "keys": ["Cmd+w"],         "description": "Close the focused tab. Note: collides with `Ctrl+w` pane navigation — Cmd modifier disambiguates." },
+        { "id": "next-tab",      "keys": ["Cmd+]"],         "description": "Switch to next tab." },
+        { "id": "prev-tab",      "keys": ["Cmd+["],         "description": "Switch to previous tab." },
+        { "id": "address",       "keys": ["Cmd+l"],         "description": "Focus the address bar." },
+        { "id": "ask",           "command": "ask",          "description": "Send the current selection to the AI panel with the page-context template." }
+      ]
+    },
+    "tillsyn": {
+      "description": "Tillsyn-specific commands.",
+      "extends": "stil-baseline",
+      "commands": [
+        { "id": "new-drop",      "keys": ["Space", "n"],    "description": "New drop in current project." },
+        { "id": "complete-drop", "keys": ["Space", "c"],    "description": "Mark drop complete." },
+        { "id": "handoff",       "command": "handoff",      "description": "Open handoff dialog for current drop." },
+        { "id": "comment",       "command": "comment",      "description": "Add a comment thread to current drop." }
+      ]
+    },
+    "hylla": {
+      "description": "Hylla-specific commands.",
+      "extends": "stil-baseline",
+      "commands": []
+    }
+  }
+}

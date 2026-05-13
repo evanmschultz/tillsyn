@@ -1,0 +1,28 @@
+{
+  "name": "tillsyn-fe",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:e2e": "playwright test",
+    "test": "pnpm run test:unit && pnpm run test:e2e"
+  },
+  "devDependencies": {
+    "@astrojs/solid-js": "^4.4.0",
+    "@playwright/test": "^1.52.0",
+    "astro": "^5.7.13",
+    "solid-js": "^1.9.7",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  },
+  "dependencies": {
+    "@fontsource/fira-code": "^5.2.7",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/iosevka": "^5.2.5",
+    "@fontsource/jetbrains-mono": "^5.2.8"
+  }
+}

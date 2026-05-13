@@ -164,6 +164,40 @@ func CI() error {
 	return nil
 }
 
+// CiFe runs the frontend continuous-integration gate: Vitest unit tests followed
+// by an Astro static build, both executed inside the `frontend/` directory.
+// Playwright e2e tests are excluded — those run via MCP during QA agent passes.
+func CiFe() error {
+	printer := newMagePrinter()
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("working directory: %w", err)
+	}
+	feDir := filepath.Join(wd, "frontend")
+	for _, stage := range []struct {
+		title string
+		run   func() error
+	}{
+		{
+			title: "FE Unit Tests",
+			run: func() error {
+				return runCommandInDir(feDir, "pnpm", "run", "test:unit")
+			},
+		},
+		{
+			title: "FE Build",
+			run: func() error {
+				return runCommandInDir(feDir, "pnpm", "run", "build")
+			},
+		},
+	} {
+		if err := runStage(printer, stage.title, stage.run); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // newMagePrinter returns the default laslig printer for Mage output.
 func newMagePrinter() *laslig.Printer {
 	return laslig.New(os.Stdout, mageOutputPolicy())
