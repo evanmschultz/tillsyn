@@ -400,13 +400,14 @@ func runInitJSONInTempDir(t *testing.T, payload string) (string, error) {
 
 // TestInit_FreshDir_CopiesAllFiles drives `till init --json` against an
 // empty t.TempDir() and asserts the D5 pipeline produces:
-//   - at least 7 agent .md files under `.tillsyn/agents/` (FLAT — no group
-//     prefix). till-go currently ships 12 .md files (7 standard + 5 legacy
-//     `go-*` placeholders); the floor is the SKETCH §11.1 standard count.
+//   - at least 7 agent .md files under `.tillsyn/agents/go/` (subdir-per-group
+//     layout; D5 refactor). `go` currently ships 10 .md files; the floor is 7.
 //   - `agents.toml` at the project root, copied from the embedded example.
 //   - `.gitignore` at the project root containing the literal line
 //     `agents.local.toml`.
 //
+// **D5 update**: agent files land in `.tillsyn/agents/<group>/` (subdir-per-group),
+// NOT flat at `.tillsyn/agents/`. The spot-check uses the group subdir path.
 // **D7 update**: the pipeline now returns nil (project-DB record created).
 func TestInit_FreshDir_CopiesAllFiles(t *testing.T) {
 	dir, err := runInitJSONInTempDir(t, `{"name":"foo","groups":["go"],"mcp":false}`)
@@ -414,10 +415,11 @@ func TestInit_FreshDir_CopiesAllFiles(t *testing.T) {
 		t.Fatalf("run(init --json) error = %v; want nil after D7 wiring", err)
 	}
 
-	agentsDir := filepath.Join(dir, ".tillsyn", "agents")
-	entries, readErr := os.ReadDir(agentsDir)
+	// D5: files land in the per-group subdir, not the flat agents root.
+	goDir := filepath.Join(dir, ".tillsyn", "agents", "go")
+	entries, readErr := os.ReadDir(goDir)
 	if readErr != nil {
-		t.Fatalf("os.ReadDir(%q): %v", agentsDir, readErr)
+		t.Fatalf("os.ReadDir(%q): %v — per-group subdir must be created by D5", goDir, readErr)
 	}
 	mdCount := 0
 	for _, e := range entries {
@@ -426,12 +428,12 @@ func TestInit_FreshDir_CopiesAllFiles(t *testing.T) {
 		}
 	}
 	if mdCount < 7 {
-		t.Fatalf("agent .md count under %q = %d; want >= 7 (SKETCH §11.1 standard set)", agentsDir, mdCount)
+		t.Fatalf("agent .md count under %q = %d; want >= 7 (SKETCH §11.1 standard set)", goDir, mdCount)
 	}
 
-	// Spot-check a representative standard agent .md exists FLAT (no group prefix).
-	if _, statErr := os.Stat(filepath.Join(agentsDir, "builder-agent.md")); statErr != nil {
-		t.Fatalf("os.Stat(builder-agent.md): %v (FLAT copy required — no till-go/ prefix)", statErr)
+	// Spot-check a representative standard agent .md exists in the go/ subdir.
+	if _, statErr := os.Stat(filepath.Join(goDir, "builder-agent.md")); statErr != nil {
+		t.Fatalf("os.Stat(go/builder-agent.md): %v (D5 subdir-per-group copy required)", statErr)
 	}
 
 	if _, statErr := os.Stat(filepath.Join(dir, "agents.toml")); statErr != nil {
@@ -1063,7 +1065,8 @@ func TestInit_SuccessMessage_Format(t *testing.T) {
 	}
 
 	stdout := out.String()
-	for _, want := range []string{"project name", "group", "agents copied", "added", "skipped"} {
+	// D5 update: "group" key renamed to "groups" (comma-joined list) in Laslig summary.
+	for _, want := range []string{"project name", "groups", "agents copied", "added", "skipped"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("init stdout missing %q; full output = %q", want, stdout)
 		}
@@ -1206,9 +1209,8 @@ func TestInit_ConsumerTie_W2D1(t *testing.T) {
 
 	t.Run("valid_multi_group_mcp_false", func(t *testing.T) {
 		// Multi-element groups; mcp explicitly false.
-		// D1 passes Groups[0] to copyAgentFiles stub — the parse succeeds
-		// and the pipeline runs (go agent files are embedded; fe is also
-		// embedded). D5 upgrades to the full multi-group loop.
+		// D5: copyAgentFiles now processes all groups; both go and fe agent
+		// files are embedded and will be copied to their respective subdirs.
 		tmp := t.TempDir()
 		t.Setenv("HOME", tmp)
 		t.Chdir(tmp)
@@ -1715,6 +1717,172 @@ func TestRunInit_JSONMode_MCPPaths(t *testing.T) {
 		mcpPath := filepath.Join(tmp, ".mcp.json")
 		if _, statErr := os.Stat(mcpPath); statErr != nil {
 			t.Fatalf(".mcp.json not found at %q; nil mcp key defaults to true -> file must be created: %v", mcpPath, statErr)
+		}
+	})
+}
+
+// TestCopyAgentFiles_SubdirPerGroup verifies the D5 subdir-per-group
+// refactor of copyAgentFiles. For each group the function must:
+//   - create <destDir>/.tillsyn/agents/<group>/ subdir
+//   - copy embedded builtin/agents/<group>/*.md into that subdir (not flat)
+//   - skip existing files (idempotent)
+//
+// Two sub-tests: single-group (go) and multi-group (go + fe).
+func TestCopyAgentFiles_SubdirPerGroup(t *testing.T) {
+	t.Run("single_group_go", func(t *testing.T) {
+		destDir := t.TempDir()
+		added, skipped, err := copyAgentFiles(destDir, []string{"go"})
+		if err != nil {
+			t.Fatalf("copyAgentFiles([go]) error = %v; want nil", err)
+		}
+		if added < 1 {
+			t.Fatalf("copyAgentFiles([go]) added = %d; want >= 1", added)
+		}
+		if skipped != 0 {
+			t.Fatalf("copyAgentFiles([go]) skipped = %d; want 0 on fresh dir", skipped)
+		}
+
+		// Subdir must exist.
+		goDir := filepath.Join(destDir, ".tillsyn", "agents", "go")
+		entries, readErr := os.ReadDir(goDir)
+		if readErr != nil {
+			t.Fatalf("os.ReadDir(%q): %v — subdir not created", goDir, readErr)
+		}
+		mdCount := 0
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				mdCount++
+			}
+		}
+		if mdCount == 0 {
+			t.Fatalf("no .md files under %q; want agent files in per-group subdir", goDir)
+		}
+		if mdCount != added {
+			t.Fatalf("os.ReadDir md count = %d; want == added (%d)", mdCount, added)
+		}
+
+		// Spot-check representative file in subdir (not flat root).
+		goBuilderPath := filepath.Join(goDir, "builder-agent.md")
+		if _, statErr := os.Stat(goBuilderPath); statErr != nil {
+			t.Fatalf("os.Stat(%q): %v — expected subdir copy not flat", goBuilderPath, statErr)
+		}
+
+		// Flat root must NOT contain any .md files.
+		flatRoot := filepath.Join(destDir, ".tillsyn", "agents")
+		flatEntries, _ := os.ReadDir(flatRoot)
+		for _, e := range flatEntries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				t.Fatalf("flat root %q contains .md file %q; D5 must write to subdir only", flatRoot, e.Name())
+			}
+		}
+	})
+
+	t.Run("multi_group_go_and_fe", func(t *testing.T) {
+		destDir := t.TempDir()
+		added, skipped, err := copyAgentFiles(destDir, []string{"go", "fe"})
+		if err != nil {
+			t.Fatalf("copyAgentFiles([go,fe]) error = %v; want nil", err)
+		}
+		if added < 2 {
+			t.Fatalf("copyAgentFiles([go,fe]) added = %d; want >= 2 (at least 1 per group)", added)
+		}
+		if skipped != 0 {
+			t.Fatalf("copyAgentFiles([go,fe]) skipped = %d; want 0 on fresh dir", skipped)
+		}
+
+		// Both subdirs must exist with .md files.
+		for _, group := range []string{"go", "fe"} {
+			groupDir := filepath.Join(destDir, ".tillsyn", "agents", group)
+			entries, readErr := os.ReadDir(groupDir)
+			if readErr != nil {
+				t.Fatalf("os.ReadDir(%q): %v — subdir for group %q not created", groupDir, readErr, group)
+			}
+			mdCount := 0
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+					mdCount++
+				}
+			}
+			if mdCount == 0 {
+				t.Fatalf("no .md files under %q for group %q", groupDir, group)
+			}
+		}
+	})
+
+	t.Run("idempotent_skip", func(t *testing.T) {
+		destDir := t.TempDir()
+		// First run.
+		added1, _, err := copyAgentFiles(destDir, []string{"go"})
+		if err != nil {
+			t.Fatalf("copyAgentFiles first run error = %v", err)
+		}
+		// Second run — all files exist, must all be skipped.
+		added2, skipped2, err := copyAgentFiles(destDir, []string{"go"})
+		if err != nil {
+			t.Fatalf("copyAgentFiles second run error = %v", err)
+		}
+		if added2 != 0 {
+			t.Fatalf("copyAgentFiles second run added = %d; want 0 (idempotent)", added2)
+		}
+		if skipped2 != added1 {
+			t.Fatalf("copyAgentFiles second run skipped = %d; want %d (= files from first run)", skipped2, added1)
+		}
+	})
+}
+
+// TestRunInitPipeline_MultiGroup is the CONSUMER-TIE test mandated by W2.D5
+// acceptance criteria. It exercises the multi-group path end-to-end via
+// run() and verifies that:
+//   - single-group: .tillsyn/agents/go/<name>.md created (subdir layout)
+//   - multi-group: both .tillsyn/agents/go/ and .tillsyn/agents/fe/ created
+//   - Laslig summary contains "groups" key (not "group")
+func TestRunInitPipeline_MultiGroup(t *testing.T) {
+	t.Run("single_group_subdir_layout", func(t *testing.T) {
+		dir, err := runInitJSONInTempDir(t, `{"name":"sub-test","groups":["go"],"mcp":false}`)
+		if err != nil {
+			t.Fatalf("run(init --json groups:[go]) error = %v; want nil", err)
+		}
+		goBuilderPath := filepath.Join(dir, ".tillsyn", "agents", "go", "builder-agent.md")
+		if _, statErr := os.Stat(goBuilderPath); statErr != nil {
+			t.Fatalf("os.Stat(%q): %v — expected subdir layout after D5", goBuilderPath, statErr)
+		}
+	})
+
+	t.Run("multi_group_both_subdirs_created", func(t *testing.T) {
+		dir, err := runInitJSONInTempDir(t, `{"name":"multi-test","groups":["go","fe"],"mcp":false}`)
+		if err != nil {
+			t.Fatalf("run(init --json groups:[go,fe]) error = %v; want nil", err)
+		}
+		for _, group := range []string{"go", "fe"} {
+			groupDir := filepath.Join(dir, ".tillsyn", "agents", group)
+			entries, readErr := os.ReadDir(groupDir)
+			if readErr != nil {
+				t.Fatalf("os.ReadDir(%q): %v — subdir for group %q not created", groupDir, readErr, group)
+			}
+			mdCount := 0
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+					mdCount++
+				}
+			}
+			if mdCount == 0 {
+				t.Fatalf("no .md files under %q for group %q after multi-group run", groupDir, group)
+			}
+		}
+	})
+
+	t.Run("laslig_summary_groups_key", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+		var out strings.Builder
+		if err := run(context.Background(),
+			[]string{"--app", "tillsyn-init", "init", "--json", `{"name":"kv-test","groups":["go","fe"],"mcp":false}`},
+			&out, io.Discard); err != nil {
+			t.Fatalf("run error = %v; want nil", err)
+		}
+		if !strings.Contains(out.String(), "groups") {
+			t.Fatalf("Laslig summary missing 'groups' key; stdout = %q", out.String())
 		}
 	})
 }

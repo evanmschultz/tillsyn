@@ -492,9 +492,9 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		return err
 	}
 
-	// D1: pass single group stub until D5 upgrades to the full multi-group
-	// loop (copyAgentFiles signature takes []string in D5).
-	agentsAdded, agentsSkipped, err := copyAgentFiles(destDir, payload.Groups[0])
+	// D5: multi-group subdir copy. copyAgentFiles iterates over all groups
+	// and writes to .tillsyn/agents/<group>/<name>.md.
+	agentsAdded, agentsSkipped, err := copyAgentFiles(destDir, payload.Groups)
 	if err != nil {
 		return fmt.Errorf("till init: copy agent files: %w", err)
 	}
@@ -536,7 +536,7 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 
 	return writeCLIKV(stdout, "Init", [][2]string{
 		{"project name", payload.Name},
-		{"group", payload.Groups[0]},
+		{"groups", strings.Join(payload.Groups, ",")},
 		{"agents dir", agentsDir},
 		{"agents copied", agentsCopied},
 		{"agents.toml", agentsTOMLStatus + " — " + agentsTomlPath},
@@ -609,55 +609,58 @@ func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, project
 const agentFileInitPerm os.FileMode = 0o644
 
 // copyAgentFiles reads the embedded `internal/templates/builtin/agents/<group>/*.md`
-// set via `templates.DefaultTemplateFS` and writes each entry to
-// `<destDir>/.tillsyn/agents/*.md` FLAT (no group prefix). Each write
-// uses `fsatomic.WriteFile` (write-temp-in-same-dir + rename). Existing
-// destination files are SKIPPED, never overwritten — re-run safety.
+// set via `templates.DefaultTemplateFS` for each group in `groups` and writes
+// each entry to `<destDir>/.tillsyn/agents/<group>/<name>.md` (subdir-per-group).
+// Each write uses `fsatomic.WriteFile` (write-temp-in-same-dir + rename).
+// Existing destination files are SKIPPED, never overwritten — re-run safety.
 //
-// Returns `(added, skippedExisting, err)`. `added` counts files newly
-// created; `skippedExisting` counts files that already existed at the
-// destination and were left untouched. On error the partial-progress
-// counts so far are returned alongside the wrapped error.
-func copyAgentFiles(destDir, group string) (int, int, error) {
-	if strings.TrimSpace(group) == "" {
-		return 0, 0, errors.New("copyAgentFiles: group required")
-	}
-
-	srcDir := path.Join("builtin", "agents", group)
-	entries, err := fs.ReadDir(templates.DefaultTemplateFS, srcDir)
-	if err != nil {
-		return 0, 0, fmt.Errorf("read embedded %q: %w", srcDir, err)
-	}
-
-	agentsDir := filepath.Join(destDir, ".tillsyn", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
-		return 0, 0, fmt.Errorf("mkdir %q: %w", agentsDir, err)
-	}
-
+// Embed source paths use the canonical W4.D1 unprefixed group names: `go`,
+// `fe`, `gen`. The destination directory `<destDir>/.tillsyn/agents/<group>/`
+// is created for each group before any file writes.
+//
+// FLAT detection (detecting old flat-layout `.md` files directly under
+// `.tillsyn/agents/`) lives in `runInitPipeline`, NOT in this function.
+// This preserves the W2.D2 check independently of the D5 signature refactor.
+//
+// Returns `(added, skippedExisting, err)`. Both counters are aggregated
+// across all groups in the slice. On error the partial-progress counts so
+// far are returned alongside the wrapped error.
+func copyAgentFiles(destDir string, groups []string) (int, int, error) {
 	added, skipped := 0, 0
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		// FLAT copy: drop the group prefix. The destination basename is
-		// the source basename, dropped directly under `.tillsyn/agents/`.
-		target := filepath.Join(agentsDir, entry.Name())
-		if _, statErr := os.Stat(target); statErr == nil {
-			skipped++
-			continue
-		} else if !errors.Is(statErr, fs.ErrNotExist) {
-			return added, skipped, fmt.Errorf("stat %q: %w", target, statErr)
+	for _, group := range groups {
+		srcDir := path.Join("builtin", "agents", group)
+		entries, err := fs.ReadDir(templates.DefaultTemplateFS, srcDir)
+		if err != nil {
+			return added, skipped, fmt.Errorf("read embedded %q: %w", srcDir, err)
 		}
 
-		srcPath := path.Join(srcDir, entry.Name())
-		data, readErr := fs.ReadFile(templates.DefaultTemplateFS, srcPath)
-		if readErr != nil {
-			return added, skipped, fmt.Errorf("read embedded %q: %w", srcPath, readErr)
+		groupDir := filepath.Join(destDir, ".tillsyn", "agents", group)
+		if err := os.MkdirAll(groupDir, 0o755); err != nil {
+			return added, skipped, fmt.Errorf("mkdir %q: %w", groupDir, err)
 		}
-		if err := fsatomic.WriteFile(target, data, agentFileInitPerm); err != nil {
-			return added, skipped, fmt.Errorf("write %q: %w", target, err)
+
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			target := filepath.Join(groupDir, entry.Name())
+			if _, statErr := os.Stat(target); statErr == nil {
+				skipped++
+				continue
+			} else if !errors.Is(statErr, fs.ErrNotExist) {
+				return added, skipped, fmt.Errorf("stat %q: %w", target, statErr)
+			}
+
+			srcPath := path.Join(srcDir, entry.Name())
+			data, readErr := fs.ReadFile(templates.DefaultTemplateFS, srcPath)
+			if readErr != nil {
+				return added, skipped, fmt.Errorf("read embedded %q: %w", srcPath, readErr)
+			}
+			if err := fsatomic.WriteFile(target, data, agentFileInitPerm); err != nil {
+				return added, skipped, fmt.Errorf("write %q: %w", target, err)
+			}
+			added++
 		}
-		added++
 	}
 	return added, skipped, nil
 }
