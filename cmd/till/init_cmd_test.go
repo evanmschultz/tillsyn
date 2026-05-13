@@ -48,7 +48,7 @@ func TestInit_BareInvocation_ReturnsTUIStubError(t *testing.T) {
 		// synthetic payload so runInitTUI exercises its happy-path branch
 		// without needing a real terminal.
 		init.step = initTUIStepDone
-		init.finalPayload = initJSONPayload{Name: "stub-project", Group: "till-go", MCP: false}
+		init.finalPayload = initJSONPayload{Name: "stub-project", Group: "go", MCP: false}
 		return scriptedProgram{model: init, runFn: func(current tea.Model) (tea.Model, error) {
 			return current, nil
 		}}
@@ -78,7 +78,7 @@ func TestInit_JSONInvocation_RoutesToValidParse(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Chdir(tmp)
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":false}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json valid) error = %v; expected nil after D7 wiring, stdout=%q", err, out.String())
 	}
 	if !strings.Contains(out.String(), "foo") {
@@ -108,16 +108,16 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 	}
 	cases := []testCase{
 		{
-			name:        "valid_till_go",
-			payload:     `{"name":"foo","group":"till-go","mcp":false}`,
+			name:        "valid_go",
+			payload:     `{"name":"foo","group":"go","mcp":false}`,
 			wantSuccess: true,
-			wantSubstrs: []string{"Init", "foo", "till-go"},
+			wantSubstrs: []string{"Init", "foo", "go"},
 		},
 		{
-			name:        "valid_till_gen_mcp_true",
-			payload:     `{"name":"bar","group":"till-gen","mcp":true}`,
+			name:        "valid_gen_mcp_true",
+			payload:     `{"name":"bar","group":"gen","mcp":true}`,
 			wantSuccess: true,
-			wantSubstrs: []string{"Init", "bar", "till-gen"},
+			wantSubstrs: []string{"Init", "bar", "gen"},
 		},
 		{
 			name:        "reserved_group_till_gdd",
@@ -136,7 +136,7 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 		},
 		{
 			name:        "missing_name",
-			payload:     `{"group":"till-go"}`,
+			payload:     `{"group":"go"}`,
 			wantSubstrs: []string{"name", "required"},
 		},
 		{
@@ -179,10 +179,13 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 
 // TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo drives the bubbletea
 // walk shipped in D4: the user presses enter on the default name (which is
-// `filepath.Base(cwd)`), moves the group cursor down to `till-go`, and
-// presses enter to confirm. The final model exposes a Payload() that must
-// equal `{Name: <cwd-base>, Group: "till-go", MCP: false}` and Done() must
-// be true.
+// `filepath.Base(cwd)`), moves the group cursor down to `go` (was `till-go`
+// pre-W4.D1; now canonical name), and presses enter to confirm. The final
+// model exposes a Payload() that must equal `{Name: <cwd-base>, Group: "go",
+// MCP: false}` and Done() must be true.
+//
+// Drop 4c.6.1 W4.D1: `till-go` → `go`, `till-gen` → `gen` (canonical names).
+// The test still presses Down once from row 0 (`gen`) to land on row 1 (`go`).
 //
 // The test does NOT exercise the cobra wiring — `runInitTUI` itself depends
 // on `programFactory`, which writes to /dev/tty in production. Driving the
@@ -212,14 +215,13 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return strings.Contains(string(out), "till-go")
+		return strings.Contains(string(out), "go")
 	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
 
-	// Step 2: cursor starts on `till-gen` (default). Press Down to land on
-	// `till-go`.
+	// Step 2: cursor starts on `gen` (default). Press Down to land on `go`.
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 
-	// Step 3: press Enter to confirm `till-go`.
+	// Step 3: press Enter to confirm `go`.
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
@@ -238,8 +240,8 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 	if got.Name != wantName {
 		t.Fatalf("Payload().Name = %q; want %q", got.Name, wantName)
 	}
-	if got.Group != "till-go" {
-		t.Fatalf("Payload().Group = %q; want %q", got.Group, "till-go")
+	if got.Group != "go" {
+		t.Fatalf("Payload().Group = %q; want %q", got.Group, "go")
 	}
 	if got.MCP {
 		t.Fatalf("Payload().MCP = true; want false (TUI mode default)")
@@ -248,11 +250,12 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 
 // TestRunInitTUI_DisabledTillGddIsUnselectable verifies the SKETCH §9.3
 // rule that `till-gdd` is shown but unselectable. Pressing Down from
-// `till-go` must NOT land the cursor on `till-gdd` — the cursor must either
-// stay on `till-go` (skip past the disabled row) or wrap, NOT advance to
+// `go` must NOT land the cursor on `till-gdd` — the cursor must either
+// stay on `go` (skip past the disabled row) or wrap, NOT advance to
 // a disabled row. Pressing Enter while the cursor sits where the user last
-// landed (`till-go`) confirms the group selection and finishes the walk;
-// the final payload must report `till-go`, never `till-gdd`.
+// landed (`go`) confirms the group selection and finishes the walk;
+// the final payload must report `go`, never `till-gdd`.
+// Drop 4c.6.1 W4.D1: `till-go` → `go`, `till-gen` → `gen`.
 func TestRunInitTUI_DisabledTillGddIsUnselectable(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -276,13 +279,13 @@ func TestRunInitTUI_DisabledTillGddIsUnselectable(t *testing.T) {
 		return strings.Contains(string(out), "till-gdd")
 	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
 
-	// Cursor on `till-gen`. Move down to `till-go`, then move down again —
+	// Cursor on `gen`. Move down to `go`, then move down again —
 	// `till-gdd` is disabled so the cursor must not advance onto it. After
-	// two Downs the cursor must still report `till-go`.
+	// two Downs the cursor must still report `go`.
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
 
-	// Press Enter — should confirm `till-go`, NOT `till-gdd`.
+	// Press Enter — should confirm `go`, NOT `till-gdd`.
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
@@ -294,8 +297,8 @@ func TestRunInitTUI_DisabledTillGddIsUnselectable(t *testing.T) {
 	if final.Cancelled() {
 		t.Fatalf("final.Cancelled() = true; want false (walk completed, just on a non-disabled row)")
 	}
-	if got := final.Payload().Group; got != "till-go" {
-		t.Fatalf("Payload().Group = %q; want %q (cursor must skip disabled till-gdd row)", got, "till-go")
+	if got := final.Payload().Group; got != "go" {
+		t.Fatalf("Payload().Group = %q; want %q (cursor must skip disabled till-gdd row)", got, "go")
 	}
 }
 
@@ -366,7 +369,7 @@ func runInitJSONInTempDir(t *testing.T, payload string) (string, error) {
 //
 // **D7 update**: the pipeline now returns nil (project-DB record created).
 func TestInit_FreshDir_CopiesAllFiles(t *testing.T) {
-	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"till-go","mcp":false}`)
+	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"go","mcp":false}`)
 	if err != nil {
 		t.Fatalf("run(init --json) error = %v; want nil after D7 wiring", err)
 	}
@@ -418,7 +421,7 @@ func TestInit_RerunSafety_NoOverwrite(t *testing.T) {
 
 	// First run.
 	var out1 strings.Builder
-	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":false}`}, &out1, io.Discard)
+	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out1, io.Discard)
 
 	// Snapshot every file under the project dir after the first run.
 	type snapshot struct {
@@ -456,7 +459,7 @@ func TestInit_RerunSafety_NoOverwrite(t *testing.T) {
 
 	// Second run.
 	var out2 strings.Builder
-	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":false}`}, &out2, io.Discard)
+	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out2, io.Discard)
 
 	// Every pre-existing file must be byte-for-byte unchanged.
 	for path, before := range preState {
@@ -486,7 +489,7 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	}
 
 	var out strings.Builder
-	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":false}`}, &out, io.Discard)
+	_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out, io.Discard)
 
 	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	if err != nil {
@@ -521,7 +524,7 @@ func TestInit_PreExistingGitignore_AppendsCleanly(t *testing.T) {
 			}
 
 			var out strings.Builder
-			_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":false}`}, &out, io.Discard)
+			_ = run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":false}`}, &out, io.Discard)
 
 			data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 			if err != nil {
@@ -579,7 +582,7 @@ func countGitignoreLine(body, want string) int {
 // surfaced error is the D7 project-DB stub, confirming the pipeline ran
 // through the D6 seam.
 func TestInit_MCPJSON_FreshFile(t *testing.T) {
-	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"till-go","mcp":true}`)
+	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"go","mcp":true}`)
 	if err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
@@ -631,7 +634,7 @@ func TestInit_MCPJSON_AppendsToExisting(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -677,7 +680,7 @@ func TestInit_MCPJSON_Idempotent(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -721,7 +724,7 @@ func TestInit_MCPJSON_Idempotent(t *testing.T) {
 // (registerMCPJSON returns immediately on includeMCP=false) and surfaces the
 // D7 project-DB stub. Drives end-to-end via run() (CONSUMER-TIE contract).
 func TestInit_MCPJSON_OptOut(t *testing.T) {
-	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"till-go","mcp":false}`)
+	dir, err := runInitJSONInTempDir(t, `{"name":"foo","group":"go","mcp":false}`)
 	if err != nil {
 		t.Fatalf("run(init --json mcp:false) error = %v; want nil after D7 wiring", err)
 	}
@@ -759,7 +762,7 @@ func TestInit_MCPJSON_PreservesHTTPTransport(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -823,7 +826,7 @@ func TestInit_MCPJSON_PreservesTopLevelExtras(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -873,7 +876,7 @@ func TestInit_MCPJSON_NullMcpServersValue(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -926,7 +929,7 @@ func TestInit_MCPJSON_NullTopLevelFile(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"till-go","mcp":true}`}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"foo","group":"go","mcp":true}`}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json mcp:true) error = %v; want nil after D7 wiring", err)
 	}
 
@@ -968,7 +971,7 @@ func TestInit_CreatesProjectRecord(t *testing.T) {
 	const projectName = "my-init-project"
 	if err := run(context.Background(), []string{
 		"--app", "tillsyn-init", "init", "--json",
-		`{"name":"` + projectName + `","group":"till-go","mcp":false}`,
+		`{"name":"` + projectName + `","group":"go","mcp":false}`,
 	}, nil, io.Discard); err != nil {
 		t.Fatalf("run(init --json) error = %v; want nil", err)
 	}
@@ -1014,7 +1017,7 @@ func TestInit_SuccessMessage_Format(t *testing.T) {
 	var out strings.Builder
 	if err := run(context.Background(), []string{
 		"--app", "tillsyn-init", "init", "--json",
-		`{"name":"format-check","group":"till-go","mcp":false}`,
+		`{"name":"format-check","group":"go","mcp":false}`,
 	}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init --json) error = %v; want nil", err)
 	}

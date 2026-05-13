@@ -1037,13 +1037,41 @@ func TestLoadDefaultTemplate_WrapsLanguageEmpty(t *testing.T) {
 	}
 }
 
-// w1d1StandardAgentNames is the closed list of seven standard agent file names
-// shipped under each `internal/templates/builtin/agents/<group>/` directory by
-// Drop 4c.6 W1.D1. The names match `SKETCH.md` § 11.1 closing note + the Drop
-// 4c.6 W1.D1 PLAN.md droplet acceptance bullet. Drop 4c.8 W4 lands substantive
-// content for these files; W1.D1 ships only a "PLACEHOLDER" body so the
-// embedded-FS resolver path can land without blocking on prompt authoring.
-var w1d1StandardAgentNames = []string{
+// w4d1StandardAgentNames is the closed list of ten standard agent file names
+// shipped under each canonical group directory (`go/`, `gen/`, `fe/`) by
+// Drop 4c.6.1 W4.D1. The 10-file set supersedes the Drop 4c.6 W1.D1
+// 7-file set: the monolithic `qa-proof-agent.md` and `qa-falsification-agent.md`
+// are split into `plan-qa-proof-agent.md`, `build-qa-proof-agent.md`,
+// `plan-qa-falsification-agent.md`, `build-qa-falsification-agent.md`, and
+// `orchestrator-managed.md` is added. Drop 4c.8 W4 lands substantive content;
+// these files are PLACEHOLDER scaffolding only until then.
+var w4d1StandardAgentNames = []string{
+	"planning-agent.md",
+	"builder-agent.md",
+	"plan-qa-proof-agent.md",
+	"build-qa-proof-agent.md",
+	"plan-qa-falsification-agent.md",
+	"build-qa-falsification-agent.md",
+	"research-agent.md",
+	"closeout-agent.md",
+	"commit-message-agent.md",
+	"orchestrator-managed.md",
+}
+
+// w4d1CanonicalGroups is the closed list of three canonical group directories
+// shipped by Drop 4c.6.1 W4.D1 under `internal/templates/builtin/agents/`.
+// Each group ships the same ten standard agent names (w4d1StandardAgentNames).
+// `gen` is the language-agnostic generic group (renamed from `till-gen`);
+// `go` is Go+mage tuning (renamed from `till-go`); `fe` is the new FE group
+// added in W4.D1. `till-gdd` is NOT in this list — it is a template-family
+// identifier (not a group) and retains its 7-file shape unchanged.
+var w4d1CanonicalGroups = []string{"gen", "go", "fe"}
+
+// w4d1TillGDDAgentNames is the closed list of seven agent file names in the
+// `till-gdd` template-family directory. `till-gdd` is NOT a group (the
+// canonical groups are gen/go/fe); it ships the original 7-file shape from
+// Drop 4c.6 W1.D1 and is NOT expanded to 10 files in W4.D1.
+var w4d1TillGDDAgentNames = []string{
 	"planning-agent.md",
 	"builder-agent.md",
 	"qa-proof-agent.md",
@@ -1053,34 +1081,28 @@ var w1d1StandardAgentNames = []string{
 	"commit-message-agent.md",
 }
 
-// w1d1AgentGroups is the closed list of three group directories shipped by
-// Drop 4c.6 W1.D1 under `internal/templates/builtin/agents/`. Each group ships
-// the same seven standard agent names. `till-gen` is the language-agnostic
-// generic group; `till-go` is Go+mage tuning; `till-gdd` is post-Hylla-rev
-// graph-driven (placeholder shape only — substantive content lands post-MVP
-// per `SKETCH.md` § 14.2 / § 21.6).
-var w1d1AgentGroups = []string{"till-gen", "till-go", "till-gdd"}
-
-// TestDefaultTemplateFSEmbedsPlaceholderAgentFiles asserts every Drop 4c.6 W1.D1
-// path resolves via `DefaultTemplateFS.Open` AND every agent .md body contains
-// the literal string "PLACEHOLDER" so a builder mistakenly committing a stub
-// prompt cannot pass embedded-FS introspection silently. Mirrors the F.2.1
-// falsification mitigation #2 pattern (explicit per-file list, never glob).
+// TestDefaultTemplateFSEmbedsPlaceholderAgentFiles asserts every Drop 4c.6.1
+// W4.D1 canonical agent file path resolves via `DefaultTemplateFS.Open` AND
+// every agent .md body contains the literal string "PLACEHOLDER" so a builder
+// mistakenly committing a stub prompt cannot pass embedded-FS introspection
+// silently. Mirrors the F.2.1 falsification mitigation #2 pattern (explicit
+// per-file list, never glob).
 //
-// Drop 4c.6 W1.D1 acceptance bullet: "embed_test.go adds an FS-introspection
-// test asserting all 21 placeholder paths + agents.example.toml resolve via
-// DefaultTemplateFS.Open."
+// Updated from the Drop 4c.6 W1.D1 version (21 paths = 3 groups × 7 names)
+// to the W4.D1 version (37 paths = 3 canonical groups × 10 names + till-gdd × 7):
+//   - Canonical groups (`gen`, `go`, `fe`): 10 files each = 30 files.
+//   - `till-gdd` template-family: 7 files (unchanged from W1.D1).
+//   - Total agent files: 37. Plus `agents.example.toml` = 38 distinct paths.
 //
-// 21 agent paths = 3 groups × 7 standard names; +1 `agents.example.toml` = 22
-// distinct files validated by this test. Substantive prompt content for the
-// agent files lands in Drop 4c.8 W4; the only contract this test enforces is
-// (a) the embed.FS opens the file and (b) the body carries the PLACEHOLDER
-// marker so accidental drift surfaces immediately.
+// Substantive prompt content for the agent files lands in Drop 4c.8 W4; the
+// only contract this test enforces is (a) the embed.FS opens the file and
+// (b) the body carries the PLACEHOLDER marker so accidental drift surfaces.
 func TestDefaultTemplateFSEmbedsPlaceholderAgentFiles(t *testing.T) {
 	t.Parallel()
 
-	for _, group := range w1d1AgentGroups {
-		for _, name := range w1d1StandardAgentNames {
+	// 10-file canonical groups: gen/, go/, fe/.
+	for _, group := range w4d1CanonicalGroups {
+		for _, name := range w4d1StandardAgentNames {
 			path := "builtin/agents/" + group + "/" + name
 			t.Run(path, func(t *testing.T) {
 				t.Parallel()
@@ -1094,10 +1116,32 @@ func TestDefaultTemplateFSEmbedsPlaceholderAgentFiles(t *testing.T) {
 					t.Fatalf("io.ReadAll(%q): unexpected error: %v", path, err)
 				}
 				if !strings.Contains(string(body), "PLACEHOLDER") {
-					t.Fatalf("agent file %q body missing required \"PLACEHOLDER\" marker; W1.D1 placeholder discipline (substantive content lands Drop 4c.8 W4)", path)
+					t.Fatalf("agent file %q body missing required \"PLACEHOLDER\" marker; W4.D1 placeholder discipline (substantive content lands Drop 4c.8 W4)", path)
 				}
 			})
 		}
+	}
+
+	// till-gdd template-family: 7-file shape unchanged from Drop 4c.6 W1.D1.
+	// till-gdd is a template-family identifier (not a group); it is NOT
+	// expanded to the 10-file standard in W4.D1.
+	for _, name := range w4d1TillGDDAgentNames {
+		path := "builtin/agents/till-gdd/" + name
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			f, err := DefaultTemplateFS.Open(path)
+			if err != nil {
+				t.Fatalf("DefaultTemplateFS.Open(%q): unexpected error: %v", path, err)
+			}
+			defer f.Close()
+			body, err := io.ReadAll(f)
+			if err != nil {
+				t.Fatalf("io.ReadAll(%q): unexpected error: %v", path, err)
+			}
+			if !strings.Contains(string(body), "PLACEHOLDER") {
+				t.Fatalf("agent file %q body missing required \"PLACEHOLDER\" marker; W1.D1 placeholder discipline (substantive content lands Drop 4c.8 W4)", path)
+			}
+		})
 	}
 
 	// agents.example.toml is the runtime-config example shipped at

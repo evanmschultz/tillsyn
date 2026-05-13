@@ -31,11 +31,12 @@ import (
 
 // goBuilderBinding returns one canonical AgentBinding fixture used by the
 // happy-path spawn tests. The values mirror the planner fixture from
-// WAVE_2_PLAN.md §2.6: agent_name = "go-builder-agent", model = "opus",
-// max_turns = 20, max_budget_usd = 5.
+// WAVE_2_PLAN.md §2.6: agent_name = "builder-agent" (renamed from
+// "go-builder-agent" per Drop 4c.6.1 W4.D1 orphan cleanup + group-subdir
+// restructure), model = "opus", max_turns = 20, max_budget_usd = 5.
 func goBuilderBinding() templates.AgentBinding {
 	return templates.AgentBinding{
-		AgentName:    "go-builder-agent",
+		AgentName:    "builder-agent",
 		Model:        "opus",
 		MaxTries:     1,
 		MaxBudgetUSD: 5,
@@ -151,11 +152,11 @@ func TestBuildSpawnCommandUsesClaudeAdapterByDefault(t *testing.T) {
 	if !argvContains(cmd.Args, "--bare") {
 		t.Errorf("cmd.Args missing --bare flag: %v", cmd.Args)
 	}
-	if v, ok := argFlagValue(cmd.Args, "--agent"); !ok || v != "go-builder-agent" {
-		t.Errorf("--agent value = %q (ok=%v), want %q", v, ok, "go-builder-agent")
+	if v, ok := argFlagValue(cmd.Args, "--agent"); !ok || v != "builder-agent" {
+		t.Errorf("--agent value = %q (ok=%v), want %q", v, ok, "builder-agent")
 	}
-	if descriptor.AgentName != "go-builder-agent" {
-		t.Errorf("descriptor.AgentName = %q, want %q", descriptor.AgentName, "go-builder-agent")
+	if descriptor.AgentName != "builder-agent" {
+		t.Errorf("descriptor.AgentName = %q, want %q", descriptor.AgentName, "builder-agent")
 	}
 }
 
@@ -738,7 +739,7 @@ func TestBuildSpawnCommandRendersFullBundleSubtree(t *testing.T) {
 	wantFiles := []string{
 		filepath.Join(bundleRoot, "system-prompt.md"),
 		filepath.Join(bundleRoot, "plugin", ".claude-plugin", "plugin.json"),
-		filepath.Join(bundleRoot, "plugin", "agents", "go-builder-agent.md"),
+		filepath.Join(bundleRoot, "plugin", "agents", "builder-agent.md"),
 		filepath.Join(bundleRoot, "plugin", ".mcp.json"),
 		filepath.Join(bundleRoot, "plugin", "settings.json"),
 		// manifest.json from F.7.1 also expected at the bundle root.

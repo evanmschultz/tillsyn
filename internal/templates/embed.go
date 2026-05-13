@@ -40,12 +40,10 @@ import (
 // SEMANTIC SHIFT note on `LoadDefaultTemplate` for the implications for
 // existing callers.
 //
-// Drop 4c.6 W1.D1 extended the directive with 21 placeholder agent .md
-// files (3 groups × 7 standard names: planning, builder, qa-proof,
-// qa-falsification, research, closeout, commit-message) and the
-// agents.example.toml runtime-config fixture. Per the W1.D1 acceptance
-// bullet + ContextBlocks `constraint` (high), the directive uses an
-// EXPLICIT PER-FILE LIST — never `**/*.md` or `builtin/agents/*` glob —
+// Drop 4c.6 W1.D1 extended the directive with placeholder agent .md files
+// and the agents.example.toml runtime-config fixture. Per the W1.D1
+// acceptance bullet + ContextBlocks `constraint` (high), the directive uses
+// an EXPLICIT PER-FILE LIST — never `**/*.md` or `builtin/agents/*` glob —
 // carrying forward Drop 4c.5 F.2.1's falsification mitigation #2. The
 // agent .md bodies are PLACEHOLDER scaffolding only; substantive prompt
 // content lands in Drop 4c.8 W4. The till-gdd group ships placeholder
@@ -59,35 +57,65 @@ import (
 // agent_name values, so the file now references `builder-agent`,
 // `planning-agent`, `research-agent`, `qa-proof-agent`,
 // `qa-falsification-agent`, `commit-message-agent`, and
-// `orchestrator-managed` — all of which resolve via the W1.D1 standard
-// placeholder set under `builtin/agents/till-go/` (plus
-// `orchestrator-managed.md` under `builtin/agents/till-gen/`). The legacy
-// `go-*-agent.md` placeholders under `builtin/agents/till-go/` remain in
-// the embed.FS as transitional residue from W1.D1 — they are no longer
-// referenced by till-go.toml and a follow-up cleanup drop (post-Drop-4c.7
-// schema removal of runtime fields) may delete them.
+// `orchestrator-managed`.
+//
+// Drop 4c.6.1 W4.D1 restructured the embedded agent group subdirs:
+//   - `builtin/agents/till-go/` renamed to `builtin/agents/go/` (canonical
+//     group name, no `till-` prefix) via `git mv` (history preserved).
+//   - `builtin/agents/till-gen/` renamed to `builtin/agents/gen/` likewise.
+//   - 5 legacy `go-*-agent.md` orphans under `go/` removed via `git rm`
+//     (they were transitional residue never referenced by till-go.toml).
+//   - Monolithic `qa-proof-agent.md` and `qa-falsification-agent.md` in
+//     both `go/` and `gen/` split into 4 dedicated files each:
+//     `plan-qa-proof-agent.md`, `build-qa-proof-agent.md`,
+//     `plan-qa-falsification-agent.md`, `build-qa-falsification-agent.md`.
+//   - `orchestrator-managed.md` added to `go/` (was only in `gen/`).
+//   - NEW `fe/` group added with 10 placeholder files (same 10 standard
+//     names as `go/` and `gen/`).
+//   - `till-gdd/` is NOT renamed — it is a template-family identifier,
+//     not a group name; its 7 files are unchanged.
+//
+// All paths below use the post-rename canonical names. The directive
+// remains an explicit per-file list per the F.2.1 mitigation pattern.
 //
 // Canonical specs: workflow/drop_3/PLAN.md droplet 3.14 + main/PLAN.md § 19.3
 // + workflow/drop_4c_5/THEME_F_PLAN.md droplets F.2.1 + F.2.2 + F.1.3 +
 // workflow/drop_4c_6/PLAN.md droplet 4c.6.W1.D1 +
-// workflow/drop_4c_6/SKETCH.md § 4.1 + § 4.2 + § 11.1 + § 14.2 + § 21.6.
+// workflow/drop_4c_6/SKETCH.md § 4.1 + § 4.2 + § 11.1 + § 14.2 + § 21.6 +
+// workflow/drop_4c_6_1/PLAN.md droplet 4c.6.1.W4.D1.
 //
 //go:embed builtin/till-go.toml builtin/till-gen.toml
 //go:embed builtin/agents.example.toml
-//go:embed builtin/agents/till-gen/planning-agent.md
-//go:embed builtin/agents/till-gen/builder-agent.md
-//go:embed builtin/agents/till-gen/qa-proof-agent.md
-//go:embed builtin/agents/till-gen/qa-falsification-agent.md
-//go:embed builtin/agents/till-gen/research-agent.md
-//go:embed builtin/agents/till-gen/closeout-agent.md
-//go:embed builtin/agents/till-gen/commit-message-agent.md
-//go:embed builtin/agents/till-go/planning-agent.md
-//go:embed builtin/agents/till-go/builder-agent.md
-//go:embed builtin/agents/till-go/qa-proof-agent.md
-//go:embed builtin/agents/till-go/qa-falsification-agent.md
-//go:embed builtin/agents/till-go/research-agent.md
-//go:embed builtin/agents/till-go/closeout-agent.md
-//go:embed builtin/agents/till-go/commit-message-agent.md
+//go:embed builtin/agents/gen/planning-agent.md
+//go:embed builtin/agents/gen/builder-agent.md
+//go:embed builtin/agents/gen/plan-qa-proof-agent.md
+//go:embed builtin/agents/gen/build-qa-proof-agent.md
+//go:embed builtin/agents/gen/plan-qa-falsification-agent.md
+//go:embed builtin/agents/gen/build-qa-falsification-agent.md
+//go:embed builtin/agents/gen/research-agent.md
+//go:embed builtin/agents/gen/closeout-agent.md
+//go:embed builtin/agents/gen/commit-message-agent.md
+//go:embed builtin/agents/gen/orchestrator-managed.md
+//go:embed builtin/agents/go/planning-agent.md
+//go:embed builtin/agents/go/builder-agent.md
+//go:embed builtin/agents/go/plan-qa-proof-agent.md
+//go:embed builtin/agents/go/build-qa-proof-agent.md
+//go:embed builtin/agents/go/plan-qa-falsification-agent.md
+//go:embed builtin/agents/go/build-qa-falsification-agent.md
+//go:embed builtin/agents/go/research-agent.md
+//go:embed builtin/agents/go/closeout-agent.md
+//go:embed builtin/agents/go/commit-message-agent.md
+//go:embed builtin/agents/go/orchestrator-managed.md
+//go:embed builtin/agents/fe/planning-agent.md
+//go:embed builtin/agents/fe/builder-agent.md
+//go:embed builtin/agents/fe/plan-qa-proof-agent.md
+//go:embed builtin/agents/fe/build-qa-proof-agent.md
+//go:embed builtin/agents/fe/plan-qa-falsification-agent.md
+//go:embed builtin/agents/fe/build-qa-falsification-agent.md
+//go:embed builtin/agents/fe/research-agent.md
+//go:embed builtin/agents/fe/closeout-agent.md
+//go:embed builtin/agents/fe/commit-message-agent.md
+//go:embed builtin/agents/fe/orchestrator-managed.md
 //go:embed builtin/agents/till-gdd/planning-agent.md
 //go:embed builtin/agents/till-gdd/builder-agent.md
 //go:embed builtin/agents/till-gdd/qa-proof-agent.md
@@ -95,12 +123,6 @@ import (
 //go:embed builtin/agents/till-gdd/research-agent.md
 //go:embed builtin/agents/till-gdd/closeout-agent.md
 //go:embed builtin/agents/till-gdd/commit-message-agent.md
-//go:embed builtin/agents/till-go/go-builder-agent.md
-//go:embed builtin/agents/till-go/go-planning-agent.md
-//go:embed builtin/agents/till-go/go-research-agent.md
-//go:embed builtin/agents/till-go/go-qa-proof-agent.md
-//go:embed builtin/agents/till-go/go-qa-falsification-agent.md
-//go:embed builtin/agents/till-gen/orchestrator-managed.md
 var DefaultTemplateFS embed.FS
 
 // ErrLanguageNotSupported is the closed sentinel returned by

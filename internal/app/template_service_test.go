@@ -65,7 +65,7 @@ title = "BUILD-QA-FALSIFICATION"
 blocked_by_parent = true
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `
 

@@ -98,7 +98,7 @@ func TestDispatcherRunCmdDryRunPrintsDescriptor(t *testing.T) {
 	t.Parallel()
 
 	env := newDispatcherCLITestEnv(t)
-	bakeDispatcherCatalog(t, env, "go-builder-agent", "")
+	bakeDispatcherCatalog(t, env, "builder-agent", "")
 
 	item, err := env.svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      env.projectID,
@@ -127,7 +127,7 @@ func TestDispatcherRunCmdDryRunPrintsDescriptor(t *testing.T) {
 	if !strings.Contains(gotStdout, "working_dir") {
 		t.Errorf("dry-run stdout missing working_dir key: %s", gotStdout)
 	}
-	if !strings.Contains(gotStdout, "go-builder-agent") {
+	if !strings.Contains(gotStdout, "builder-agent") {
 		t.Errorf("dry-run stdout missing agent name fixture value: %s", gotStdout)
 	}
 
@@ -141,8 +141,8 @@ func TestDispatcherRunCmdDryRunPrintsDescriptor(t *testing.T) {
 	if err := json.Unmarshal([]byte(gotStdout), &decoded); err != nil {
 		t.Fatalf("json.Unmarshal(dry-run stdout) error = %v\nstdout:\n%s", err, gotStdout)
 	}
-	if decoded.AgentName != "go-builder-agent" {
-		t.Errorf("decoded.AgentName = %q, want %q", decoded.AgentName, "go-builder-agent")
+	if decoded.AgentName != "builder-agent" {
+		t.Errorf("decoded.AgentName = %q, want %q", decoded.AgentName, "builder-agent")
 	}
 	if decoded.Model != "opus" {
 		t.Errorf("decoded.Model = %q, want %q", decoded.Model, "opus")
@@ -180,7 +180,7 @@ func TestDispatcherRunCmdSpawnsAndReports(t *testing.T) {
 
 	env := newDispatcherCLITestEnv(t)
 	agentBin := buildDispatcherCLIFakeAgent(t)
-	bakeDispatcherCatalog(t, env, "go-builder-agent", agentBin)
+	bakeDispatcherCatalog(t, env, "builder-agent", agentBin)
 
 	item, err := env.svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      env.projectID,
@@ -214,8 +214,8 @@ func TestDispatcherRunCmdSpawnsAndReports(t *testing.T) {
 	if !strings.HasPrefix(gotStdout, "spawned ") {
 		t.Errorf("stdout = %q, want prefix %q", gotStdout, "spawned ")
 	}
-	if !strings.Contains(gotStdout, "go-builder-agent") {
-		t.Errorf("stdout = %q, want substring %q", gotStdout, "go-builder-agent")
+	if !strings.Contains(gotStdout, "builder-agent") {
+		t.Errorf("stdout = %q, want substring %q", gotStdout, "builder-agent")
 	}
 	if !strings.Contains(gotStdout, item.ID) {
 		t.Errorf("stdout = %q, want substring %q (action item id)", gotStdout, item.ID)
@@ -439,7 +439,7 @@ func TestDispatcherRunCmdRejectsProjectMismatch(t *testing.T) {
 	t.Parallel()
 
 	env := newDispatcherCLITestEnv(t)
-	bakeDispatcherCatalog(t, env, "go-builder-agent", "")
+	bakeDispatcherCatalog(t, env, "builder-agent", "")
 
 	item, err := env.svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      env.projectID,
@@ -477,7 +477,7 @@ func TestDispatcherRunCmdHonorsExplicitProjectFlag(t *testing.T) {
 
 	env := newDispatcherCLITestEnv(t)
 	agentBin := buildDispatcherCLIFakeAgent(t)
-	bakeDispatcherCatalog(t, env, "go-builder-agent", agentBin)
+	bakeDispatcherCatalog(t, env, "builder-agent", agentBin)
 
 	item, err := env.svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      env.projectID,
@@ -513,7 +513,7 @@ func TestDispatcherRunCmdDryRunReportsIneligible(t *testing.T) {
 	t.Parallel()
 
 	env := newDispatcherCLITestEnv(t)
-	bakeDispatcherCatalog(t, env, "go-builder-agent", "")
+	bakeDispatcherCatalog(t, env, "builder-agent", "")
 
 	// Two siblings: blocker stays in todo; candidate's BlockedBy points at
 	// blocker. The walker's predicate rejects the candidate because
@@ -569,8 +569,8 @@ func TestDispatcherRunCmdDryRunReportsIneligible(t *testing.T) {
 		t.Errorf("dry-run reason = %q; want substring %q (blocker ID)", decoded.Reason, blocker.ID)
 	}
 	// Descriptor still rendered so dev scripts inspect would-have-been argv.
-	if decoded.AgentName != "go-builder-agent" {
-		t.Errorf("dry-run agent_name = %q, want go-builder-agent", decoded.AgentName)
+	if decoded.AgentName != "builder-agent" {
+		t.Errorf("dry-run agent_name = %q, want builder-agent", decoded.AgentName)
 	}
 }
 

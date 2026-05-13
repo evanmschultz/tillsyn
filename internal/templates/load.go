@@ -45,7 +45,7 @@ type LoadOptions struct {
 	// validateAgentBindingNames (Drop 4c.6 W0.5.D2) for the EMBEDDED tier
 	// of the 3-tier agent resolver (per SKETCH.md §3.4). Returns true when
 	// `<name>` resolves to a real `*.md` file in any of the embedded
-	// `builtin/agents/{till-gen,till-go,till-gdd}/<name>.md` paths.
+	// `builtin/agents/{gen,go,fe,till-gdd}/<name>.md` paths.
 	//
 	// Nil resolves to a default that walks DefaultAgentLibraryFS
 	// unconditionally — no project-tier or user-tier lookup is performed
@@ -230,8 +230,8 @@ type LoadOptions struct {
 //     wrap WarnLogger at the call site. Drop 4c.5 F.5.1 hook.
 //     k'. validateAgentBindingNames — for every AgentBinding HARD-FAIL
 //     when AgentName does not resolve at the embedded tier of the 3-tier
-//     resolver (`internal/templates/builtin/agents/{till-gen,till-go,
-//     till-gdd}/<name>.md`). Distinct from validateAgentBindingFiles:
+//     resolver (`internal/templates/builtin/agents/{gen,go,fe,till-gdd}/
+//     <name>.md`). Distinct from validateAgentBindingFiles:
 //     warn-only is for dev-machine state; this hard-fail is for template
 //     correctness — a dangling agent_name reference catches typos like
 //     "buidler-agent" at Load rather than at spawn. Drop 4c.6 W0.5.D2
@@ -2069,8 +2069,13 @@ func validateAgentBindingFiles(tpl Template, logger func(string), statFn func(st
 
 // embeddedAgentGroups names the closed set of embedded agent-library groups
 // the default AgentLookupFn walks. Per SKETCH.md §3.4 the 3-tier resolver's
-// embedded floor unions across these three groups; an agent_name resolves at
+// embedded floor unions across these groups; an agent_name resolves at
 // the floor if its `<name>.md` file exists in ANY group's directory.
+//
+// Drop 4c.6.1 W4.D1 renamed `till-gen` → `gen` and `till-go` → `go` (canonical
+// group names without the `till-` prefix), and added the new `fe` group. The
+// `till-gdd` entry is unchanged — it is a template-family identifier, not a
+// group name, and retains its `till-` prefix.
 //
 // LOUD WARNING TO FUTURE DROPS THAT ADD NEW EMBEDDED GROUPS: extend this
 // slice in the same drop that ships the new group's `builtin/agents/<group>/`
@@ -2082,11 +2087,11 @@ func validateAgentBindingFiles(tpl Template, logger func(string), statFn func(st
 // exist. The default walker handles the missing-directory case gracefully via
 // embed.FS.Open returning an error, which the walker translates to "not
 // found" without panicking.
-var embeddedAgentGroups = []string{"till-gen", "till-go", "till-gdd"}
+var embeddedAgentGroups = []string{"gen", "go", "fe", "till-gdd"}
 
 // embeddedAgentLibraryShipped reports whether DefaultTemplateFS contains at
 // least one agent .md file under any of the embedded groups
-// (`builtin/agents/{till-gen,till-go,till-gdd}/`). Probed once at package
+// (`builtin/agents/{gen,go,fe,till-gdd}/`). Probed once at package
 // init via fs.ReadDir against the embed.FS so the default walker can
 // distinguish "library has shipped, walk strictly" from "library has not
 // yet shipped (pre-W1.D1), walk permissively."
@@ -2130,7 +2135,7 @@ var embeddedAgentLibraryShipped = func() bool {
 
 // defaultAgentLookupFn is the production existence-check used by
 // validateAgentBindingNames when LoadOptions.AgentLookupFn is nil. Walks the
-// embedded `builtin/agents/{till-gen,till-go,till-gdd}/<name>.md` paths in
+// embedded `builtin/agents/{gen,go,fe,till-gdd}/<name>.md` paths in
 // DefaultTemplateFS and returns true on the first hit, false otherwise.
 //
 // Per W0.5 plan FF2 disclosure: this default walker exercises embed.FS
@@ -2174,9 +2179,9 @@ func defaultAgentLookupFn(name string) bool {
 
 // validateAgentBindingNames asserts every AgentBinding.AgentName resolves at
 // the EMBEDDED tier of the 3-tier agent resolver per SKETCH.md §3.4. The
-// embedded tier is the union of `internal/templates/builtin/agents/{till-gen,
-// till-go,till-gdd}/<name>.md`; resolution succeeds on the first hit across
-// the three groups.
+// embedded tier is the union of `internal/templates/builtin/agents/{gen,go,
+// fe,till-gdd}/<name>.md`; resolution succeeds on the first hit across
+// the four groups.
 //
 // Hard-fail (NOT warn-only — distinct from validateAgentBindingFiles, which
 // checks `~/.claude/agents/<name>.md` warn-only for dev-machine state). A

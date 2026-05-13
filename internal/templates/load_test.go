@@ -38,7 +38,7 @@ title = "BUILD-QA-FALSIFICATION"
 blocked_by_parent = true
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `
 	tpl, err := Load(strings.NewReader(src))
@@ -256,7 +256,7 @@ func TestLoadRejectsBogusAgentBindingsMapKey(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.totally-bogus]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `
 	_, err := Load(strings.NewReader(src))
@@ -521,49 +521,36 @@ model = "opus"
 // fail-permissive while the embedded agent library has not yet shipped
 // (pre-W1.D1). Per W0.5 plan FF2 reconciliation: the validator code is final
 // on D2 land but its production effect gates on the embed.FS contents.
-// Pre-W1.D1 the `builtin/agents/{till-gen,till-go,till-gdd}/` subtree
-// contains no .md files (and is not even listed in the //go:embed directive
-// at embed.go), so `embeddedAgentLibraryShipped` evaluates to false at
-// package init and `defaultAgentLookupFn` returns true unconditionally.
+// Drop 4c.6.1 W4.D1 update: the embedded agent library has shipped
+// (W1.D1 landed, and W4.D1 restructured groups to `gen/`, `go/`, `fe/`).
+// `embeddedAgentLibraryShipped` evaluates to true at package init and
+// `defaultAgentLookupFn` is now strict. The valid_minimal.toml fixture was
+// updated from `agent_name = "builder-agent"` (an orphan deleted in W4.D1)
+// to `agent_name = "builder-agent"` (a real file in `gen/`, `go/`, and `fe/`).
 //
-// The valid_minimal.toml fixture references `agent_name = "go-builder-agent"`
-// (a real Go agent name that pre-W1.D1 does not exist in the embedded
-// library); the default walker passes the binding because the library has
-// not shipped — the validator is structurally wired but vacuously satisfies
-// the floor.
+// The test still asserts nil error — not because of the pre-W1.D1
+// fail-permissive mode, but because `builder-agent` genuinely resolves in
+// the embedded library. The test function name retains its historical form
+// to preserve the git-blame audit trail showing when this sentinel-flip
+// happened; the function contract is now "default walker, strict mode, name
+// resolves successfully."
 //
-// Post-W1.D1 this test's expectation flips: once the embedded library lands
-// real .md files, `embeddedAgentLibraryShipped` switches to true and the
-// default walker becomes strict. Either the fixture must reference a real
-// embedded name OR the test's contract flips to "rejects when name does not
-// resolve in embedded library." The W0.5 plan's FF2 disclosure pins this
-// transition explicitly: "Post-W1.D1, the same default walker finds the
-// real placeholder files W1.D1 ships into the same FS path and resolves
-// real agent_name references at Load."
-//
-// LOUD WARNING TO W1.D1 BUILDER: when you ship `builtin/agents/{till-gen,
-// till-go,till-gdd}/<name>.md` placeholder files AND extend the //go:embed
-// directive in embed.go to include them, this test WILL change behaviour.
-// Either update the test's assertion (default lookup now strict) or update
-// `valid_minimal.toml` to reference an agent_name your placeholder files
-// satisfy.
+// Historical note: pre-W1.D1 the `builtin/agents/{till-gen,till-go,till-gdd}/`
+// subtree contained no .md files, so `embeddedAgentLibraryShipped` was false
+// and the walker was fail-permissive. W1.D1 lit the library; W4.D1 renamed
+// the groups to `gen/`, `go/`, `fe/` and deleted the `go-*` orphan files that
+// the fixture previously referenced.
 func TestLoadValidatesAgentBindingNamesDefaultLookupPermissivePreW1D1(t *testing.T) {
 	src := mustReadTestdata(t, "valid_minimal.toml")
 	// LoadOptions.AgentLookupFn intentionally nil: exercise the default
-	// embedded-FS walker. Pre-W1.D1 the FS contains no agent .md files
-	// AND the //go:embed directive does not list `builtin/agents/`, so
-	// `embeddedAgentLibraryShipped` is false and the default walker
-	// fail-permissive-passes every name. The valid_minimal.toml fixture
-	// references `go-builder-agent`; the validator must NOT reject it
-	// pre-W1.D1.
+	// embedded-FS walker. Post-W4.D1 the FS contains the canonical 10-file
+	// set per group under `gen/`, `go/`, `fe/` — `embeddedAgentLibraryShipped`
+	// is true and the walker is strict. The valid_minimal.toml fixture
+	// references `builder-agent`, which exists in every group; the validator
+	// resolves it successfully and Load returns nil.
 	_, err := LoadWithOptions(strings.NewReader(src), LoadOptions{})
 	if err != nil {
-		// Pre-W1.D1 the embedded library has not shipped. If this test
-		// fails with `ErrUnknownAgentName`, W1.D1 has likely landed —
-		// flip the assertion or update the fixture per the LOUD WARNING
-		// in this test's godoc.
-		t.Fatalf("Load: expected nil error pre-W1.D1 (embedded agent library not yet shipped; fail-permissive default); got %v. "+
-			"If W1.D1 has landed placeholder agent .md files plus the //go:embed extension, update this test per its LOUD WARNING.", err)
+		t.Fatalf("Load: unexpected error: %v (valid_minimal.toml must reference a builder-agent name present in the embedded library)", err)
 	}
 }
 
@@ -744,7 +731,7 @@ func TestLoadAgentBindingEnvAndCLIKindHappyPath(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 env = ["ANTHROPIC_API_KEY", "https_proxy", "HTTP_PROXY"]
 cli_kind = "claude"
@@ -782,7 +769,7 @@ func TestLoadAgentBindingCLIKindOmittedDefaultsToEmpty(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `
 	tpl, err := Load(strings.NewReader(src))
@@ -893,7 +880,7 @@ func TestLoadAgentBindingEnvRejectionTable(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 env = ` + tc.env + `
 `
@@ -932,12 +919,12 @@ func TestLoadAgentBindingDuplicateEnvNamesAcrossBindingsAllowed(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 env = ["ANTHROPIC_API_KEY"]
 
 [agent_bindings.plan]
-agent_name = "go-planning-agent"
+agent_name = "planning-agent"
 model = "opus"
 env = ["ANTHROPIC_API_KEY"]
 `
@@ -958,7 +945,7 @@ func TestLoadAgentBindingStrictDecodeUnknownFieldStillRejects(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 bogus_field = true
 `
@@ -1032,7 +1019,7 @@ func TestLoadTillsynOmittedTableZeroValue(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `
 	tpl, err := Load(strings.NewReader(src))
@@ -1135,7 +1122,7 @@ func TestLoadAgentBindingToolGatingHappyPath(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 tools_allowed = ["Read", "Grep"]
 tools_disallowed = ["WebFetch", "Bash(curl *)"]
@@ -1190,7 +1177,7 @@ func TestLoadAgentBindingToolGatingOmittedFields(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `
 	tpl, err := Load(strings.NewReader(src))
@@ -1353,7 +1340,7 @@ denied_domains = ["https://badactor.example"]`,
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 ` + tc.fragment + "\n"
 			_, err := Load(strings.NewReader(src))
@@ -1383,7 +1370,7 @@ func TestLoadAgentBindingToolGatingAllowsGlobDomain(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.sandbox.network]
@@ -1411,7 +1398,7 @@ func TestLoadAgentBindingToolGatingStrictDecodeUnknownFieldRejected(t *testing.T
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 bogus_tool_field = true
 `
@@ -1445,7 +1432,7 @@ func TestLoadAgentBindingToolGatingStrictDecodeUnknownSandboxFieldRejected(t *te
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.sandbox.filesystem]
@@ -1460,7 +1447,7 @@ bogus_filesystem_key = true
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.sandbox.network]
@@ -1475,7 +1462,7 @@ bogus_network_key = true
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.sandbox]
@@ -1869,7 +1856,7 @@ func TestValidateMapKeysCanonicalizesAgentBindingsKeys(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.BUILD]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `
 	tpl, err := Load(strings.NewReader(src))
@@ -1880,7 +1867,7 @@ model = "opus"
 	if !ok {
 		t.Fatalf("tpl.AgentBindings[%q] missing after canonicalization (got map keys %v)", domain.KindBuild, mapKeys(tpl.AgentBindings))
 	}
-	if got, want := binding.AgentName, "go-builder-agent"; got != want {
+	if got, want := binding.AgentName, "builder-agent"; got != want {
 		t.Fatalf("tpl.AgentBindings[%q].AgentName = %q; want %q", domain.KindBuild, got, want)
 	}
 	if _, leaked := tpl.AgentBindings[domain.Kind("BUILD")]; leaked {
@@ -2092,7 +2079,7 @@ blocked_by_parent = true
 func TestValidateAgentBindingFiles_WarnOnMissing(t *testing.T) {
 	src := templateWithBindings(t, `
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `)
 	var warnings []string
@@ -2107,14 +2094,14 @@ model = "opus"
 	if got, want := len(warnings), 1; got != want {
 		t.Fatalf("len(warnings) = %d; want %d (one per missing binding)", got, want)
 	}
-	if !strings.Contains(warnings[0], "go-builder-agent") {
-		t.Fatalf("warnings[0] = %q; want substring %q (agent_name)", warnings[0], "go-builder-agent")
+	if !strings.Contains(warnings[0], "builder-agent") {
+		t.Fatalf("warnings[0] = %q; want substring %q (agent_name)", warnings[0], "builder-agent")
 	}
 	if !strings.Contains(warnings[0], "build") {
 		t.Fatalf("warnings[0] = %q; want substring %q (binding kind)", warnings[0], "build")
 	}
-	if !strings.Contains(warnings[0], "go-builder-agent.md") {
-		t.Fatalf("warnings[0] = %q; want substring %q (resolved file path)", warnings[0], "go-builder-agent.md")
+	if !strings.Contains(warnings[0], "builder-agent.md") {
+		t.Fatalf("warnings[0] = %q; want substring %q (resolved file path)", warnings[0], "builder-agent.md")
 	}
 	// Sanity: the binding still landed on the parsed Template — warn-only
 	// must not blackhole the binding row.
@@ -2131,7 +2118,7 @@ model = "opus"
 func TestValidateAgentBindingFiles_NoWarnOnPresent(t *testing.T) {
 	src := templateWithBindings(t, `
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `)
 	var warnings []string

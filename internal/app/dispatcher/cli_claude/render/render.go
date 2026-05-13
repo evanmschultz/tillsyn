@@ -178,15 +178,25 @@ const agentBodyEmbeddedRoot = "builtin/agents"
 
 // agentBodyDefaultGroup is the dogfood default group selected when
 // binding.SystemPromptTemplatePath is empty (W3-FF5 LOCKED). Adopters
-// targeting till-gen / till-gdd MUST set SystemPromptTemplatePath
+// targeting gen / till-gdd MUST set SystemPromptTemplatePath
 // explicitly in their template; the empty-path fallback is documented
 // dogfood-only behavior.
-const agentBodyDefaultGroup = "till-go"
+//
+// Drop 4c.6.1 W4.D1 renamed the embedded subdir from `till-go` to `go`
+// (canonical group name, no `till-` prefix). W1.D3 absorbs this constant
+// update; updated here because W4.D1's rename makes the old value immediately
+// incorrect (the embedded path `builtin/agents/till-go/` no longer exists).
+const agentBodyDefaultGroup = "go"
 
 // agentBodyFallbackGroup is the canonical shared-agents group the
 // embedded-tier cross-group fallback descends into (W3-FF7 LOCKED).
-// One-way fallback only — till-gen does NOT fall back to other groups.
-const agentBodyFallbackGroup = "till-gen"
+// One-way fallback only — gen does NOT fall back to other groups.
+//
+// Drop 4c.6.1 W4.D1 renamed the embedded subdir from `till-gen` to `gen`
+// (canonical group name, no `till-` prefix). W1.D3 absorbs this constant
+// update; updated here because W4.D1's rename makes the old value immediately
+// incorrect (the embedded path `builtin/agents/till-gen/` no longer exists).
+const agentBodyFallbackGroup = "gen"
 
 // projectAgentsSubdir is the per-project override directory the project
 // tier reads from (`<project.RepoPrimaryWorktree>/.tillsyn/agents/`).
@@ -545,7 +555,7 @@ func renderPluginManifest(bundle dispatcher.Bundle) error {
 //  2. user tier    — `<user-home>/.tillsyn/agents/<group>/<basename>`
 //  3. embedded tier — `templates.DefaultTemplateFS` via
 //     `builtin/agents/<group>/<basename>` with cross-group fallback to
-//     `builtin/agents/till-gen/<basename>` on fs.ErrNotExist.
+//     `builtin/agents/gen/<basename>` on fs.ErrNotExist.
 //
 // The tier-1 / tier-2 override paths are deliberately Tillsyn-owned
 // (`.tillsyn/agents/...`), NOT `~/.claude/agents/...`. The latter is what
@@ -557,9 +567,9 @@ func renderPluginManifest(bundle dispatcher.Bundle) error {
 //   - `<group> = path.Dir(binding.SystemPromptTemplatePath)` when non-empty
 //     (slash-aware `path.Dir`, NOT OS-aware `filepath.Dir`, because
 //     embed.FS paths are always slash-separated).
-//   - `<group> = "till-go"` (dogfood default) when empty.
+//   - `<group> = "go"` (agentBodyDefaultGroup dogfood default) when empty.
 //   - If `path.Dir` returns "." (path has no slash), the resolver treats
-//     the path as malformed and falls back to "till-go".
+//     the path as malformed and falls back to "go" (agentBodyDefaultGroup).
 //
 // `<basename>` derivation:
 //
@@ -646,7 +656,7 @@ func renderAgentFile(bundle dispatcher.Bundle, project domain.Project, binding d
 func assembleAgentFileBody(project domain.Project, binding dispatcher.BindingResolved) (string, error) {
 	// Round-2 W3-D23-FF1 fix: validate the full template path BEFORE
 	// any path.Dir / path.Base derivation. The empty-path branch is
-	// the W3-FF5 LOCKED "use embedded till-go default" sentinel and
+	// the W3-FF5 LOCKED "use embedded default group" sentinel and
 	// MUST short-circuit before the validator runs — the validator
 	// only inspects non-empty paths.
 	if trimmed := strings.TrimSpace(binding.SystemPromptTemplatePath); trimmed != "" {
@@ -855,8 +865,9 @@ func validateAgentBasename(basename string) error {
 
 // resolveAgentGroup applies the W3-FF5 LOCKED <group> derivation. Slash-
 // aware path.Dir on binding.SystemPromptTemplatePath when non-empty;
-// agentBodyDefaultGroup (till-go) when empty OR when path.Dir returns "."
-// (malformed path).
+// agentBodyDefaultGroup ("go") when empty OR when path.Dir returns "."
+// (malformed path). Drop 4c.6.1 W4.D1 updated the constant from "till-go"
+// to "go" and agentBodyFallbackGroup from "till-gen" to "gen".
 func resolveAgentGroup(binding dispatcher.BindingResolved) string {
 	if trimmed := strings.TrimSpace(binding.SystemPromptTemplatePath); trimmed != "" {
 		if dir := path.Dir(trimmed); dir != "" && dir != "." {
@@ -915,10 +926,11 @@ func readUserTierAgent(group, basename string) (string, bool, error) {
 // W3-FF7 LOCKED cross-group fallback ladder:
 //
 //  1. primary  — `builtin/agents/<group>/<basename>`
-//  2. fallback — `builtin/agents/till-gen/<basename>` on fs.ErrNotExist
+//  2. fallback — `builtin/agents/gen/<basename>` on fs.ErrNotExist
 //
-// If the primary group is already till-gen, the fallback is skipped (no
-// symmetric fallback — till-gen is the only fallback target).
+// If the primary group is already gen (agentBodyFallbackGroup), the fallback
+// is skipped (no symmetric fallback — gen is the only fallback target).
+// Drop 4c.6.1 W4.D1 renamed "till-gen" → "gen" for agentBodyFallbackGroup.
 //
 // On primary hit returns the primary content. On primary miss + fallback
 // hit returns the fallback content. On both miss returns a wrapped
@@ -938,8 +950,8 @@ func readEmbeddedTierAgent(group, basename string) (string, error) {
 		return "", fmt.Errorf("embedded primary read %q: %w", primary, err)
 	}
 
-	// Primary miss — fall back to till-gen unless group already is
-	// till-gen (no symmetric fallback).
+	// Primary miss — fall back to gen (agentBodyFallbackGroup) unless
+	// group already is gen (no symmetric fallback).
 	if group == agentBodyFallbackGroup {
 		return "", fmt.Errorf("%w: agent_name lookup miss (group %q, basename %q)",
 			ErrAgentBodyNotFound, group, basename)

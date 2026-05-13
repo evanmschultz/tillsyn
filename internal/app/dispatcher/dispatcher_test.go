@@ -644,8 +644,10 @@ func (a richMonitorAdapter) UpdateActionItem(ctx context.Context, in updateActio
 }
 
 // buildRichFixture seeds a richDispatchService with a single eligible action
-// item, a project carrying a baked KindCatalog (kind=build → go-builder-agent),
+// item, a project carrying a baked KindCatalog (kind=build → builder-agent),
 // and the four canonical columns the walker/monitor resolve on.
+// Drop 4c.6.1 W4.D1: updated AgentName from "go-builder-agent" (deleted orphan)
+// to "builder-agent" (canonical name in go/ group post-rename).
 func buildRichFixture(t *testing.T) *richDispatchService {
 	t.Helper()
 	tpl := templates.Template{
@@ -655,7 +657,7 @@ func buildRichFixture(t *testing.T) *richDispatchService {
 		},
 		AgentBindings: map[domain.Kind]templates.AgentBinding{
 			domain.KindBuild: {
-				AgentName:    "go-builder-agent",
+				AgentName:    "builder-agent",
 				Model:        "opus",
 				MaxTries:     1,
 				MaxBudgetUSD: 5,

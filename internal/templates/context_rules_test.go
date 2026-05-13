@@ -19,7 +19,7 @@ func TestLoadAgentBindingContextHappyPath(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.context]
@@ -73,7 +73,7 @@ func TestLoadAgentBindingContextEmptyTablePresent(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.context]
@@ -99,7 +99,7 @@ func TestLoadAgentBindingContextOmittedAltogether(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 `
 	tpl, err := Load(strings.NewReader(src))
@@ -158,7 +158,7 @@ func TestLoadAgentBindingContextRejectsInvalidDelivery(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.context]
@@ -190,7 +190,7 @@ func TestLoadAgentBindingContextRejectsNegativeMaxChars(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.context]
@@ -226,7 +226,7 @@ func TestLoadAgentBindingContextRejectsNegativeMaxRuleDuration(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.context]
@@ -255,7 +255,7 @@ func TestLoadAgentBindingContextRejectsInvalidKindReference(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.context]
@@ -289,7 +289,7 @@ func TestLoadAgentBindingContextAllowsDescendantsOnPlanKind(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.plan]
-agent_name = "go-planning-agent"
+agent_name = "planning-agent"
 model = "opus"
 
 [agent_bindings.plan.context]
@@ -328,7 +328,7 @@ func TestLoadAgentBindingContextStrictDecodeRejectsUnknownKey(t *testing.T) {
 schema_version = "v1"
 
 [agent_bindings.build]
-agent_name = "go-builder-agent"
+agent_name = "builder-agent"
 model = "opus"
 
 [agent_bindings.build.context]

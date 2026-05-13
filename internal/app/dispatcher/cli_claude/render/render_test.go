@@ -102,7 +102,7 @@ func fixtureProject() domain.Project {
 // branches both fire.
 func fixtureBinding() dispatcher.BindingResolved {
 	return dispatcher.BindingResolved{
-		AgentName:       "go-builder-agent",
+		AgentName:       "builder-agent",
 		CLIKind:         dispatcher.CLIKindClaude,
 		ToolsAllowed:    []string{"Read", "Grep"},
 		ToolsDisallowed: []string{"WebFetch", "Bash(curl *)"},
@@ -124,7 +124,7 @@ func TestRenderHappyPathWritesAllFiveFiles(t *testing.T) {
 	wantFiles := []string{
 		filepath.Join(bundle.Paths.Root, "system-prompt.md"),
 		filepath.Join(bundle.Paths.Root, "plugin", ".claude-plugin", "plugin.json"),
-		filepath.Join(bundle.Paths.Root, "plugin", "agents", "go-builder-agent.md"),
+		filepath.Join(bundle.Paths.Root, "plugin", "agents", "builder-agent.md"),
 		filepath.Join(bundle.Paths.Root, "plugin", ".mcp.json"),
 		filepath.Join(bundle.Paths.Root, "plugin", "settings.json"),
 	}
@@ -304,7 +304,7 @@ func TestRenderSettingsExplicitEmptyArraysWhenBindingEmpty(t *testing.T) {
 
 	bundle := fixtureBundle(t)
 	binding := dispatcher.BindingResolved{
-		AgentName:       "go-builder-agent",
+		AgentName:       "builder-agent",
 		CLIKind:         dispatcher.CLIKindClaude,
 		ToolsAllowed:    nil, // explicit nil
 		ToolsDisallowed: nil, // explicit nil
@@ -375,7 +375,7 @@ func TestRenderAgentFileWithoutToolGating(t *testing.T) {
 
 	bundle := fixtureBundle(t)
 	binding := dispatcher.BindingResolved{
-		AgentName: "go-builder-agent",
+		AgentName: "builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
 		// No ToolsAllowed / ToolsDisallowed.
 	}
@@ -866,12 +866,12 @@ func TestAssembleAgentFileBody_EmbeddedDefault(t *testing.T) {
 	project := fixtureProject()
 	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
 
-	// AgentName "go-builder-agent" maps to till-go/go-builder-agent.md
-	// (verified embedded at internal/templates/embed.go:98).
+	// AgentName "builder-agent" maps to go/builder-agent.md (agentBodyDefaultGroup
+	// = "go" per Drop 4c.6.1 W4.D1; verified embedded at internal/templates/embed.go).
 	binding := dispatcher.BindingResolved{
-		AgentName: "go-builder-agent",
+		AgentName: "builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
-		// SystemPromptTemplatePath empty → group defaults to till-go.
+		// SystemPromptTemplatePath empty → group defaults to "go" (agentBodyDefaultGroup).
 	}
 
 	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
@@ -898,14 +898,14 @@ func TestAssembleAgentFileBody_UserOverride(t *testing.T) {
 	homeDir := t.TempDir()
 
 	const sentinel = "SENTINEL_USER_TIER"
-	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
-		"---\nname: go-builder-agent\n---\n\n"+validatorConformingBodySuffix()+sentinel+"\n")
+	agentTierUserFixture(t, homeDir, "go", "builder-agent.md",
+		"---\nname: builder-agent\n---\n\n"+validatorConformingBodySuffix()+sentinel+"\n")
 
 	project := fixtureProject()
 	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
 
 	binding := dispatcher.BindingResolved{
-		AgentName: "go-builder-agent",
+		AgentName: "builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
 	}
 
@@ -931,18 +931,18 @@ func TestAssembleAgentFileBody_ProjectOverride(t *testing.T) {
 	// (Project tier wins so the user-tier body's validator compliance is
 	// moot here, but keep both fixtures validator-conforming for
 	// symmetry — a future test reorder might exercise the user tier.)
-	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
-		"---\nname: go-builder-agent\n---\n\n"+validatorConformingBodySuffix()+"SENTINEL_USER_TIER\n")
+	agentTierUserFixture(t, homeDir, "go", "builder-agent.md",
+		"---\nname: builder-agent\n---\n\n"+validatorConformingBodySuffix()+"SENTINEL_USER_TIER\n")
 
 	project := fixtureProject()
 	project.RepoPrimaryWorktree = t.TempDir()
 
 	const projectSentinel = "SENTINEL_PROJECT_TIER"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md",
-		"---\nname: go-builder-agent\n---\n\n"+validatorConformingBodySuffix()+projectSentinel+"\n")
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md",
+		"---\nname: builder-agent\n---\n\n"+validatorConformingBodySuffix()+projectSentinel+"\n")
 
 	binding := dispatcher.BindingResolved{
-		AgentName: "go-builder-agent",
+		AgentName: "builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
 	}
 
@@ -960,15 +960,23 @@ func TestAssembleAgentFileBody_ProjectOverride(t *testing.T) {
 	}
 }
 
-// TestAssembleAgentFileBody_CrossGroupFallbackToTillGen asserts the W3-FF7
+// TestAssembleAgentFileBody_CrossGroupFallbackToGen asserts the W3-FF7
 // LOCKED cross-group fallback: when the primary embedded-tier lookup at
 // builtin/agents/<group>/<basename> misses with fs.ErrNotExist, the resolver
-// falls back to builtin/agents/till-gen/<basename>.
+// falls back to builtin/agents/gen/<basename>.
 //
-// AgentName "orchestrator-managed" with empty SystemPromptTemplatePath
-// resolves group "till-go" → builtin/agents/till-go/orchestrator-managed.md
-// MISS → fallback builtin/agents/till-gen/orchestrator-managed.md HIT.
-func TestAssembleAgentFileBody_CrossGroupFallbackToTillGen(t *testing.T) {
+// Drop 4c.6.1 W4.D1 updated: agentBodyDefaultGroup = "go" and
+// agentBodyFallbackGroup = "gen". "orchestrator-managed" now exists in
+// go/orchestrator-managed.md (added in W4.D1), so primary HIT occurs.
+// The cross-group fallback path is still exercised via a custom
+// SystemPromptTemplatePath pointing at a non-go group to confirm the
+// fallback to gen/ still works for adopters who target a group without that
+// agent name.
+//
+// Cross-group fallback: use SystemPromptTemplatePath = "till-gdd" (a group
+// that has NO orchestrator-managed.md) to force a primary miss → fallback to
+// gen/orchestrator-managed.md HIT.
+func TestAssembleAgentFileBody_CrossGroupFallbackToGen(t *testing.T) {
 	// Cannot run t.Parallel — t.Setenv used.
 	bundle := fixtureBundle(t)
 	homeDir := t.TempDir()
@@ -980,9 +988,10 @@ func TestAssembleAgentFileBody_CrossGroupFallbackToTillGen(t *testing.T) {
 	binding := dispatcher.BindingResolved{
 		AgentName: "orchestrator-managed",
 		CLIKind:   dispatcher.CLIKindClaude,
-		// Empty SystemPromptTemplatePath → group defaults to till-go.
-		// till-go/orchestrator-managed.md DOES NOT EXIST → fallback to
-		// till-gen/orchestrator-managed.md.
+		// SystemPromptTemplatePath "till-gdd" → group = "till-gdd".
+		// till-gdd/orchestrator-managed.md DOES NOT EXIST → fallback to
+		// gen/orchestrator-managed.md (agentBodyFallbackGroup).
+		SystemPromptTemplatePath: "till-gdd/orchestrator-managed.md",
 	}
 
 	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
@@ -990,9 +999,9 @@ func TestAssembleAgentFileBody_CrossGroupFallbackToTillGen(t *testing.T) {
 	}
 
 	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
-	// Cross-group fallback fired → till-gen/orchestrator-managed.md content.
+	// Cross-group fallback fired → gen/orchestrator-managed.md content.
 	if !strings.Contains(body, "orchestrator-managed coordination kinds") {
-		t.Errorf("cross-group fallback did not surface till-gen/orchestrator-managed.md content\nbody:\n%s", body)
+		t.Errorf("cross-group fallback did not surface gen/orchestrator-managed.md content\nbody:\n%s", body)
 	}
 }
 
@@ -1077,14 +1086,14 @@ func TestAssembleAgentFileBody_FrontmatterStripModelOnAgentsTOMLSet(t *testing.T
 	bundle := fixtureBundle(t)
 	homeDir := t.TempDir()
 
-	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
-		d3UserTierFrontmatter("name: go-builder-agent\nmodel: opus\n"))
+	agentTierUserFixture(t, homeDir, "go", "builder-agent.md",
+		d3UserTierFrontmatter("name: builder-agent\nmodel: opus\n"))
 
 	project := fixtureProject()
 	project.RepoPrimaryWorktree = t.TempDir()
 
 	binding := dispatcher.BindingResolved{
-		AgentName: "go-builder-agent",
+		AgentName: "builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
 		Model:     ptrString("sonnet"), // agents.toml SET model → strip.
 	}
@@ -1102,7 +1111,7 @@ func TestAssembleAgentFileBody_FrontmatterStripModelOnAgentsTOMLSet(t *testing.T
 		t.Errorf("rendered body lost post-frontmatter marker\nbody:\n%s", body)
 	}
 	// `name:` survives strip (not in strip universe).
-	if !strings.Contains(body, "name: go-builder-agent") {
+	if !strings.Contains(body, "name: builder-agent") {
 		t.Errorf("rendered body missing `name:` line\nbody:\n%s", body)
 	}
 }
@@ -1119,9 +1128,9 @@ func TestAssembleAgentFileBody_FrontmatterStripToolsOnAgentsTOMLSet(t *testing.T
 	// Stale template-time tool-gating keys land in the user-tier fixture
 	// frontmatter — strip must remove them all so the runtime inject step
 	// is the sole source.
-	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
+	agentTierUserFixture(t, homeDir, "go", "builder-agent.md",
 		d3UserTierFrontmatter(
-			"name: go-builder-agent\n"+
+			"name: builder-agent\n"+
 				"tools: Read, Bash\n"+
 				"allowedTools: Read\n"+
 				"disallowedTools: WebFetch\n"))
@@ -1130,7 +1139,7 @@ func TestAssembleAgentFileBody_FrontmatterStripToolsOnAgentsTOMLSet(t *testing.T
 	project.RepoPrimaryWorktree = t.TempDir()
 
 	binding := dispatcher.BindingResolved{
-		AgentName:    "go-builder-agent",
+		AgentName:    "builder-agent",
 		CLIKind:      dispatcher.CLIKindClaude,
 		ToolsAllowed: []string{"Read"}, // runtime per-spawn value.
 	}
@@ -1157,7 +1166,7 @@ func TestAssembleAgentFileBody_FrontmatterStripToolsOnAgentsTOMLSet(t *testing.T
 		t.Errorf("rendered body missing injected `allowedTools: Read`\nbody:\n%s", body)
 	}
 	// `name:` survives.
-	if !strings.Contains(body, "name: go-builder-agent") {
+	if !strings.Contains(body, "name: builder-agent") {
 		t.Errorf("rendered body missing `name:` line\nbody:\n%s", body)
 	}
 }
@@ -1214,7 +1223,7 @@ func TestAssembleAgentFileBody_RejectsPathTraversalInGroup(t *testing.T) {
 	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
 
 	binding := dispatcher.BindingResolved{
-		AgentName: "go-builder-agent",
+		AgentName: "builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
 		// W3-D23-FF1 attack string verbatim — the path used by the
 		// build-QA-falsification finding. path.Base="passwd",
@@ -1283,7 +1292,7 @@ func TestAssembleAgentFileBody_RejectsPathTraversalSiblingCases(t *testing.T) {
 			project.RepoPrimaryWorktree = t.TempDir()
 
 			binding := dispatcher.BindingResolved{
-				AgentName:                "go-builder-agent",
+				AgentName:                "builder-agent",
 				CLIKind:                  dispatcher.CLIKindClaude,
 				SystemPromptTemplatePath: tc.path,
 			}
@@ -1300,9 +1309,11 @@ func TestAssembleAgentFileBody_RejectsPathTraversalSiblingCases(t *testing.T) {
 }
 
 // TestAssembleAgentFileBody_AcceptsLegitimateTemplatePath is the positive
-// control: a legitimate `till-<group>/<file>.md` path still resolves
+// control: a legitimate `<group>/<file>.md` path still resolves
 // without the new validator rejecting it. Ensures the round-2 defense
 // does not over-reject and break the W3-FF5 LOCKED dogfood path.
+// Drop 4c.6.1 W4.D1: uses `go/builder-agent.md` (canonical path; the old
+// `till-go/builder-agent.md` path no longer exists post-rename).
 func TestAssembleAgentFileBody_AcceptsLegitimateTemplatePath(t *testing.T) {
 	// Cannot run t.Parallel — t.Setenv used.
 	bundle := fixtureBundle(t)
@@ -1313,11 +1324,11 @@ func TestAssembleAgentFileBody_AcceptsLegitimateTemplatePath(t *testing.T) {
 	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
 
 	binding := dispatcher.BindingResolved{
-		AgentName: "go-builder-agent",
+		AgentName: "builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
-		// Legitimate canonical form: `till-<group>/<basename>.md`.
-		// Resolves via embedded-tier till-go/go-builder-agent.md.
-		SystemPromptTemplatePath: "till-go/go-builder-agent.md",
+		// Legitimate canonical form: `<group>/<basename>.md`.
+		// Resolves via embedded-tier go/builder-agent.md.
+		SystemPromptTemplatePath: "go/builder-agent.md",
 	}
 
 	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
@@ -1331,12 +1342,13 @@ func TestAssembleAgentFileBody_AcceptsLegitimateTemplatePath(t *testing.T) {
 	}
 }
 
-// TestAssembleAgentFileBody_EmptyPathStillRoutesToTillGoDefault asserts
+// TestAssembleAgentFileBody_EmptyPathStillRoutesToDefaultGroup asserts
 // the empty-SystemPromptTemplatePath sentinel (W3-FF5 LOCKED — use
-// embedded till-go default) survives the round-2 validator addition.
+// embedded default group) survives the round-2 validator addition.
 // The validator MUST NOT reject the empty-string path; the empty branch
-// short-circuits BEFORE the validator runs.
-func TestAssembleAgentFileBody_EmptyPathStillRoutesToTillGoDefault(t *testing.T) {
+// short-circuits BEFORE the validator runs. Drop 4c.6.1 W4.D1: the
+// default group is now "go" (was "till-go").
+func TestAssembleAgentFileBody_EmptyPathStillRoutesToDefaultGroup(t *testing.T) {
 	// Cannot run t.Parallel — t.Setenv used.
 	bundle := fixtureBundle(t)
 	homeDir := t.TempDir()
@@ -1346,21 +1358,20 @@ func TestAssembleAgentFileBody_EmptyPathStillRoutesToTillGoDefault(t *testing.T)
 	project.RepoPrimaryWorktree = t.TempDir() // empty project tier
 
 	binding := dispatcher.BindingResolved{
-		AgentName: "go-builder-agent",
+		AgentName: "builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
-		// Empty path → W3-FF5 LOCKED till-go default.
+		// Empty path → W3-FF5 LOCKED default group ("go").
 	}
 
 	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, binding, nil); err != nil {
-		t.Fatalf("Render() error = %v, want nil (empty path must route to till-go default, not reject)", err)
+		t.Fatalf("Render() error = %v, want nil (empty path must route to default group, not reject)", err)
 	}
 
 	body := readRenderedAgentFile(t, bundle.Paths.Root, binding.AgentName)
-	// The embedded placeholder for go-builder-agent carries the
-	// PLACEHOLDER marker — same assertion shape as
-	// TestAssembleAgentFileBody_EmbeddedDefault.
+	// The embedded placeholder for builder-agent carries the PLACEHOLDER
+	// marker — same assertion shape as TestAssembleAgentFileBody_EmbeddedDefault.
 	if !strings.Contains(body, "# PLACEHOLDER") {
-		t.Errorf("empty-path render did not surface till-go default body\nbody:\n%s", body)
+		t.Errorf("empty-path render did not surface default group body\nbody:\n%s", body)
 	}
 }
 
@@ -1380,9 +1391,9 @@ func TestAssembleAgentFileBody_FrontmatterPreservedWhenAgentsTOMLAbsent(t *testi
 	bundle := fixtureBundle(t)
 	homeDir := t.TempDir()
 
-	agentTierUserFixture(t, homeDir, "till-go", "go-builder-agent.md",
+	agentTierUserFixture(t, homeDir, "go", "builder-agent.md",
 		d3UserTierFrontmatter(
-			"name: go-builder-agent\n"+
+			"name: builder-agent\n"+
 				"model: opus\n"+
 				"tools: Read, Bash\n"))
 
@@ -1390,7 +1401,7 @@ func TestAssembleAgentFileBody_FrontmatterPreservedWhenAgentsTOMLAbsent(t *testi
 	project.RepoPrimaryWorktree = t.TempDir()
 
 	binding := dispatcher.BindingResolved{
-		AgentName:       "go-builder-agent",
+		AgentName:       "builder-agent",
 		CLIKind:         dispatcher.CLIKindClaude,
 		Model:           ptrString(""), // resolver's "absent" representation per W3-FF2.
 		ToolsAllowed:    nil,
@@ -1466,7 +1477,7 @@ func TestRenderValidatorFailsOnTooShortBody(t *testing.T) {
 	// `# PLACEHOLDER` marker (Signal C). Body remainder is only a handful
 	// of chars so total post-closing-delimiter byte count is < 200.
 	shortBody := "---\nname: go-builder-agent\n---\n\n# PLACEHOLDER\nshort\n"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md", shortBody)
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md", shortBody)
 
 	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil)
 	if err == nil {
@@ -1504,7 +1515,7 @@ func TestRenderValidatorFailsOnMissingFrontmatter(t *testing.T) {
 	noFrontmatterBody := "# PLACEHOLDER\n\n" +
 		strings.Repeat("body content without frontmatter to clear the 200-char floor on Signal A. ", 5) +
 		"\n"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md", noFrontmatterBody)
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md", noFrontmatterBody)
 
 	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil)
 	if err == nil {
@@ -1532,7 +1543,7 @@ func TestRenderValidatorFailsOnMissingMarker(t *testing.T) {
 		"Tillsyn-spawned subagent stub. Behavior loaded from the canonical " +
 		"template path. " + strings.Repeat("filler prose to clear Signal A. ", 4) +
 		"\n"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md", stubLikeBody)
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md", stubLikeBody)
 
 	_, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil)
 	if err == nil {
@@ -1564,7 +1575,7 @@ func TestRenderValidatorPassesOnSubstantiveBody(t *testing.T) {
 		"# Section 0 — SEMI-FORMAL REASONING\n\n" +
 		strings.Repeat("Substantive prompt body content above the 200-char floor. ", 4) +
 		"\n"
-	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "go-builder-agent.md", substantiveBody)
+	agentTierProjectFixture(t, project.RepoPrimaryWorktree, "builder-agent.md", substantiveBody)
 
 	if _, err := render.Render(context.Background(), bundle, fixtureItem(), project, fixtureBinding(), nil); err != nil {
 		t.Fatalf("Render() error = %v, want nil (substantive body must pass validator)", err)

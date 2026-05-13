@@ -28,9 +28,9 @@ import (
 
 // initJSONPayload is the schema for `till init --json '{...}'` headless
 // invocations. `Name` and `Group` are required; `MCP` defaults to false
-// (zero value). Group must be one of the W2-supported values
-// (`till-gen`, `till-go`); `till-gdd` is greyed-out per SKETCH §9.3 and
-// rejected as reserved.
+// (zero value). Group must be one of the W2-supported values (`gen`, `go`);
+// `till-gdd` is greyed-out per SKETCH §9.3 and rejected as reserved.
+// Drop 4c.6.1 W4.D1 renamed `till-gen` → `gen` and `till-go` → `go`.
 type initJSONPayload struct {
 	Name  string `json:"name"`
 	Group string `json:"group"`
@@ -40,13 +40,17 @@ type initJSONPayload struct {
 // allowedInitGroups lists the active agent groups `till init` accepts in
 // W2. `till-gdd` is deliberately omitted — it is reserved per SKETCH §9.3
 // and will be re-enabled once GDD methodology lands post-dogfood. Order
-// is preserved for the validation error message.
-var allowedInitGroups = []string{"till-gen", "till-go"}
+// is preserved for the validation error message. Drop 4c.6.1 W4.D1 renamed
+// `till-gen` → `gen` and `till-go` → `go` (canonical group names without
+// the `till-` prefix); the old group names are replaced here and in the
+// test fixtures so the embedded FS paths resolve.
+var allowedInitGroups = []string{"gen", "go"}
 
 // reservedInitGroups lists groups recognized in the schema but rejected
 // at validation time. Each entry returns a tailored "reserved" error so
 // callers can distinguish typos (unknown group) from intentional-but-not-
-// yet-shipped groups.
+// yet-shipped groups. `till-gdd` retains its `till-` prefix because it is
+// a template-family identifier, not a group name — see W4.D1 RiskNotes.
 var reservedInitGroups = map[string]string{
 	"till-gdd": "till-gdd",
 }
@@ -76,7 +80,7 @@ files are skipped, never overwritten.
 `),
 		Example: strings.Join([]string{
 			"  till init",
-			"  till init --json '{\"name\":\"my-project\",\"group\":\"till-go\",\"mcp\":true}'",
+			"  till init --json '{\"name\":\"my-project\",\"group\":\"go\",\"mcp\":true}'",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -129,11 +133,13 @@ type initTUIGroupRow struct {
 }
 
 // initTUIGroupRows is the static picker model the walk renders. Order is
-// load-bearing — the cursor defaults to row 0 (`till-gen`) so the most
-// common pick is one Enter away.
+// load-bearing — the cursor defaults to row 0 (`gen`) so the most
+// common pick is one Enter away. Drop 4c.6.1 W4.D1 renamed `till-gen` → `gen`
+// and `till-go` → `go`; `till-gdd` retains its `till-` prefix (template-family
+// identifier, not a group — see W4.D1 RiskNotes).
 var initTUIGroupRows = []initTUIGroupRow{
-	{Name: "till-gen", Disabled: false},
-	{Name: "till-go", Disabled: false},
+	{Name: "gen", Disabled: false},
+	{Name: "go", Disabled: false},
 	{Name: "till-gdd", Disabled: true},
 }
 
