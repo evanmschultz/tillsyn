@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -472,7 +471,7 @@ func TestRunRootHelp(t *testing.T) {
 		if !strings.Contains(output, "usage") || !strings.Contains(output, "till [command]") {
 			t.Fatalf("expected root usage output, got %q", out.String())
 		}
-		for _, want := range []string{"serve", "mcp", "auth", "project", "embeddings", "capture-state", "kind", "lease", "handoff", "export", "import", "paths"} {
+		for _, want := range []string{"mcp", "auth", "project", "embeddings", "capture-state", "kind", "lease", "handoff", "export", "import", "paths"} {
 			if !strings.Contains(output, want) {
 				t.Fatalf("expected %q command in root help, got %q", want, out.String())
 			}
@@ -487,23 +486,11 @@ func TestRunRootHelp(t *testing.T) {
 
 // TestRunSubcommandHelp verifies subcommand help output returns usage without executing command handlers.
 func TestRunSubcommandHelp(t *testing.T) {
-	origRunner := serveCommandRunner
-	t.Cleanup(func() { serveCommandRunner = origRunner })
-	serveCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
-		t.Fatal("serve command runner should not execute for --help")
-		return nil
-	}
-
 	cases := []struct {
 		name string
 		args []string
 		want []string
 	}{
-		{
-			name: "serve",
-			args: []string{"serve", "--help"},
-			want: []string{"till serve", "--http", "--api-endpoint", "--mcp-endpoint"},
-		},
 		{
 			name: "mcp",
 			args: []string{"mcp", "--help"},
@@ -1795,7 +1782,6 @@ func TestShouldMuteRuntimeConsole(t *testing.T) {
 		{command: "project.list", want: true},
 		{command: "capture-state", want: true},
 		{command: "mcp", want: false},
-		{command: "serve", want: false},
 	}
 
 	for _, tc := range cases {
@@ -2185,10 +2171,6 @@ func TestRunHelpPathsDoNotSeedMissingConfig(t *testing.T) {
 			name: "root help",
 			args: []string{"--db", filepath.Join(workspace, "root-help.db"), "--config", filepath.Join(workspace, "root-help.toml"), "--help"},
 		},
-		{
-			name: "serve help",
-			args: []string{"--db", filepath.Join(workspace, "serve-help.db"), "--config", filepath.Join(workspace, "serve-help.toml"), "serve", "--help"},
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2295,7 +2277,7 @@ func TestResolveRuntimePathsCommandsShareDefaultNonDevRuntime(t *testing.T) {
 		ConfigPath: filepath.Join(workspace, "platform-config.toml"),
 		DBPath:     filepath.Join(workspace, "platform.db"),
 	}
-	commands := []string{"", "mcp", "serve"}
+	commands := []string{"", "mcp"}
 	for _, command := range commands {
 		t.Run(firstNonEmpty(command, "root"), func(t *testing.T) {
 			got, err := resolveRuntimePaths(command, rootCommandOptions{
@@ -2462,267 +2444,6 @@ func TestRunUnknownCommand(t *testing.T) {
 	err := run(context.Background(), []string{"unknown-command"}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unknown command") {
 		t.Fatalf("expected unknown command error, got %v", err)
-	}
-}
-
-// TestRunServeCommandWiresDefaults verifies serve command wiring with default endpoint flags.
-func TestRunServeCommandWiresDefaults(t *testing.T) {
-	origRunner := serveCommandRunner
-	t.Cleanup(func() { serveCommandRunner = origRunner })
-
-	var gotCfg mcpcommon.Config
-	var gotDeps mcpcommon.Dependencies
-	serveCommandRunner = func(_ context.Context, cfg mcpcommon.Config, deps mcpcommon.Dependencies) error {
-		gotCfg = cfg
-		gotDeps = deps
-		return nil
-	}
-
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "tillsyn.db")
-	cfgPath := filepath.Join(tmp, "tillsyn.toml")
-	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
-		t.Fatalf("run(serve) error = %v", err)
-	}
-	if gotCfg.HTTPBind != "127.0.0.1:5437" {
-		t.Fatalf("serve http bind = %q, want 127.0.0.1:5437", gotCfg.HTTPBind)
-	}
-	if gotCfg.APIEndpoint != "/api/v1" {
-		t.Fatalf("serve api endpoint = %q, want /api/v1", gotCfg.APIEndpoint)
-	}
-	if gotCfg.MCPEndpoint != "/mcp" {
-		t.Fatalf("serve mcp endpoint = %q, want /mcp", gotCfg.MCPEndpoint)
-	}
-	if gotDeps.CaptureState == nil {
-		t.Fatal("expected capture_state dependency to be wired")
-	}
-	if gotDeps.Attention == nil {
-		t.Fatal("expected attention dependency to be wired")
-	}
-}
-
-// TestRunServeCommandUsesInterruptEchoSuppression verifies the HTTP daemon path applies the Ctrl-C echo suppression wrapper.
-func TestRunServeCommandUsesInterruptEchoSuppression(t *testing.T) {
-	origRunner := serveCommandRunner
-	origWrapper := withInterruptEchoSuppressedFunc
-	t.Cleanup(func() {
-		serveCommandRunner = origRunner
-		withInterruptEchoSuppressedFunc = origWrapper
-	})
-
-	var calls int
-	withInterruptEchoSuppressedFunc = func(runFn func() error) error {
-		calls++
-		if runFn == nil {
-			return nil
-		}
-		return runFn()
-	}
-	serveCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
-		return nil
-	}
-
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "tillsyn.db")
-	cfgPath := filepath.Join(tmp, "tillsyn.toml")
-	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
-		t.Fatalf("run(serve) error = %v", err)
-	}
-	if calls != 1 {
-		t.Fatalf("withInterruptEchoSuppressedFunc calls = %d, want 1", calls)
-	}
-}
-
-// TestRunServeCommandWiresFlags verifies serve command forwards endpoint flag overrides.
-func TestRunServeCommandWiresFlags(t *testing.T) {
-	origRunner := serveCommandRunner
-	t.Cleanup(func() { serveCommandRunner = origRunner })
-
-	var gotCfg mcpcommon.Config
-	serveCommandRunner = func(_ context.Context, cfg mcpcommon.Config, _ mcpcommon.Dependencies) error {
-		gotCfg = cfg
-		return nil
-	}
-
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "tillsyn.db")
-	cfgPath := filepath.Join(tmp, "tillsyn.toml")
-	args := []string{
-		"--db", dbPath,
-		"--config", cfgPath,
-		"serve",
-		"--http", "127.0.0.1:9090",
-		"--api-endpoint", "/custom-api",
-		"--mcp-endpoint", "/custom-mcp",
-	}
-	if err := run(context.Background(), args, io.Discard, io.Discard); err != nil {
-		t.Fatalf("run(serve with flags) error = %v", err)
-	}
-	if gotCfg.HTTPBind != "127.0.0.1:9090" {
-		t.Fatalf("serve http bind = %q, want 127.0.0.1:9090", gotCfg.HTTPBind)
-	}
-	if gotCfg.APIEndpoint != "/custom-api" {
-		t.Fatalf("serve api endpoint = %q, want /custom-api", gotCfg.APIEndpoint)
-	}
-	if gotCfg.MCPEndpoint != "/custom-mcp" {
-		t.Fatalf("serve mcp endpoint = %q, want /custom-mcp", gotCfg.MCPEndpoint)
-	}
-}
-
-// TestRunServeCommandTreatsCanceledRunnerAsCleanShutdown verifies serve interrupt shutdown stays clean through the wrapper path.
-func TestRunServeCommandTreatsCanceledRunnerAsCleanShutdown(t *testing.T) {
-	origRunner := serveCommandRunner
-	t.Cleanup(func() { serveCommandRunner = origRunner })
-	started := make(chan struct{})
-	serveCommandRunner = func(ctx context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
-		close(started)
-		<-ctx.Done()
-		return ctx.Err()
-	}
-
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "tillsyn.db")
-	cfgPath := filepath.Join(tmp, "tillsyn.toml")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-started
-		cancel()
-	}()
-	if err := run(ctx, []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
-		t.Fatalf("run(serve canceled) error = %v, want nil clean shutdown", err)
-	}
-}
-
-// TestRunServeIntegrationStartsAndStopsDispatcher verifies the Drop 4b.7
-// wiring: runServe constructs a dispatcher via dispatcherFactoryFunc, calls
-// Start at boot, and calls Stop on shutdown. The test injects a stub
-// dispatcher that records both lifecycle calls so the assertion is
-// observable without standing up the subscriber graph.
-func TestRunServeIntegrationStartsAndStopsDispatcher(t *testing.T) {
-	origFactory := dispatcherFactoryFunc
-	origRunner := serveCommandRunner
-	t.Cleanup(func() {
-		dispatcherFactoryFunc = origFactory
-		serveCommandRunner = origRunner
-	})
-
-	stub := &stubDispatcherLifecycle{}
-	dispatcherFactoryFunc = func(_ *app.Service, _ app.LiveWaitBroker) (dispatcherLifecycle, error) {
-		return stub, nil
-	}
-	started := make(chan struct{})
-	serveCommandRunner = func(ctx context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
-		close(started)
-		<-ctx.Done()
-		return ctx.Err()
-	}
-
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "tillsyn.db")
-	cfgPath := filepath.Join(tmp, "tillsyn.toml")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-started
-		cancel()
-	}()
-	if err := run(ctx, []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
-		t.Fatalf("run(serve canceled) error = %v, want nil clean shutdown", err)
-	}
-
-	if got := stub.startCalls.Load(); got != 1 {
-		t.Fatalf("dispatcher Start calls = %d, want 1", got)
-	}
-	if got := stub.stopCalls.Load(); got != 1 {
-		t.Fatalf("dispatcher Stop calls = %d, want 1", got)
-	}
-}
-
-// TestRunServeIntegrationFailsOnDispatcherStartError verifies runServe
-// surfaces a dispatcher Start failure rather than booting the HTTP / MCP
-// servers — fail-loud is the MVP contract per Drop 4b.7's runServe
-// docstring.
-func TestRunServeIntegrationFailsOnDispatcherStartError(t *testing.T) {
-	origFactory := dispatcherFactoryFunc
-	origRunner := serveCommandRunner
-	t.Cleanup(func() {
-		dispatcherFactoryFunc = origFactory
-		serveCommandRunner = origRunner
-	})
-
-	startErr := errors.New("synthetic start failure")
-	stub := &stubDispatcherLifecycle{startReturn: startErr}
-	dispatcherFactoryFunc = func(_ *app.Service, _ app.LiveWaitBroker) (dispatcherLifecycle, error) {
-		return stub, nil
-	}
-	runnerInvoked := false
-	serveCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
-		runnerInvoked = true
-		return nil
-	}
-
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "tillsyn.db")
-	cfgPath := filepath.Join(tmp, "tillsyn.toml")
-	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard)
-	if err == nil {
-		t.Fatal("run(serve) error = nil, want wrapped dispatcher start failure")
-	}
-	if !errors.Is(err, startErr) {
-		t.Fatalf("run(serve) error = %v, want errors.Is(%v)", err, startErr)
-	}
-	if runnerInvoked {
-		t.Fatal("serveCommandRunner invoked despite dispatcher start failure; want fail-loud")
-	}
-	if got := stub.stopCalls.Load(); got != 0 {
-		t.Fatalf("dispatcher Stop calls = %d, want 0 (Stop must not fire when Start failed)", got)
-	}
-}
-
-// stubDispatcherLifecycle is a minimal dispatcherLifecycle test stub. The
-// startReturn / stopReturn fields control the sentinel surfaced by Start /
-// Stop; startCalls / stopCalls record invocation counts so tests assert the
-// runServe lifecycle wired both calls.
-type stubDispatcherLifecycle struct {
-	startCalls   atomic.Int32
-	stopCalls    atomic.Int32
-	startReturn  error
-	stopReturn   error
-	startObserve chan struct{}
-}
-
-func (s *stubDispatcherLifecycle) Start(_ context.Context) error {
-	s.startCalls.Add(1)
-	if s.startObserve != nil {
-		close(s.startObserve)
-	}
-	return s.startReturn
-}
-
-func (s *stubDispatcherLifecycle) Stop(_ context.Context) error {
-	s.stopCalls.Add(1)
-	return s.stopReturn
-}
-
-// TestRunServeCommandPropagatesErrors verifies serve runner failures are returned to callers.
-func TestRunServeCommandPropagatesErrors(t *testing.T) {
-	origRunner := serveCommandRunner
-	t.Cleanup(func() { serveCommandRunner = origRunner })
-
-	serveCommandRunner = func(_ context.Context, _ mcpcommon.Config, _ mcpcommon.Dependencies) error {
-		return errors.New("listen failed")
-	}
-
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "tillsyn.db")
-	cfgPath := filepath.Join(tmp, "tillsyn.toml")
-	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard)
-	if err == nil {
-		t.Fatal("expected serve command error")
-	}
-	if !strings.Contains(err.Error(), "run serve command") {
-		t.Fatalf("expected wrapped serve error, got %v", err)
 	}
 }
 

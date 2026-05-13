@@ -26,7 +26,7 @@ func TestBuildEmbeddingRuntimeConfigParsesDurations(t *testing.T) {
 	cfg.Embeddings.InitialRetryBackoff = "20s"
 	cfg.Embeddings.MaxRetryBackoff = "10m"
 
-	runtimeCfg, err := buildEmbeddingRuntimeConfig(cfg, "tillsyn-test", "serve")
+	runtimeCfg, err := buildEmbeddingRuntimeConfig(cfg, "tillsyn-test", "mcp")
 	if err != nil {
 		t.Fatalf("buildEmbeddingRuntimeConfig() error = %v", err)
 	}
@@ -48,7 +48,7 @@ func TestBuildEmbeddingRuntimeConfigParsesDurations(t *testing.T) {
 	if runtimeCfg.ModelSignature != app.BuildEmbeddingModelSignature("deterministic", "hash-bow-v1", "", 3) {
 		t.Fatalf("model signature = %q", runtimeCfg.ModelSignature)
 	}
-	if !strings.Contains(runtimeCfg.WorkerID, "tillsyn-test:serve:") {
+	if !strings.Contains(runtimeCfg.WorkerID, "tillsyn-test:mcp:") {
 		t.Fatalf("worker id = %q, want app and command segments", runtimeCfg.WorkerID)
 	}
 }

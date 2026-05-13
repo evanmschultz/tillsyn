@@ -22,10 +22,8 @@ import (
 	fantasyembed "github.com/evanmschultz/tillsyn/internal/adapters/embeddings/fantasy"
 	mcpcommon "github.com/evanmschultz/tillsyn/internal/adapters/mcp_common"
 	mcpstdio "github.com/evanmschultz/tillsyn/internal/adapters/mcp_stdio"
-	serveradapter "github.com/evanmschultz/tillsyn/internal/adapters/server"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
-	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
 	// Side-effect import: cli_claude.init() registers the claude adapter
 	// with the dispatcher's CLIKind→adapter registry at process start. Drop
 	// 4c F.7.17.5 adapter wiring; Drop 4d adds a parallel cli_codex import.
@@ -51,31 +49,6 @@ type program interface {
 // programFactory stores a package-level helper value.
 var programFactory = func(m tea.Model) program {
 	return tea.NewProgram(m)
-}
-
-// serveCommandRunner starts the HTTP+MCP serve flow.
-var serveCommandRunner = func(ctx context.Context, cfg mcpcommon.Config, deps mcpcommon.Dependencies) error {
-	return serveradapter.Run(ctx, cfg, deps)
-}
-
-// dispatcherLifecycle is the narrow Start/Stop seam runServe consumes for
-// the cascade dispatcher. The dispatcher package's Dispatcher interface is
-// the production satisfier; the local alias keeps cmd/till's surface
-// minimal. Tests stub the factory to assert Start/Stop both fire during the
-// serve flow without standing up the real subscriber graph.
-type dispatcherLifecycle interface {
-	Start(ctx context.Context) error
-	Stop(ctx context.Context) error
-}
-
-// dispatcherFactoryFunc constructs a dispatcherLifecycle for runServe.
-// Production wires NewDispatcher; tests swap in a stub via t.Cleanup.
-var dispatcherFactoryFunc = func(svc *app.Service, broker app.LiveWaitBroker) (dispatcherLifecycle, error) {
-	disp, err := dispatcher.NewDispatcher(svc, broker, dispatcher.Options{})
-	if err != nil {
-		return nil, err
-	}
-	return disp, nil
 }
 
 // mcpCommandRunner starts the stdio MCP flow.
@@ -120,15 +93,10 @@ type rootCommandOptions struct {
 	showVersion bool
 }
 
-// serveCommandOptions stores serve subcommand option values.
-type serveCommandOptions struct {
-	httpBind    string
-	apiEndpoint string
+// mcpCommandOptions stores stdio MCP subcommand option values.
+type mcpCommandOptions struct {
 	mcpEndpoint string
 }
-
-// mcpCommandOptions stores stdio MCP subcommand option values.
-type mcpCommandOptions struct{}
 
 // authCommandOptions stores auth subcommand option values.
 type authCommandOptions struct{}
@@ -415,12 +383,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		rootOpts.homeDir = envHome
 	}
 
-	serveOpts := serveCommandOptions{
-		httpBind:    "127.0.0.1:5437",
-		apiEndpoint: "/api/v1",
+	mcpOpts := mcpCommandOptions{
 		mcpEndpoint: "/mcp",
 	}
-	mcpOpts := mcpCommandOptions{}
 	authOpts := authCommandOptions{}
 	projectListOpts := projectListCommandOptions{}
 	projectCreateOpts := projectCreateCommandOptions{}
@@ -474,15 +439,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	dispatcherRunOpts := dispatcherRunCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, serveOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, dispatcherRunOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, dispatcherRunOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
 		Use:   "till",
-		Short: "Local-first planning TUI with stdio MCP and HTTP adapters",
+		Short: "Local-first planning TUI with stdio MCP adapter",
 		Long: strings.TrimSpace(`
-Run Tillsyn as an interactive local-first planning workspace, an stdio MCP
-runtime, or an HTTP API + streamable MCP service.
+Run Tillsyn as an interactive local-first planning workspace or an stdio MCP
+runtime.
 
 Use the bare till command to open the TUI. Use subcommands when you need stable
 operator flows for projects, auth/session lifecycle, leases, handoffs, snapshot
@@ -494,7 +459,6 @@ transport, or embeddings operations.
 			"  till project create --name Inbox",
 			"  till embeddings status --cross-project",
 			"  till mcp",
-			"  till serve --http 127.0.0.1:4848",
 		}, "\n"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -513,31 +477,6 @@ transport, or embeddings operations.
 	rootCmd.PersistentFlags().BoolVar(&rootOpts.devMode, "dev", rootOpts.devMode, "Use repo-local dev runtime home when --home is not set")
 	rootCmd.PersistentFlags().BoolVar(&rootOpts.showVersion, "version", false, "Show version")
 
-	serveCmd := &cobra.Command{
-		Use:   "serve",
-		Short: "Start HTTP API and streamable HTTP MCP endpoints",
-		Long: strings.TrimSpace(`
-Start the long-running Tillsyn server process with both the HTTP API and the
-streamable HTTP MCP endpoint enabled.
-
-Use this when a browser client, remote MCP client, or another local process
-needs to talk to one persistent runtime instead of invoking 'till mcp' over
-stdio.
-`),
-		Example: strings.Join([]string{
-			"  till serve",
-			"  till serve --http 127.0.0.1:4848",
-			"  till serve --http 127.0.0.1:4848 --api-endpoint /api --mcp-endpoint /mcp",
-		}, "\n"),
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "serve")
-		},
-	}
-	serveCmd.Flags().StringVar(&serveOpts.httpBind, "http", serveOpts.httpBind, "HTTP listen address")
-	serveCmd.Flags().StringVar(&serveOpts.apiEndpoint, "api-endpoint", serveOpts.apiEndpoint, "HTTP API base endpoint")
-	serveCmd.Flags().StringVar(&serveOpts.mcpEndpoint, "mcp-endpoint", serveOpts.mcpEndpoint, "MCP streamable HTTP endpoint")
-
 	mcpCmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Start raw MCP over stdio for local integrations",
@@ -545,7 +484,7 @@ stdio.
 Start the raw stdio MCP runtime for local agent integrations.
 
 Use this when one local MCP-capable client should speak directly to Tillsyn
-over stdin/stdout instead of the HTTP server surface.
+over stdin/stdout.
 `),
 		Example: strings.Join([]string{
 			"  till mcp",
@@ -1038,7 +977,7 @@ status' for manual progress inspection.
 		Short: "Capture one summary-first recovery snapshot",
 		Long: strings.TrimSpace(`
 Capture a deterministic, summary-first recovery snapshot for one project or
-scope. The result is the same capture_state bundle exposed through MCP and HTTP.
+scope. The result is the same capture_state bundle exposed through MCP.
 
 Next step: inspect the returned JSON for the scope path, state hash, work
 overview, attention overview, and follow-up pointers.
@@ -1884,7 +1823,7 @@ or explicit path overrides through flags and environment.
 
 	initCmd := newInitCommand(stdout, &rootOpts)
 	installCmd := newInstallCommand(stdout, &rootOpts)
-	rootCmd.AddCommand(serveCmd, mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initCmd, installCmd)
+	rootCmd.AddCommand(mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initCmd, installCmd)
 	applyCommandHelp(rootCmd)
 	return fang.Execute(
 		ctx,
@@ -1999,7 +1938,7 @@ func resolveRuntimePaths(command string, opts rootCommandOptions, paths platform
 
 // ensureRuntimePathParents creates any required runtime parent directories before startup.
 func ensureRuntimePathParents(command string, paths resolvedRuntimePaths) error {
-	if command == "" || command == "serve" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" || command == "dispatcher.run" {
+	if command == "" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" || command == "dispatcher.run" {
 		if err := os.MkdirAll(filepath.Dir(paths.ConfigPath), 0o755); err != nil {
 			return fmt.Errorf("create config directory: %w", err)
 		}
@@ -2134,8 +2073,7 @@ func executeCommandFlow(
 	ctx context.Context,
 	command string,
 	rootOpts rootCommandOptions,
-	serveOpts serveCommandOptions,
-	_ mcpCommandOptions,
+	mcpOpts mcpCommandOptions,
 	_ authCommandOptions,
 	projectListOpts projectListCommandOptions,
 	projectCreateOpts projectCreateCommandOptions,
@@ -2377,24 +2315,10 @@ func executeCommandFlow(
 	switch command {
 	case "":
 		logger.Info("command flow start", "command", "tui")
-	case "serve":
-		logger.Info("command flow start", "command", "serve")
-		if err := withInterruptEchoSuppressedFunc(func() error {
-			return runServe(ctx, svc, authSvc, liveWaitBroker, rootOpts.appName, serveOpts)
-		}); err != nil {
-			if errors.Is(err, context.Canceled) {
-				logger.Info("command flow complete", "command", "serve", "shutdown", "interrupt")
-				return nil
-			}
-			logger.Error("command flow failed", "command", "serve", "err", err)
-			return fmt.Errorf("run serve command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "serve")
-		return nil
 	case "mcp":
 		logger.Info("command flow start", "command", "mcp", "transport", "stdio")
 		if err := withInterruptEchoSuppressedFunc(func() error {
-			return runMCP(ctx, svc, authSvc, rootOpts.appName, serveOpts)
+			return runMCP(ctx, svc, authSvc, rootOpts.appName, mcpOpts)
 		}); err != nil {
 			if errors.Is(err, context.Canceled) {
 				logger.Info("command flow complete", "command", "mcp", "transport", "stdio", "shutdown", "interrupt")
@@ -2630,56 +2554,15 @@ func executeCommandFlow(
 // shouldMuteRuntimeConsole reports whether runtime logs should stay off the console for one command.
 func shouldMuteRuntimeConsole(command string) bool {
 	switch command {
-	case "serve", "mcp":
+	case "mcp":
 		return false
 	default:
 		return true
 	}
 }
 
-// runServe runs the serve subcommand flow.
-//
-// Drop 4b.7 wires the cascade dispatcher's continuous-mode loop alongside
-// the HTTP + MCP servers: NewDispatcher / Start at boot, Stop with a
-// bounded shutdown context on exit. The dispatcher subscribes to
-// LiveWaitEventActionItemChanged events per project and auto-promotes
-// eligible action items via the existing 4a.23 RunOnce pipeline. Spawn
-// invocation goes through the 4a.19 stub today; Drop 4c F.7 swaps in the
-// real Claude-Code spawn pipeline without disturbing the subscriber loop.
-//
-// dispatcher Start failures surface as a non-nil error so the serve flow
-// fails fast on misconfiguration — fail-loud is preferred for MVP. The
-// HTTP / MCP servers do NOT boot if the dispatcher cannot start.
-func runServe(ctx context.Context, svc *app.Service, auth *autentauth.Service, broker app.LiveWaitBroker, appName string, opts serveCommandOptions) error {
-	appAdapter := mcpcommon.NewAppServiceAdapter(svc, auth)
-
-	disp, err := dispatcherFactoryFunc(svc, broker)
-	if err != nil {
-		return fmt.Errorf("construct dispatcher: %w", err)
-	}
-	if err := disp.Start(ctx); err != nil {
-		return fmt.Errorf("start dispatcher: %w", err)
-	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = disp.Stop(stopCtx)
-	}()
-
-	return serveCommandRunner(ctx, mcpcommon.Config{
-		HTTPBind:      opts.httpBind,
-		APIEndpoint:   opts.apiEndpoint,
-		MCPEndpoint:   opts.mcpEndpoint,
-		ServerName:    appName,
-		ServerVersion: version,
-	}, mcpcommon.Dependencies{
-		CaptureState: appAdapter,
-		Attention:    appAdapter,
-	})
-}
-
 // runMCP runs the stdio MCP subcommand flow.
-func runMCP(ctx context.Context, svc *app.Service, auth *autentauth.Service, appName string, opts serveCommandOptions) error {
+func runMCP(ctx context.Context, svc *app.Service, auth *autentauth.Service, appName string, opts mcpCommandOptions) error {
 	appAdapter := mcpcommon.NewAppServiceAdapter(svc, auth)
 	return mcpCommandRunner(ctx, mcpcommon.Config{
 		MCPEndpoint:   opts.mcpEndpoint,

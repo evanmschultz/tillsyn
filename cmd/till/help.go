@@ -32,20 +32,6 @@ flags, and next-step guidance stay explicit.
 			"  till auth request list --state pending",
 		},
 	},
-	"till serve": {
-		Long: strings.TrimSpace(`
-Start the local HTTP API and streamable HTTP MCP endpoints for one Tillsyn
-runtime.
-
-Use this when a browser client, HTTP integration, or remote MCP client needs
-to talk to the local store over HTTP rather than stdio.
-`),
-		Example: []string{
-			"  till serve",
-			"  till serve --http 127.0.0.1:4848",
-			"  till serve --http 127.0.0.1:4848 --api-endpoint /api --mcp-endpoint /mcp",
-		},
-	},
 	"till mcp": {
 		Long: strings.TrimSpace(`
 Start the raw stdio MCP runtime for local agent integrations.
