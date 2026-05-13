@@ -188,12 +188,14 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 
 // TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo drives the bubbletea
 // walk: the user presses Enter on the default name then immediately presses
-// Enter again to confirm the default group selection. After D3, the group
-// picker pre-selects "gen" (row 0), so one Enter on the group step confirms
-// Groups = ["gen"] without any navigation.
+// Enter again to confirm the default group selection, then Enter again to
+// confirm the MCP default YES. After D3, the group picker pre-selects "gen"
+// (row 0), so one Enter on the group step advances to the MCP confirm step.
+// After D4, a second Enter on the MCP step accepts the default YES and
+// completes the walk with MCPRegistration() = true.
 //
-// Drop 4c.6.1 W2.D3: replaced single-cursor picker with picker_multi.go
-// component. "gen" is pre-selected by default. Enter immediately confirms.
+// Drop 4c.6.1 W2.D4: MCP confirm step added between group and done.
+// The walk is now name -> group -> MCP -> done (three Enter presses).
 //
 // The test does NOT exercise the cobra wiring — runInitTUI depends on
 // programFactory which writes to /dev/tty in production. Driving at the
@@ -225,8 +227,16 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 		return strings.Contains(string(out), "gen")
 	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
 
-	// Step 2: press Enter to confirm the default selection (["gen"]
-	// pre-selected by newInitTUIModel via the picker_multi.go component).
+	// Step 2: press Enter to confirm the default group selection (["gen"]
+	// pre-selected). Advances to the MCP confirm step (W2.D4).
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return strings.Contains(string(out), "mcp.json") || strings.Contains(string(out), "Y/n")
+	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
+
+	// Step 3: press Enter to accept the default YES on the MCP confirm step
+	// (D4: defaultYes=true). Advances to initTUIStepDone.
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
@@ -236,7 +246,7 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 		t.Fatalf("FinalModel type = %T; want initTUIModel", tm.FinalModel(t))
 	}
 	if !final.Done() {
-		t.Fatalf("final.Done() = false; want true after enter on group")
+		t.Fatalf("final.Done() = false; want true after enter on MCP step")
 	}
 	if final.Cancelled() {
 		t.Fatalf("final.Cancelled() = true; want false after a complete walk")
@@ -248,8 +258,8 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 	if len(got.Groups) != 1 || got.Groups[0] != "gen" {
 		t.Fatalf("Payload().Groups = %v; want [\"gen\"] (default pre-selection)", got.Groups)
 	}
-	if got.MCPRegistration() {
-		t.Fatalf("Payload().MCPRegistration() = true; want false (TUI mode default until D4)")
+	if !got.MCPRegistration() {
+		t.Fatalf("Payload().MCPRegistration() = false; want true (D4: default YES on Enter)")
 	}
 }
 
@@ -259,13 +269,16 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 //
 //	Enter (name) → j → j (cursor to fe) → Space (select fe) →
 //	k → k (cursor to gen) → Space (deselect gen) → j → j (cursor to fe) →
-//	Enter (confirm)
+//	Enter (confirm group) → Enter (accept MCP default YES)
 //
 // Final selection: Groups = ["fe"].
 //
 // Drop 4c.6.1 W2.D3: picker_multi.go uses j/k (not Up/Down) for navigation
 // and Space for toggle. gen is pre-selected by default; user must deselect it
 // to get an exclusive fe selection.
+//
+// Drop 4c.6.1 W2.D4: MCP confirm step added after group step. An extra Enter
+// accepts the default YES.
 func TestRunInitTUI_SelectsFeRow(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -299,10 +312,18 @@ func TestRunInitTUI_SelectsFeRow(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: 'k'})          // cursor go(1) -> gen(0)
 	tm.Send(tea.KeyPressMsg{Code: tea.KeySpace}) // deselect gen; selected={0:false,2:true}
 
-	// Navigate back to fe for clarity, then confirm.
+	// Navigate back to fe for clarity, then confirm group selection.
+	// Advances to MCP confirm step (W2.D4).
 	tm.Send(tea.KeyPressMsg{Code: 'j'})          // cursor gen(0) -> go(1)
 	tm.Send(tea.KeyPressMsg{Code: 'j'})          // cursor go(1) -> fe(2)
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // confirm; Selected()=["fe"]
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // confirm group; -> initTUIStepMCP
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return strings.Contains(string(out), "mcp.json") || strings.Contains(string(out), "Y/n")
+	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
+
+	// Accept default YES on MCP confirm step.
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // -> initTUIStepDone
 
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
 
@@ -314,7 +335,7 @@ func TestRunInitTUI_SelectsFeRow(t *testing.T) {
 		t.Fatalf("final.Cancelled() = true; want false (walk completed with fe selection)")
 	}
 	if !final.Done() {
-		t.Fatalf("final.Done() = false; want true after enter on fe row")
+		t.Fatalf("final.Done() = false; want true after enter on MCP step")
 	}
 	if got := final.Payload().Groups; len(got) != 1 || got[0] != "fe" {
 		t.Fatalf("Payload().Groups = %v; want [\"fe\"]", got)
@@ -1434,10 +1455,16 @@ func TestInitTUIModel_GroupMultiSelect(t *testing.T) {
 
 	t.Run("default_gen_preselected", func(t *testing.T) {
 		m := advanceToGroupStep(t, cwd)
-		// gen is pre-selected — pressing Enter immediately confirms ["gen"].
+		// gen is pre-selected — pressing Enter immediately confirms ["gen"] and
+		// advances to the MCP confirm step (W2.D4).
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepMCP {
+			t.Fatalf("step after group Enter = %v; want initTUIStepMCP (D4: group -> MCP)", m.step)
+		}
+		// Accept the default YES on the MCP confirm step.
 		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 		if m.step != initTUIStepDone {
-			t.Fatalf("step after Enter on default = %v; want initTUIStepDone", m.step)
+			t.Fatalf("step after MCP Enter = %v; want initTUIStepDone", m.step)
 		}
 		if got := m.finalPayload.Groups; len(got) != 1 || got[0] != "gen" {
 			t.Fatalf("Groups = %v; want [\"gen\"] (default pre-selection)", got)
@@ -1454,10 +1481,15 @@ func TestInitTUIModel_GroupMultiSelect(t *testing.T) {
 		// Move to fe (2) and select it.
 		m = update(m, tea.KeyPressMsg{Code: 'j'})          // cursor -> 2
 		m = update(m, tea.KeyPressMsg{Code: tea.KeySpace}) // select fe
-		// Confirm.
+		// Confirm group selection -> MCP confirm step (W2.D4).
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepMCP {
+			t.Fatalf("step after group Enter = %v; want initTUIStepMCP (D4: group -> MCP)", m.step)
+		}
+		// Accept the default YES on the MCP confirm step.
 		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 		if m.step != initTUIStepDone {
-			t.Fatalf("step after multi-select Enter = %v; want initTUIStepDone", m.step)
+			t.Fatalf("step after MCP Enter = %v; want initTUIStepDone", m.step)
 		}
 		got := m.finalPayload.Groups
 		if len(got) != 2 || got[0] != "go" || got[1] != "fe" {
@@ -1477,14 +1509,19 @@ func TestInitTUIModel_GroupMultiSelect(t *testing.T) {
 		if m.emptyHint == "" {
 			t.Fatalf("emptyHint = \"\"; want a non-empty hint message after Enter on empty selection")
 		}
-		// Now select gen again and confirm — hint clears and walk advances.
+		// Now select gen again and confirm -> MCP confirm step (W2.D4).
 		m = update(m, tea.KeyPressMsg{Code: tea.KeySpace}) // re-select gen
 		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-		if m.step != initTUIStepDone {
-			t.Fatalf("step after re-selecting gen and Enter = %v; want initTUIStepDone", m.step)
+		if m.step != initTUIStepMCP {
+			t.Fatalf("step after re-selecting gen and Enter = %v; want initTUIStepMCP (D4: group -> MCP)", m.step)
 		}
 		if m.emptyHint != "" {
-			t.Fatalf("emptyHint = %q; want \"\" after successful confirmation", m.emptyHint)
+			t.Fatalf("emptyHint = %q; want \"\" after successful group confirmation", m.emptyHint)
+		}
+		// Accept MCP confirm.
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepDone {
+			t.Fatalf("step after MCP Enter = %v; want initTUIStepDone", m.step)
 		}
 		if got := m.finalPayload.Groups; len(got) != 1 || got[0] != "gen" {
 			t.Fatalf("Groups = %v; want [\"gen\"]", got)
@@ -1514,6 +1551,172 @@ func TestRunInit_JSONMode_MultiGroup(t *testing.T) {
 	if !strings.Contains(stdout, "Init") {
 		t.Fatalf("stdout = %q; want Laslig Init block", stdout)
 	}
+}
+
+// TestInitTUIModel_MCPStep verifies the MCP confirm step added by W2.D4:
+//
+//   - enter_yes: advance name->group->MCP via Enter x2, then press Enter at
+//     the MCP prompt to accept the default YES. Payload().MCPRegistration()
+//     must return true and Done() must be true.
+//   - n_no: advance to MCP, press 'n' to decline. MCPRegistration() returns
+//     false and Done() returns true.
+//   - esc_cancel: advance to MCP, press Esc. Cancelled() returns true,
+//     Done() returns false.
+//
+// Tests drive the model directly (no teatest program) to inspect mid-walk
+// state without relying on WaitFinished. Pattern mirrors
+// TestInitTUIModel_GroupMultiSelect above.
+func TestInitTUIModel_MCPStep(t *testing.T) {
+	update := func(m initTUIModel, msg tea.Msg) initTUIModel {
+		t.Helper()
+		next, _ := m.Update(msg)
+		cast, ok := next.(initTUIModel)
+		if !ok {
+			t.Fatalf("Update returned unexpected type %T; want initTUIModel", next)
+		}
+		return cast
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	// advanceToMCPStep drives the model through the name step (Enter) and the
+	// group step (Enter on default pre-selection) to arrive at initTUIStepMCP.
+	advanceToMCPStep := func(t *testing.T) initTUIModel {
+		t.Helper()
+		m := newInitTUIModel(cwd)
+		// Accept default name.
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepGroup {
+			t.Fatalf("step after name Enter = %v; want initTUIStepGroup", m.step)
+		}
+		// Confirm default group selection (gen pre-selected).
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepMCP {
+			t.Fatalf("step after group Enter = %v; want initTUIStepMCP", m.step)
+		}
+		return m
+	}
+
+	t.Run("enter_yes", func(t *testing.T) {
+		m := advanceToMCPStep(t)
+		// Enter accepts the default YES (defaultYes=true in NewConfirm).
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if !m.Done() {
+			t.Fatalf("Done() = false after Enter on MCP step; want true")
+		}
+		if m.Cancelled() {
+			t.Fatalf("Cancelled() = true after Enter YES on MCP step; want false")
+		}
+		if got := m.Payload().MCPRegistration(); !got {
+			t.Fatalf("MCPRegistration() = false after Enter YES; want true")
+		}
+	})
+
+	t.Run("n_no", func(t *testing.T) {
+		m := advanceToMCPStep(t)
+		// 'n' declines.
+		m = update(m, tea.KeyPressMsg{Code: 'n'})
+		if !m.Done() {
+			t.Fatalf("Done() = false after 'n' on MCP step; want true")
+		}
+		if m.Cancelled() {
+			t.Fatalf("Cancelled() = true after 'n' on MCP step; want false (NO is a valid answer, not a cancel)")
+		}
+		if got := m.Payload().MCPRegistration(); got {
+			t.Fatalf("MCPRegistration() = true after 'n'; want false")
+		}
+	})
+
+	t.Run("esc_cancel", func(t *testing.T) {
+		m := advanceToMCPStep(t)
+		// Esc cancels the walk.
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+		if !m.Cancelled() {
+			t.Fatalf("Cancelled() = false after Esc on MCP step; want true")
+		}
+		if m.Done() {
+			t.Fatalf("Done() = true after Esc cancel on MCP step; want false")
+		}
+	})
+}
+
+// TestRunInit_JSONMode_MCPPaths is the CONSUMER-TIE supplement mandated by
+// W2.D4 acceptance criteria. It exercises three JSON-mode MCP paths via
+// run() end-to-end to verify that D1's MCPRegistration() accessor and the
+// D4 pipeline consume the field correctly:
+//
+//   - mcp_true: {"groups":["go"],"mcp":true} -> MCPRegistration() = true
+//     (pipeline runs registerMCPJSON with includeMCP=true).
+//   - mcp_false: {"groups":["go"],"mcp":false} -> MCPRegistration() = false
+//     (pipeline skips .mcp.json write).
+//   - no_mcp_key: {"groups":["go"]} (omitted) -> MCPRegistration() = true
+//     (nil *bool defaults to true per D1 opt-out model).
+//
+// Each case invokes run(...) end-to-end so the cobra wiring, JSON parsing,
+// validateInitPayload, runInitJSON -> runInitPipeline -> registerMCPJSON
+// chain are all exercised. Success is nil error + Laslig Init block in stdout.
+func TestRunInit_JSONMode_MCPPaths(t *testing.T) {
+	t.Run("mcp_true", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+		var out strings.Builder
+		err := run(context.Background(),
+			[]string{"--app", "tillsyn-init", "init", "--json", `{"name":"x","groups":["go"],"mcp":true}`},
+			&out, io.Discard)
+		if err != nil {
+			t.Fatalf("run(mcp:true) error = %v; want nil", err)
+		}
+		if !strings.Contains(out.String(), "Init") {
+			t.Fatalf("stdout = %q; want Laslig Init block", out.String())
+		}
+	})
+
+	t.Run("mcp_false", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+		var out strings.Builder
+		err := run(context.Background(),
+			[]string{"--app", "tillsyn-init", "init", "--json", `{"name":"x","groups":["go"],"mcp":false}`},
+			&out, io.Discard)
+		if err != nil {
+			t.Fatalf("run(mcp:false) error = %v; want nil", err)
+		}
+		if !strings.Contains(out.String(), "Init") {
+			t.Fatalf("stdout = %q; want Laslig Init block", out.String())
+		}
+		// mcp:false must NOT create .mcp.json.
+		mcpPath := filepath.Join(tmp, ".mcp.json")
+		if _, statErr := os.Stat(mcpPath); statErr == nil {
+			t.Fatalf(".mcp.json exists at %q; mcp:false must not create the file", mcpPath)
+		}
+	})
+
+	t.Run("no_mcp_key", func(t *testing.T) {
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+		var out strings.Builder
+		err := run(context.Background(),
+			[]string{"--app", "tillsyn-init", "init", "--json", `{"name":"x","groups":["go"]}`},
+			&out, io.Discard)
+		if err != nil {
+			t.Fatalf("run(no mcp key) error = %v; want nil (nil->true default)", err)
+		}
+		if !strings.Contains(out.String(), "Init") {
+			t.Fatalf("stdout = %q; want Laslig Init block", out.String())
+		}
+		// Omitting mcp key defaults to true -> .mcp.json should be created
+		// (either added or already exists).
+		mcpPath := filepath.Join(tmp, ".mcp.json")
+		if _, statErr := os.Stat(mcpPath); statErr != nil {
+			t.Fatalf(".mcp.json not found at %q; nil mcp key defaults to true -> file must be created: %v", mcpPath, statErr)
+		}
+	})
 }
 
 // topKeys returns the keys of a map[string]json.RawMessage for use in

@@ -105,9 +105,9 @@ files are skipped, never overwritten.
 }
 
 // initTUIStep enumerates the bubbletea walk's current state. The walk is a
-// two-step linear flow (name → group) with an explicit completion / cancel
-// terminal — keeping the step type closed makes the Update logic dispatch
-// on a single switch and the tests assert state directly.
+// three-step linear flow (name → group → mcp) with an explicit completion /
+// cancel terminal — keeping the step type closed makes the Update logic
+// dispatch on a single switch and the tests assert state directly.
 type initTUIStep int
 
 const (
@@ -120,6 +120,12 @@ const (
 	// Esc cancels.
 	initTUIStepGroup
 
+	// initTUIStepMCP prompts the user to confirm .mcp.json registration via
+	// the confirm.go sub-component. Default answer is YES (default = true
+	// per REVISION_BRIEF §2.6). Enter accepts YES; y/Y explicit YES; n/N
+	// NO; Esc cancels the walk.
+	initTUIStepMCP
+
 	// initTUIStepDone is the terminal state — Done() returns true and the
 	// caller reads Payload().
 	initTUIStepDone
@@ -131,8 +137,9 @@ const (
 
 // initTUIModel is the bubbletea model that drives the `till init` walk —
 // project name via textinput, agent groups via the picker_multi.go
-// component. The model exposes Done() / Cancelled() / Payload() so the
-// caller (runInitTUI) can read the final state once tea.Program.Run
+// component, and a y/n MCP registration confirm via the confirm.go
+// sub-component. The model exposes Done() / Cancelled() / Payload() so
+// the caller (runInitTUI) can read the final state once tea.Program.Run
 // returns the terminal model. The shape mirrors the in-repo textinput
 // patterns at `internal/tui/file_picker_core.go` (textinput usage) and
 // the keymap idioms at `internal/tui/model.go` (tea.KeyEnter / etc.).
@@ -140,6 +147,7 @@ type initTUIModel struct {
 	step         initTUIStep
 	nameInput    textinput.Model
 	groupPicker  components.PickerMultiModel
+	mcpConfirm   components.ConfirmModel
 	emptyHint    string
 	defaultName  string
 	finalPayload initJSONPayload
@@ -174,6 +182,7 @@ func newInitTUIModel(cwd string) initTUIModel {
 		step:        initTUIStepName,
 		nameInput:   ti,
 		groupPicker: picker,
+		mcpConfirm:  components.NewConfirm("Register MCP server in .mcp.json?", true),
 		defaultName: def,
 	}
 }
@@ -237,14 +246,31 @@ func (m initTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			m.finalPayload.Groups = m.groupPicker.Selected()
-			// D3->D4 interim: TUI hardwires MCP to false. D4 removes this
-			// hardwire and adds the confirm step that sets MCP via user input.
-			mcpFalse := false
-			m.finalPayload.MCP = &mcpFalse
+			// Advance to the MCP confirm step (D4). The hardwire is gone.
+			m.step = initTUIStepMCP
+			return m, nil
+		}
+		return m, cmd
+
+	case initTUIStepMCP:
+		// Intercept Esc directly: Esc cancels the entire walk, distinct from
+		// pressing 'n' which is a valid NO answer. The confirm component merges
+		// both into Cancelled() so we separate them here before forwarding.
+		if kp, ok := msg.(tea.KeyPressMsg); ok && kp.Code == tea.KeyEsc {
+			m.step = initTUIStepCancelled
+			return m, tea.Quit
+		}
+		m.mcpConfirm, _ = m.mcpConfirm.Update(msg)
+		if m.mcpConfirm.Done() {
+			// Confirmed() = true for y/Y/Enter-default-yes (MCP enabled).
+			// !Confirmed() = false for n/N (MCP disabled). Both are valid
+			// answers — only Esc (handled above) cancels the walk.
+			mcpYes := m.mcpConfirm.Confirmed()
+			m.finalPayload.MCP = &mcpYes
 			m.step = initTUIStepDone
 			return m, tea.Quit
 		}
-		return m, cmd
+		return m, nil
 
 	default:
 		// Terminal states ignore further input.
@@ -271,6 +297,9 @@ func (m initTUIModel) View() tea.View {
 			b.WriteString(m.emptyHint)
 			b.WriteString("\n")
 		}
+	case initTUIStepMCP:
+		b.WriteString(m.mcpConfirm.View())
+		b.WriteString("\n")
 	case initTUIStepDone:
 		b.WriteString("done\n")
 	case initTUIStepCancelled:
