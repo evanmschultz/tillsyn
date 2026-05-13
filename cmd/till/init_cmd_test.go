@@ -187,15 +187,13 @@ func TestInit_JSONParse_TableDriven(t *testing.T) {
 }
 
 // TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo drives the bubbletea
-// walk: the user presses enter on the default name (filepath.Base(cwd)),
-// moves the group cursor down to `go` (row 1), and presses enter to confirm.
-// The final model must have Done() true, Payload().Groups = ["go"], and
-// MCPRegistration() false (TUI hardwires MCP=false until D4 adds the
-// confirm step).
+// walk: the user presses Enter on the default name then immediately presses
+// Enter again to confirm the default group selection. After D3, the group
+// picker pre-selects "gen" (row 0), so one Enter on the group step confirms
+// Groups = ["gen"] without any navigation.
 //
-// Drop 4c.6.1 W2.D1: Groups replaces Group; initTUIGroupRows now has 3
-// all-enabled rows: gen (0), go (1), fe (2). One Down press moves from
-// gen to go.
+// Drop 4c.6.1 W2.D3: replaced single-cursor picker with picker_multi.go
+// component. "gen" is pre-selected by default. Enter immediately confirms.
 //
 // The test does NOT exercise the cobra wiring — runInitTUI depends on
 // programFactory which writes to /dev/tty in production. Driving at the
@@ -224,13 +222,11 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
-		return strings.Contains(string(out), "go")
+		return strings.Contains(string(out), "gen")
 	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
 
-	// Step 2: cursor starts on `gen` (default). Press Down to land on `go`.
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
-
-	// Step 3: press Enter to confirm `go`.
+	// Step 2: press Enter to confirm the default selection (["gen"]
+	// pre-selected by newInitTUIModel via the picker_multi.go component).
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
@@ -249,22 +245,27 @@ func TestRunInitTUI_AcceptsDefaultNameAndSelectsTillGo(t *testing.T) {
 	if got.Name != wantName {
 		t.Fatalf("Payload().Name = %q; want %q", got.Name, wantName)
 	}
-	if len(got.Groups) != 1 || got.Groups[0] != "go" {
-		t.Fatalf("Payload().Groups = %v; want [\"go\"]", got.Groups)
+	if len(got.Groups) != 1 || got.Groups[0] != "gen" {
+		t.Fatalf("Payload().Groups = %v; want [\"gen\"] (default pre-selection)", got.Groups)
 	}
 	if got.MCPRegistration() {
 		t.Fatalf("Payload().MCPRegistration() = true; want false (TUI mode default until D4)")
 	}
 }
 
-// TestRunInitTUI_SelectsFeRow verifies that the third row (`fe`) is
-// selectable after W2.D1 removes `till-gdd` and adds `fe` as a canonical
-// all-enabled group. Pressing Down twice from `gen` (row 0) lands on `fe`
-// (row 2); pressing Enter produces a payload with Groups = ["fe"].
+// TestRunInitTUI_SelectsFeRow verifies that the "fe" group (row 2) is
+// selectable as the sole group. The key sequence deselects the default "gen"
+// and selects "fe" only:
 //
-// This replaces TestRunInitTUI_DisabledTillGddIsUnselectable which tested
-// the old disabled-row skip logic. W2.D1 removes the disabled row; all
-// three rows (gen/go/fe) are now enabled.
+//	Enter (name) → j → j (cursor to fe) → Space (select fe) →
+//	k → k (cursor to gen) → Space (deselect gen) → j → j (cursor to fe) →
+//	Enter (confirm)
+//
+// Final selection: Groups = ["fe"].
+//
+// Drop 4c.6.1 W2.D3: picker_multi.go uses j/k (not Up/Down) for navigation
+// and Space for toggle. gen is pre-selected by default; user must deselect it
+// to get an exclusive fe selection.
 func TestRunInitTUI_SelectsFeRow(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -288,12 +289,20 @@ func TestRunInitTUI_SelectsFeRow(t *testing.T) {
 		return strings.Contains(string(out), "fe")
 	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
 
-	// Cursor starts on gen (row 0). Down -> go (row 1). Down -> fe (row 2).
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyDown})
+	// Navigate to fe (row 2) and select it.
+	tm.Send(tea.KeyPressMsg{Code: 'j'})          // cursor gen(0) -> go(1)
+	tm.Send(tea.KeyPressMsg{Code: 'j'})          // cursor go(1) -> fe(2)
+	tm.Send(tea.KeyPressMsg{Code: tea.KeySpace}) // select fe; selected={0:true,2:true}
 
-	// Press Enter — confirms `fe`.
-	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Navigate back to gen and deselect it.
+	tm.Send(tea.KeyPressMsg{Code: 'k'})          // cursor fe(2) -> go(1)
+	tm.Send(tea.KeyPressMsg{Code: 'k'})          // cursor go(1) -> gen(0)
+	tm.Send(tea.KeyPressMsg{Code: tea.KeySpace}) // deselect gen; selected={0:false,2:true}
+
+	// Navigate back to fe for clarity, then confirm.
+	tm.Send(tea.KeyPressMsg{Code: 'j'})          // cursor gen(0) -> go(1)
+	tm.Send(tea.KeyPressMsg{Code: 'j'})          // cursor go(1) -> fe(2)
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter}) // confirm; Selected()=["fe"]
 
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
 
@@ -1382,6 +1391,129 @@ func TestRunInitPipeline_OldSchemaDetection(t *testing.T) {
 			t.Fatalf("run() error = %v; want nil (old-schema beyond 20-line window should not be detected)", err)
 		}
 	})
+}
+
+// TestInitTUIModel_GroupMultiSelect exercises the picker_multi.go-backed
+// group selection step:
+//
+//   - default_gen_preselected: pressing Enter immediately after advancing to
+//     the group step confirms Groups = ["gen"] — the default pre-selection.
+//   - multi_select_go_and_fe: deselects gen, selects go and fe via j/Space,
+//     confirms Groups = ["go", "fe"] in order.
+//   - min1_empty_selection_refuses_advance: after deselecting gen, pressing
+//     Enter does NOT advance the walk; step remains initTUIStepGroup and
+//     emptyHint is set.
+//
+// These tests drive the model directly (no teatest program) so they can
+// inspect mid-walk state (emptyHint, step) without relying on WaitFinished.
+func TestInitTUIModel_GroupMultiSelect(t *testing.T) {
+	update := func(m initTUIModel, msg tea.Msg) initTUIModel {
+		t.Helper()
+		next, _ := m.Update(msg)
+		cast, ok := next.(initTUIModel)
+		if !ok {
+			t.Fatalf("Update returned unexpected type %T; want initTUIModel", next)
+		}
+		return cast
+	}
+	advanceToGroupStep := func(t *testing.T, cwd string) initTUIModel {
+		t.Helper()
+		m := newInitTUIModel(cwd)
+		// Accept default name (Enter advances name -> group step).
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepGroup {
+			t.Fatalf("step after name Enter = %v; want initTUIStepGroup", m.step)
+		}
+		return m
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	t.Run("default_gen_preselected", func(t *testing.T) {
+		m := advanceToGroupStep(t, cwd)
+		// gen is pre-selected — pressing Enter immediately confirms ["gen"].
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepDone {
+			t.Fatalf("step after Enter on default = %v; want initTUIStepDone", m.step)
+		}
+		if got := m.finalPayload.Groups; len(got) != 1 || got[0] != "gen" {
+			t.Fatalf("Groups = %v; want [\"gen\"] (default pre-selection)", got)
+		}
+	})
+
+	t.Run("multi_select_go_and_fe", func(t *testing.T) {
+		m := advanceToGroupStep(t, cwd)
+		// Deselect gen (cursor is at 0, gen is pre-selected).
+		m = update(m, tea.KeyPressMsg{Code: tea.KeySpace}) // deselect gen
+		// Move to go (1) and select it.
+		m = update(m, tea.KeyPressMsg{Code: 'j'})          // cursor -> 1
+		m = update(m, tea.KeyPressMsg{Code: tea.KeySpace}) // select go
+		// Move to fe (2) and select it.
+		m = update(m, tea.KeyPressMsg{Code: 'j'})          // cursor -> 2
+		m = update(m, tea.KeyPressMsg{Code: tea.KeySpace}) // select fe
+		// Confirm.
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepDone {
+			t.Fatalf("step after multi-select Enter = %v; want initTUIStepDone", m.step)
+		}
+		got := m.finalPayload.Groups
+		if len(got) != 2 || got[0] != "go" || got[1] != "fe" {
+			t.Fatalf("Groups = %v; want [\"go\",\"fe\"]", got)
+		}
+	})
+
+	t.Run("min1_empty_selection_refuses_advance", func(t *testing.T) {
+		m := advanceToGroupStep(t, cwd)
+		// Deselect gen (the only pre-selected item) — now nothing is selected.
+		m = update(m, tea.KeyPressMsg{Code: tea.KeySpace}) // deselect gen; selected={}
+		// Press Enter — must NOT advance (empty selection is rejected).
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepGroup {
+			t.Fatalf("step after Enter with empty selection = %v; want initTUIStepGroup (min-1 enforcement)", m.step)
+		}
+		if m.emptyHint == "" {
+			t.Fatalf("emptyHint = \"\"; want a non-empty hint message after Enter on empty selection")
+		}
+		// Now select gen again and confirm — hint clears and walk advances.
+		m = update(m, tea.KeyPressMsg{Code: tea.KeySpace}) // re-select gen
+		m = update(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if m.step != initTUIStepDone {
+			t.Fatalf("step after re-selecting gen and Enter = %v; want initTUIStepDone", m.step)
+		}
+		if m.emptyHint != "" {
+			t.Fatalf("emptyHint = %q; want \"\" after successful confirmation", m.emptyHint)
+		}
+		if got := m.finalPayload.Groups; len(got) != 1 || got[0] != "gen" {
+			t.Fatalf("Groups = %v; want [\"gen\"]", got)
+		}
+	})
+}
+
+// TestRunInit_JSONMode_MultiGroup is the CONSUMER-TIE supplement mandated by
+// W2.D3 acceptance criteria. It exercises the JSON multi-group path directly
+// via run() end-to-end, verifying that groups:["go","fe"] parses correctly,
+// passes validateInitPayload, and runs through the full init pipeline without
+// error. The pipeline uses Groups[0] as the copyAgentFiles stub (D5 upgrades
+// to full multi-group); D3's concern is parsing and TUI capture, not copy.
+func TestRunInit_JSONMode_MultiGroup(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
+
+	var out strings.Builder
+	err := run(context.Background(),
+		[]string{"--app", "tillsyn-init", "init", "--json", `{"name":"x","groups":["go","fe"],"mcp":false}`},
+		&out, io.Discard)
+	if err != nil {
+		t.Fatalf("run(--json groups:[go,fe]) error = %v; want nil (multi-group JSON path must succeed)", err)
+	}
+	stdout := out.String()
+	if !strings.Contains(stdout, "Init") {
+		t.Fatalf("stdout = %q; want Laslig Init block", stdout)
+	}
 }
 
 // topKeys returns the keys of a map[string]json.RawMessage for use in

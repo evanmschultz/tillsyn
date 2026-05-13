@@ -24,6 +24,7 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/fsatomic"
 	"github.com/evanmschultz/tillsyn/internal/platform"
 	"github.com/evanmschultz/tillsyn/internal/templates"
+	"github.com/evanmschultz/tillsyn/internal/tui/components"
 )
 
 // initJSONPayload is the schema for `till init --json '{...}'` headless
@@ -114,9 +115,9 @@ const (
 	// Enter advances to initTUIStepGroup; pressing Esc cancels.
 	initTUIStepName initTUIStep = iota
 
-	// initTUIStepGroup collects the agent group via a small cursor over
-	// initTUIGroupRows. Pressing Enter on an enabled row finalizes; Esc
-	// cancels.
+	// initTUIStepGroup collects agent groups via the picker_multi.go
+	// component. Space toggles, Enter confirms (minimum 1 required),
+	// Esc cancels.
 	initTUIStepGroup
 
 	// initTUIStepDone is the terminal state — Done() returns true and the
@@ -128,38 +129,18 @@ const (
 	initTUIStepCancelled
 )
 
-// initTUIGroupRow models one row in the group picker. `Disabled` is kept
-// for the D1->D3 interim — all rows are currently enabled (Disabled: false)
-// and the field is inert. D3 removes this struct wholesale when the
-// picker_multi.go component takes over multi-select.
-type initTUIGroupRow struct {
-	Name     string
-	Disabled bool
-}
-
-// initTUIGroupRows is the static picker model the walk renders. Order is
-// load-bearing — the cursor defaults to row 0 (`gen`) so the most
-// common pick is one Enter away. All three rows are enabled; `till-gdd`
-// was removed in Drop 4c.6.1 W2.D1 when the reserved-group rationale
-// evaporated. Drop 4c.6.1 W4.D1 established `gen`, `go`, and `fe` as the
-// canonical unprefixed group names.
-var initTUIGroupRows = []initTUIGroupRow{
-	{Name: "gen", Disabled: false},
-	{Name: "go", Disabled: false},
-	{Name: "fe", Disabled: false},
-}
-
 // initTUIModel is the bubbletea model that drives the `till init` walk —
-// project name via textinput, agent group via a small inline picker. The
-// model exposes Done() / Cancelled() / Payload() so the caller
-// (runInitTUI) can read the final state once tea.Program.Run returns the
-// terminal model. The shape mirrors the in-repo textinput patterns at
-// `internal/tui/file_picker_core.go` (textinput usage) and the keymap
-// idioms at `internal/tui/model.go` (tea.KeyEnter / tea.KeyDown / etc.).
+// project name via textinput, agent groups via the picker_multi.go
+// component. The model exposes Done() / Cancelled() / Payload() so the
+// caller (runInitTUI) can read the final state once tea.Program.Run
+// returns the terminal model. The shape mirrors the in-repo textinput
+// patterns at `internal/tui/file_picker_core.go` (textinput usage) and
+// the keymap idioms at `internal/tui/model.go` (tea.KeyEnter / etc.).
 type initTUIModel struct {
 	step         initTUIStep
 	nameInput    textinput.Model
-	groupCursor  int
+	groupPicker  components.PickerMultiModel
+	emptyHint    string
 	defaultName  string
 	finalPayload initJSONPayload
 }
@@ -168,6 +149,10 @@ type initTUIModel struct {
 // to filepath.Base(cwd) per SKETCH §9.3 ("default = filepath.Base(cwd);
 // user can edit"). The textinput is pre-populated with the default so an
 // Enter on the first frame accepts it verbatim.
+//
+// The group picker is pre-seeded with all allowedInitGroups and defaults
+// to "gen" (index 0) selected — pressing Enter immediately on the group
+// step confirms Groups = ["gen"] without any navigation.
 func newInitTUIModel(cwd string) initTUIModel {
 	def := filepath.Base(cwd)
 	ti := textinput.New()
@@ -177,10 +162,18 @@ func newInitTUIModel(cwd string) initTUIModel {
 	ti.SetValue(def)
 	ti.CursorEnd()
 	ti.Focus()
+
+	// Construct the multi-select picker for the three canonical groups.
+	// Pre-select "gen" (index 0) by sending one Space press while the
+	// cursor is at 0 — the picker map starts empty, so the first Space
+	// toggles gen to selected.
+	picker := components.NewPickerMulti(allowedInitGroups)
+	picker, _ = picker.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+
 	return initTUIModel{
 		step:        initTUIStepName,
 		nameInput:   ti,
-		groupCursor: 0,
+		groupPicker: picker,
 		defaultName: def,
 	}
 }
@@ -193,19 +186,18 @@ func (m initTUIModel) Init() tea.Cmd {
 	return nil
 }
 
-// Update advances the walk one event at a time. The keymap is intentionally
-// small: Enter / Esc on both steps, plus Up/Down (or j/k) on the group
-// picker. Any other keypress on the name step is forwarded to the
-// textinput; on the group step it is ignored.
+// Update advances the walk one event at a time. The name step handles
+// Enter (advance) and Esc (cancel) plus forwards all other keypresses to
+// the textinput. The group step dispatches to the picker_multi.go component
+// and enforces a minimum-1 selection before allowing the walk to advance.
 func (m initTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyPressMsg)
-	if !ok {
-		// Non-key messages (WindowSize, etc.) pass through unchanged.
-		return m, nil
-	}
-
 	switch m.step {
 	case initTUIStepName:
+		key, ok := msg.(tea.KeyPressMsg)
+		if !ok {
+			// Non-key messages (WindowSize, etc.) pass through unchanged.
+			return m, nil
+		}
 		switch {
 		case key.Code == tea.KeyEsc:
 			m.step = initTUIStepCancelled
@@ -225,37 +217,34 @@ func (m initTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case initTUIStepGroup:
-		switch {
-		case key.Code == tea.KeyEsc:
-			m.step = initTUIStepCancelled
-			return m, tea.Quit
-		case key.Code == tea.KeyUp || key.String() == "k":
-			m.groupCursor = prevEnabledGroupRow(m.groupCursor)
-			return m, nil
-		case key.Code == tea.KeyDown || key.String() == "j":
-			m.groupCursor = nextEnabledGroupRow(m.groupCursor)
-			return m, nil
-		case key.Code == tea.KeyEnter:
-			row := initTUIGroupRows[m.groupCursor]
-			if row.Disabled {
-				// Defense-in-depth: the cursor movement helpers already
-				// skip disabled rows, but if the cursor somehow lands on
-				// one (e.g. future row additions), Enter is a no-op
-				// rather than accepting a disabled selection.
+		// Intercept Enter before dispatching to the picker: if nothing is
+		// selected, show an inline hint and refuse to advance. The picker
+		// must NOT receive Enter when selection is empty (once the picker
+		// marks itself Done it ignores further input, which would deadlock
+		// the walk).
+		if kp, ok := msg.(tea.KeyPressMsg); ok && kp.Code == tea.KeyEnter {
+			if len(m.groupPicker.Selected()) == 0 {
+				m.emptyHint = "select at least one group (space to toggle)"
 				return m, nil
 			}
-			// D1: single-value Groups slice as a bridge until D3 ships
-			// multi-select via picker_multi.go.
-			m.finalPayload.Groups = []string{row.Name}
-			// D1->D3 interim: TUI hardwires MCP to false. D4 removes this
+			m.emptyHint = ""
+		}
+		var cmd tea.Cmd
+		m.groupPicker, cmd = m.groupPicker.Update(msg)
+		if m.groupPicker.Done() {
+			if m.groupPicker.Cancelled() {
+				m.step = initTUIStepCancelled
+				return m, tea.Quit
+			}
+			m.finalPayload.Groups = m.groupPicker.Selected()
+			// D3->D4 interim: TUI hardwires MCP to false. D4 removes this
 			// hardwire and adds the confirm step that sets MCP via user input.
 			mcpFalse := false
 			m.finalPayload.MCP = &mcpFalse
 			m.step = initTUIStepDone
 			return m, tea.Quit
-		default:
-			return m, nil
 		}
+		return m, cmd
 
 	default:
 		// Terminal states ignore further input.
@@ -275,18 +264,11 @@ func (m initTUIModel) View() tea.View {
 		b.WriteString(m.nameInput.View())
 		b.WriteString("\n")
 	case initTUIStepGroup:
-		b.WriteString("Agent group (↑/↓ to move, enter to confirm, esc to cancel)\n\n")
-		for i, row := range initTUIGroupRows {
-			marker := "  "
-			if i == m.groupCursor {
-				marker = "> "
-			}
-			label := row.Name
-			if row.Disabled {
-				label += " (disabled — reserved for GDD)"
-			}
-			b.WriteString(marker)
-			b.WriteString(label)
+		b.WriteString("Agent groups (j/k to move, space to toggle, enter to confirm, esc to cancel)\n\n")
+		b.WriteString(m.groupPicker.View())
+		if m.emptyHint != "" {
+			b.WriteString("\n")
+			b.WriteString(m.emptyHint)
 			b.WriteString("\n")
 		}
 	case initTUIStepDone:
@@ -314,30 +296,6 @@ func (m initTUIModel) Cancelled() bool {
 // zero value (and the Groups field will be nil/empty).
 func (m initTUIModel) Payload() initJSONPayload {
 	return m.finalPayload
-}
-
-// nextEnabledGroupRow returns the cursor position one row down from cur,
-// skipping any disabled rows. If every subsequent row is disabled, the
-// cursor stays put — disabled rows are NEVER landable.
-func nextEnabledGroupRow(cur int) int {
-	for i := cur + 1; i < len(initTUIGroupRows); i++ {
-		if !initTUIGroupRows[i].Disabled {
-			return i
-		}
-	}
-	return cur
-}
-
-// prevEnabledGroupRow returns the cursor position one row up from cur,
-// skipping any disabled rows. If every prior row is disabled, the cursor
-// stays put.
-func prevEnabledGroupRow(cur int) int {
-	for i := cur - 1; i >= 0; i-- {
-		if !initTUIGroupRows[i].Disabled {
-			return i
-		}
-	}
-	return cur
 }
 
 // runInitTUI drives the interactive bubbletea walk (project name + group
