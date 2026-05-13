@@ -231,7 +231,11 @@ After a drop PR merges, the closing orchestrator MUST run the cleanup sequence b
 
 The parent Claude Code session launched by the dev from this directory is always **the orchestrator**. There is no `.claude/agents/orchestration-agent.md` file — the orchestrator is defined by the invocation context, not by a markdown spec. Every other role (builder, qa, planner, closeout, research) is a subagent spawned via the `Agent` tool.
 
-**CRITICAL: The orchestrator NEVER writes Go code.** The parent session must not use `Edit`, `Write`, or any other tool to modify `.go` source or test files. Every code change — every single one — goes through a builder subagent via the `Agent` tool. Orchestrator reads code for planning and research only.
+**PREFER cascade subagents for code changes.** The cascade methodology (planner → builder → QA pair → commit) is the default execution path. Spawn a typed builder subagent (`go-builder-agent`, `fe-builder-agent`) via the `Agent` tool for normal code work — the cascade enforces atomic-droplet sizing, plan-QA discipline, and asymmetric build-QA verification that orchestrator-direct edits skip.
+
+**Orchestrator MAY edit Go (or other) code directly when the cascade adds overhead without value**: trivial typo fixes, single-constant updates, mid-flight build-green stabilization, NIT-class absorptions surfaced by build-QA. The judgment call: does the change benefit from a builder's TDD loop + build-QA gate, or is it small enough that the cascade is ceremony? When in doubt, prefer the builder.
+
+Even when editing directly, the orchestrator should still run the verification gates (`mage ci`, etc.) and commit per the build-QA-commit discipline.
 
 **Markdown doc ownership is split between drop-orch (drop branch) and STEWARD (`main` post-merge).** Drop-orchs (`DROP_N_ORCH`) own per-drop artifact content in `main/workflow/drop_N/` and any architecture-MD edits (`CLAUDE.md`, `PLAN.md`, `AGENT_CASCADE_DESIGN.md`, `STEWARD_ORCH_PROMPT.md`, `workflow/README.md`, `workflow/example/**`) when the drop's scope touches process — all on the drop branch, flowing to `main` via PR merge. STEWARD (persistent continuation orchestrator — `STEWARD_ORCH_PROMPT.md`) runs post-merge on `main`, reads `main/workflow/drop_N/` content, collates it into the six top-level MDs (`LEDGER.md`, `REFINEMENTS.md`, `HYLLA_FEEDBACK.md`, `WIKI_CHANGELOG.md`, `HYLLA_REFINEMENTS.md`, plus `WIKI.md` curation), then `git worktree remove drop/N` after drop-orch has deleted the remote + local branch refs.
 
