@@ -64,15 +64,15 @@ Two node types, one enum. `project` is a table, not a kind. Everything below is 
 
 ```
 project                                                    (table: projects)
-└── plan (infinitely nestable)                             kind: plan                    ─→ agent: go-planning-agent          (opus)
-      ├── plan-qa-proof                                    kind: plan-qa-proof           ─→ agent: go-qa-proof-agent          (opus)
-      ├── plan-qa-falsification                            kind: plan-qa-falsification   ─→ agent: go-qa-falsification-agent  (opus)
+└── plan (infinitely nestable)                             kind: plan                    ─→ agent: planning-agent              (opus)
+      ├── plan-qa-proof                                    kind: plan-qa-proof           ─→ agent: plan-qa-proof-agent         (opus)
+      ├── plan-qa-falsification                            kind: plan-qa-falsification   ─→ agent: plan-qa-falsification-agent (opus)
       │
-      ├── research                                         kind: research                ─→ agent: go-research-agent          (opus)
+      ├── research                                         kind: research                ─→ agent: research-agent              (opus)
       │
-      ├── build (leaf)                                     kind: build                   ─→ agent: go-builder-agent           (sonnet)
-      │     ├── build-qa-proof                             kind: build-qa-proof          ─→ agent: go-qa-proof-agent          (sonnet)
-      │     └── build-qa-falsification                     kind: build-qa-falsification  ─→ agent: go-qa-falsification-agent  (sonnet)
+      ├── build (leaf)                                     kind: build                   ─→ agent: builder-agent               (sonnet)
+      │     ├── build-qa-proof                             kind: build-qa-proof          ─→ agent: build-qa-proof-agent        (sonnet)
+      │     └── build-qa-falsification                     kind: build-qa-falsification  ─→ agent: build-qa-falsification-agent (sonnet)
       │
       ├── plan (sub-plan — infinite nesting)               kind: plan                    (same shape, recurses)
       │
@@ -106,17 +106,19 @@ Pre-cascade: orchestrator spawns these manually via the `Agent` tool using Tills
 Post-Drop-3: the template binds kinds → agents; the dispatcher spawns them on `in_progress` transitions.
 Post-Drop-4a: Wave 2 delivered the dispatcher loop with manual-trigger CLI (`till dispatcher run --action-item <id>`); automatic dispatch on `in_progress` transitions lands in Drop 4b.
 
-| Kind                      | Agent                         | Model  | Role               | Edits Code? |
-| ------------------------- | ----------------------------- | ------ | ------------------ | ----------- |
-| `plan`                    | `go-planning-agent`           | opus   | `planner`          | No          |
-| `plan-qa-proof`           | `go-qa-proof-agent`           | opus   | `qa-proof`         | No          |
-| `plan-qa-falsification`   | `go-qa-falsification-agent`   | opus   | `qa-falsification` | No          |
-| `research`                | `go-research-agent`           | opus   | `research`         | No          |
-| `build`                   | `go-builder-agent`            | sonnet | `builder`          | **Yes**     |
-| `build-qa-proof`          | `go-qa-proof-agent`           | sonnet | `qa-proof`         | No          |
-| `build-qa-falsification`  | `go-qa-falsification-agent`   | sonnet | `qa-falsification` | No          |
-| `commit` _(Drop-4+)_      | `commit-message-agent`        | haiku  | `commit`           | No          |
-| `closeout` / `refinement` / `discussion` / `human-verify` | orchestrator-managed | —   | orchestrator       | No          |
+| Kind                      | Agent                              | Model  | Role               | Edits Code? |
+| ------------------------- | ---------------------------------- | ------ | ------------------ | ----------- |
+| `plan`                    | `planning-agent`                   | opus   | `planner`          | No          |
+| `plan-qa-proof`           | `plan-qa-proof-agent`              | opus   | `qa-proof`         | No          |
+| `plan-qa-falsification`   | `plan-qa-falsification-agent`      | opus   | `qa-falsification` | No          |
+| `research`                | `research-agent`                   | opus   | `research`         | No          |
+| `build`                   | `builder-agent`                    | sonnet | `builder`          | **Yes**     |
+| `build-qa-proof`          | `build-qa-proof-agent`             | sonnet | `qa-proof`         | No          |
+| `build-qa-falsification`  | `build-qa-falsification-agent`     | sonnet | `qa-falsification` | No          |
+| `commit` _(Drop-4+)_      | `commit-message-agent`             | haiku  | `commit`           | No          |
+| `closeout` / `refinement` / `discussion` / `human-verify` | `orchestrator-managed` | —   | orchestrator       | No          |
+
+Agent names above are the **cascade defaults** — the bare names tillsyn dispatches against, resolving to the per-group embedded prompts at `internal/templates/builtin/agents/<group>/<name>.md` (substantive prompt content scheduled for Drop 4c.8 W4 — see `EMBED-PROMPTS-R1`). Users can override per project via template `agent_bindings`, or point a kind at a custom system-agent file on their own filesystem.
 
 ### Post-Build Gates (Deterministic, Between `build` And Its QA Children)
 
@@ -311,16 +313,24 @@ Wave 1 of Drop 4a landed `paths []string`, `packages []string`, `files []string`
 4. Revoke orphaned auth sessions/leases.
 5. Resume from current action-item state.
 
-## Claude Code Agents (Go Project)
+## Cascade Agents (Tillsyn Defaults — Go Project)
 
-Spawn via the `Agent` tool with `subagent_type`. There is no orchestration-agent row — the orchestrator is the parent session, not a subagent.
+The cascade-default 10 agents per group. Tillsyn dispatches against these bare names; the dispatcher resolves them via the 3-tier walk (project `.tillsyn/agents/<group>/<name>.md` → user `~/.tillsyn/agents/<group>/<name>.md` → embedded `internal/templates/builtin/agents/<group>/<name>.md`). Substantive embedded prompt content lands in Drop 4c.8 W4 (`EMBED-PROMPTS-R1`).
 
-| Agent                | Subagent Type               | Purpose                                                 |
-| -------------------- | --------------------------- | ------------------------------------------------------- |
-| **Builder**          | `go-builder-agent`          | Ephemeral builder — the only role that edits Go code    |
-| **Planning**         | `go-planning-agent`         | Hylla-first planning grounded in committed code reality |
-| **QA Proof**         | `go-qa-proof-agent`         | Proof-completeness check — evidence supports the claim  |
-| **QA Falsification** | `go-qa-falsification-agent` | Falsification attempt — try to break the conclusion     |
+| Agent Name                       | Kind(s) Served                                            | Model    | Purpose                                                                                |
+| -------------------------------- | --------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------- |
+| `planning-agent`                 | `plan`                                                    | opus     | Decompose work into atomic droplets with `blocked_by` wiring                           |
+| `plan-qa-proof-agent`            | `plan-qa-proof`                                           | opus     | Proof-completeness on a `plan` parent                                                  |
+| `plan-qa-falsification-agent`    | `plan-qa-falsification`                                   | opus     | Counterexamples against a `plan` parent                                                |
+| `research-agent`                 | `research`                                                | opus     | Read-only investigation; compiles findings                                             |
+| `builder-agent`                  | `build`                                                   | sonnet   | Implements + tests; the only role that edits code                                      |
+| `build-qa-proof-agent`           | `build-qa-proof`                                          | sonnet   | Proof-completeness on a `build` parent                                                 |
+| `build-qa-falsification-agent`   | `build-qa-falsification`                                  | sonnet   | Counterexamples against a `build` parent                                               |
+| `commit-message-agent`           | `commit`                                                  | haiku    | Forms the commit message; no code edits                                                |
+| `orchestrator-managed`           | `closeout` / `refinement` / `discussion` / `human-verify` | —        | Orchestrator-managed kinds (coordination, not LLM-dispatched)                          |
+
+**Pre-cascade — how the parent orchestrator spawns agents today (legacy bridge):**
+Today, while the dispatcher is in development, the parent Claude Code session uses the `Agent` tool with `subagent_type` pointing at LOCAL system-agent files under `~/.claude/agents/*.md` (currently named with a `go-` prefix: `go-builder-agent`, `go-planning-agent`, `go-qa-proof-agent`, `go-qa-falsification-agent`, `go-research-agent`). Those files are the **inspiration source** for the embedded prompt content in Drop 4c.8 W4 — the cascade defaults will inherit their Karpathy-style claude.md content + Section 0 reasoning shape. The legacy `go-*` prefix on system files is independent of the cascade's bare-name convention; the two surfaces will converge when the dispatcher takes over spawning (Drop 4c.7) and when `~/.claude/agents/*.md` are renamed to bare per `QA-SPLIT-R1` + `ORCH-MANAGED-R1`.
 
 Inline (no subagent file):
 
