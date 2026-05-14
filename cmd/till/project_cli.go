@@ -151,6 +151,163 @@ func runProjectCreate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	return writeProjectDetail(stdout, project, "Created Project")
 }
 
+// runProjectUpdate reads the existing project, merges explicit flag values, then
+// calls (*app.Service).UpdateProject. Fields not supplied in opts are preserved
+// from the existing record; value-typed UpdateProjectInput has no pointer
+// sentinels, so the read-first pattern is mandatory to avoid silently clobbering
+// unchanged fields.
+//
+// Group membership changes:
+//   - --add-group appends a value to Metadata.Groups when not already present (dedup
+//     via linear scan); rejects values outside the allowedInitGroups set with a clear error.
+//   - --remove-group filters the named value out of Metadata.Groups (no-op when absent).
+func runProjectUpdate(ctx context.Context, svc *app.Service, cfg config.Config, opts projectUpdateCommandOptions, stdout io.Writer) error {
+	if err := requireProjectID("project update", opts.projectID); err != nil {
+		return err
+	}
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+
+	// Validate --add-group values before any read/write. Trim whitespace first
+	// so the validation policy is consistent with applyGroupMutations, which
+	// also trims each value before dedup/append. Over-rejecting trimmed-valid
+	// input ("  go  " rejected as unknown) would be inconsistent and confusing.
+	for _, g := range opts.addGroups {
+		trimmed := strings.TrimSpace(g)
+		if !isAllowedProjectGroup(trimmed) {
+			return fmt.Errorf("project update: unknown group %q; allowed values: %s", g, strings.Join(allowedInitGroups, ", "))
+		}
+	}
+
+	existing, err := locateProjectForCLI(ctx, svc, opts.projectID, false, "project update")
+	if err != nil {
+		return err
+	}
+
+	ctx = cliMutationContext(ctx, cfg)
+
+	// Merge: start from all existing first-class fields, then overwrite flag-supplied values.
+	name := existing.Name
+	description := existing.Description
+	hyllaArtifactRef := existing.HyllaArtifactRef
+	repoBareRoot := existing.RepoBareRoot
+	repoPrimaryWorktree := existing.RepoPrimaryWorktree
+	language := existing.Language
+	buildTool := existing.BuildTool
+	devMcpServerName := existing.DevMcpServerName
+
+	if strings.TrimSpace(opts.description) != "" {
+		description = opts.description
+	}
+	if strings.TrimSpace(opts.rootPath) != "" {
+		repoPrimaryWorktree = opts.rootPath
+	}
+	if strings.TrimSpace(opts.bareRoot) != "" {
+		repoBareRoot = opts.bareRoot
+	}
+	if strings.TrimSpace(opts.language) != "" {
+		language = opts.language
+	}
+	if strings.TrimSpace(opts.hyllaArtifactRef) != "" {
+		hyllaArtifactRef = opts.hyllaArtifactRef
+	}
+	if strings.TrimSpace(opts.buildTool) != "" {
+		buildTool = opts.buildTool
+	}
+	if strings.TrimSpace(opts.devMcpServerName) != "" {
+		devMcpServerName = opts.devMcpServerName
+	}
+
+	// Merge metadata: preserve all existing fields, apply flag-driven overrides.
+	metadata := existing.Metadata
+	if strings.TrimSpace(opts.owner) != "" {
+		metadata.Owner = opts.owner
+	}
+	if strings.TrimSpace(opts.icon) != "" {
+		metadata.Icon = opts.icon
+	}
+	if strings.TrimSpace(opts.color) != "" {
+		metadata.Color = opts.color
+	}
+	if strings.TrimSpace(opts.homepage) != "" {
+		metadata.Homepage = opts.homepage
+	}
+	if len(opts.tags) > 0 {
+		metadata.Tags = opts.tags
+	}
+
+	// Apply group mutations on top of existing groups.
+	groups := applyGroupMutations(metadata.Groups, opts.addGroups, opts.removeGroups)
+	metadata.Groups = groups
+
+	project, err := svc.UpdateProject(ctx, app.UpdateProjectInput{
+		ProjectID:           opts.projectID,
+		Name:                name,
+		Description:         description,
+		Metadata:            metadata,
+		HyllaArtifactRef:    hyllaArtifactRef,
+		RepoBareRoot:        repoBareRoot,
+		RepoPrimaryWorktree: repoPrimaryWorktree,
+		Language:            language,
+		BuildTool:           buildTool,
+		DevMcpServerName:    devMcpServerName,
+	})
+	if err != nil {
+		return fmt.Errorf("update project: %w", err)
+	}
+	return writeProjectDetail(stdout, project, "Updated Project")
+}
+
+// applyGroupMutations returns a new groups slice with addGroups appended (dedup)
+// and removeGroups filtered out. The original slice is not mutated.
+func applyGroupMutations(existing, add, remove []string) []string {
+	groups := append([]string(nil), existing...)
+	for _, g := range add {
+		g = strings.TrimSpace(g)
+		if g == "" {
+			continue
+		}
+		found := false
+		for _, eg := range groups {
+			if eg == g {
+				found = true
+				break
+			}
+		}
+		if !found {
+			groups = append(groups, g)
+		}
+	}
+	if len(remove) == 0 {
+		return groups
+	}
+	removeSet := make(map[string]struct{}, len(remove))
+	for _, r := range remove {
+		r = strings.TrimSpace(r)
+		if r != "" {
+			removeSet[r] = struct{}{}
+		}
+	}
+	filtered := groups[:0:0]
+	for _, g := range groups {
+		if _, skip := removeSet[g]; !skip {
+			filtered = append(filtered, g)
+		}
+	}
+	return filtered
+}
+
+// isAllowedProjectGroup reports whether g is a member of allowedInitGroups.
+func isAllowedProjectGroup(g string) bool {
+	for _, allowed := range allowedInitGroups {
+		if g == allowed {
+			return true
+		}
+	}
+	return false
+}
+
 // runProjectShow shows one project and writes a human-readable detail view.
 func runProjectShow(ctx context.Context, svc *app.Service, cfg config.Config, opts projectShowCommandOptions, stdout io.Writer) error {
 	if err := requireProjectID("project show", opts.projectID); err != nil {
@@ -271,6 +428,9 @@ func writeProjectList(stdout io.Writer, projects []domain.Project, emptyGuidance
 }
 
 // writeProjectDetail renders one project as a readable key/value summary.
+// Includes the Drop 4a first-class fields (root paths, language, build tool,
+// dev MCP server name, Hylla artifact ref, and groups) so users can visually
+// confirm what flag-driven updates changed.
 func writeProjectDetail(stdout io.Writer, project domain.Project, title string) error {
 	rows := [][2]string{
 		{"name", compactText(project.Name)},
@@ -284,6 +444,13 @@ func writeProjectDetail(stdout io.Writer, project domain.Project, title string) 
 		{"archived", projectArchivedText(project.ArchivedAt)},
 		{"description", compactText(project.Description)},
 		{"standards_markdown", compactText(project.Metadata.StandardsMarkdown)},
+		{"root_path", compactText(project.RepoPrimaryWorktree)},
+		{"bare_root", compactText(project.RepoBareRoot)},
+		{"language", compactText(project.Language)},
+		{"build_tool", compactText(project.BuildTool)},
+		{"dev_mcp_server_name", compactText(project.DevMcpServerName)},
+		{"hylla_artifact_ref", compactText(project.HyllaArtifactRef)},
+		{"groups", compactText(strings.Join(project.Metadata.Groups, ", "))},
 	}
 	return writeCLIKV(stdout, strings.TrimSpace(title), rows)
 }

@@ -273,6 +273,27 @@ type projectReadinessCommandOptions struct {
 	includeArchived bool
 }
 
+// projectUpdateCommandOptions stores project update flag values.
+// All fields are zero by default; runProjectUpdate reads the existing project
+// first and only overwrites fields that are explicitly supplied.
+type projectUpdateCommandOptions struct {
+	projectID        string
+	description      string
+	rootPath         string
+	bareRoot         string
+	language         string
+	hyllaArtifactRef string
+	buildTool        string
+	devMcpServerName string
+	owner            string
+	icon             string
+	color            string
+	homepage         string
+	tags             []string
+	addGroups        []string
+	removeGroups     []string
+}
+
 // issueSessionCommandOptions stores issue-session flag values.
 //
 // Drop 4c.5 droplet A.3: client_type is no longer a flag-driven option.

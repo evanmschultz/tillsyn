@@ -1,13 +1,19 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/config"
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/google/uuid"
 )
 
 // TestWriteProjectList renders a stable human-scannable project table.
@@ -470,5 +476,638 @@ func TestCompareProjectsForCLI(t *testing.T) {
 	want := []string{"p1", "p3", "p2"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("sorted ids = %v, want %v", got, want)
+	}
+}
+
+// newServiceForProjectUpdateTest opens a fresh in-memory-equivalent SQLite repo and
+// wraps it in a minimal *app.Service for runProjectUpdate unit tests. The
+// repo is registered for cleanup via t.Cleanup.
+func newServiceForProjectUpdateTest(t *testing.T) *app.Service {
+	t.Helper()
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("sqlite.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	noopLease := false
+	svc := app.NewService(repo, func() string { return uuid.NewString() }, nil, app.ServiceConfig{
+		RequireAgentLease: &noopLease,
+	})
+	return svc
+}
+
+// seedProjectForUpdateTest creates one minimal project via the service and returns it.
+func seedProjectForUpdateTest(t *testing.T, svc *app.Service, name string) domain.Project {
+	t.Helper()
+	project, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
+		Name: name,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata(%q) error = %v", name, err)
+	}
+	return project
+}
+
+// TestRunProjectUpdate_MissingProjectIDReturnsDiscoveryError guards the canonical
+// missing-project-id path before any service call runs.
+func TestRunProjectUpdate_MissingProjectIDReturnsDiscoveryError(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	var out bytes.Buffer
+	err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{}, &out)
+	if err == nil {
+		t.Fatal("expected missing project id error")
+	}
+	for _, want := range []string{"--project-id is required", "till project list", "till project discover"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in project-id guidance, got %v", want, err)
+		}
+	}
+}
+
+// TestRunProjectUpdate_UpdatesFirstClassFields verifies that flag-supplied first-class
+// fields are written through to the project record without clobbering unchanged fields.
+func TestRunProjectUpdate_UpdatesFirstClassFields(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "Alpha")
+
+	cases := []struct {
+		name    string
+		opts    projectUpdateCommandOptions
+		wantOut []string
+	}{
+		{
+			// root-path stored in RepoPrimaryWorktree; writeProjectDetail does not
+			// surface that field, so we verify success via the title only.
+			name: "root-path update",
+			opts: projectUpdateCommandOptions{
+				projectID: project.ID,
+				rootPath:  "/tmp/main",
+			},
+			wantOut: []string{"Updated Project"},
+		},
+		{
+			// bare-root stored in RepoBareRoot; not surfaced by writeProjectDetail.
+			name: "bare-root update",
+			opts: projectUpdateCommandOptions{
+				projectID: project.ID,
+				bareRoot:  "/tmp/bare",
+			},
+			wantOut: []string{"Updated Project"},
+		},
+		{
+			name: "description update",
+			opts: projectUpdateCommandOptions{
+				projectID:   project.ID,
+				description: "new desc",
+			},
+			wantOut: []string{"Updated Project", "new desc"},
+		},
+		{
+			name: "build-tool update",
+			opts: projectUpdateCommandOptions{
+				projectID: project.ID,
+				buildTool: "mage",
+			},
+			wantOut: []string{"Updated Project"},
+		},
+		{
+			name: "dev-mcp-server-name update",
+			opts: projectUpdateCommandOptions{
+				projectID:        project.ID,
+				devMcpServerName: "tillsyn-dev",
+			},
+			wantOut: []string{"Updated Project"},
+		},
+		{
+			name: "hylla-artifact-ref update",
+			opts: projectUpdateCommandOptions{
+				projectID:        project.ID,
+				hyllaArtifactRef: "github.com/org/repo@main",
+			},
+			wantOut: []string{"Updated Project"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := runProjectUpdate(context.Background(), svc, config.Config{}, tc.opts, &out); err != nil {
+				t.Fatalf("runProjectUpdate() error = %v", err)
+			}
+			got := out.String()
+			for _, want := range tc.wantOut {
+				if !strings.Contains(got, want) {
+					t.Fatalf("expected %q in output, got %q", want, got)
+				}
+			}
+		})
+	}
+}
+
+// TestRunProjectUpdate_LanguageValidation rejects unsupported language values and
+// accepts the known closed-enum set ("" | "go" | "fe").
+func TestRunProjectUpdate_LanguageValidation(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "LangProject")
+
+	cases := []struct {
+		name    string
+		lang    string
+		wantErr string
+	}{
+		{
+			name:    "invalid language rejects",
+			lang:    "invalid",
+			wantErr: "invalid language",
+		},
+		{
+			name: "go language accepted",
+			lang: "go",
+		},
+		{
+			name: "fe language accepted",
+			lang: "fe",
+		},
+		{
+			name: "empty language accepted",
+			lang: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+				projectID: project.ID,
+				language:  tc.lang,
+			}, &out)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("runProjectUpdate() error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("runProjectUpdate() error = %v", err)
+			}
+		})
+	}
+}
+
+// TestRunProjectUpdate_OwnerMetadata verifies --owner flag updates Metadata.Owner
+// without clobbering other metadata fields.
+func TestRunProjectUpdate_OwnerMetadata(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "OwnerProject")
+
+	var out bytes.Buffer
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID: project.ID,
+		owner:     "Evan",
+	}, &out); err != nil {
+		t.Fatalf("runProjectUpdate(--owner) error = %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "Evan") {
+		t.Fatalf("expected owner %q in output, got %q", "Evan", got)
+	}
+}
+
+// TestRunProjectUpdate_AddGroupAppendsAndDeduplicates verifies --add-group appends
+// a new group and is a no-op when the group is already present.
+func TestRunProjectUpdate_AddGroupAppendsAndDeduplicates(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "GroupProject")
+
+	// First add: "go" should appear in Groups.
+	var out bytes.Buffer
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID: project.ID,
+		addGroups: []string{"go"},
+	}, &out); err != nil {
+		t.Fatalf("runProjectUpdate(--add-group go) error = %v", err)
+	}
+
+	// Second add: "go" again — should not duplicate.
+	out.Reset()
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID: project.ID,
+		addGroups: []string{"go"},
+	}, &out); err != nil {
+		t.Fatalf("runProjectUpdate(--add-group go again) error = %v", err)
+	}
+
+	// Verify the current state has exactly one "go" by reading the project.
+	projects, err := svc.ListProjects(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var found domain.Project
+	for _, p := range projects {
+		if p.ID == project.ID {
+			found = p
+			break
+		}
+	}
+	goCount := 0
+	for _, g := range found.Metadata.Groups {
+		if g == "go" {
+			goCount++
+		}
+	}
+	if goCount != 1 {
+		t.Fatalf("expected exactly 1 'go' group, got %d in %v", goCount, found.Metadata.Groups)
+	}
+}
+
+// TestRunProjectUpdate_RemoveGroupFiltersAndIsNoopWhenAbsent verifies --remove-group
+// removes a present group and is a no-op when the group is not present.
+func TestRunProjectUpdate_RemoveGroupFiltersAndIsNoopWhenAbsent(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "RemoveGroupProject")
+
+	// Seed: add "go" and "fe" groups.
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID: project.ID,
+		addGroups: []string{"go", "fe"},
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectUpdate(add go fe) error = %v", err)
+	}
+
+	// Remove "go".
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID:    project.ID,
+		removeGroups: []string{"go"},
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectUpdate(--remove-group go) error = %v", err)
+	}
+
+	// Remove absent group "gen" — should be no-op (no error).
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID:    project.ID,
+		removeGroups: []string{"gen"},
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectUpdate(--remove-group gen absent) error = %v", err)
+	}
+
+	projects, err := svc.ListProjects(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var found domain.Project
+	for _, p := range projects {
+		if p.ID == project.ID {
+			found = p
+			break
+		}
+	}
+	for _, g := range found.Metadata.Groups {
+		if g == "go" {
+			t.Fatalf("expected 'go' to be removed from Groups, got %v", found.Metadata.Groups)
+		}
+	}
+	hasFe := false
+	for _, g := range found.Metadata.Groups {
+		if g == "fe" {
+			hasFe = true
+		}
+	}
+	if !hasFe {
+		t.Fatalf("expected 'fe' to remain in Groups after removing 'go', got %v", found.Metadata.Groups)
+	}
+}
+
+// TestRunProjectUpdate_AddGroupRejectsUnknownGroup verifies that unknown group
+// values fail with a clear validation error before any service call.
+func TestRunProjectUpdate_AddGroupRejectsUnknownGroup(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "ValidateGroupProject")
+
+	var out bytes.Buffer
+	err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID: project.ID,
+		addGroups: []string{"invalid-group"},
+	}, &out)
+	if err == nil {
+		t.Fatal("expected unknown group error")
+	}
+	if !strings.Contains(err.Error(), "invalid-group") {
+		t.Fatalf("expected group name in error, got %v", err)
+	}
+}
+
+// TestRunProjectUpdate_MultipleAddRemoveGroups verifies repeatable --add-group and
+// --remove-group flags process all supplied values in one call.
+func TestRunProjectUpdate_MultipleAddRemoveGroups(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "MultiGroupProject")
+
+	// Add "go" and "fe" in one call.
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID: project.ID,
+		addGroups: []string{"go", "fe"},
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectUpdate(add go fe) error = %v", err)
+	}
+
+	// Remove "go" and verify "fe" remains.
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID:    project.ID,
+		removeGroups: []string{"go"},
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectUpdate(remove go) error = %v", err)
+	}
+
+	projects, err := svc.ListProjects(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var found domain.Project
+	for _, p := range projects {
+		if p.ID == project.ID {
+			found = p
+			break
+		}
+	}
+	if len(found.Metadata.Groups) != 1 || found.Metadata.Groups[0] != "fe" {
+		t.Fatalf("expected Groups=[fe], got %v", found.Metadata.Groups)
+	}
+}
+
+// TestRunProjectUpdate_MetadataFlagsIconColorHomepageTags verifies that
+// --icon, --color, --homepage, and --tags (via opts.tags) update the
+// corresponding Metadata fields via the read-then-merge pattern.
+func TestRunProjectUpdate_MetadataFlagsIconColorHomepageTags(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "MetaProject")
+
+	cases := []struct {
+		name  string
+		opts  projectUpdateCommandOptions
+		check func(t *testing.T, p domain.Project)
+	}{
+		{
+			name: "icon updates Metadata.Icon",
+			opts: projectUpdateCommandOptions{
+				projectID: project.ID,
+				icon:      "star",
+			},
+			check: func(t *testing.T, p domain.Project) {
+				t.Helper()
+				if p.Metadata.Icon != "star" {
+					t.Fatalf("expected Icon=%q, got %q", "star", p.Metadata.Icon)
+				}
+			},
+		},
+		{
+			name: "color updates Metadata.Color",
+			opts: projectUpdateCommandOptions{
+				projectID: project.ID,
+				color:     "#ff0000",
+			},
+			check: func(t *testing.T, p domain.Project) {
+				t.Helper()
+				if p.Metadata.Color != "#ff0000" {
+					t.Fatalf("expected Color=%q, got %q", "#ff0000", p.Metadata.Color)
+				}
+			},
+		},
+		{
+			name: "homepage updates Metadata.Homepage",
+			opts: projectUpdateCommandOptions{
+				projectID: project.ID,
+				homepage:  "https://example.invalid",
+			},
+			check: func(t *testing.T, p domain.Project) {
+				t.Helper()
+				if p.Metadata.Homepage != "https://example.invalid" {
+					t.Fatalf("expected Homepage=%q, got %q", "https://example.invalid", p.Metadata.Homepage)
+				}
+			},
+		},
+		{
+			name: "tags updates Metadata.Tags",
+			opts: projectUpdateCommandOptions{
+				projectID: project.ID,
+				tags:      []string{"a", "b", "c"},
+			},
+			check: func(t *testing.T, p domain.Project) {
+				t.Helper()
+				want := []string{"a", "b", "c"}
+				if len(p.Metadata.Tags) != len(want) {
+					t.Fatalf("expected Tags=%v, got %v", want, p.Metadata.Tags)
+				}
+				for i, tag := range want {
+					if p.Metadata.Tags[i] != tag {
+						t.Fatalf("Tags[%d]: expected %q, got %q", i, tag, p.Metadata.Tags[i])
+					}
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := runProjectUpdate(context.Background(), svc, config.Config{}, tc.opts, &out); err != nil {
+				t.Fatalf("runProjectUpdate(%s) error = %v", tc.name, err)
+			}
+			projects, err := svc.ListProjects(context.Background(), false)
+			if err != nil {
+				t.Fatalf("ListProjects() error = %v", err)
+			}
+			var found domain.Project
+			for _, p := range projects {
+				if p.ID == project.ID {
+					found = p
+					break
+				}
+			}
+			tc.check(t, found)
+		})
+	}
+}
+
+// TestRunProjectUpdate_SingleFlagDoesNotClobberOthers verifies that running
+// runProjectUpdate with only --language preserves all other first-class and
+// metadata fields that were set at seed time.
+func TestRunProjectUpdate_SingleFlagDoesNotClobberOthers(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+
+	// Seed with all first-class and key metadata fields populated.
+	created, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
+		Name:                "FullProject",
+		Description:         "Original description",
+		HyllaArtifactRef:    "github.com/org/repo@main",
+		RepoBareRoot:        "/tmp/bare",
+		RepoPrimaryWorktree: "/tmp/main",
+		Language:            "go",
+		BuildTool:           "mage",
+		DevMcpServerName:    "tillsyn-dev",
+		Metadata: domain.ProjectMetadata{
+			Groups: []string{"go", "fe"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+
+	// Update ONLY the language to "fe".
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID: created.ID,
+		language:  "fe",
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectUpdate(--language fe) error = %v", err)
+	}
+
+	// Read back and assert all other fields are unchanged.
+	projects, err := svc.ListProjects(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var found domain.Project
+	for _, p := range projects {
+		if p.ID == created.ID {
+			found = p
+			break
+		}
+	}
+	if found.Language != "fe" {
+		t.Fatalf("expected Language=%q after update, got %q", "fe", found.Language)
+	}
+	if found.Description != "Original description" {
+		t.Fatalf("expected Description preserved, got %q", found.Description)
+	}
+	if found.HyllaArtifactRef != "github.com/org/repo@main" {
+		t.Fatalf("expected HyllaArtifactRef preserved, got %q", found.HyllaArtifactRef)
+	}
+	if found.RepoBareRoot != "/tmp/bare" {
+		t.Fatalf("expected RepoBareRoot preserved, got %q", found.RepoBareRoot)
+	}
+	if found.RepoPrimaryWorktree != "/tmp/main" {
+		t.Fatalf("expected RepoPrimaryWorktree preserved, got %q", found.RepoPrimaryWorktree)
+	}
+	if found.BuildTool != "mage" {
+		t.Fatalf("expected BuildTool preserved, got %q", found.BuildTool)
+	}
+	if found.DevMcpServerName != "tillsyn-dev" {
+		t.Fatalf("expected DevMcpServerName preserved, got %q", found.DevMcpServerName)
+	}
+	if len(found.Metadata.Groups) != 2 {
+		t.Fatalf("expected Groups preserved as [go fe], got %v", found.Metadata.Groups)
+	}
+}
+
+// TestRunProjectUpdate_AddGroupIncludesGenGroup extends the add/remove group
+// tests to cover the "gen" value in allowedInitGroups (belt-and-braces: the
+// three-value enum has gen, go, fe; prior tests only exercised go and fe).
+func TestRunProjectUpdate_AddGroupIncludesGenGroup(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "GenGroupProject")
+
+	// Add "gen".
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID: project.ID,
+		addGroups: []string{"gen"},
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectUpdate(--add-group gen) error = %v", err)
+	}
+
+	// Remove "gen".
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID:    project.ID,
+		removeGroups: []string{"gen"},
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectUpdate(--remove-group gen) error = %v", err)
+	}
+
+	projects, err := svc.ListProjects(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var found domain.Project
+	for _, p := range projects {
+		if p.ID == project.ID {
+			found = p
+			break
+		}
+	}
+	for _, g := range found.Metadata.Groups {
+		if g == "gen" {
+			t.Fatalf("expected 'gen' removed from Groups, got %v", found.Metadata.Groups)
+		}
+	}
+}
+
+// TestWriteProjectDetail_IncludesFirstClassFields verifies that writeProjectDetail
+// surfaces the Drop 4a first-class project fields so users can visually confirm
+// flag-driven updates.
+func TestWriteProjectDetail_IncludesFirstClassFields(t *testing.T) {
+	project := domain.Project{
+		ID:                  "proj-id",
+		Name:                "TestProject",
+		RepoPrimaryWorktree: "/tmp/main",
+		RepoBareRoot:        "/tmp/bare",
+		Language:            "go",
+		BuildTool:           "mage",
+		DevMcpServerName:    "tillsyn-dev",
+		HyllaArtifactRef:    "github.com/org/repo@main",
+		Metadata: domain.ProjectMetadata{
+			Groups: []string{"go", "fe"},
+		},
+	}
+	var out bytes.Buffer
+	if err := writeProjectDetail(&out, project, "Project"); err != nil {
+		t.Fatalf("writeProjectDetail() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"/tmp/main",
+		"/tmp/bare",
+		"go",
+		"mage",
+		"tillsyn-dev",
+		"github.com/org/repo@main",
+		"go, fe",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in writeProjectDetail output, got:\n%s", want, got)
+		}
+	}
+}
+
+// TestRunProjectUpdate_WhitespaceTrimmedBeforeGroupValidation verifies that
+// leading/trailing whitespace is trimmed from --add-group values BEFORE
+// validation, so "  go  " is accepted rather than rejected as an unknown group.
+func TestRunProjectUpdate_WhitespaceTrimmedBeforeGroupValidation(t *testing.T) {
+	svc := newServiceForProjectUpdateTest(t)
+	project := seedProjectForUpdateTest(t, svc, "TrimProject")
+
+	// "  go  " should be accepted after trim.
+	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
+		projectID: project.ID,
+		addGroups: []string{"  go  "},
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runProjectUpdate(--add-group '  go  ') error = %v; expected trim before validation", err)
+	}
+
+	projects, err := svc.ListProjects(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var found domain.Project
+	for _, p := range projects {
+		if p.ID == project.ID {
+			found = p
+			break
+		}
+	}
+	hasGo := false
+	for _, g := range found.Metadata.Groups {
+		if g == "go" {
+			hasGo = true
+		}
+	}
+	if !hasGo {
+		t.Fatalf("expected 'go' in Groups after trimmed add, got %v", found.Metadata.Groups)
 	}
 }
