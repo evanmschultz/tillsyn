@@ -393,35 +393,50 @@ func runInitJSON(stdout io.Writer, opts rootCommandOptions, payload string) erro
 	return runInitPipeline(stdout, opts, parsed)
 }
 
-// detectFLATLayout checks whether `<destDir>/.tillsyn/agents/` contains any
-// `.md` regular files directly at its root — the "FLAT" layout written by
-// Drop 4c.6 and earlier sessions. If the directory is absent the check is
-// a no-op (returns nil). If a `.md` file is found at the root level (not
-// inside a group subdirectory), the function returns a non-nil error with a
-// clear remediation instruction.
+// cleanFLATLayout surgically removes legacy FLAT-layout `.md` files at the
+// root of `<destDir>/.tillsyn/agents/` (the layout written by Drop 4c.6 and
+// earlier sessions) while preserving any `<group>/` subdirectory content
+// (the W2.D5 subdir-per-group layout). Returns the list of removed
+// basenames so the caller can surface an audit notice; an empty slice
+// means clean state.
 //
-// The check is placed in `runInitPipeline` (not inside `copyAgentFiles`) so
-// it survives the D5 rewrite of `copyAgentFiles` independently — see
+// E2E-7 root cause + fix: the prior `detectFLATLayout` returned an error
+// instructing the user to `rm -rf .tillsyn/agents/`, which destroyed
+// legitimate `<group>/` subdir content (e.g. hand-edited W8 substantive
+// prompts) alongside the FLAT leftovers. Surgical auto-clean removes ONLY
+// the flat `.md` files at root, leaving subdir content untouched, so
+// re-running `till init` is safe in the FLAT-leftover scenario.
+//
+// If the directory is absent the function is a no-op (returns nil, nil).
+// Permission or removal failures bubble up as a wrapped error so the user
+// sees a clear failure rather than a silent partial cleanup.
+//
+// The cleanup is placed in `runInitPipeline` (not inside `copyAgentFiles`)
+// so it survives the D5 rewrite of `copyAgentFiles` independently — see
 // W2.D2 ContextBlocks decision.
-func detectFLATLayout(destDir string) error {
+func cleanFLATLayout(destDir string) ([]string, error) {
 	agentsDir := filepath.Join(destDir, ".tillsyn", "agents")
 	entries, err := os.ReadDir(agentsDir)
 	switch {
 	case err == nil:
-		// Directory exists — scan for .md files at root.
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-				return fmt.Errorf("FLAT agent layout detected at %s/. Remove it and re-run: rm -rf %s && till init --group <group>",
-					agentsDir, agentsDir)
-			}
-		}
-		return nil
 	case errors.Is(err, fs.ErrNotExist):
-		// Directory absent — nothing to detect.
-		return nil
+		return nil, nil
 	default:
-		return fmt.Errorf("till init: stat %q: %w", agentsDir, err)
+		return nil, fmt.Errorf("till init: read %q: %w", agentsDir, err)
 	}
+
+	var removed []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		target := filepath.Join(agentsDir, e.Name())
+		if err := os.Remove(target); err != nil {
+			return removed, fmt.Errorf("till init: remove legacy flat agent %q: %w", target, err)
+		}
+		removed = append(removed, e.Name())
+	}
+	return removed, nil
 }
 
 // detectOldSchemaAgentsTOML checks whether `<destDir>/agents.toml` uses the
@@ -483,10 +498,13 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		return fmt.Errorf("till init: resolve cwd: %w", err)
 	}
 
-	// Pre-flight checks: fail loud if a known-bad state is detected. Both
-	// checks run before any file-copy side effects (no partial writes on
-	// failure). See W2.D2 for FLAT layout and old-schema detection rationale.
-	if err := detectFLATLayout(destDir); err != nil {
+	// Pre-flight: surgically clean any FLAT-layout `.md` leftovers at
+	// `.tillsyn/agents/` root (preserves `<group>/` subdirs) and fail
+	// loud on old-schema agents.toml. The cleanup happens before any
+	// file-copy side effects so the rest of the pipeline sees a normalized
+	// agents dir. See W2.D2 + E2E-7 for the auto-clean rationale.
+	flatRemoved, err := cleanFLATLayout(destDir)
+	if err != nil {
 		return err
 	}
 	if err := detectOldSchemaAgentsTOML(destDir); err != nil {
@@ -559,7 +577,7 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 	templateTOMLStatus := templateTOMLStatusFromWrite
 	_, _ = templateAdded, templateSkipped // counters available for future use
 
-	return writeCLIKV(stdout, "Init", [][2]string{
+	rows := [][2]string{
 		{"project name", payload.Name},
 		{"groups", strings.Join(payload.Groups, ",")},
 		{"agents dir", agentsDir},
@@ -569,7 +587,14 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		{".gitignore", gitignoreStatus},
 		{".mcp.json", mcpStatus},
 		{"project DB", dbStatus},
-	})
+	}
+	if len(flatRemoved) > 0 {
+		rows = append(rows, [2]string{
+			"removed legacy flat agents",
+			fmt.Sprintf("%d: %s", len(flatRemoved), strings.Join(flatRemoved, ", ")),
+		})
+	}
+	return writeCLIKV(stdout, "Init", rows)
 }
 
 // detectBareRoot attempts to resolve the git bare-root path for cwd by running

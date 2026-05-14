@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -1247,40 +1249,112 @@ func TestInit_ConsumerTie_W2D1(t *testing.T) {
 	})
 }
 
-// TestRunInitPipeline_FLATDetection exercises the three CONSUMER-TIE cases
-// mandated by W2.D2 acceptance criteria for FLAT agent layout detection:
+// TestRunInitPipeline_FLATCleanup exercises the surgical FLAT-layout auto-clean
+// (E2E-7 fix): legacy `.tillsyn/agents/*.md` files at root are removed, while
+// `<group>/` subdir content is preserved. The test family is:
 //
-//	(a) FLAT layout present (.tillsyn/agents/ contains a .md file at root)
-//	    -> run() returns non-zero error containing "FLAT agent layout".
-//	(b) Old-schema agents.toml present (first line starts with "[agents.")
-//	    -> run() returns non-zero error containing "agents.toml uses the old".
+//	(a) FLAT layout present at root -> auto-cleaned; run() succeeds; Laslig
+//	    output contains the removal notice.
+//	(b) FLAT layout at root + user-edited `<group>/<name>.md` subdir content
+//	    -> flat files removed, subdir content preserved byte-for-byte.
 //	(c) Clean state (no FLAT agents dir, no old-schema agents.toml)
-//	    -> both checks pass, run() returns nil.
-func TestRunInitPipeline_FLATDetection(t *testing.T) {
-	t.Run("flat_layout_present", func(t *testing.T) {
+//	    -> no removal happens, no notice in output, run() returns nil.
+func TestRunInitPipeline_FLATCleanup(t *testing.T) {
+	t.Run("flat_layout_auto_cleaned", func(t *testing.T) {
 		tmp := t.TempDir()
 		t.Setenv("HOME", tmp)
 		t.Chdir(tmp)
 
-		// Seed a FLAT-layout agents dir with a .md file directly at root.
+		// Seed a FLAT-layout agents dir with .md files directly at root.
 		agentsDir := filepath.Join(tmp, ".tillsyn", "agents")
 		if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 			t.Fatalf("MkdirAll %q: %v", agentsDir, err)
 		}
-		if err := os.WriteFile(filepath.Join(agentsDir, "builder-agent.md"), []byte("# builder\n"), 0o644); err != nil {
-			t.Fatalf("WriteFile builder-agent.md: %v", err)
+		flatNames := []string{"builder-agent.md", "planning-agent.md"}
+		for _, name := range flatNames {
+			if err := os.WriteFile(filepath.Join(agentsDir, name), []byte("# legacy flat\n"), 0o644); err != nil {
+				t.Fatalf("WriteFile %q: %v", name, err)
+			}
 		}
 
 		var out strings.Builder
 		err := run(context.Background(), []string{
 			"--app", "tillsyn-init", "init", "--json",
-			`{"name":"flattest","groups":["go"],"mcp":false}`,
+			`{"name":"flatclean","groups":["go"],"mcp":false}`,
 		}, &out, io.Discard)
-		if err == nil {
-			t.Fatalf("run() = nil; want error containing 'FLAT agent layout'")
+		if err != nil {
+			t.Fatalf("run() error = %v; want nil — flat files must be auto-cleaned not rejected", err)
 		}
-		if !strings.Contains(err.Error(), "FLAT agent layout") {
-			t.Fatalf("error = %q; want substring 'FLAT agent layout'", err.Error())
+
+		// Flat files at root must be gone.
+		for _, name := range flatNames {
+			if _, statErr := os.Stat(filepath.Join(agentsDir, name)); !errors.Is(statErr, fs.ErrNotExist) {
+				t.Fatalf("flat file %q survived auto-clean (statErr = %v)", name, statErr)
+			}
+		}
+
+		// Laslig output must surface the removal notice.
+		if !strings.Contains(out.String(), "removed legacy flat agents") {
+			t.Fatalf("stdout = %q; want 'removed legacy flat agents' notice row", out.String())
+		}
+		for _, name := range flatNames {
+			if !strings.Contains(out.String(), name) {
+				t.Fatalf("stdout = %q; want removed name %q in audit notice", out.String(), name)
+			}
+		}
+	})
+
+	t.Run("flat_plus_subdir_preserves_subdir_content", func(t *testing.T) {
+		// E2E-7 regression: a project with BOTH legacy flat leftovers AND
+		// hand-edited subdir content (the smoke-time scenario) must have
+		// only the flat files removed; subdir content must survive byte-
+		// for-byte.
+		tmp := t.TempDir()
+		t.Setenv("HOME", tmp)
+		t.Chdir(tmp)
+
+		// Seed flat leftovers at agents root.
+		agentsDir := filepath.Join(tmp, ".tillsyn", "agents")
+		if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll %q: %v", agentsDir, err)
+		}
+		if err := os.WriteFile(filepath.Join(agentsDir, "builder-agent.md"), []byte("# legacy flat\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile flat: %v", err)
+		}
+
+		// Seed user-edited subdir content (W2.D5 layout).
+		userTargetDir := filepath.Join(agentsDir, "go")
+		if err := os.MkdirAll(userTargetDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll %q: %v", userTargetDir, err)
+		}
+		userContent := []byte("# HAND-EDITED PROMPT\n\nW8 substantive content. Do not clobber.\n")
+		userTargetPath := filepath.Join(userTargetDir, "builder-agent.md")
+		if err := os.WriteFile(userTargetPath, userContent, 0o644); err != nil {
+			t.Fatalf("WriteFile user: %v", err)
+		}
+
+		var out strings.Builder
+		err := run(context.Background(), []string{
+			"--app", "tillsyn-init", "init", "--json",
+			`{"name":"e2e7full","groups":["go"],"mcp":false}`,
+		}, &out, io.Discard)
+		if err != nil {
+			t.Fatalf("run() error = %v; want nil", err)
+		}
+
+		// Flat file gone.
+		if _, statErr := os.Stat(filepath.Join(agentsDir, "builder-agent.md")); !errors.Is(statErr, fs.ErrNotExist) {
+			t.Fatalf("flat file survived auto-clean (statErr = %v)", statErr)
+		}
+
+		// Subdir content preserved byte-for-byte.
+		got, err := os.ReadFile(userTargetPath)
+		if err != nil {
+			t.Fatalf("os.ReadFile(%q): %v — user subdir file disappeared!", userTargetPath, err)
+		}
+		if !bytes.Equal(got, userContent) {
+			t.Fatalf("till init overwrote user subdir content at %q (E2E-7 silent data loss):\n got  %q\n want %q",
+				userTargetPath, got, userContent)
 		}
 	})
 
@@ -1301,6 +1375,10 @@ func TestRunInitPipeline_FLATDetection(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), "Init") {
 			t.Fatalf("stdout = %q; want Laslig Init block", out.String())
+		}
+		// Clean state: removal notice must NOT appear (no flat files to clean).
+		if strings.Contains(out.String(), "removed legacy flat agents") {
+			t.Fatalf("stdout = %q; clean state must NOT show removal notice", out.String())
 		}
 	})
 }
@@ -1829,6 +1907,82 @@ func TestCopyAgentFiles_SubdirPerGroup(t *testing.T) {
 		}
 		if skipped2 != added1 {
 			t.Fatalf("copyAgentFiles second run skipped = %d; want %d (= files from first run)", skipped2, added1)
+		}
+	})
+
+	// E2E-7 falsification regression: a user who hand-edits an agent prompt
+	// file under .tillsyn/agents/<group>/<name>.md (NOT created by a prior
+	// copyAgentFiles run — content differs from the embedded default) must
+	// have that content preserved on a subsequent till init. Skip-on-exists
+	// is a data-safety invariant: re-running till init must never silently
+	// overwrite hand-edited project-tier customizations with the embedded
+	// placeholder.
+	t.Run("preserves_user_modified_existing_content", func(t *testing.T) {
+		destDir := t.TempDir()
+		targetDir := filepath.Join(destDir, ".tillsyn", "agents", "go")
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+			t.Fatalf("os.MkdirAll(%q): %v", targetDir, err)
+		}
+		userContent := []byte("# USER-EDITED PROMPT\n\nThis must not be overwritten by till init.\n")
+		targetPath := filepath.Join(targetDir, "builder-agent.md")
+		if err := os.WriteFile(targetPath, userContent, 0o644); err != nil {
+			t.Fatalf("os.WriteFile(%q): %v", targetPath, err)
+		}
+
+		_, skipped, err := copyAgentFiles(destDir, []string{"go"})
+		if err != nil {
+			t.Fatalf("copyAgentFiles error = %v; want nil", err)
+		}
+		if skipped < 1 {
+			t.Fatalf("copyAgentFiles skipped = %d; want >= 1 (the pre-existing user file)", skipped)
+		}
+
+		got, err := os.ReadFile(targetPath)
+		if err != nil {
+			t.Fatalf("os.ReadFile(%q): %v", targetPath, err)
+		}
+		if !bytes.Equal(got, userContent) {
+			t.Fatalf("copyAgentFiles overwrote user content at %q (E2E-7 silent data loss):\n got  %q\n want %q",
+				targetPath, got, userContent)
+		}
+	})
+
+	// E2E-7 end-to-end regression: drive `till init --json` through the full
+	// pipeline against a destDir that already has hand-edited user content
+	// under the SUBDIR-per-group layout (the W2.D5 shape, NOT the legacy
+	// FLAT shape). The user content MUST survive the pipeline — neither
+	// detectFLATLayout, nor copyAgentFiles, nor any other step in
+	// runInitPipeline may silently overwrite it.
+	t.Run("end_to_end_preserves_user_subdir_content", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("HOME", dir)
+		t.Chdir(dir)
+
+		// Pre-seed user content in the subdir-per-group layout (legitimate
+		// W2.D5 shape — not a FLAT layout that detectFLATLayout would reject).
+		userTargetDir := filepath.Join(dir, ".tillsyn", "agents", "go")
+		if err := os.MkdirAll(userTargetDir, 0o755); err != nil {
+			t.Fatalf("os.MkdirAll(%q): %v", userTargetDir, err)
+		}
+		userContent := []byte("# HAND-EDITED PROMPT\n\nW8 substantive content. Do not clobber.\n")
+		userTargetPath := filepath.Join(userTargetDir, "builder-agent.md")
+		if err := os.WriteFile(userTargetPath, userContent, 0o644); err != nil {
+			t.Fatalf("os.WriteFile(%q): %v", userTargetPath, err)
+		}
+
+		var out strings.Builder
+		err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"e2e7","groups":["go"],"mcp":false}`}, &out, io.Discard)
+		if err != nil {
+			t.Fatalf("run(init --json) error = %v; want nil — user subdir content must not block init", err)
+		}
+
+		got, err := os.ReadFile(userTargetPath)
+		if err != nil {
+			t.Fatalf("os.ReadFile(%q): %v — user file disappeared!", userTargetPath, err)
+		}
+		if !bytes.Equal(got, userContent) {
+			t.Fatalf("till init overwrote user content at %q (E2E-7 silent data loss):\n got  %q\n want %q",
+				userTargetPath, got, userContent)
 		}
 	})
 }

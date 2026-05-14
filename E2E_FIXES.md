@@ -11,7 +11,7 @@ Status legend: `open` / `in-progress` / `fixed`.
 - E2E-4 — fixed (orch-direct cobra wiring for `till project update`; other W3 commands still need wiring)
 - E2E-5 — open (`till project discover` output missing W2.D7 first-class fields)
 - E2E-6 — open (TUI project view missing W2.D7 first-class fields; project-edit form missing/broken too)
-- E2E-7 — open (W2.D5 `copyAgentFiles` overwrote substantive `.tillsyn/agents/{go,fe}/*.md` content with placeholders despite claimed idempotent skip; recovered via `git checkout HEAD --`)
+- E2E-7 — fixed (root cause was `detectFLATLayout` returning a `rm -rf .tillsyn/agents/` remediation message that destroyed legitimate subdir content; replaced with surgical `cleanFLATLayout` that auto-removes only root-level `.md` files and preserves `<group>/` subdir content)
 
 ---
 
@@ -37,20 +37,28 @@ Status legend: `open` / `in-progress` / `fixed`.
 
 ---
 
-## E2E-7 — `copyAgentFiles` overwrites existing agent files instead of skipping
+## E2E-7 — `till init` clobbered subdir agent content on FLAT-leftover repos
 
-- **Status:** open
+- **Status:** fixed (2026-05-14 same session)
 - **Surfaced:** 2026-05-14 — dev ran `till init` against TILLSYN repo (which had committed W8 substantive content under `.tillsyn/agents/{go,fe}/*.md`). Output reported `agents copied  added=20 skipped=0` — overwrote all 20 W8 substantive files with embedded placeholder content. W8 substantive content (104-line `builder-agent.md` etc.) was REPLACED with 10-line placeholders.
-- **Verified:** `wc -l` on working-tree file: 10 (placeholder). `git show HEAD:<path> | wc -l`: 104 (W8 substantive). Confirmed: working tree was clobbered.
+- **Verified:** `wc -l` on working-tree file: 10 (placeholder). `git show HEAD:<path> | wc -l`: 104 (W8 substantive). Working tree was clobbered.
 - **Recovery this session:** `git checkout HEAD -- .tillsyn/agents/fe/ .tillsyn/agents/go/` — restored.
-- **Expected per W2.D5 L2 spec:** "Idempotent: existing files at `<destDir>/.tillsyn/agents/<group>/<name>.md` are SKIPPED (not overwritten)."
-- **Suspected scope:** W2.D5's `copyAgentFiles` does NOT actually check if the destination file exists before writing (or the check is inverted). The "added=20 skipped=0" output proves the skip predicate never fired for any of the 20 files even though every one existed on disk.
-- **Fix plan:**
-  - Read `copyAgentFiles` in `cmd/till/init_cmd.go` — verify the existence check.
-  - Add `os.Stat(destPath); if err == nil { skipped++; continue }` guard before write.
-  - Add a regression test: pre-create a file at destination, run copyAgentFiles, assert `skipped >= 1` AND file content unchanged.
-  - This is a real data-safety bug; the W2.D5 test suite passed without catching it. Falsification gap.
-- **Severity:** HIGH — silent data loss on `till init` re-run in a project that has hand-edited agent files. Dogfood-relevant since W4.D1's placeholder embedded content will replace any project-tier customizations.
+- **Investigation (fix-session, 2026-05-14):**
+  - Wrote two regression tests for `copyAgentFiles` skip-on-exists invariant (one unit + one e2e through `run()`). Both PASS against current source — `copyAgentFiles` correctly skips pre-existing user content. So `copyAgentFiles` is NOT the bug.
+  - Git status at session start showed 12 FLAT files staged for deletion at `.tillsyn/agents/*.md` (cleaned up in commit `789a494`). These were present at smoke time.
+  - Root cause traced to `detectFLATLayout` at `init_cmd.go:406-425`: on detecting FLAT-layout `.md` files at the root of `.tillsyn/agents/`, it returned the error message `"FLAT agent layout detected ... Remove it and re-run: rm -rf %s && till init"` — instructing the user to delete the entire `.tillsyn/agents/` directory, which destroys legitimate `<group>/` subdir content alongside the flat leftovers.
+  - Smoke-time chain: (1) dev had FLAT files from earlier sessions, (2) `till init` failed with the `rm -rf` remediation, (3) dev ran `rm -rf .tillsyn/agents/`, (4) re-ran `till init`, (5) `copyAgentFiles` correctly added embedded placeholders to a now-empty dir (`added=20 skipped=0`). The W8 content was lost in step 3, not step 5.
+- **Fix shipped:**
+  - Replaced `detectFLATLayout` with `cleanFLATLayout` (`cmd/till/init_cmd.go`): surgically removes only root-level `.md` files from `.tillsyn/agents/`, preserves `<group>/` subdirs. Returns the list of removed basenames.
+  - `runInitPipeline` calls `cleanFLATLayout` in the pre-flight slot and adds a Laslig audit row `"removed legacy flat agents"` when the list is non-empty.
+  - Regression tests added in `cmd/till/init_cmd_test.go`:
+    - `TestCopyAgentFiles_SubdirPerGroup/preserves_user_modified_existing_content` — unit guard for skip-on-exists with non-embedded content (closes the original falsification gap claimed in the smoke note).
+    - `TestCopyAgentFiles_SubdirPerGroup/end_to_end_preserves_user_subdir_content` — e2e through `run()` with pre-seeded user content in subdir.
+    - `TestRunInitPipeline_FLATCleanup/flat_layout_auto_cleaned` — flat files at root are auto-removed and surfaced in the audit notice.
+    - `TestRunInitPipeline_FLATCleanup/flat_plus_subdir_preserves_subdir_content` — exact smoke-time scenario: flat files + user subdir content. Flat removed, subdir preserved byte-for-byte.
+    - `TestRunInitPipeline_FLATCleanup/clean_state_no_flat_layout` updated to assert the audit row does NOT appear on clean state.
+  - `mage ci` green (405 cmd/till tests pass; coverage 77.6%).
+- **Severity:** HIGH — silent data loss. Closed.
 
 ---
 
