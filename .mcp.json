@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "tillsyn": {
+      "command": "/Users/evanschultz/.local/bin/till"
+    }
+  }
+}
