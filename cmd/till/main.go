@@ -431,6 +431,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	projectCreateOpts := projectCreateCommandOptions{}
 	projectShowOpts := projectShowCommandOptions{}
 	projectDiscoverOpts := projectReadinessCommandOptions{}
+	projectUpdateOpts := projectUpdateCommandOptions{}
 	issueSessionOpts := issueSessionCommandOptions{
 		principalType: "user",
 		clientID:      "till-cli",
@@ -480,7 +481,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	dispatcherRunOpts := dispatcherRunCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, actionItemCreateOpts, dispatcherRunOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, projectUpdateOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, actionItemCreateOpts, dispatcherRunOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -713,7 +714,44 @@ in order rather than relying on remembered setup steps.
 	}
 	projectDiscoverCmd.Flags().StringVar(&projectDiscoverOpts.projectID, "project-id", "", "Project identifier")
 	projectDiscoverCmd.Flags().BoolVar(&projectDiscoverOpts.includeArchived, "include-archived", false, "Include archived projects")
-	projectCmd.AddCommand(projectListCmd, projectCreateCmd, projectShowCmd, projectDiscoverCmd)
+	projectUpdateCmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update one project's first-class fields and metadata",
+		Long: strings.TrimSpace(`
+Update one project's first-class fields and metadata. The CLI reads the
+existing project first and only overwrites fields you supply explicitly,
+so unset flags preserve their current values.
+
+Use --add-group / --remove-group (repeatable) to mutate the project's
+metadata.groups slice. Group values must be in the canonical set
+(go, fe, gen); --language must map to the same enum.
+`),
+		Example: strings.Join([]string{
+			"  till project update --project-id PROJECT_ID --root-path /abs/path",
+			"  till project update --project-id PROJECT_ID --add-group fe --remove-group go",
+			"  till project update --project-id PROJECT_ID --language go --bare-root /abs/path",
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "project.update")
+		},
+	}
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.projectID, "project-id", "", "Project identifier (required)")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.description, "description", "", "Project description")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.rootPath, "root-path", "", "Repo primary worktree absolute path")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.bareRoot, "bare-root", "", "Repo bare-root absolute path")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.language, "language", "", "Project language closed enum: go|fe|gen|<empty>")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.hyllaArtifactRef, "hylla-artifact-ref", "", "Hylla artifact reference, e.g. github.com/org/repo@main")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.buildTool, "build-tool", "", "Build tool (mage, npm, pnpm, etc.)")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.devMcpServerName, "dev-mcp-server-name", "", "Dev MCP server registration name")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.owner, "owner", "", "Project owner display name")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.icon, "icon", "", "Project icon glyph")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.color, "color", "", "Project color hex")
+	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.homepage, "homepage", "", "Project homepage URL")
+	projectUpdateCmd.Flags().StringSliceVar(&projectUpdateOpts.tags, "tag", nil, "Project tag (repeatable)")
+	projectUpdateCmd.Flags().StringArrayVar(&projectUpdateOpts.addGroups, "add-group", nil, "Append a group to metadata.groups (repeatable; dedup)")
+	projectUpdateCmd.Flags().StringArrayVar(&projectUpdateOpts.removeGroups, "remove-group", nil, "Remove a group from metadata.groups (repeatable; no-op if absent)")
+	projectCmd.AddCommand(projectListCmd, projectCreateCmd, projectShowCmd, projectDiscoverCmd, projectUpdateCmd)
 
 	actionItemCmd := &cobra.Command{
 		Use:   "action_item",
@@ -2162,6 +2200,7 @@ func executeCommandFlow(
 	projectCreateOpts projectCreateCommandOptions,
 	projectShowOpts projectShowCommandOptions,
 	projectDiscoverOpts projectReadinessCommandOptions,
+	projectUpdateOpts projectUpdateCommandOptions,
 	captureStateOpts captureStateCommandOptions,
 	embeddingsStatusOpts embeddingsStatusCommandOptions,
 	embeddingsReindexOpts embeddingsReindexCommandOptions,
@@ -2536,6 +2575,10 @@ func executeCommandFlow(
 	case "handoff.update":
 		return runOneShotCommand("handoff.update", "handoff update", func() error {
 			return runHandoffUpdate(ctx, svc, cfg, handoffUpdateOpts, stdout)
+		})
+	case "project.update":
+		return runOneShotCommand("project.update", "project update", func() error {
+			return runProjectUpdate(ctx, svc, cfg, projectUpdateOpts, stdout)
 		})
 	case "action_item.create":
 		return runOneShotCommand("action_item.create", "action_item create", func() error {
