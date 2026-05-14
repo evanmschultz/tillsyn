@@ -1075,6 +1075,280 @@ func TestWriteProjectDetail_IncludesFirstClassFields(t *testing.T) {
 	}
 }
 
+// newServiceForProjectLifecycleTest opens a fresh in-memory-equivalent SQLite repo
+// and wraps it in a minimal *app.Service for delete/archive/restore/rename tests.
+func newServiceForProjectLifecycleTest(t *testing.T) *app.Service {
+	t.Helper()
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("sqlite.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	noopLease := false
+	svc := app.NewService(repo, func() string { return uuid.NewString() }, nil, app.ServiceConfig{
+		RequireAgentLease: &noopLease,
+	})
+	return svc
+}
+
+// seedProjectForLifecycleTest creates one minimal project via the service and returns it.
+func seedProjectForLifecycleTest(t *testing.T, svc *app.Service, name string) domain.Project {
+	t.Helper()
+	project, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
+		Name: name,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata(%q) error = %v", name, err)
+	}
+	return project
+}
+
+// TestRunProjectDelete_RequiresConfirm verifies that missing --confirm fails with a
+// clear error before any service call runs.
+func TestRunProjectDelete_RequiresConfirm(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+	project := seedProjectForLifecycleTest(t, svc, "DeleteTarget")
+
+	var out bytes.Buffer
+	err := runProjectDelete(context.Background(), svc, config.Config{}, projectDeleteCommandOptions{
+		projectID: project.ID,
+		confirm:   false,
+	}, &out)
+	if err == nil {
+		t.Fatal("expected confirm-required error")
+	}
+	for _, want := range []string{"--confirm", "hard delete is irreversible"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in error, got %v", want, err)
+		}
+	}
+}
+
+// TestRunProjectDelete_SuccessPath verifies that --confirm=true deletes the project
+// and writes a confirmation line to stdout.
+func TestRunProjectDelete_SuccessPath(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+	project := seedProjectForLifecycleTest(t, svc, "DeleteMe")
+
+	var out bytes.Buffer
+	if err := runProjectDelete(context.Background(), svc, config.Config{}, projectDeleteCommandOptions{
+		projectID: project.ID,
+		confirm:   true,
+	}, &out); err != nil {
+		t.Fatalf("runProjectDelete() error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, project.ID) && !strings.Contains(got, "deleted") {
+		t.Fatalf("expected deletion confirmation in output, got %q", got)
+	}
+	// Verify the project is actually gone.
+	projects, err := svc.ListProjects(context.Background(), true)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	for _, p := range projects {
+		if p.ID == project.ID {
+			t.Fatalf("expected project %q to be deleted, but still found", project.ID)
+		}
+	}
+}
+
+// TestRunProjectDelete_MissingProjectIDReturnsDiscoveryError validates the
+// missing-project-id guard before confirm is checked.
+func TestRunProjectDelete_MissingProjectIDReturnsDiscoveryError(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+
+	var out bytes.Buffer
+	err := runProjectDelete(context.Background(), svc, config.Config{}, projectDeleteCommandOptions{
+		confirm: true,
+	}, &out)
+	if err == nil {
+		t.Fatal("expected missing project id error")
+	}
+	if !strings.Contains(err.Error(), "--project-id is required") {
+		t.Fatalf("expected project-id guidance, got %v", err)
+	}
+}
+
+// TestRunProjectArchive_ArchivesProject verifies the archive path returns the
+// archived project detail with title "Archived Project".
+func TestRunProjectArchive_ArchivesProject(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+	project := seedProjectForLifecycleTest(t, svc, "ArchiveMe")
+
+	var out bytes.Buffer
+	if err := runProjectArchive(context.Background(), svc, config.Config{}, projectArchiveCommandOptions{
+		projectID: project.ID,
+	}, &out); err != nil {
+		t.Fatalf("runProjectArchive() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"Archived Project", project.Name} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in archive output, got %q", want, got)
+		}
+	}
+}
+
+// TestRunProjectArchive_MissingProjectIDReturnsDiscoveryError guards the
+// missing-project-id path before any service call runs.
+func TestRunProjectArchive_MissingProjectIDReturnsDiscoveryError(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+
+	var out bytes.Buffer
+	err := runProjectArchive(context.Background(), svc, config.Config{}, projectArchiveCommandOptions{}, &out)
+	if err == nil {
+		t.Fatal("expected missing project id error")
+	}
+	if !strings.Contains(err.Error(), "--project-id is required") {
+		t.Fatalf("expected project-id guidance, got %v", err)
+	}
+}
+
+// TestRunProjectRestore_RestoresProject verifies the restore path returns the
+// restored project detail with title "Restored Project".
+func TestRunProjectRestore_RestoresProject(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+	project := seedProjectForLifecycleTest(t, svc, "RestoreMe")
+
+	// Archive first.
+	if _, err := svc.ArchiveProject(context.Background(), project.ID); err != nil {
+		t.Fatalf("ArchiveProject() error = %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runProjectRestore(context.Background(), svc, config.Config{}, projectRestoreCommandOptions{
+		projectID: project.ID,
+	}, &out); err != nil {
+		t.Fatalf("runProjectRestore() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"Restored Project", project.Name} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in restore output, got %q", want, got)
+		}
+	}
+}
+
+// TestRunProjectRestore_MissingProjectIDReturnsDiscoveryError guards the
+// missing-project-id path before any service call runs.
+func TestRunProjectRestore_MissingProjectIDReturnsDiscoveryError(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+
+	var out bytes.Buffer
+	err := runProjectRestore(context.Background(), svc, config.Config{}, projectRestoreCommandOptions{}, &out)
+	if err == nil {
+		t.Fatal("expected missing project id error")
+	}
+	if !strings.Contains(err.Error(), "--project-id is required") {
+		t.Fatalf("expected project-id guidance, got %v", err)
+	}
+}
+
+// TestRunProjectRename_MissingNameReturnsError verifies that omitting --name fails
+// with a clear required-field error before any service call.
+func TestRunProjectRename_MissingNameReturnsError(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+	project := seedProjectForLifecycleTest(t, svc, "RenameMe")
+
+	var out bytes.Buffer
+	err := runProjectRename(context.Background(), svc, config.Config{}, projectRenameCommandOptions{
+		projectID: project.ID,
+		newName:   "",
+	}, &out)
+	if err == nil {
+		t.Fatal("expected missing name error")
+	}
+	if !strings.Contains(err.Error(), "--name") {
+		t.Fatalf("expected --name guidance in error, got %v", err)
+	}
+}
+
+// TestRunProjectRename_MissingProjectIDReturnsDiscoveryError guards the
+// missing-project-id path before name validation or any service call.
+func TestRunProjectRename_MissingProjectIDReturnsDiscoveryError(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+
+	var out bytes.Buffer
+	err := runProjectRename(context.Background(), svc, config.Config{}, projectRenameCommandOptions{
+		newName: "NewName",
+	}, &out)
+	if err == nil {
+		t.Fatal("expected missing project id error")
+	}
+	if !strings.Contains(err.Error(), "--project-id is required") {
+		t.Fatalf("expected project-id guidance, got %v", err)
+	}
+}
+
+// TestRunProjectRename_PreservesAllOtherFields verifies that rename updates only
+// the Name field and preserves all other first-class and metadata fields.
+func TestRunProjectRename_PreservesAllOtherFields(t *testing.T) {
+	svc := newServiceForProjectLifecycleTest(t)
+
+	// Create a fully-populated project.
+	created, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
+		Name:                "OriginalName",
+		Description:         "Original description",
+		HyllaArtifactRef:    "github.com/org/repo@main",
+		RepoBareRoot:        "/tmp/bare",
+		RepoPrimaryWorktree: "/tmp/main",
+		Language:            "go",
+		BuildTool:           "mage",
+		DevMcpServerName:    "tillsyn-dev",
+		Metadata: domain.ProjectMetadata{
+			Owner: "original-owner",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runProjectRename(context.Background(), svc, config.Config{}, projectRenameCommandOptions{
+		projectID: created.ID,
+		newName:   "RenamedProject",
+	}, &out); err != nil {
+		t.Fatalf("runProjectRename() error = %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "RenamedProject") {
+		t.Fatalf("expected new name in output, got %q", got)
+	}
+	if !strings.Contains(got, "Renamed Project") {
+		t.Fatalf("expected title 'Renamed Project' in output, got %q", got)
+	}
+
+	// Read back and confirm all other fields preserved.
+	projects, err := svc.ListProjects(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var found domain.Project
+	for _, p := range projects {
+		if p.ID == created.ID {
+			found = p
+			break
+		}
+	}
+	if found.Name != "RenamedProject" {
+		t.Fatalf("expected Name=%q, got %q", "RenamedProject", found.Name)
+	}
+	if found.Description != "Original description" {
+		t.Fatalf("expected Description preserved, got %q", found.Description)
+	}
+	if found.HyllaArtifactRef != "github.com/org/repo@main" {
+		t.Fatalf("expected HyllaArtifactRef preserved, got %q", found.HyllaArtifactRef)
+	}
+	if found.Language != "go" {
+		t.Fatalf("expected Language preserved, got %q", found.Language)
+	}
+	if found.Metadata.Owner != "original-owner" {
+		t.Fatalf("expected Owner preserved, got %q", found.Metadata.Owner)
+	}
+}
+
 // TestRunProjectUpdate_WhitespaceTrimmedBeforeGroupValidation verifies that
 // leading/trailing whitespace is trimmed from --add-group values BEFORE
 // validation, so "  go  " is accepted rather than rejected as an unknown group.

@@ -308,6 +308,116 @@ func isAllowedProjectGroup(g string) bool {
 	return false
 }
 
+// projectDeleteCommandOptions holds options for the project delete subcommand.
+type projectDeleteCommandOptions struct {
+	projectID string
+	confirm   bool
+}
+
+// projectArchiveCommandOptions holds options for the project archive subcommand.
+type projectArchiveCommandOptions struct {
+	projectID string
+}
+
+// projectRestoreCommandOptions holds options for the project restore subcommand.
+type projectRestoreCommandOptions struct {
+	projectID string
+}
+
+// projectRenameCommandOptions holds options for the project rename subcommand.
+type projectRenameCommandOptions struct {
+	projectID string
+	newName   string
+}
+
+// runProjectDelete hard-deletes one project. --confirm is required; omitting it
+// returns a clear error because hard delete is irreversible.
+func runProjectDelete(ctx context.Context, svc *app.Service, cfg config.Config, opts projectDeleteCommandOptions, stdout io.Writer) error {
+	if err := requireProjectID("project delete", opts.projectID); err != nil {
+		return err
+	}
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	if !opts.confirm {
+		return fmt.Errorf("till project delete requires --confirm flag; hard delete is irreversible")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	if err := svc.DeleteProject(ctx, opts.projectID); err != nil {
+		return fmt.Errorf("delete project: %w", err)
+	}
+	_, err := fmt.Fprintf(stdout, "Project %q deleted.\n", opts.projectID)
+	return err
+}
+
+// runProjectArchive archives one project and writes the archived project detail.
+func runProjectArchive(ctx context.Context, svc *app.Service, cfg config.Config, opts projectArchiveCommandOptions, stdout io.Writer) error {
+	if err := requireProjectID("project archive", opts.projectID); err != nil {
+		return err
+	}
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	project, err := svc.ArchiveProject(ctx, opts.projectID)
+	if err != nil {
+		return fmt.Errorf("archive project: %w", err)
+	}
+	return writeProjectDetail(stdout, project, "Archived Project")
+}
+
+// runProjectRestore restores one archived project and writes the restored project detail.
+func runProjectRestore(ctx context.Context, svc *app.Service, cfg config.Config, opts projectRestoreCommandOptions, stdout io.Writer) error {
+	if err := requireProjectID("project restore", opts.projectID); err != nil {
+		return err
+	}
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	project, err := svc.RestoreProject(ctx, opts.projectID)
+	if err != nil {
+		return fmt.Errorf("restore project: %w", err)
+	}
+	return writeProjectDetail(stdout, project, "Restored Project")
+}
+
+// runProjectRename renames one project by calling (*Service).UpdateProject with
+// a new Name while preserving all other first-class and metadata fields.
+// --name is required and must be non-empty.
+func runProjectRename(ctx context.Context, svc *app.Service, cfg config.Config, opts projectRenameCommandOptions, stdout io.Writer) error {
+	if err := requireProjectID("project rename", opts.projectID); err != nil {
+		return err
+	}
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+	if strings.TrimSpace(opts.newName) == "" {
+		return fmt.Errorf("project rename requires --name <new-name>; new name cannot be empty")
+	}
+	existing, err := locateProjectForCLI(ctx, svc, opts.projectID, false, "project rename")
+	if err != nil {
+		return err
+	}
+	ctx = cliMutationContext(ctx, cfg)
+	project, err := svc.UpdateProject(ctx, app.UpdateProjectInput{
+		ProjectID:           opts.projectID,
+		Name:                strings.TrimSpace(opts.newName),
+		Description:         existing.Description,
+		Metadata:            existing.Metadata,
+		HyllaArtifactRef:    existing.HyllaArtifactRef,
+		RepoBareRoot:        existing.RepoBareRoot,
+		RepoPrimaryWorktree: existing.RepoPrimaryWorktree,
+		Language:            existing.Language,
+		BuildTool:           existing.BuildTool,
+		DevMcpServerName:    existing.DevMcpServerName,
+	})
+	if err != nil {
+		return fmt.Errorf("rename project: %w", err)
+	}
+	return writeProjectDetail(stdout, project, "Renamed Project")
+}
+
 // runProjectShow shows one project and writes a human-readable detail view.
 func runProjectShow(ctx context.Context, svc *app.Service, cfg config.Config, opts projectShowCommandOptions, stdout io.Writer) error {
 	if err := requireProjectID("project show", opts.projectID); err != nil {
