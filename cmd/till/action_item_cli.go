@@ -16,6 +16,142 @@ import (
 	"github.com/google/uuid"
 )
 
+// validStructuralTypeValues is the canonical list of structural-type values
+// used in flag-validation error messages for `till action_item create
+// --structural-type`. The order matches the StructuralType enum declaration
+// order in structural_type.go so the human-facing error is stable.
+var validStructuralTypeValues = []string{"drop", "segment", "confluence", "droplet"}
+
+// structuralTypeSmartDefault returns the FF4 smart-default StructuralType for
+// the given kind string. The table is:
+//
+//   - plan → segment (a plan introduces a grouping level in the cascade tree)
+//   - refinement → segment (a refinement umbrella is also a grouping level)
+//   - all other 10 kinds → droplet (atomic leaf, the safe pre-MVP default)
+//
+// The empty kind returns droplet so callers can invoke the helper before
+// required-field validation fires without panicking.
+func structuralTypeSmartDefault(kind string) domain.StructuralType {
+	switch strings.TrimSpace(strings.ToLower(kind)) {
+	case string(domain.KindPlan), string(domain.KindRefinement):
+		return domain.StructuralTypeSegment
+	default:
+		return domain.StructuralTypeDroplet
+	}
+}
+
+// runActionItemCreate is the CLI flow for `till action_item create`. It:
+//
+//  1. Validates required fields (project-id, kind, title, description) before
+//     any service call.
+//  2. Determines the effective StructuralType — smart-default when the flag is
+//     empty, explicit value validated against the closed enum when supplied.
+//  3. Resolves the ColumnID by calling (*Service).ListColumns and selecting
+//     the first column sorted by position (ListColumns returns sorted).
+//  4. Optionally parses --metadata-json into a domain.ActionItemMetadata and
+//     merges --blocked-by onto Metadata.BlockedBy.
+//  5. Calls (*Service).CreateActionItem.
+//  6. Computes the new item's dotted address via the shared helper and emits
+//     "Created action item <id> (dotted: <addr>)\n" to stdout.
+func runActionItemCreate(ctx context.Context, svc *app.Service, opts actionItemCreateCommandOptions, stdout io.Writer) error {
+	// Required-field validation fires BEFORE the service-availability check so
+	// the CLI's human-facing error reflects what is wrong with the invocation
+	// rather than the runtime wiring.
+	if strings.TrimSpace(opts.projectID) == "" {
+		return fmt.Errorf("action_item create: --project-id is required")
+	}
+	if strings.TrimSpace(opts.kind) == "" {
+		return fmt.Errorf("action_item create: --kind is required")
+	}
+	if strings.TrimSpace(opts.title) == "" {
+		return fmt.Errorf("action_item create: --title is required")
+	}
+	if strings.TrimSpace(opts.description) == "" {
+		return fmt.Errorf("action_item create: --description is required")
+	}
+	if svc == nil {
+		return fmt.Errorf("app service is not configured")
+	}
+
+	// Resolve effective StructuralType: smart-default when the flag is absent,
+	// explicit validated value when supplied. NEVER pass an empty StructuralType
+	// to the service — domain.NewActionItem rejects empty with
+	// ErrInvalidStructuralType.
+	var structuralType domain.StructuralType
+	if rawST := strings.TrimSpace(opts.structuralType); rawST == "" {
+		structuralType = structuralTypeSmartDefault(opts.kind)
+	} else {
+		normalized := domain.NormalizeStructuralType(domain.StructuralType(rawST))
+		if !domain.IsValidStructuralType(normalized) {
+			return fmt.Errorf("action_item create: --structural-type %q is invalid (valid values: %s)",
+				rawST, strings.Join(validStructuralTypeValues, "|"))
+		}
+		structuralType = normalized
+	}
+
+	projectID := strings.TrimSpace(opts.projectID)
+
+	// Auto-resolve ColumnID from the project's first column (sorted by
+	// position ascending — ListColumns guarantees this sort order).
+	columns, err := svc.ListColumns(ctx, projectID, false)
+	if err != nil {
+		return fmt.Errorf("action_item create: list columns: %w", err)
+	}
+	if len(columns) == 0 {
+		return fmt.Errorf("action_item create: project %q has no columns; create at least one column before adding action items", projectID)
+	}
+	columnID := columns[0].ID
+
+	// Parse optional --metadata-json. An absent flag leaves metadata at its
+	// zero value; a supplied flag must be valid JSON for a metadata object.
+	// --blocked-by is merged on top (overwrites the field if also supplied via
+	// --metadata-json, which is unusual but correct — explicit flag wins).
+	var metadata domain.ActionItemMetadata
+	if raw := strings.TrimSpace(opts.metadataJSON); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+			return fmt.Errorf("action_item create: --metadata-json is not valid JSON: %w", err)
+		}
+	}
+	if len(opts.blockedBy) > 0 {
+		metadata.BlockedBy = opts.blockedBy
+	}
+
+	kind := domain.Kind(strings.TrimSpace(opts.kind))
+	role := domain.Role(strings.TrimSpace(opts.role))
+
+	created, err := svc.CreateActionItem(ctx, app.CreateActionItemInput{
+		ProjectID:      projectID,
+		ParentID:       strings.TrimSpace(opts.parentID),
+		Kind:           kind,
+		Scope:          domain.KindAppliesTo(kind),
+		Role:           role,
+		StructuralType: structuralType,
+		ColumnID:       columnID,
+		Title:          strings.TrimSpace(opts.title),
+		Description:    strings.TrimSpace(opts.description),
+		Paths:          opts.paths,
+		Packages:       opts.packages,
+		Files:          opts.files,
+		Metadata:       metadata,
+	})
+	if err != nil {
+		return fmt.Errorf("action_item create: %w", err)
+	}
+
+	// Compute dotted address for human-readable output. We reuse the in-file
+	// computeDottedAddressesForItems helper which does a full tree walk —
+	// acceptable at pre-MVP scale (<1k items per project).
+	addresses, err := computeDottedAddressesForItems(ctx, svc, projectID, []domain.ActionItem{created})
+	if err != nil || addresses[created.ID] == "" {
+		// Dotted address is best-effort: emit without it rather than aborting
+		// after a successful create. The UUID is the authoritative identifier.
+		_, _ = fmt.Fprintf(stdout, "Created action item %s (dotted: -)\n", created.ID)
+		return nil
+	}
+	_, _ = fmt.Fprintf(stdout, "Created action item %s (dotted: %s)\n", created.ID, addresses[created.ID])
+	return nil
+}
+
 // validActionItemListStates is the closed set of lifecycle states accepted by
 // the `till action_item list --state <value>` flag. The slice is the source
 // of truth for both the flag-validation error message and the cobra `Long:`

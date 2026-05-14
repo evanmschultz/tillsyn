@@ -697,7 +697,7 @@ AcceptanceCriteria:
 - `till project update --help` shows correct flags (--project-id, --root-path, --bare-root, --language, --description, --hylla-artifact-ref, --build-tool, --dev-mcp-server-name, --owner, --icon, --color, --homepage, --tags, --add-group, --remove-group).
 - `till project delete --help` shows --project-id, --confirm.
 - `till project archive --help`, `till project restore --help`, `till project rename --help` each show their flags.
-- `till action_item create --help` shows all flags including --structural-type with smart-default documented.
+- `till action_item create --help` shows all flags including --structural-type with smart-default documented. (Note: `actionItemCreateCmd` is already registered in main.go by W3.D3 scope-absorption; D7 only needs to verify this is present — do NOT re-add.)
 - `till template --help` lists save/list/show/diff/restore.
 - `till agents --help` lists save/list/show/diff/bootstrap.
 - `till agents bootstrap --help` shows --from, --to, --dry-run, --force with the R3-NIT6 verbatim warning (no trailing period) in the --force description.
@@ -743,7 +743,7 @@ KindPayload:
     {"file": "cmd/till/main.go", "symbol": "projectArchiveCmd", "action": "add"},
     {"file": "cmd/till/main.go", "symbol": "projectRestoreCmd", "action": "add"},
     {"file": "cmd/till/main.go", "symbol": "projectRenameCmd", "action": "add", "shape_hint": "cobra.Command for till project rename — --name flag"},
-    {"file": "cmd/till/main.go", "symbol": "actionItemCreateCmd", "action": "add", "shape_hint": "cobra.Command for till action_item create — all flags including --structural-type"},
+    {"file": "cmd/till/main.go", "symbol": "actionItemCreateCmd", "action": "verify", "shape_hint": "cobra.Command for till action_item create — all flags including --structural-type; ALREADY SHIPPED by W3.D3 (scope-absorbed per D3-absorption-round); W3.D7 must only verify presence, do NOT re-add"},
     {"file": "cmd/till/main.go", "symbol": "templateCmd", "action": "add", "shape_hint": "top-level cobra.Command for till template — groups save/list/show/diff/restore"},
     {"file": "cmd/till/main.go", "symbol": "agentsCmd", "action": "add", "shape_hint": "top-level cobra.Command for till agents — groups save/list/show/diff/bootstrap"},
     {"file": "cmd/till/main_test.go", "symbol": "TestW3CommandsRegistered", "action": "add", "shape_hint": "smoke test: run(['till', '--help'], ...) and check all new command names appear; new, not yet in tree"}

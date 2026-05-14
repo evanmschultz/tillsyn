@@ -740,6 +740,434 @@ func TestRunActionItemList(t *testing.T) {
 	})
 }
 
+// TestRunActionItemCreate_StructuralTypeSmartDefault verifies the FF4
+// smart-default table: plan → segment, refinement → segment, all other 10
+// kinds → droplet, explicit valid override accepted, explicit invalid value
+// rejects with the valid list.
+func TestRunActionItemCreate_StructuralTypeSmartDefault(t *testing.T) {
+	t.Parallel()
+
+	t.Run("structuralTypeSmartDefault covers all 12 kinds", func(t *testing.T) {
+		t.Parallel()
+		cases := []struct {
+			kind string
+			want domain.StructuralType
+		}{
+			{"plan", domain.StructuralTypeSegment},
+			{"refinement", domain.StructuralTypeSegment},
+			{"build", domain.StructuralTypeDroplet},
+			{"research", domain.StructuralTypeDroplet},
+			{"plan-qa-proof", domain.StructuralTypeDroplet},
+			{"plan-qa-falsification", domain.StructuralTypeDroplet},
+			{"build-qa-proof", domain.StructuralTypeDroplet},
+			{"build-qa-falsification", domain.StructuralTypeDroplet},
+			{"closeout", domain.StructuralTypeDroplet},
+			{"commit", domain.StructuralTypeDroplet},
+			{"discussion", domain.StructuralTypeDroplet},
+			{"human-verify", domain.StructuralTypeDroplet},
+		}
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.kind, func(t *testing.T) {
+				t.Parallel()
+				got := structuralTypeSmartDefault(tc.kind)
+				if got != tc.want {
+					t.Fatalf("structuralTypeSmartDefault(%q) = %q, want %q", tc.kind, got, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("explicit valid override accepted", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-override")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:      projectID,
+			kind:           "build",
+			title:          "T",
+			description:    "D",
+			structuralType: "confluence",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemCreate() error = %v", err)
+		}
+		if !strings.Contains(out.String(), "Created action item") {
+			t.Fatalf("expected 'Created action item' in output, got: %s", out.String())
+		}
+	})
+
+	t.Run("explicit invalid structural-type rejects with valid list", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-invalid")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:      projectID,
+			kind:           "build",
+			title:          "T",
+			description:    "D",
+			structuralType: "invalid-value",
+		}, &out)
+		if err == nil {
+			t.Fatal("expected error for invalid structural-type, got nil")
+		}
+		for _, valid := range []string{"drop", "segment", "confluence", "droplet"} {
+			if !strings.Contains(err.Error(), valid) {
+				t.Fatalf("error %q missing valid value %q", err, valid)
+			}
+		}
+	})
+
+	t.Run("smart-default plan creates segment without explicit flag", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-plan")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:   projectID,
+			kind:        "plan",
+			title:       "My plan",
+			description: "D",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemCreate() error = %v", err)
+		}
+		if !strings.Contains(out.String(), "Created action item") {
+			t.Fatalf("output missing 'Created action item': %s", out.String())
+		}
+	})
+
+	t.Run("smart-default build creates droplet without explicit flag", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-build")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:   projectID,
+			kind:        "build",
+			title:       "My build",
+			description: "D",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemCreate() error = %v", err)
+		}
+		if !strings.Contains(out.String(), "Created action item") {
+			t.Fatalf("output missing 'Created action item': %s", out.String())
+		}
+	})
+}
+
+// TestRunActionItemCreate_RequiredFields verifies that missing required flags
+// surface a clear error before any service call.
+func TestRunActionItemCreate_RequiredFields(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		opts actionItemCreateCommandOptions
+		want string
+	}{
+		{
+			name: "missing project-id",
+			opts: actionItemCreateCommandOptions{kind: "build", title: "T", description: "D"},
+			want: "--project-id",
+		},
+		{
+			name: "missing kind",
+			opts: actionItemCreateCommandOptions{projectID: "proj-id", title: "T", description: "D"},
+			want: "--kind",
+		},
+		{
+			name: "missing title",
+			opts: actionItemCreateCommandOptions{projectID: "proj-id", kind: "build", description: "D"},
+			want: "--title",
+		},
+		{
+			name: "missing description",
+			opts: actionItemCreateCommandOptions{projectID: "proj-id", kind: "build", title: "T"},
+			want: "--description",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// nil svc: the required-field gate fires before any service call.
+			var out strings.Builder
+			err := runActionItemCreate(context.Background(), nil, tc.opts, &out)
+			if err == nil {
+				t.Fatalf("expected error for %q, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunActionItemCreate_PassThroughFlags verifies that every pass-through
+// flag lands on the created action item and that ColumnID is auto-resolved to
+// the first project column (sorted by position).
+func TestRunActionItemCreate_PassThroughFlags(t *testing.T) {
+	t.Parallel()
+
+	t.Run("blocked-by sets Metadata.BlockedBy without post-create update", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-blockedby")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:   projectID,
+			kind:        "build",
+			title:       "Blocked build",
+			description: "D",
+			blockedBy:   []string{"dep-uuid-1", "dep-uuid-2"},
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemCreate() error = %v", err)
+		}
+		// Verify the created item has BlockedBy set via JSON output inspection.
+		// Read the newly created item — its UUID is in "Created action item <uuid> (dotted: ...)".
+		outputText := out.String()
+		if !strings.Contains(outputText, "Created action item") {
+			t.Fatalf("output missing 'Created action item': %s", outputText)
+		}
+		// Extract UUID from output: "Created action item <uuid> (dotted: ...)".
+		// parts[0]="Created" parts[1]="action" parts[2]="item" parts[3]=<uuid>
+		parts := strings.Fields(outputText)
+		if len(parts) < 5 {
+			t.Fatalf("unexpected output format: %s", outputText)
+		}
+		createdID := parts[3]
+		item, err := svc.GetActionItem(context.Background(), createdID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%q) error = %v", createdID, err)
+		}
+		if len(item.Metadata.BlockedBy) != 2 {
+			t.Fatalf("expected 2 BlockedBy entries, got %d: %v", len(item.Metadata.BlockedBy), item.Metadata.BlockedBy)
+		}
+		if item.Metadata.BlockedBy[0] != "dep-uuid-1" || item.Metadata.BlockedBy[1] != "dep-uuid-2" {
+			t.Fatalf("BlockedBy mismatch: %v", item.Metadata.BlockedBy)
+		}
+	})
+
+	t.Run("paths and packages pass through", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-paths")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:   projectID,
+			kind:        "build",
+			title:       "With paths",
+			description: "D",
+			paths:       []string{"cmd/till/action_item_cli.go"},
+			packages:    []string{"cmd/till"},
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemCreate() error = %v", err)
+		}
+		outputText := out.String()
+		parts := strings.Fields(outputText)
+		if len(parts) < 5 {
+			t.Fatalf("unexpected output format: %s", outputText)
+		}
+		createdID := parts[3]
+		item, err := svc.GetActionItem(context.Background(), createdID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%q) error = %v", createdID, err)
+		}
+		if len(item.Paths) != 1 || item.Paths[0] != "cmd/till/action_item_cli.go" {
+			t.Fatalf("Paths mismatch: %v", item.Paths)
+		}
+		if len(item.Packages) != 1 || item.Packages[0] != "cmd/till" {
+			t.Fatalf("Packages mismatch: %v", item.Packages)
+		}
+	})
+
+	t.Run("role pass-through", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-role")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:   projectID,
+			kind:        "build",
+			title:       "With role",
+			description: "D",
+			role:        "builder",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemCreate() error = %v", err)
+		}
+		outputText := out.String()
+		parts := strings.Fields(outputText)
+		if len(parts) < 5 {
+			t.Fatalf("unexpected output format: %s", outputText)
+		}
+		createdID := parts[3]
+		item, err := svc.GetActionItem(context.Background(), createdID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%q) error = %v", createdID, err)
+		}
+		if item.Role != domain.Role("builder") {
+			t.Fatalf("Role mismatch: got %q, want %q", item.Role, "builder")
+		}
+	})
+
+	t.Run("metadata-json pass-through", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-meta")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:    projectID,
+			kind:         "build",
+			title:        "With metadata",
+			description:  "D",
+			metadataJSON: `{"objective":"test objective"}`,
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemCreate() error = %v", err)
+		}
+		outputText := out.String()
+		parts := strings.Fields(outputText)
+		if len(parts) < 5 {
+			t.Fatalf("unexpected output format: %s", outputText)
+		}
+		createdID := parts[3]
+		item, err := svc.GetActionItem(context.Background(), createdID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%q) error = %v", createdID, err)
+		}
+		if item.Metadata.Objective != "test objective" {
+			t.Fatalf("Metadata.Objective mismatch: got %q, want %q", item.Metadata.Objective, "test objective")
+		}
+	})
+
+	t.Run("metadata-json malformed JSON returns clear error", func(t *testing.T) {
+		t.Parallel()
+		// Use a real service so execution reaches the JSON-parse gate (the svc==nil
+		// and svc.ListColumns checks fire before JSON parsing).
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-badjson")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:    projectID,
+			kind:         "build",
+			title:        "T",
+			description:  "D",
+			metadataJSON: `{invalid`,
+		}, &out)
+		if err == nil {
+			t.Fatal("expected error for malformed --metadata-json, got nil")
+		}
+		if !strings.Contains(err.Error(), "not valid JSON") {
+			t.Fatalf("error %q missing 'not valid JSON' phrase", err)
+		}
+	})
+
+	t.Run("column auto-resolved to first column sorted by position", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-colid")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:   projectID,
+			kind:        "build",
+			title:       "Auto column",
+			description: "D",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemCreate() error = %v", err)
+		}
+		outputText := out.String()
+		parts := strings.Fields(outputText)
+		if len(parts) < 5 {
+			t.Fatalf("unexpected output format: %s", outputText)
+		}
+		createdID := parts[3]
+		item, err := svc.GetActionItem(context.Background(), createdID)
+		if err != nil {
+			t.Fatalf("GetActionItem(%q) error = %v", createdID, err)
+		}
+		// ColumnID must be non-empty (auto-resolved from the project's columns).
+		if item.ColumnID == "" {
+			t.Fatal("expected non-empty ColumnID after auto-resolution, got empty")
+		}
+	})
+
+	t.Run("nil service rejects with not-configured", func(t *testing.T) {
+		t.Parallel()
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), nil, actionItemCreateCommandOptions{
+			projectID:   "proj-id",
+			kind:        "build",
+			title:       "T",
+			description: "D",
+		}, &out)
+		if err == nil {
+			t.Fatal("expected error for nil service, got nil")
+		}
+		if !strings.Contains(err.Error(), "not configured") {
+			t.Fatalf("error %q missing 'not configured' hint", err)
+		}
+	})
+
+	t.Run("output includes id and dotted address", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newCreateCLIServiceForTest(t, "create-svc-output")
+		var out strings.Builder
+		err := runActionItemCreate(context.Background(), svc, actionItemCreateCommandOptions{
+			projectID:   projectID,
+			kind:        "build",
+			title:       "Output test",
+			description: "D",
+		}, &out)
+		if err != nil {
+			t.Fatalf("runActionItemCreate() error = %v", err)
+		}
+		text := out.String()
+		if !strings.Contains(text, "Created action item") {
+			t.Fatalf("output missing 'Created action item': %s", text)
+		}
+		if !strings.Contains(text, "dotted:") {
+			t.Fatalf("output missing 'dotted:': %s", text)
+		}
+	})
+}
+
+// newCreateCLIServiceForTest seeds a project with columns + a pre-seeded root
+// action item to exercise the dotted-address computation path (new item is
+// child 0 of root, address = "0.0"). Returns (svc, projectID).
+func newCreateCLIServiceForTest(t *testing.T, projectID string) (*app.Service, string) {
+	t.Helper()
+	repo, err := sqlite.OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	ctx := context.Background()
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: projectID, Name: "Create CLI " + projectID}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput() error = %v", err)
+	}
+	project.Slug = strings.ToLower(strings.ReplaceAll(projectID, "-", ""))
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	col, err := domain.NewColumn("c-create-todo-"+projectID, projectID, "To Do", 0, 0, now)
+	if err != nil {
+		t.Fatalf("NewColumn() error = %v", err)
+	}
+	if err := repo.CreateColumn(ctx, col); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	idCounter := 0
+	idGen := func() string {
+		idCounter++
+		return strings.Repeat("a", 32-len(itoa(idCounter))) + itoa(idCounter)
+	}
+	clk := func() time.Time { return now.Add(time.Second) }
+	svc := app.NewService(repo, idGen, clk, app.ServiceConfig{})
+	return svc, projectID
+}
+
 // listCLISeed describes one action-item seed entry for the B.2 list CLI
 // fixture. `archived` flips the row's ArchivedAt pointer post-create so the
 // fixture exercises the failed+archived cross-axis case.

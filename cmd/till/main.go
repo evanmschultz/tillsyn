@@ -248,6 +248,25 @@ type actionItemCommandOptions struct {
 	includeArchived bool
 }
 
+// actionItemCreateCommandOptions stores `till action_item create` flag values.
+// All fields correspond one-to-one to CreateActionItemInput fields; the
+// structuralType and role fields name the closed-enum string forms so the CLI
+// can validate them with clear human-readable errors before the service call.
+type actionItemCreateCommandOptions struct {
+	projectID      string
+	parentID       string
+	kind           string
+	title          string
+	description    string
+	paths          []string
+	packages       []string
+	files          []string
+	blockedBy      []string
+	metadataJSON   string
+	structuralType string
+	role           string
+}
+
 // projectCreateCommandOptions stores project create flag values.
 type projectCreateCommandOptions struct {
 	name              string
@@ -457,10 +476,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	handoffListOpts := handoffListCommandOptions{scopeType: string(domain.ScopeLevelProject), limit: 50}
 	handoffUpdateOpts := handoffUpdateCommandOptions{}
 	actionItemOpts := actionItemCommandOptions{}
+	actionItemCreateOpts := actionItemCreateCommandOptions{}
 	dispatcherRunOpts := dispatcherRunCommandOptions{}
 
 	runFlow := func(ctx context.Context, command string) error {
-		return executeCommandFlow(ctx, command, rootOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, dispatcherRunOpts, stdout, stderr)
+		return executeCommandFlow(ctx, command, rootOpts, mcpOpts, authOpts, projectListOpts, projectCreateOpts, projectShowOpts, projectDiscoverOpts, captureStateOpts, embeddingsStatusOpts, embeddingsReindexOpts, kindListOpts, kindAllowlistOpts, leaseListOpts, leaseIssueOpts, leaseHeartbeatOpts, leaseRenewOpts, leaseRevokeOpts, leaseRevokeAllOpts, handoffCreateOpts, handoffGetOpts, handoffListOpts, handoffUpdateOpts, issueSessionOpts, requestCreateOpts, requestListOpts, requestShowOpts, requestApproveOpts, requestDenyOpts, requestCancelOpts, sessionListOpts, sessionValidateOpts, revokeSessionOpts, exportOpts, importOpts, actionItemOpts, actionItemCreateOpts, dispatcherRunOpts, stdout, stderr)
 	}
 
 	rootCmd := &cobra.Command{
@@ -814,6 +834,47 @@ empty reason defeats the point.
 		RunE: actionItemMutationRunE("supersede"),
 	}
 	actionItemSupersedeCmd.Flags().StringVar(&actionItemOpts.reason, "reason", "", "Dev-intent reason recorded on metadata.transition_notes (required, non-empty after trim)")
+	// actionItemCreateCmd is the W3.D3 `till action_item create` command.
+	// FF4 smart-default: plan|refinement → segment; all other kinds → droplet.
+	// ColumnID is auto-resolved from the project's first column (sorted by
+	// position). --blocked-by accumulates into Metadata.BlockedBy directly —
+	// no post-create UpdateActionItem is needed.
+	actionItemCreateCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create one action item under a project",
+		Long: strings.TrimSpace(`
+Create one action item under the specified project. The --structural-type flag
+defaults to the FF4 smart-default per kind: plan and refinement default to
+segment; all other kinds default to droplet. Supply --structural-type explicitly
+to override (valid values: drop|segment|confluence|droplet).
+
+Defaults: plan and refinement -> segment; all other kinds -> droplet.
+
+The action item is placed on the project's first column (sorted by position)
+automatically — no --column-id flag is required. Pass --parent-id to nest the
+new item under an existing action item.
+`),
+		Example: strings.Join([]string{
+			`  till action_item create --project-id PROJ_ID --kind plan --title "My plan" --description "D"`,
+			`  till action_item create --project-id PROJ_ID --kind build --title "My build" --description "D" --blocked-by UUID1 --blocked-by UUID2`,
+		}, "\n"),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "action_item.create")
+		},
+	}
+	actionItemCreateCmd.Flags().StringVar(&actionItemCreateOpts.projectID, "project-id", "", "Project identifier (required)")
+	actionItemCreateCmd.Flags().StringVar(&actionItemCreateOpts.parentID, "parent-id", "", "Parent action-item UUID (omit for a top-level item)")
+	actionItemCreateCmd.Flags().StringVar(&actionItemCreateOpts.kind, "kind", "", "Kind of action item (plan|research|build|plan-qa-proof|plan-qa-falsification|build-qa-proof|build-qa-falsification|closeout|commit|refinement|discussion|human-verify) (required)")
+	actionItemCreateCmd.Flags().StringVar(&actionItemCreateOpts.title, "title", "", "Action-item title (required)")
+	actionItemCreateCmd.Flags().StringVar(&actionItemCreateOpts.description, "description", "", "Action-item description (required)")
+	actionItemCreateCmd.Flags().StringArrayVar(&actionItemCreateOpts.paths, "path", nil, "Write-scope file path (repeatable; forward-slash repo-root-relative)")
+	actionItemCreateCmd.Flags().StringArrayVar(&actionItemCreateOpts.packages, "package", nil, "Package import path covering --path entries (repeatable)")
+	actionItemCreateCmd.Flags().StringArrayVar(&actionItemCreateOpts.files, "file", nil, "Reference-material file path (repeatable; forward-slash repo-root-relative)")
+	actionItemCreateCmd.Flags().StringArrayVar(&actionItemCreateOpts.blockedBy, "blocked-by", nil, "UUID of action item this one is blocked by (repeatable)")
+	actionItemCreateCmd.Flags().StringVar(&actionItemCreateOpts.metadataJSON, "metadata-json", "", "Optional JSON object merged into action-item metadata (e.g. {\"objective\":\"...\"})")
+	actionItemCreateCmd.Flags().StringVar(&actionItemCreateOpts.structuralType, "structural-type", "", "Cascade structural type override (drop|segment|confluence|droplet; default: FF4 smart-default per kind)")
+	actionItemCreateCmd.Flags().StringVar(&actionItemCreateOpts.role, "role", "", "Role tag (builder|planner|qa-proof|qa-falsification|... ; optional)")
 	// actionItemListCmd is the Drop 4c.5 droplet B.2 pre-TUI failure-listing
 	// CLI. The dev runs `till action_item list --state failed --project tillsyn`
 	// to see what is stuck; the natural follow-up is `till action_item
@@ -859,6 +920,7 @@ to also see rows with archived_at != nil.
 	actionItemCmd.AddCommand(
 		actionItemGetCmd,
 		actionItemListCmd,
+		actionItemCreateCmd,
 		actionItemUpdateCmd,
 		actionItemMoveCmd,
 		actionItemMoveStateCmd,
@@ -2128,6 +2190,7 @@ func executeCommandFlow(
 	exportOpts exportCommandOptions,
 	importOpts importCommandOptions,
 	actionItemOpts actionItemCommandOptions,
+	actionItemCreateOpts actionItemCreateCommandOptions,
 	dispatcherRunOpts dispatcherRunCommandOptions,
 	stdout io.Writer,
 	stderr io.Writer,
@@ -2473,6 +2536,10 @@ func executeCommandFlow(
 	case "handoff.update":
 		return runOneShotCommand("handoff.update", "handoff update", func() error {
 			return runHandoffUpdate(ctx, svc, cfg, handoffUpdateOpts, stdout)
+		})
+	case "action_item.create":
+		return runOneShotCommand("action_item.create", "action_item create", func() error {
+			return runActionItemCreate(ctx, svc, actionItemCreateOpts, stdout)
 		})
 	case "action_item.get":
 		return runOneShotCommand("action_item.get", "action_item get", func() error {
