@@ -36,9 +36,13 @@ var errStewardParentNotSeeded = errors.New("steward persistent parent not seeded
 //
 // Production impl: tries loadProjectTierTemplateOnly(&project) first; if a
 // project-tier template is found AND its StewardSeeds slice is non-empty,
-// that template is returned. Otherwise falls back to
+// that template is returned (the project receives exactly the seeds it
+// declares — N anchors for N seeds). Otherwise falls back to
 // templates.LoadBuiltinTemplate("till-gen") — the embedded generic template
-// — preserving the invariant that every project gets 6 STEWARD anchor seeds.
+// whose 6 [[steward_seeds]] entries materialize the cascade's baseline 6
+// STEWARD anchors. The fallback invariant is "every project lacking a
+// project-tier template gets 6 STEWARD anchors"; project-tier-template
+// authors set their own seed count.
 //
 // Tests substitute a hand-built Template (or an error) by replacing this
 // seam in a t.Cleanup. The fixture closure receives the same domain.Project
