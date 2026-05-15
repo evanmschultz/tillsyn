@@ -642,30 +642,6 @@ func detectBareRoot(ctx context.Context, cwd string) string {
 	return abs
 }
 
-// mapGroupsToLanguage maps the first element of groups to the project's
-// Language field using the closed language enum: "go" -> "go", "fe" -> "fe",
-// anything else (including "gen" and multi-word options) -> "" (no language
-// bias). Selection-order wins: the user's first group pick determines the
-// primary language. The fixed go-priority heuristic was explicitly rejected per
-// plan-QA NIT5 — user intent expressed through group order is the policy.
-//
-// An empty groups slice returns "" without panicking. This should never occur
-// after validateInitPayload, but the function is defensive.
-func mapGroupsToLanguage(groups []string) string {
-	if len(groups) == 0 {
-		return ""
-	}
-	switch groups[0] {
-	case "go":
-		return "go"
-	case "fe":
-		return "fe"
-	default:
-		// "gen" and any future unmapped groups have no language bias.
-		return ""
-	}
-}
-
 // createProjectDBRecord opens the Tillsyn SQLite database, then either
 // creates a new project record for the init payload or skips creation if a
 // project with the same name already exists (idempotency — re-running
@@ -682,7 +658,6 @@ func mapGroupsToLanguage(groups []string) string {
 //   - RepoPrimaryWorktree = os.Getwd() (absolute cwd at call time)
 //   - RepoBareRoot = git rev-parse --git-common-dir result, resolved to
 //     absolute path; empty string if git is absent or cwd is not a git repo
-//   - Language = payload.Groups[0] mapped through the closed enum (go/fe/gen)
 //   - Metadata.Groups = payload.Groups (typed []string field from W1.D2)
 func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, payload initJSONPayload) (string, error) {
 	paths, err := platform.DefaultPathsWithOptions(platform.Options{
