@@ -817,7 +817,7 @@ func newOrchSelfApprovalFixture(t *testing.T) orchSelfApprovalFixture {
 }
 
 // TestServiceCreateAuthRequestWakesOnApproval verifies create with wait_timeout blocks until the
-// request is approved, then returns the approved state with the issued session secret field populated.
+// request is approved, then returns the approved state with the issued session id field populated.
 func TestServiceCreateAuthRequestWakesOnApproval(t *testing.T) {
 	fixture := newAuthRequestServiceFixture(t)
 
@@ -1427,6 +1427,148 @@ func TestApproveAuthRequestStewardCrossSubtreeExceptionRejectsNonStewardOrch(t *
 	})
 	if !errors.Is(err, domain.ErrAuthorizationDenied) {
 		t.Fatalf("ApproveAuthRequest(non-steward orch cross-subtree) error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestServiceCreateAuthRequestWakesOnDeny verifies create with wait_timeout blocks until the
+// request is denied, then returns the denied state with no issued session id.
+func TestServiceCreateAuthRequestWakesOnDeny(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	createdCh := make(chan domain.AuthRequest, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		req, createErr := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+			Path:          "project/" + fixture.project.ID,
+			PrincipalID:   "review-agent",
+			PrincipalType: "agent",
+			ClientID:      "till-mcp-stdio",
+			ClientType:    "mcp-stdio",
+			Reason:        "wait on deny",
+			RequestedBy:   "review-agent",
+			WaitTimeout:   2 * time.Second,
+		})
+		if createErr != nil {
+			errCh <- createErr
+			return
+		}
+		createdCh <- req
+	}()
+
+	// The waiter should remain blocked until a terminal auth decision is published.
+	select {
+	case err := <-errCh:
+		t.Fatalf("CreateAuthRequest() early error = %v", err)
+	case req := <-createdCh:
+		t.Fatalf("CreateAuthRequest() returned early with %#v before deny", req)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Retrieve the pending request ID so we can deny it.
+	requests, err := fixture.svc.ListAuthRequests(context.Background(), domain.AuthRequestListFilter{
+		ProjectID: fixture.project.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListAuthRequests() error = %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("ListAuthRequests() count = %d, want 1", len(requests))
+	}
+	requestID := requests[0].ID
+
+	_, err = fixture.svc.DenyAuthRequest(context.Background(), app.DenyAuthRequestInput{
+		RequestID:      requestID,
+		ResolvedBy:     "denier-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "denied for live wait",
+	})
+	if err != nil {
+		t.Fatalf("DenyAuthRequest() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	case req := <-createdCh:
+		if got := req.State; got != domain.AuthRequestStateDenied {
+			t.Fatalf("CreateAuthRequest() state = %q, want denied", got)
+		}
+		if got := req.IssuedSessionID; got != "" {
+			t.Fatalf("CreateAuthRequest() issued_session_id = %q, want empty", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CreateAuthRequest() did not wake after deny")
+	}
+}
+
+// TestServiceCreateAuthRequestWakesOnCancel verifies create with wait_timeout blocks until the
+// request is canceled, then returns the canceled state with no issued session id.
+func TestServiceCreateAuthRequestWakesOnCancel(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	createdCh := make(chan domain.AuthRequest, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		req, createErr := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+			Path:          "project/" + fixture.project.ID,
+			PrincipalID:   "review-agent",
+			PrincipalType: "agent",
+			ClientID:      "till-mcp-stdio",
+			ClientType:    "mcp-stdio",
+			Reason:        "wait on cancel",
+			RequestedBy:   "review-agent",
+			WaitTimeout:   2 * time.Second,
+		})
+		if createErr != nil {
+			errCh <- createErr
+			return
+		}
+		createdCh <- req
+	}()
+
+	// The waiter should remain blocked until a terminal auth decision is published.
+	select {
+	case err := <-errCh:
+		t.Fatalf("CreateAuthRequest() early error = %v", err)
+	case req := <-createdCh:
+		t.Fatalf("CreateAuthRequest() returned early with %#v before cancel", req)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Retrieve the pending request ID so we can cancel it.
+	requests, err := fixture.svc.ListAuthRequests(context.Background(), domain.AuthRequestListFilter{
+		ProjectID: fixture.project.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListAuthRequests() error = %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("ListAuthRequests() count = %d, want 1", len(requests))
+	}
+	requestID := requests[0].ID
+
+	_, err = fixture.svc.CancelAuthRequest(context.Background(), app.CancelAuthRequestInput{
+		RequestID:      requestID,
+		ResolvedBy:     "canceler-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "canceled for live wait",
+	})
+	if err != nil {
+		t.Fatalf("CancelAuthRequest() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	case req := <-createdCh:
+		if got := req.State; got != domain.AuthRequestStateCanceled {
+			t.Fatalf("CreateAuthRequest() state = %q, want canceled", got)
+		}
+		if got := req.IssuedSessionID; got != "" {
+			t.Fatalf("CreateAuthRequest() issued_session_id = %q, want empty", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CreateAuthRequest() did not wake after cancel")
 	}
 }
 
