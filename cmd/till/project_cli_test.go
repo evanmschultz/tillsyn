@@ -604,56 +604,6 @@ func TestRunProjectUpdate_UpdatesFirstClassFields(t *testing.T) {
 	}
 }
 
-// TestRunProjectUpdate_LanguageValidation rejects unsupported language values and
-// accepts the known closed-enum set ("" | "go" | "fe").
-func TestRunProjectUpdate_LanguageValidation(t *testing.T) {
-	svc := newServiceForProjectUpdateTest(t)
-	project := seedProjectForUpdateTest(t, svc, "LangProject")
-
-	cases := []struct {
-		name    string
-		lang    string
-		wantErr string
-	}{
-		{
-			name:    "invalid language rejects",
-			lang:    "invalid",
-			wantErr: "invalid language",
-		},
-		{
-			name: "go language accepted",
-			lang: "go",
-		},
-		{
-			name: "fe language accepted",
-			lang: "fe",
-		},
-		{
-			name: "empty language accepted",
-			lang: "",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var out bytes.Buffer
-			err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
-				projectID: project.ID,
-				language:  tc.lang,
-			}, &out)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("runProjectUpdate() error = %v, want substring %q", err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("runProjectUpdate() error = %v", err)
-			}
-		})
-	}
-}
-
 // TestRunProjectUpdate_OwnerMetadata verifies --owner flag updates Metadata.Owner
 // without clobbering other metadata fields.
 func TestRunProjectUpdate_OwnerMetadata(t *testing.T) {
@@ -927,10 +877,10 @@ func TestRunProjectUpdate_MetadataFlagsIconColorHomepageTags(t *testing.T) {
 	}
 }
 
-// TestRunProjectUpdate_SingleFlagDoesNotClobberOthers verifies that running
-// runProjectUpdate with only --language preserves all other first-class and
-// metadata fields that were set at seed time.
-func TestRunProjectUpdate_SingleFlagDoesNotClobberOthers(t *testing.T) {
+// TestRunProjectUpdate_SingleDescriptionFlagDoesNotClobberOthers verifies that
+// running runProjectUpdate with only --description preserves all other
+// first-class and metadata fields that were set at seed time.
+func TestRunProjectUpdate_SingleDescriptionFlagDoesNotClobberOthers(t *testing.T) {
 	svc := newServiceForProjectUpdateTest(t)
 
 	// Seed with all first-class and key metadata fields populated.
@@ -950,15 +900,15 @@ func TestRunProjectUpdate_SingleFlagDoesNotClobberOthers(t *testing.T) {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
 
-	// Update ONLY the language to "fe".
+	// Update ONLY the description.
 	if err := runProjectUpdate(context.Background(), svc, config.Config{}, projectUpdateCommandOptions{
-		projectID: created.ID,
-		language:  "fe",
+		projectID:   created.ID,
+		description: "updated-desc",
 	}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("runProjectUpdate(--language fe) error = %v", err)
+		t.Fatalf("runProjectUpdate(--description updated-desc) error = %v", err)
 	}
 
-	// Read back and assert all other fields are unchanged.
+	// Read back and assert description was updated and all other fields are unchanged.
 	projects, err := svc.ListProjects(context.Background(), false)
 	if err != nil {
 		t.Fatalf("ListProjects() error = %v", err)
@@ -970,8 +920,8 @@ func TestRunProjectUpdate_SingleFlagDoesNotClobberOthers(t *testing.T) {
 			break
 		}
 	}
-	if found.Description != "Original description" {
-		t.Fatalf("expected Description preserved, got %q", found.Description)
+	if found.Description != "updated-desc" {
+		t.Fatalf("expected Description updated to %q, got %q", "updated-desc", found.Description)
 	}
 	if found.HyllaArtifactRef != "github.com/org/repo@main" {
 		t.Fatalf("expected HyllaArtifactRef preserved, got %q", found.HyllaArtifactRef)

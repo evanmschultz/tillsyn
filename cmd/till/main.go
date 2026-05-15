@@ -302,7 +302,6 @@ type projectUpdateCommandOptions struct {
 	description      string
 	rootPath         string
 	bareRoot         string
-	language         string
 	hyllaArtifactRef string
 	buildTool        string
 	devMcpServerName string
@@ -726,12 +725,11 @@ so unset flags preserve their current values.
 
 Use --add-group / --remove-group (repeatable) to mutate the project's
 metadata.groups slice. Group values must be in the canonical set
-(go, fe, gen); --language must map to the same enum.
+(go, fe, gen).
 `),
 		Example: strings.Join([]string{
 			"  till project update --project-id PROJECT_ID --root-path /abs/path",
 			"  till project update --project-id PROJECT_ID --add-group fe --remove-group go",
-			"  till project update --project-id PROJECT_ID --language go --bare-root /abs/path",
 		}, "\n"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -742,7 +740,6 @@ metadata.groups slice. Group values must be in the canonical set
 	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.description, "description", "", "Project description")
 	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.rootPath, "root-path", "", "Repo primary worktree absolute path")
 	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.bareRoot, "bare-root", "", "Repo bare-root absolute path")
-	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.language, "language", "", "Project language closed enum: go|fe|gen|<empty>")
 	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.hyllaArtifactRef, "hylla-artifact-ref", "", "Hylla artifact reference, e.g. github.com/org/repo@main")
 	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.buildTool, "build-tool", "", "Build tool (mage, npm, pnpm, etc.)")
 	projectUpdateCmd.Flags().StringVar(&projectUpdateOpts.devMcpServerName, "dev-mcp-server-name", "", "Dev MCP server registration name")

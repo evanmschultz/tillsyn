@@ -169,14 +169,6 @@ func runProjectUpdate(ctx context.Context, svc *app.Service, cfg config.Config, 
 		return fmt.Errorf("app service is not configured")
 	}
 
-	// Validate --language value before any read/write. Language field was
-	// removed from app.UpdateProjectInput (Phase 4.3 removes the flag); this
-	// guard preserves CLI-level validation so invalid values still surface a
-	// clear error rather than being silently ignored.
-	if lang := strings.TrimSpace(opts.language); lang != "" && lang != "go" && lang != "fe" {
-		return fmt.Errorf("project update: invalid language %q; allowed values: go, fe, or empty", opts.language)
-	}
-
 	// Validate --add-group values before any read/write. Trim whitespace first
 	// so the validation policy is consistent with applyGroupMutations, which
 	// also trims each value before dedup/append. Over-rejecting trimmed-valid
@@ -201,7 +193,6 @@ func runProjectUpdate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	hyllaArtifactRef := existing.HyllaArtifactRef
 	repoBareRoot := existing.RepoBareRoot
 	repoPrimaryWorktree := existing.RepoPrimaryWorktree
-	language := ""
 	buildTool := existing.BuildTool
 	devMcpServerName := existing.DevMcpServerName
 
@@ -214,10 +205,6 @@ func runProjectUpdate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	if strings.TrimSpace(opts.bareRoot) != "" {
 		repoBareRoot = opts.bareRoot
 	}
-	if strings.TrimSpace(opts.language) != "" {
-		language = opts.language
-	}
-	_ = language // Language field removed from UpdateProjectInput; Phase 4.3 removes flag
 	if strings.TrimSpace(opts.hyllaArtifactRef) != "" {
 		hyllaArtifactRef = opts.hyllaArtifactRef
 	}
@@ -545,7 +532,7 @@ func writeProjectList(stdout io.Writer, projects []domain.Project, emptyGuidance
 }
 
 // writeProjectDetail renders one project as a readable key/value summary.
-// Includes the Drop 4a first-class fields (root paths, language, build tool,
+// Includes the Drop 4a first-class fields (root paths, build tool,
 // dev MCP server name, Hylla artifact ref, and groups) so users can visually
 // confirm what flag-driven updates changed.
 func writeProjectDetail(stdout io.Writer, project domain.Project, title string) error {
@@ -563,7 +550,6 @@ func writeProjectDetail(stdout io.Writer, project domain.Project, title string) 
 		{"standards_markdown", compactText(project.Metadata.StandardsMarkdown)},
 		{"root_path", compactText(project.RepoPrimaryWorktree)},
 		{"bare_root", compactText(project.RepoBareRoot)},
-		{"language", compactText("")},
 		{"build_tool", compactText(project.BuildTool)},
 		{"dev_mcp_server_name", compactText(project.DevMcpServerName)},
 		{"hylla_artifact_ref", compactText(project.HyllaArtifactRef)},
