@@ -884,7 +884,7 @@ func loadProjectTemplateCandidate(candidatePath string) (templates.Template, boo
 
 // UpdateProjectInput holds input values for update project operations.
 //
-// Six Drop 4a L4 first-class fields ride alongside Name / Description.
+// Five Drop 4a L4 first-class fields ride alongside Name / Description.
 // Per WAVE_1_PLAN.md §1.8 the Project surface is admin-driven, so the
 // fields are value-typed (no pointer-sentinels). Callers that want to
 // preserve existing values must read the project first and pass them
