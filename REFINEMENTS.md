@@ -39,6 +39,50 @@ Transitions are recorded by appending a dated status note to the entry, not by r
 
 ---
 
+## 2026-05-15 — methodology — compile-coupled droplet chains defer `mage ci` to the chain tail
+
+### Context
+Phase 4.2 Droplet 1 (`refactor(domain): remove project.Language field`, commit `8f3a418`) committed locally with `mage test-pkg ./internal/domain` GREEN but full-tree `mage ci` RED. The downstream packages (`internal/app`, `cmd/till`, `internal/adapters/*`, `internal/tui`) reference `project.Language` and `ErrInvalidLanguage` which the droplet removed; their fixes live in Droplets 2-5. Builder + sibling QA proof PASSED within the droplet's declared `paths` scope, but QA falsification CAUGHT a hard conflict with CLAUDE.md "Build Verification" rule 1 ("all relevant mage targets pass") + post-build gate ("`mage ci` on fail → build moves to `failed`"). The rule was written for self-contained droplets and doesn't accommodate compile-coupled cross-package refactors where the only way to honor the atomic-droplet sizing rule (1-4 code blocks) is to leave CI red between intermediate droplets.
+
+### Observation
+Two competing rules:
+
+1. **Atomic droplet sizing** (per `feedback_plan_down_build_up.md`): each `build` action item is 1-4 code blocks. Reviewable independently. A planner decomposes a multi-package refactor into N small droplets rather than one giant blob.
+2. **Build verification** (CLAUDE.md "Build Verification" rule 1): every `build` action item passes `mage ci` before `complete`. Post-build gate runs `mage ci` and fails the build on red.
+
+For compile-coupled refactors (rename / remove / change-signature touching N packages), these rules collide. Honoring atomicity = `mage ci` red between droplets. Honoring `mage ci` per-droplet = squashing into one un-reviewable mega-droplet.
+
+### Proposed fix — Route A formalized
+
+**A multi-droplet chain is one logical refactor that the planner decomposes for review-ability, not for CI-per-droplet.** The chain's invariants:
+
+1. Every droplet in the chain declares its `paths` to the single package it touches.
+2. Each droplet's build gate is `mage test-pkg <package>` — the touched package compiles + its tests pass.
+3. Every droplet except the FIRST carries `blocked_by` pointing at the prior droplet, enforcing sequential execution.
+4. **`mage ci` is the chain gate, NOT the droplet gate.** It runs on the LAST droplet in the chain (or before push, whichever is first).
+5. **Push is held until the chain completes.** All chain commits stay local until the chain's last `mage ci` passes. This means intermediate CI-red commits never reach origin.
+6. Per-droplet QA proof + falsification still run; falsifier is expected to surface the CI-red intermediate state as an observation — orchestrator routes it via this methodology rather than failing the droplet.
+
+The plan action item parents the chain. Plan-QA twins review the decomposition + chain integrity (no orphan droplets, all `blocked_by` edges wired, last droplet's `mage ci` actually clears the full tree).
+
+### Worked example — Phase 4.2
+
+- Plan `6e41ec19` PHASE 4.2 REMOVE PROJECT LANGUAGE FIELD (drop): chain parent.
+- Droplet 1 `7bad55cd` (domain): builds, `mage test-pkg ./internal/domain` green, `mage ci` red (expected — referenced in app + adapters). `complete` per Route A.
+- Droplet 2 `<TBD>` (app): builds against domain commit, `mage test-pkg ./internal/app` green, `mage ci` partially red (adapters still reference Language).
+- Droplet 3 + 4 `<TBD>` (storage + mcp_common, parallel after 2).
+- Droplet 5 `<TBD>` (mcp_rpc): final droplet, `mage ci` GREEN across full tree, push.
+
+If any droplet in the chain fails its `mage test-pkg <package>` gate, the chain pauses; orchestrator decides whether to fix forward (extra droplet) or abandon the chain (revert all commits + redecompose).
+
+### Target drop
+This entry IS the methodology — no separate drop. The rule lands here so future Phase 4.x / Phase 5.x / etc. multi-droplet chains have prior art to cite.
+
+### Tags
+`methodology`, `cascade`, `build-verification`, `compile-coupled-refactor`, `chain-semantics`
+
+---
+
 ## 2026-05-15 — phase-4.2-orphans — Predicted orphans after `project.Language` removal
 
 ### Context
