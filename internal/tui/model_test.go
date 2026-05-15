@@ -14993,7 +14993,6 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		"HyllaArtifactRef":    {},
 		"RepoBareRoot":        {},
 		"RepoPrimaryWorktree": {},
-		"Language":            {},
 		"BuildTool":           {},
 		"DevMcpServerName":    {},
 	}
@@ -15198,8 +15197,8 @@ func TestProjectFormW2D7FieldsPassedThroughOnCreate(t *testing.T) {
 
 // TestUpdateThreadDescriptionPreservesW2D7Fields is the QA-falsification-driven regression
 // for the sibling save path bug: editing a project's thread description previously called
-// Service.UpdateProject with only Name/Description/Metadata, silently wiping the six W2.D7
-// typed fields (HyllaArtifactRef, RepoBareRoot, RepoPrimaryWorktree, Language, BuildTool,
+// Service.UpdateProject with only Name/Description/Metadata, silently wiping the five W2.D7
+// typed fields (HyllaArtifactRef, RepoBareRoot, RepoPrimaryWorktree, BuildTool,
 // DevMcpServerName). The fix forwards the values from the in-scope project snapshot.
 func TestUpdateThreadDescriptionPreservesW2D7Fields(t *testing.T) {
 	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
