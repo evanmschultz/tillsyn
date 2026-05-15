@@ -816,6 +816,120 @@ func newOrchSelfApprovalFixture(t *testing.T) orchSelfApprovalFixture {
 	}
 }
 
+// TestServiceCreateAuthRequestWakesOnApproval verifies create with wait_timeout blocks until the
+// request is approved, then returns the approved state with the issued session secret field populated.
+func TestServiceCreateAuthRequestWakesOnApproval(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	createdCh := make(chan domain.AuthRequest, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		req, createErr := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+			Path:          "project/" + fixture.project.ID,
+			PrincipalID:   "review-agent",
+			PrincipalType: "agent",
+			ClientID:      "till-mcp-stdio",
+			ClientType:    "mcp-stdio",
+			Reason:        "wait on approval",
+			RequestedBy:   "review-agent",
+			WaitTimeout:   2 * time.Second,
+		})
+		if createErr != nil {
+			errCh <- createErr
+			return
+		}
+		createdCh <- req
+	}()
+
+	// The waiter should remain blocked until a terminal auth decision is published.
+	select {
+	case err := <-errCh:
+		t.Fatalf("CreateAuthRequest() early error = %v", err)
+	case req := <-createdCh:
+		t.Fatalf("CreateAuthRequest() returned early with %#v before approval", req)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Retrieve the pending request ID so we can approve it.
+	requests, err := fixture.svc.ListAuthRequests(context.Background(), domain.AuthRequestListFilter{
+		ProjectID: fixture.project.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListAuthRequests() error = %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("ListAuthRequests() count = %d, want 1", len(requests))
+	}
+	requestID := requests[0].ID
+
+	approved, err := fixture.svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+		RequestID:      requestID,
+		ResolvedBy:     "approver-1",
+		ResolvedType:   domain.ActorTypeUser,
+		ResolutionNote: "approved for live wait",
+	})
+	if err != nil {
+		t.Fatalf("ApproveAuthRequest() error = %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	case req := <-createdCh:
+		if got := req.State; got != domain.AuthRequestStateApproved {
+			t.Fatalf("CreateAuthRequest() state = %q, want approved", got)
+		}
+		if got := req.IssuedSessionID; got != approved.Request.IssuedSessionID {
+			t.Fatalf("CreateAuthRequest() issued_session_id = %q, want %q", got, approved.Request.IssuedSessionID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CreateAuthRequest() did not wake after approval")
+	}
+}
+
+// TestServiceCreateAuthRequestWaitsForPendingResolution verifies create with wait_timeout returns the
+// pending record (no error) when the timeout elapses before any resolution.
+func TestServiceCreateAuthRequestWaitsForPendingResolution(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	req, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:          "project/" + fixture.project.ID,
+		PrincipalID:   "review-agent",
+		PrincipalType: "agent",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		Reason:        "short timeout returns pending",
+		WaitTimeout:   50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	if got := req.State; got != domain.AuthRequestStatePending {
+		t.Fatalf("CreateAuthRequest() state = %q, want pending", got)
+	}
+}
+
+// TestServiceCreateAuthRequestZeroWaitTimeoutReturnsImmediately verifies that omitting wait_timeout
+// (zero value) returns immediately as before — no regression.
+func TestServiceCreateAuthRequestZeroWaitTimeoutReturnsImmediately(t *testing.T) {
+	fixture := newAuthRequestServiceFixture(t)
+
+	req, err := fixture.svc.CreateAuthRequest(context.Background(), app.CreateAuthRequestInput{
+		Path:          "project/" + fixture.project.ID,
+		PrincipalID:   "review-agent",
+		PrincipalType: "agent",
+		ClientID:      "till-mcp-stdio",
+		ClientType:    "mcp-stdio",
+		Reason:        "no wait",
+	})
+	if err != nil {
+		t.Fatalf("CreateAuthRequest() error = %v", err)
+	}
+	if got := req.State; got != domain.AuthRequestStatePending {
+		t.Fatalf("CreateAuthRequest() state = %q, want pending", got)
+	}
+}
+
 // TestApproveAuthRequestRejectsMissingApproverIdentity verifies the all-or-nothing
 // rule on the four approver-identity fields landed in Drop 4a Wave 3 W3.1.
 func TestApproveAuthRequestRejectsMissingApproverIdentity(t *testing.T) {

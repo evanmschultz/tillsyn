@@ -628,6 +628,7 @@ type CreateAuthRequestRequest struct {
 	ClientName          string
 	RequestedTTL        string
 	Timeout             string
+	WaitTimeout         string
 	Reason              string
 	ContinuationJSON    string
 }

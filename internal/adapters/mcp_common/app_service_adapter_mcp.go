@@ -88,6 +88,10 @@ func (a *AppServiceAdapter) CreateAuthRequest(ctx context.Context, in CreateAuth
 	if err != nil {
 		return AuthRequestRecord{}, err
 	}
+	waitTimeout, err := parseOptionalDurationString(in.WaitTimeout, "wait_timeout")
+	if err != nil {
+		return AuthRequestRecord{}, err
+	}
 	continuation, err := normalizeCreateAuthRequestContinuation(in.ContinuationJSON)
 	if err != nil {
 		return AuthRequestRecord{}, err
@@ -112,6 +116,7 @@ func (a *AppServiceAdapter) CreateAuthRequest(ctx context.Context, in CreateAuth
 		RequestedBy:         requestedByActor,
 		RequestedType:       requestedByType,
 		Timeout:             timeout,
+		WaitTimeout:         waitTimeout,
 	})
 	if err != nil {
 		return AuthRequestRecord{}, mapAppError("create auth request", err)

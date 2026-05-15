@@ -133,7 +133,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests mcpcommon.A
 			mcp.WithString("acting_session_secret", mcp.Description("Approved acting auth session secret. Required for operation=list_sessions|check_session_governance|revoke_session and optional for bounded delegation on operation=create. When create targets a different principal/client, this acting session must be an orchestrator session; non-orchestrators may request only their own session.")),
 			mcp.WithString("acting_auth_context_id", mcp.Description("Bound MCP auth context handle for the acting session, returned by till.auth_request claim/validate_session on stdio runtimes")),
 			mcp.WithString("resume_token", mcp.Description("Requester-owned resume token. Required for operation=claim|cancel. Use the token returned by operation=create when continuation_json was omitted.")),
-			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for human approval before returning the current request state, for example 30m")),
+			mcp.WithString("wait_timeout", mcp.Description("Optional how long to wait for human approval before returning the current request state, for example 30m. Honored on operation=create and operation=claim only; ignored on other operations.")),
 			mcp.WithString("resolution_note", mcp.Description("Optional requester-visible note explaining why the pending request was withdrawn or approved")),
 			mcp.WithString("agent_instance_id", mcp.Description("Approving orchestrator's agent instance identifier. Required for operation=approve.")),
 			mcp.WithString("lease_token", mcp.Description("Approving orchestrator's lease token. Required for operation=approve.")),
@@ -215,6 +215,7 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests mcpcommon.A
 					ClientName:       args.ClientName,
 					RequestedTTL:     args.RequestedTTL,
 					Timeout:          args.Timeout,
+					WaitTimeout:      args.WaitTimeout,
 					Reason:           args.Reason,
 					ContinuationJSON: args.ContinuationJSON,
 				})

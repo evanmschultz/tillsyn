@@ -160,6 +160,7 @@ type CreateAuthRequestInput struct {
 	RequestedBy         string
 	RequestedType       domain.ActorType
 	Timeout             time.Duration
+	WaitTimeout         time.Duration
 }
 
 // DenyAuthRequestInput captures fields for denying one auth request.
@@ -283,7 +284,32 @@ func (s *Service) CreateAuthRequest(ctx context.Context, in CreateAuthRequestInp
 			return domain.AuthRequest{}, err
 		}
 	}
+	if in.WaitTimeout > 0 && s.liveWait != nil {
+		return s.createAuthRequestLive(ctx, req, in.WaitTimeout)
+	}
 	return req, nil
+}
+
+// createAuthRequestLive waits on one in-process resolution event after persisting a new auth request.
+//
+// Ordering: persist → get baseline sequence → check if already resolved (defensive) →
+// liveWait.Wait with deadline → re-read resolved state via GetAuthRequest → return.
+func (s *Service) createAuthRequestLive(ctx context.Context, req domain.AuthRequest, waitTimeout time.Duration) (domain.AuthRequest, error) {
+	baselineSequence, err := s.liveWaitBaselineSequence(ctx, LiveWaitEventAuthRequestResolved, req.ID)
+	if err != nil {
+		return domain.AuthRequest{}, err
+	}
+	if domain.NormalizeAuthRequestState(req.State) != domain.AuthRequestStatePending {
+		return req, nil
+	}
+	waitCtx, cancel := context.WithDeadline(ctx, authRequestWaitDeadline(s.clock().UTC(), req.ExpiresAt, waitTimeout))
+	defer cancel()
+	if _, err := s.liveWait.Wait(waitCtx, LiveWaitEventAuthRequestResolved, req.ID, baselineSequence); err != nil {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return domain.AuthRequest{}, err
+		}
+	}
+	return s.authRequests.GetAuthRequest(ctx, req.ID)
 }
 
 // GetAuthRequest returns one auth request by id.
