@@ -810,6 +810,49 @@ func loadProjectTemplateWithHome(project *domain.Project, homeDir, group string)
 	return tpl, true, nil
 }
 
+// loadProjectTierTemplateOnly resolves a project's template via the
+// project-tier candidates ONLY — no HOME tier, no embedded language-default
+// fallback. Returns (zero, false, nil) when neither
+// <RepoBareRoot>/.tillsyn/template.toml nor
+// <RepoPrimaryWorktree>/.tillsyn/template.toml exists.
+//
+// This is the project-tier-opt-in contract documented in REFINEMENTS.md
+// 2026-05-14 "Remove project.Language; templates are project-tier opt-in
+// only": child_rules auto-spawn at action_item create time fires only when a
+// project has authored its own template, never via the embedded fallback. A
+// project with no project-tier template gets no auto-create — pure tracking.
+//
+// Errors from a present-but-malformed candidate file (typo, schema mismatch,
+// validator rejection) propagate wrapped with the offending path; the
+// function does NOT silently fall through to a different candidate on
+// non-not-exist open failures.
+//
+// Project nil-guard mirrors loadProjectTemplate.
+func loadProjectTierTemplateOnly(project *domain.Project) (templates.Template, bool, error) {
+	if project == nil {
+		return templates.Template{}, false, nil
+	}
+	bareRoot := strings.TrimSpace(project.RepoBareRoot)
+	primaryWorktree := strings.TrimSpace(project.RepoPrimaryWorktree)
+	candidates := make([]string, 0, 2)
+	if bareRoot != "" {
+		candidates = append(candidates, filepath.Join(bareRoot, projectTemplateDir, projectTemplateFilename))
+	}
+	if primaryWorktree != "" {
+		candidates = append(candidates, filepath.Join(primaryWorktree, projectTemplateDir, projectTemplateFilename))
+	}
+	for _, candidatePath := range candidates {
+		tpl, ok, err := loadProjectTemplateCandidate(candidatePath)
+		if err != nil {
+			return templates.Template{}, false, err
+		}
+		if ok {
+			return tpl, true, nil
+		}
+	}
+	return templates.Template{}, false, nil
+}
+
 // loadProjectTemplateCandidate opens and parses a single on-disk template
 // candidate at the given absolute path. Return contract:
 //
@@ -1483,23 +1526,22 @@ func (s *Service) applyChildRulesForCreate(ctx context.Context, parent domain.Ac
 	if err != nil {
 		return fmt.Errorf("load project: %w", err)
 	}
-	// Skip when the project has neither Groups nor Language: such "pre-
-	// bootstrap" projects have no template binding and the embedded
-	// language-default fallback would surface arbitrary rules a caller has
-	// not opted into. The TILLSYN-style real projects always carry Groups
-	// (set by `till init`); legacy or unit-test projects often do not.
-	if strings.TrimSpace(project.Language) == "" && len(project.Metadata.Groups) == 0 {
-		return nil
-	}
-	homeDir, homeErr := os.UserHomeDir()
-	if homeErr != nil {
-		// No HOME — best-effort skip. The dispatcher will still see the
-		// parent action item; the missing auto-children just won't fire.
-		return nil
-	}
-	tpl, ok, err := loadProjectTemplatesForGroups(&project, homeDir)
+	// Project-tier-only template lookup. Per the design captured in
+	// REFINEMENTS.md 2026-05-14 ("Remove project.Language; templates are
+	// project-tier opt-in only"), child_rules auto-spawn fires only when the
+	// project has explicitly authored a template at
+	// <project.RepoBareRoot>/.tillsyn/template.toml or
+	// <project.RepoPrimaryWorktree>/.tillsyn/template.toml. NO embedded
+	// language-default fallback at this boundary — falling through to the
+	// embedded till-<lang>.toml would impose arbitrary cascade behavior on
+	// projects that did not opt in. The bake-time KindCatalog path
+	// (bakeProjectKindCatalog) keeps the embedded fallback for backwards
+	// compatibility of kind / agent-binding resolution until the architecture
+	// refinement drop removes it; the create-time auto-spawn boundary is the
+	// first place to enforce the project-tier-only invariant.
+	tpl, ok, err := loadProjectTierTemplateOnly(&project)
 	if err != nil {
-		return fmt.Errorf("load project templates: %w", err)
+		return fmt.Errorf("load project-tier template: %w", err)
 	}
 	if !ok {
 		return nil

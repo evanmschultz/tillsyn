@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,13 +14,15 @@ import (
 // TestServiceRaiseListResolveAttentionItem verifies attention lifecycle APIs on the app service.
 func TestServiceRaiseListResolveAttentionItem(t *testing.T) {
 	repo := newFakeRepo()
-	ids := []string{"p1", "c1", "t1", "attn-1"}
-	nextID := 0
+	idCounter := 0
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	// Counter-based idGen so template-driven auto-create (child_rules adding
+	// QA twin children when a build/plan parent is persisted) does not
+	// exhaust a fixed-length ID slice. The prior 4-entry slice predates
+	// child_rules wire-up at the service layer.
 	svc := NewService(repo, func() string {
-		id := ids[nextID]
-		nextID++
-		return id
+		idCounter++
+		return fmt.Sprintf("id-%04d", idCounter)
 	}, func() time.Time {
 		return now
 	}, ServiceConfig{})
@@ -161,13 +164,12 @@ func TestServiceListAttentionItemsWaitsForLiveChange(t *testing.T) {
 // TestRaiseAttentionItemValidatesScopeEntityConsistency verifies scope_type/scope_id tuple validation.
 func TestRaiseAttentionItemValidatesScopeEntityConsistency(t *testing.T) {
 	repo := newFakeRepo()
-	ids := []string{"p1", "c1", "t1", "attn-project", "attn-actionItem"}
-	nextID := 0
+	idCounter := 0
 	now := time.Date(2026, 2, 24, 12, 30, 0, 0, time.UTC)
+	// Counter-based idGen — see TestServiceRaiseListResolveAttentionItem above.
 	svc := NewService(repo, func() string {
-		id := ids[nextID]
-		nextID++
-		return id
+		idCounter++
+		return fmt.Sprintf("id-%04d", idCounter)
 	}, func() time.Time {
 		return now
 	}, ServiceConfig{})
@@ -302,12 +304,11 @@ func TestMoveActionItemBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 func TestCaptureStateSummary(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 24, 14, 0, 0, 0, time.UTC)
-	ids := []string{"p1", "c1", "t1", "attn-1"}
-	nextID := 0
+	idCounter := 0
+	// Counter-based idGen — see TestServiceRaiseListResolveAttentionItem above.
 	svc := NewService(repo, func() string {
-		id := ids[nextID]
-		nextID++
-		return id
+		idCounter++
+		return fmt.Sprintf("id-%04d", idCounter)
 	}, func() time.Time {
 		return now
 	}, ServiceConfig{})

@@ -7372,12 +7372,31 @@ func TestCreateActionItem_AppliesTemplateChildRules(t *testing.T) {
 		return now
 	}, ServiceConfig{})
 
+	// Project-tier template authoring is the contract: write the embedded
+	// till-go.toml content to <RepoPrimaryWorktree>/.tillsyn/template.toml so
+	// loadProjectTierTemplateOnly resolves a real on-disk file. Per REFINEMENTS
+	// 2026-05-14 ("project-tier opt-in only"), the create-time auto-spawn
+	// does NOT consult embedded fallbacks.
+	worktree := t.TempDir()
+	tplDir := filepath.Join(worktree, ".tillsyn")
+	if err := os.MkdirAll(tplDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", tplDir, err)
+	}
+	tplBytes, err := templates.DefaultTemplateFS.ReadFile("builtin/till-go.toml")
+	if err != nil {
+		t.Fatalf("ReadFile embedded till-go.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tplDir, "template.toml"), tplBytes, 0o644); err != nil {
+		t.Fatalf("WriteFile template.toml: %v", err)
+	}
+
 	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
-		Name:        "Cascade Template Test",
-		Language:    "go",
-		Metadata:    domain.ProjectMetadata{Groups: []string{"go"}},
-		UpdatedBy:   "user-1",
-		UpdatedType: domain.ActorTypeUser,
+		Name:                "Cascade Template Test",
+		Language:            "go",
+		RepoPrimaryWorktree: worktree,
+		Metadata:            domain.ProjectMetadata{Groups: []string{"go"}},
+		UpdatedBy:           "user-1",
+		UpdatedType:         domain.ActorTypeUser,
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
