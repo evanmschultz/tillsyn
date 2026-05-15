@@ -31,17 +31,28 @@ const stewardOwner = "STEWARD"
 var errStewardParentNotSeeded = errors.New("steward persistent parent not seeded for project")
 
 // loadStewardSeedTemplate is a package-level seam returning the cascade
-// Template the auto-generator iterates. The seam takes a single `lang`
-// argument and routes through `templates.LoadDefaultTemplateForLanguage`.
-// Production callers pass `""` (generic template) since project.Language
-// was removed in Phase 4.2; per-project routing is deferred to Phase 4.4.
+// Template the auto-generator iterates. The seam receives the full
+// domain.Project so it can attempt the project-tier template first.
+//
+// Production impl: tries loadProjectTierTemplateOnly(&project) first; if a
+// project-tier template is found AND its StewardSeeds slice is non-empty,
+// that template is returned. Otherwise falls back to
+// templates.LoadBuiltinTemplate("till-gen") — the embedded generic template
+// — preserving the invariant that every project gets 6 STEWARD anchor seeds.
 //
 // Tests substitute a hand-built Template (or an error) by replacing this
-// seam in a t.Cleanup. The fixture closure receives the same `lang`
-// argument; fixtures that ignore the axis use `_ string` in the closure
-// signature.
-var loadStewardSeedTemplate = func(lang string) (templates.Template, error) {
-	return templates.LoadDefaultTemplateForLanguage(lang)
+// seam in a t.Cleanup. The fixture closure receives the same domain.Project
+// argument; fixtures that do not inspect it use `_ domain.Project` in the
+// closure signature.
+var loadStewardSeedTemplate = func(project domain.Project) (templates.Template, error) {
+	tpl, ok, err := loadProjectTierTemplateOnly(&project)
+	if err != nil {
+		return templates.Template{}, err
+	}
+	if ok && len(tpl.StewardSeeds) > 0 {
+		return tpl, nil
+	}
+	return templates.LoadBuiltinTemplate("till-gen")
 }
 
 // seedStewardAnchors materializes the long-lived STEWARD-owned anchor
@@ -86,8 +97,7 @@ var loadStewardSeedTemplate = func(lang string) (templates.Template, error) {
 // re-invoke seedStewardAnchors after fixing the root cause and idempotency
 // will pick up where the previous attempt left off.
 func (s *Service) seedStewardAnchors(ctx context.Context, project domain.Project) error {
-	// TODO Phase 4.4: project.Language removed; "" selects generic embedded template until STEWARD seed migration lands.
-	tpl, err := loadStewardSeedTemplate("")
+	tpl, err := loadStewardSeedTemplate(project)
 	if err != nil {
 		return fmt.Errorf("seed steward anchors: load template: %w", err)
 	}

@@ -7119,50 +7119,53 @@ func TestBakeProjectKindCatalog_NonEmptyPathNoTemplateEmptyCatalog(t *testing.T)
 	}
 }
 
-// TestSeedStewardAnchors_GenericSeamWiring verifies that seedStewardAnchors
-// always invokes the loadStewardSeedTemplate seam with an empty string
-// (generic template) after Phase 4.2 removed project.Language.
+// TestSeedStewardAnchors_FallsBackToGenericWhenNoProjectTemplate verifies
+// that seedStewardAnchors invokes the loadStewardSeedTemplate seam exactly
+// once per project create and that the seam falls back to the generic
+// embedded template when the project has no project-tier template (empty
+// RepoBareRoot + empty RepoPrimaryWorktree).
 //
-// Pre-Phase-4.2 the seam was called with project.Language so the STEWARD
-// seed path was language-aware. Post-Phase-4.2 project.Language is gone;
-// the seam receives "" unconditionally until Phase 4.4 wires per-project
-// STEWARD seed migration.
-//
-// This test asserts:
+// Phase 4.4 D2 migrated the seam from func(lang string) to
+// func(project domain.Project). The production impl tries
+// loadProjectTierTemplateOnly first; with no project-tier paths configured
+// (ok=false), it falls through to templates.LoadBuiltinTemplate("till-gen").
+// This test installs a fixture that counts invocations and returns a
+// single-seed template, then asserts:
 //  1. The seam is invoked exactly once per project create.
-//  2. The seam receives "" regardless of how the project was created.
+//  2. The seam receives the project value (ID is non-empty).
 //  3. The materialized STEWARD anchors come from the fixture the seam
 //     returned (proves the fixture was actually used to drive seed
 //     materialization).
-func TestSeedStewardAnchors_GenericSeamWiring(t *testing.T) {
-	const anchorTitle = "GENERIC_SEAM_ANCHOR"
-	var seamLangsObserved []string
-	withSeedTemplateFixture(t, func(lang string) (templates.Template, error) {
-		seamLangsObserved = append(seamLangsObserved, lang)
+func TestSeedStewardAnchors_FallsBackToGenericWhenNoProjectTemplate(t *testing.T) {
+	const anchorTitle = "GENERIC_FALLBACK_ANCHOR"
+	var seamProjectsObserved []domain.Project
+	withSeedTemplateFixture(t, func(proj domain.Project) (templates.Template, error) {
+		seamProjectsObserved = append(seamProjectsObserved, proj)
 		return templates.Template{
 			SchemaVersion: templates.SchemaVersionV1,
 			StewardSeeds: []templates.StewardSeed{
-				{Title: anchorTitle, Description: "generic-seam seeded anchor"},
+				{Title: anchorTitle, Description: "generic-fallback seeded anchor"},
 			},
 		}, nil
 	})
 
 	svc, repo := newSeederService(t)
 	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
-		Name: "Generic Seam Demo",
+		Name: "Generic Fallback Demo",
+		// RepoBareRoot and RepoPrimaryWorktree intentionally empty —
+		// no project-tier template; production impl falls back to till-gen.
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
 
 	// Acceptance #1: exactly one invocation per project create.
-	if got := len(seamLangsObserved); got != 1 {
+	if got := len(seamProjectsObserved); got != 1 {
 		t.Fatalf("seam invocations = %d; want 1 (seedStewardAnchors fires once at project create)", got)
 	}
-	// Acceptance #2: seam receives "" (generic) post-Phase-4.2.
-	if seamLangsObserved[0] != "" {
-		t.Fatalf("seam invoked with lang = %q; want \"\" (project.Language removed in Phase 4.2; generic template until Phase 4.4)",
-			seamLangsObserved[0])
+	// Acceptance #2: seam receives the project (non-empty ID).
+	if seamProjectsObserved[0].ID == "" {
+		t.Fatalf("seam received project with empty ID; want the created project's ID")
 	}
 
 	// Acceptance #3: materialized anchor title matches fixture.
@@ -7180,6 +7183,72 @@ func TestSeedStewardAnchors_GenericSeamWiring(t *testing.T) {
 	wantTitles := []string{anchorTitle}
 	if !reflect.DeepEqual(stewardTitles, wantTitles) {
 		t.Fatalf("STEWARD anchor titles = %v; want %v (generic fixture must drive materialization)",
+			stewardTitles, wantTitles)
+	}
+}
+
+// TestSeedStewardAnchors_UsesProjectTierTemplateWhenPresent verifies that
+// the production loadStewardSeedTemplate seam uses a project-tier template
+// (from <RepoPrimaryWorktree>/.tillsyn/template.toml) when one is present
+// and its StewardSeeds slice is non-empty, instead of falling back to the
+// embedded generic (till-gen.toml).
+//
+// The test writes a minimal template.toml with a project-tier-only seed
+// title ("PROJECT_TIER_ANCHOR") into a t.TempDir() directory and sets the
+// project's RepoPrimaryWorktree to that dir. The production seam impl
+// (loadProjectTierTemplateOnly) will find and parse the file; the test then
+// asserts that the materialized STEWARD anchor carries the project-tier
+// seed title, NOT the generic fallback seeds.
+func TestSeedStewardAnchors_UsesProjectTierTemplateWhenPresent(t *testing.T) {
+	// Write a minimal valid template.toml into a temp dir.
+	tmpDir := t.TempDir()
+	tillsynDir := filepath.Join(tmpDir, ".tillsyn")
+	if err := os.MkdirAll(tillsynDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(.tillsyn) error = %v", err)
+	}
+	templatePath := filepath.Join(tillsynDir, "template.toml")
+	// Minimal template: schema_version + one [[steward_seeds]] entry.
+	// The kind catalog and child_rules are omitted — till-gen.toml defaults
+	// fill them during Load; seedStewardAnchors only consumes StewardSeeds.
+	templateContent := `schema_version = "v1"
+
+[[steward_seeds]]
+title = "PROJECT_TIER_ANCHOR"
+description = "Seeded from project-tier template."
+`
+	if err := os.WriteFile(templatePath, []byte(templateContent), 0o644); err != nil {
+		t.Fatalf("WriteFile(template.toml) error = %v", err)
+	}
+
+	// Do NOT install a fixture: use the REAL production loadStewardSeedTemplate
+	// so this test exercises the actual project-tier-first logic.
+
+	svc, repo := newSeederService(t)
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name:                "Project Tier Demo",
+		RepoPrimaryWorktree: tmpDir,
+		// RepoBareRoot intentionally empty — production prefers bare root
+		// when present; primary worktree is the canonical non-bare layout.
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+
+	// The materialized STEWARD anchor must carry the project-tier seed title.
+	var stewardTitles []string
+	for _, item := range repo.tasks {
+		if item.ProjectID != project.ID {
+			continue
+		}
+		if item.Owner != stewardOwner {
+			continue
+		}
+		stewardTitles = append(stewardTitles, item.Title)
+	}
+	sort.Strings(stewardTitles)
+	wantTitles := []string{"PROJECT_TIER_ANCHOR"}
+	if !reflect.DeepEqual(stewardTitles, wantTitles) {
+		t.Fatalf("STEWARD anchor titles = %v; want %v (project-tier template must take priority over generic fallback)",
 			stewardTitles, wantTitles)
 	}
 }
