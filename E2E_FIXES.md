@@ -13,7 +13,7 @@ Status legend: `open` / `in-progress` / `fixed`.
 - E2E-6 — fixed 2026-05-15 (commit `1a932e8`; plan-QA falsification caught the real bug — TUI `startProjectForm` at `model.go:4763` read TUI cache instead of `project.RepoPrimaryWorktree`; fix prefers canonical with cache fallback)
 - E2E-7 — fixed (root cause was `detectFLATLayout` returning a `rm -rf .tillsyn/agents/` remediation message that destroyed legitimate subdir content; replaced with surgical `cleanFLATLayout` that auto-removes only root-level `.md` files and preserves `<group>/` subdir content)
 - E2E-8 — fixed (commits `ba58ba7` + `49fa802` + `ed5f29d`; threaded `wait_timeout` through handler→adapter→app→`createAuthRequestLive`; added 5 tests covering Approval+Deny+Cancel wake + Pending-timeout + Zero-wait regression + MCP wire-layer integration; schema description on `handler.go:136` updated to enumerate honored ops `create` + `claim`)
-- E2E-9 — open (`.mcp.json` from `till init` invokes the global `till` binary instead of a project-local one — no natural path/auth scoping per dev's design intent; tracked separately in REFINEMENTS.md)
+- E2E-9 — closed 2026-05-15 as not-a-bug (framing was wrong: the auth+lease system already scopes every MCP op to a specific `project_id` via session_id + session_secret + agent_instance_id + lease_token, all bound at claim time. Two orchs in two projects sharing one global MCP server + global DB cannot step on each other because their tokens are bound to different project scopes. Project-local binary/`.mcp.json` was a non-solution to a non-problem.)
 - E2E-10 — fixed 2026-05-15 (commit `8ea3822`; Option A auto-clear guard at `service.go:1337` with 3-subtest regression covering top-level / legitimate-parent / not-found branches)
 
 ---
@@ -124,20 +124,10 @@ Status legend: `open` / `in-progress` / `fixed`.
 
 ---
 
-## E2E-9 — `.mcp.json` from `till init` invokes global `till`, not project-local
+## E2E-9 — `.mcp.json` invokes global `till` (CLOSED — not a bug)
 
-- **Status:** open (parking-lot in REFINEMENTS.md — see entry 2026-05-14 "Project-local `till mcp` for natural path / auth scoping")
-- **Surfaced:** 2026-05-14 during joint dogfood smoke.
-- **Symptom:**
-  - `till init` writes `.mcp.json` with `command: <result-of-exec.LookPath("till")>`, falling back to `$HOME/.local/bin/till`. Result is the GLOBAL till binary.
-  - Dev's stated design intent: each project's `.mcp.json` should invoke a PROJECT-LOCAL `till` binary so the MCP server is naturally path/auth-limited to that project. Different orchs in different projects shouldn't be able to read/mutate each other's state via the SAME MCP server.
-- **Expected:** Project-tier `till init` writes a `.mcp.json` entry that points at a project-local binary (e.g. `./till`, `.tillsyn/bin/till`, or some other project-tier path). The project-local `till mcp` instance opens a project-tier DB (or has a cwd-aware DB resolution mode) so it can only see this project's state. Global `till` auth is still available for orchs that need cross-project visibility — but the default is scoped.
-- **Suspected scope:**
-  - `registerMCPJSON` in `cmd/till/init_cmd.go`: needs a "project-local first, global fallback" resolution.
-  - DB resolution policy: today user-tier `~/.tillsyn/tillsyn.db`. For project-local, either (a) build-time embed, (b) flag-driven `--db <project>/.tillsyn/tillsyn.db`, or (c) cwd-aware resolution that picks a project-tier DB when `.tillsyn/tillsyn.db` exists in cwd or ancestor.
-  - Where does the project-local binary live? `./till`? `.tillsyn/bin/till`? Tied to `mage build` output for Go projects; unclear for non-Go projects.
-- **Fix plan:** Plan + ship in a follow-up drop. Three sub-questions to resolve before building (binary location, DB resolution policy, auth scoping semantics). Full detail in REFINEMENTS.md.
-- **Severity:** MEDIUM — not blocking dogfood today (global path + auth-scoped requests provide logical limiting); but the natural-path-limiting safety net is missing.
+- **Status:** closed 2026-05-15 as not-a-bug.
+- **Resolution:** The original framing assumed the global `till` binary + global DB created a cross-project leakage risk that needed a project-local binary fix. On review the auth+lease system already provides the scoping: every guarded MCP mutation requires `session_id` + `session_secret` + `agent_instance_id` + `lease_token`, all four bound to a specific project at claim time (`path: project/<uuid>/...`). The server rejects any call whose target resource's `project_id` doesn't match the bound auth scope. So one global binary + one global DB CAN serve multiple projects safely — different orchs hold tokens bound to different project paths and can't reach each other's state. No code change required. Closing this ticket; the original REFINEMENTS.md parking-lot entry can also be removed.
 
 ---
 
