@@ -1260,9 +1260,9 @@ func TestSnapshotActionItemEndCommitLegacyFormatCompatibility(t *testing.T) {
 	}
 }
 
-// TestSnapshotProjectFirstClassFieldsRoundTrip verifies the six Drop 4a L4
+// TestSnapshotProjectFirstClassFieldsRoundTrip verifies the five Drop 4a L4
 // project-node first-class fields (HyllaArtifactRef, RepoBareRoot,
-// RepoPrimaryWorktree, Language, BuildTool, DevMcpServerName) survive the
+// RepoPrimaryWorktree, BuildTool, DevMcpServerName) survive the
 // domain → snapshot → domain round-trip. Each field carries an
 // `,omitempty` JSON tag so legacy pre-4a.12 snapshots without these
 // fields decode cleanly to empty strings.
@@ -1275,7 +1275,6 @@ func TestSnapshotProjectFirstClassFieldsRoundTrip(t *testing.T) {
 		HyllaArtifactRef:    "github.com/evanmschultz/tillsyn@main",
 		RepoBareRoot:        "/Users/evan/code/tillsyn",
 		RepoPrimaryWorktree: "/Users/evan/code/tillsyn/main",
-		Language:            "go",
 		BuildTool:           "mage",
 		DevMcpServerName:    "tillsyn-dev",
 	}, now)
@@ -1290,7 +1289,7 @@ func TestSnapshotProjectFirstClassFieldsRoundTrip(t *testing.T) {
 	if snap.RepoBareRoot != "/Users/evan/code/tillsyn" || snap.RepoPrimaryWorktree != "/Users/evan/code/tillsyn/main" {
 		t.Fatalf("snapshot repo paths missed: bare=%q wt=%q", snap.RepoBareRoot, snap.RepoPrimaryWorktree)
 	}
-	if snap.Language != "go" || snap.BuildTool != "mage" || snap.DevMcpServerName != "tillsyn-dev" {
+	if snap.BuildTool != "mage" || snap.DevMcpServerName != "tillsyn-dev" {
 		t.Fatalf("snapshot scalar fields missed: %+v", snap)
 	}
 
@@ -1298,7 +1297,6 @@ func TestSnapshotProjectFirstClassFieldsRoundTrip(t *testing.T) {
 	if hydrated.HyllaArtifactRef != original.HyllaArtifactRef ||
 		hydrated.RepoBareRoot != original.RepoBareRoot ||
 		hydrated.RepoPrimaryWorktree != original.RepoPrimaryWorktree ||
-		hydrated.Language != original.Language ||
 		hydrated.BuildTool != original.BuildTool ||
 		hydrated.DevMcpServerName != original.DevMcpServerName {
 		t.Fatalf("hydrated round-trip drift: original=%+v hydrated=%+v", original, hydrated)
@@ -1325,12 +1323,12 @@ func TestSnapshotProjectFirstClassFieldsLegacyFormatCompatibility(t *testing.T) 
 		t.Fatalf("legacy snapshot unmarshal error = %v", err)
 	}
 	if snap.HyllaArtifactRef != "" || snap.RepoBareRoot != "" || snap.RepoPrimaryWorktree != "" ||
-		snap.Language != "" || snap.BuildTool != "" || snap.DevMcpServerName != "" {
+		snap.BuildTool != "" || snap.DevMcpServerName != "" {
 		t.Fatalf("legacy snapshot first-class fields not empty: %+v", snap)
 	}
 	hydrated := snap.toDomain()
 	if hydrated.HyllaArtifactRef != "" || hydrated.RepoBareRoot != "" || hydrated.RepoPrimaryWorktree != "" ||
-		hydrated.Language != "" || hydrated.BuildTool != "" || hydrated.DevMcpServerName != "" {
+		hydrated.BuildTool != "" || hydrated.DevMcpServerName != "" {
 		t.Fatalf("hydrated legacy snapshot fields not empty: %+v", hydrated)
 	}
 }

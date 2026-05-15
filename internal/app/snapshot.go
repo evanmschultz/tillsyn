@@ -31,11 +31,11 @@ type Snapshot struct {
 
 // SnapshotProject represents snapshot project data used by this package.
 //
-// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree / Language /
-// BuildTool / DevMcpServerName are the six Drop 4a L4 first-class
-// project-node fields. Each carries the `,omitempty` JSON tag so legacy
-// snapshots (pre-4a.12) without these fields decode cleanly with empty
-// defaults — no SnapshotVersion bump required.
+// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree / BuildTool /
+// DevMcpServerName are the five Drop 4a L4 first-class project-node
+// fields. Each carries the `,omitempty` JSON tag so legacy snapshots
+// (pre-4a.12) without these fields decode cleanly with empty defaults —
+// no SnapshotVersion bump required.
 type SnapshotProject struct {
 	ID                  string                 `json:"id"`
 	Slug                string                 `json:"slug"`
@@ -44,7 +44,6 @@ type SnapshotProject struct {
 	HyllaArtifactRef    string                 `json:"hylla_artifact_ref,omitempty"`
 	RepoBareRoot        string                 `json:"repo_bare_root,omitempty"`
 	RepoPrimaryWorktree string                 `json:"repo_primary_worktree,omitempty"`
-	Language            string                 `json:"language,omitempty"`
 	BuildTool           string                 `json:"build_tool,omitempty"`
 	DevMcpServerName    string                 `json:"dev_mcp_server_name,omitempty"`
 	Metadata            domain.ProjectMetadata `json:"metadata"`
@@ -1090,7 +1089,6 @@ func snapshotProjectFromDomain(p domain.Project) SnapshotProject {
 		HyllaArtifactRef:    p.HyllaArtifactRef,
 		RepoBareRoot:        p.RepoBareRoot,
 		RepoPrimaryWorktree: p.RepoPrimaryWorktree,
-		Language:            p.Language,
 		BuildTool:           p.BuildTool,
 		DevMcpServerName:    p.DevMcpServerName,
 		Metadata:            p.Metadata,
@@ -1312,7 +1310,6 @@ func (p SnapshotProject) toDomain() domain.Project {
 		HyllaArtifactRef:    strings.TrimSpace(p.HyllaArtifactRef),
 		RepoBareRoot:        strings.TrimSpace(p.RepoBareRoot),
 		RepoPrimaryWorktree: strings.TrimSpace(p.RepoPrimaryWorktree),
-		Language:            strings.TrimSpace(p.Language),
 		BuildTool:           strings.TrimSpace(p.BuildTool),
 		DevMcpServerName:    strings.TrimSpace(p.DevMcpServerName),
 		Metadata:            p.Metadata,

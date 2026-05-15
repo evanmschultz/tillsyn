@@ -875,7 +875,7 @@ func (r *Repository) CreateProject(ctx context.Context, p domain.Project) error 
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		p.ID, p.Slug, p.Name, p.Description, string(metaJSON),
-		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, p.Language, p.BuildTool, p.DevMcpServerName,
+		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, "", p.BuildTool, p.DevMcpServerName,
 		string(p.KindCatalogJSON),
 		ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt),
 	)
@@ -897,7 +897,7 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 		WHERE id = ?
 	`,
 		p.Slug, p.Name, p.Description, string(metaJSON),
-		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, p.Language, p.BuildTool, p.DevMcpServerName,
+		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, "", p.BuildTool, p.DevMcpServerName,
 		string(p.KindCatalogJSON),
 		ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID,
 	)
@@ -2878,10 +2878,11 @@ func scanProject(s scanner) (domain.Project, error) {
 		createdRaw     string
 		updatedRaw     string
 		archived       sql.NullString
+		_language      string // Phase 4.2: project.Language removed from domain; column kept for schema compat
 	)
 	if err := s.Scan(
 		&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw,
-		&p.HyllaArtifactRef, &p.RepoBareRoot, &p.RepoPrimaryWorktree, &p.Language, &p.BuildTool, &p.DevMcpServerName,
+		&p.HyllaArtifactRef, &p.RepoBareRoot, &p.RepoPrimaryWorktree, &_language, &p.BuildTool, &p.DevMcpServerName,
 		&kindCatalogRaw,
 		&createdRaw, &updatedRaw, &archived,
 	); err != nil {

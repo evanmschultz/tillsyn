@@ -26,22 +26,10 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
-// TemplateBakeSourceLanguage names the embedded-default bake-source token
-// for each closed Project.Language enum value. The MCP envelope uses the
-// closed-vocabulary string so wire-side adopters can route on the value
-// without re-querying the project's Language axis.
-//
-// Closed enum (mirrors templates.LoadDefaultTemplateForLanguage):
-//
-//   - "" (generic) → "embedded-default-generic"
-//   - "go"         → "embedded-default-go"
-//
-// Future languages (`"fe"` and beyond) extend this map alongside the
-// builtin TOML and the resolver — same drift contract as
-// templates.LoadDefaultTemplateForLanguage.
+// templateBakeSourceBareRoot and templateBakeSourcePrimaryWorktree are the
+// bake-source provenance tokens the F.3.1 wire envelope reports for
+// project-tier template resolutions.
 const (
-	templateBakeSourceEmbeddedGeneric = "embedded-default-generic"
-	templateBakeSourceEmbeddedGo      = "embedded-default-go"
 	templateBakeSourceBareRoot        = "<bare-root>"
 	templateBakeSourcePrimaryWorktree = "<primary-worktree>"
 )
@@ -174,27 +162,6 @@ func resolveProjectTemplateWithSource(project *domain.Project) (templates.Templa
 	// the empty result; callers interpret an empty BakeSource as "this
 	// project has not authored a template."
 	return templates.Template{}, "", nil
-}
-
-// embeddedSourceForLanguage maps the project Language axis to the
-// closed-enum bake-source token the F.3.1 wire envelope reports for an
-// embedded-fallback resolution.
-//
-// Drift contract: kept in lockstep with
-// templates.LoadDefaultTemplateForLanguage. A future drop that adds a
-// language MUST extend both this map and the resolver. The default branch
-// returns the empty string, which the MCP envelope surfaces verbatim — a
-// loud "we resolved an embedded template but cannot name it" signal that
-// triggers the closed-enum drift guard at the dev surface.
-func embeddedSourceForLanguage(lang string) string {
-	switch lang {
-	case "":
-		return templateBakeSourceEmbeddedGeneric
-	case "go":
-		return templateBakeSourceEmbeddedGo
-	default:
-		return ""
-	}
 }
 
 // ValidateCandidateTemplateInput carries the candidate TOML bytes the

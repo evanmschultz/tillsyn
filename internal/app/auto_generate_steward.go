@@ -32,31 +32,14 @@ var errStewardParentNotSeeded = errors.New("steward persistent parent not seeded
 
 // loadStewardSeedTemplate is a package-level seam returning the cascade
 // Template the auto-generator iterates. The seam takes a single `lang`
-// argument (the project's `Language` field — closed enum `"" | "go" | "fe"`
-// per `domain.isValidProjectLanguage`) and routes through
-// `templates.LoadDefaultTemplateForLanguage` so the embedded TOML the
-// 6 STEWARD seeds materialize from is selected per the project's language
-// axis rather than a hard-coded default.
-//
-// Drop 4c.5 droplet F.2.4 caller audit + redirect: this seam was
-// previously parameterless and called `templates.LoadDefaultTemplate()`
-// directly. Post-F.2.4 the seam takes the language argument so the
-// production STEWARD seed path is language-aware. The seam preserves
-// `LoadDefaultTemplateForLanguage`'s closed-enum routing — `lang="fe"`
-// surfaces `templates.ErrLanguageNotSupported` at the create boundary,
-// and unknown values are rejected with the same sentinel. The thin
-// wrapper `templates.LoadDefaultTemplate()` itself is preserved for
-// callers that intentionally want the language-AGNOSTIC generic
-// catalog (none in production today; tests may still reach for it).
+// argument and routes through `templates.LoadDefaultTemplateForLanguage`.
+// Production callers pass `""` (generic template) since project.Language
+// was removed in Phase 4.2; per-project routing is deferred to Phase 4.4.
 //
 // Tests substitute a hand-built Template (or an error) by replacing this
 // seam in a t.Cleanup. The fixture closure receives the same `lang`
-// argument so test code can assert language-specific behavior; fixtures
-// that ignore the axis simply use `_ string` in the closure signature.
-//
-// Pre-MVP rule: per-project template override resolution
-// (<project_root>/.tillsyn/template.toml) is deferred to a future drop —
-// until then every project shares the embedded language-default.
+// argument; fixtures that ignore the axis use `_ string` in the closure
+// signature.
 var loadStewardSeedTemplate = func(lang string) (templates.Template, error) {
 	return templates.LoadDefaultTemplateForLanguage(lang)
 }
@@ -103,17 +86,8 @@ var loadStewardSeedTemplate = func(lang string) (templates.Template, error) {
 // re-invoke seedStewardAnchors after fixing the root cause and idempotency
 // will pick up where the previous attempt left off.
 func (s *Service) seedStewardAnchors(ctx context.Context, project domain.Project) error {
-	// Drop 4c.5 droplet F.2.4: pass project.Language through to the seam so
-	// the embedded TOML the STEWARD seeds materialize from is chosen per
-	// the project's language axis (till-gen vs till-go ← default-generic
-	// vs default-go, rebadged in Drop 4c.6 W5.D1 + W5.D2), not a
-	// hard-coded language. The 6 STEWARD seed titles are identical across
-	// the two builtins (per F.2.2 acceptance #5), so today the materialized
-	// anchor set is shape-equivalent regardless of language; the redirect
-	// makes the seed path align with the F.1.2 walk + F.1.3 resolver
-	// downstream, ensuring future builtin drift (e.g. an FE template with
-	// FE-specific seeds) lands at the correct seam.
-	tpl, err := loadStewardSeedTemplate(project.Language)
+	// TODO Phase 4.4: project.Language removed; "" selects generic embedded template until STEWARD seed migration lands.
+	tpl, err := loadStewardSeedTemplate("")
 	if err != nil {
 		return fmt.Errorf("seed steward anchors: load template: %w", err)
 	}

@@ -277,9 +277,9 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 
 // CreateProjectInput holds input values for create project operations.
 //
-// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree / Language /
-// BuildTool / DevMcpServerName are the six Drop 4a L4 first-class
-// project-node fields. They round-trip through Service.CreateProject →
+// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree / BuildTool /
+// DevMcpServerName are the five Drop 4a L4 first-class project-node
+// fields. They round-trip through Service.CreateProject →
 // domain.NewProjectFromInput → repo.CreateProject. Empty strings are the
 // meaningful zero value (project not yet bootstrapped) and round-trip
 // untouched.
@@ -291,7 +291,6 @@ type CreateProjectInput struct {
 	HyllaArtifactRef    string
 	RepoBareRoot        string
 	RepoPrimaryWorktree string
-	Language            string
 	BuildTool           string
 	DevMcpServerName    string
 	UpdatedBy           string
@@ -318,7 +317,6 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 		HyllaArtifactRef:    in.HyllaArtifactRef,
 		RepoBareRoot:        in.RepoBareRoot,
 		RepoPrimaryWorktree: in.RepoPrimaryWorktree,
-		Language:            in.Language,
 		BuildTool:           in.BuildTool,
 		DevMcpServerName:    in.DevMcpServerName,
 	}, now)
@@ -338,7 +336,6 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 		project.HyllaArtifactRef,
 		project.RepoBareRoot,
 		project.RepoPrimaryWorktree,
-		project.Language,
 		project.BuildTool,
 		project.DevMcpServerName,
 		mergedMetadata,
@@ -670,15 +667,11 @@ const projectTemplateDir = ".tillsyn"
 //     RepoPrimaryWorktree (after whitespace trim) is non-empty AND the
 //     file exists. Adopters that do not use a bare-root layout author
 //     their template here.
-//  3. <$HOME>/.tillsyn/templates/<group>.toml — where group is
-//     strings.TrimSpace(project.Language). Skipped when os.UserHomeDir()
-//     fails, when home is whitespace-only, or when Language is empty.
-//     Allows users to override the embedded default for all projects that
-//     share a language without per-project template files (W1.D1).
-//  4. Embedded `default-<lang>.toml` selected by project.Language via
-//     templates.LoadDefaultTemplateForLanguage (F.1.3's resolver). This
-//     is the unconditional final fallback whenever no on-disk candidate
-//     matches, including when both repo-path fields are empty.
+//  3. <$HOME>/.tillsyn/templates/<group>.toml — where group is drawn from
+//     project.Metadata.Groups (see loadProjectTemplatesForGroups).
+//     Skipped when os.UserHomeDir() fails or when the group list is empty.
+//     Allows users to override templates for all projects that share a
+//     group without per-project template files (W1.D1).
 //
 // First-candidate-wins on success: as soon as a candidate file exists
 // AND templates.Load returns nil error, the function returns. Subsequent
@@ -695,8 +688,8 @@ const projectTemplateDir = ".tillsyn"
 // apparently-correct project creates run against unintended embedded
 // defaults. The wrapping format is `template at <abs-path>: <wrapped>`
 // so callers retain `errors.Is(err, ErrUnknownTemplateKey)` /
-// `errors.Is(err, ErrLanguageNotSupported)` etc. against the templates
-// package sentinels AND see the offending path.
+// `errors.Is(err, templates.ErrUnknownTemplateKey)` etc. against the
+// templates package sentinels AND see the offending path.
 //
 // File-not-exist vs other open errors: only fs.ErrNotExist on os.Open
 // triggers fallthrough to the next candidate. Permission-denied or any
@@ -731,11 +724,9 @@ const projectTemplateDir = ".tillsyn"
 // this helper — it loads the embedded default template independently
 // via the package-level `loadStewardSeedTemplate` seam (see
 // auto_generate_steward.go) so seed materialization is decoupled from
-// the KindCatalog-bake fallback semantics. Post-Drop-4c.5-droplet-F.2.4
-// that seam takes a `lang` argument and routes through
-// `templates.LoadDefaultTemplateForLanguage(project.Language)` so the
-// STEWARD-seed path is language-aware in lockstep with this helper's
-// embedded fallback (line ~552 below).
+// the KindCatalog-bake fallback semantics. Post-Phase-4.2 the seam is
+// called with `""` (generic template) until Phase 4.4 wires per-project
+// STEWARD seed migration.
 //
 // Per Drop 3 finding 5.B.14: edits to the on-disk template AFTER project
 // creation are ignored — the catalog is the create-time snapshot.
@@ -748,14 +739,14 @@ func loadProjectTemplate(project *domain.Project) (templates.Template, bool, err
 	if h, err := os.UserHomeDir(); err == nil && strings.TrimSpace(h) != "" {
 		homeDir = h
 	}
-	return loadProjectTemplateWithHome(project, homeDir, strings.TrimSpace(project.Language))
+	return loadProjectTemplateWithHome(project, homeDir, "")
 }
 
 // loadProjectTemplateWithHome is the testability seam for the 3-tier template
 // resolution walk. loadProjectTemplate calls it with the real os.UserHomeDir()
-// result and the project's Language (TrimSpace applied). D2's multi-group
-// coordinator calls it per element in project.Metadata.Groups with the same
-// homeDir.
+// result and a group string (empty string skips the HOME tier). D2's
+// multi-group coordinator calls it per element in project.Metadata.Groups
+// with the same homeDir.
 //
 // Resolution order:
 //
@@ -770,9 +761,9 @@ func loadProjectTemplate(project *domain.Project) (templates.Template, bool, err
 // REFINEMENTS.md 2026-05-14.
 //
 // HOME tier is skipped when homeDir is empty (os.UserHomeDir() failed or
-// returned whitespace) or when group is empty (empty Language → no meaningful
-// group name → malformed path avoided). This mirrors the readUserTierAgent
-// pattern in render.go.
+// returned whitespace) or when group is empty (no meaningful group name →
+// malformed path avoided). This mirrors the readUserTierAgent pattern in
+// render.go.
 //
 // First-candidate-wins and error-propagation semantics are identical to the
 // pre-D1 walk: a candidate file that EXISTS but fails templates.Load
@@ -907,7 +898,6 @@ type UpdateProjectInput struct {
 	HyllaArtifactRef    string
 	RepoBareRoot        string
 	RepoPrimaryWorktree string
-	Language            string
 	BuildTool           string
 	DevMcpServerName    string
 	UpdatedBy           string
@@ -935,7 +925,6 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (dom
 		in.HyllaArtifactRef,
 		in.RepoBareRoot,
 		in.RepoPrimaryWorktree,
-		in.Language,
 		in.BuildTool,
 		in.DevMcpServerName,
 		in.Metadata,

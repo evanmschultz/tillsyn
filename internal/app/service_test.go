@@ -4866,7 +4866,6 @@ func TestCreateActionItemKindPayloadValidation(t *testing.T) {
 	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
 		Name:                "Kinds",
 		RepoPrimaryWorktree: "/abs/path/to/worktree",
-		Language:            "go",
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
@@ -6449,21 +6448,18 @@ func TestLoadProjectTemplate_NoOnDiskTemplate(t *testing.T) {
 		project domain.Project
 	}{
 		{
-			name:    "zero-value project (Language empty) → no template",
+			name:    "zero-value project → no template",
 			project: domain.Project{},
 		},
 		{
-			name: "Language=go, empty paths → no template",
-			project: domain.Project{
-				Language: "go",
-			},
+			name:    "empty paths → no template",
+			project: domain.Project{},
 		},
 		{
 			name: "whitespace-only RepoBareRoot trims to empty → no template",
 			project: domain.Project{
 				RepoBareRoot:        "   ",
 				RepoPrimaryWorktree: "\t  ",
-				Language:            "go",
 			},
 		},
 	}
@@ -6472,7 +6468,7 @@ func TestLoadProjectTemplate_NoOnDiskTemplate(t *testing.T) {
 			project := tc.project
 			// Route through the testability seam with empty homeDir so the
 			// HOME tier is always skipped.
-			tpl, ok, err := loadProjectTemplateWithHome(&project, "", strings.TrimSpace(project.Language))
+			tpl, ok, err := loadProjectTemplateWithHome(&project, "", "")
 			if err != nil {
 				t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
 			}
@@ -6599,7 +6595,7 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 			name: "HOME file exists is used before embedded fallback",
 			fn: func(t *testing.T) {
 				fakeHome := writeHomeTemplateFixture(t, t.TempDir(), "go", withTillsynMarker(base, homeMarker))
-				project := domain.Project{Language: "go"}
+				project := domain.Project{}
 				tpl, ok, err := loadProjectTemplateWithHome(&project, fakeHome, "go")
 				if err != nil {
 					t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
@@ -6620,7 +6616,7 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 			name: "HOME file absent returns no template",
 			fn: func(t *testing.T) {
 				fakeHome := t.TempDir() // real dir; no .tillsyn/templates/ inside
-				project := domain.Project{Language: "go"}
+				project := domain.Project{}
 				tpl, ok, err := loadProjectTemplateWithHome(&project, fakeHome, "go")
 				if err != nil {
 					t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
@@ -6640,7 +6636,7 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 			name: "HOME file malformed error propagates",
 			fn: func(t *testing.T) {
 				fakeHome := writeHomeTemplateFixture(t, t.TempDir(), "go", []byte("schema_version = \"v1\"\nunknown_key = \"boom\"\n"))
-				project := domain.Project{Language: "go"}
+				project := domain.Project{}
 				tpl, ok, err := loadProjectTemplateWithHome(&project, fakeHome, "go")
 				if err == nil {
 					t.Fatal("loadProjectTemplateWithHome(): err = nil; want wrapped ErrUnknownTemplateKey from HOME candidate")
@@ -6664,7 +6660,7 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 			name: "empty worktree paths and no HOME file returns no template",
 			fn: func(t *testing.T) {
 				fakeHome := t.TempDir() // no .tillsyn/templates/ inside
-				project := domain.Project{Language: "go"}
+				project := domain.Project{}
 				tpl, ok, err := loadProjectTemplateWithHome(&project, fakeHome, "go")
 				if err != nil {
 					t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
@@ -6684,7 +6680,7 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 			name: "empty-group skip — HOME tier not constructed, no template",
 			fn: func(t *testing.T) {
 				fakeHome := t.TempDir() // real dir; guard fires on empty group, not on homeDir
-				project := domain.Project{Language: "go"}
+				project := domain.Project{}
 				tpl, ok, err := loadProjectTemplateWithHome(&project, fakeHome, "")
 				if err != nil {
 					t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
@@ -6703,7 +6699,7 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 			// exist. Returns (zero, false, nil) — no embedded fallback.
 			name: "empty-homeDir skip — HOME tier not constructed, no template",
 			fn: func(t *testing.T) {
-				project := domain.Project{Language: "go"}
+				project := domain.Project{}
 				tpl, ok, err := loadProjectTemplateWithHome(&project, "", "go")
 				if err != nil {
 					t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
@@ -6737,7 +6733,6 @@ func TestLoadProjectTemplate_BareRootWins(t *testing.T) {
 	project := domain.Project{
 		RepoBareRoot:        bareRoot,
 		RepoPrimaryWorktree: primaryWorktree,
-		Language:            "go",
 	}
 	tpl, ok, err := loadProjectTemplate(&project)
 	if err != nil {
@@ -6764,7 +6759,6 @@ func TestLoadProjectTemplate_PrimaryWorktreeFallback(t *testing.T) {
 	project := domain.Project{
 		RepoBareRoot:        bareRoot,
 		RepoPrimaryWorktree: primaryWorktree,
-		Language:            "go",
 	}
 	tpl, ok, err := loadProjectTemplate(&project)
 	if err != nil {
@@ -6803,7 +6797,6 @@ func TestLoadProjectTemplate_BareRootSyntaxErrorPropagates(t *testing.T) {
 	project := domain.Project{
 		RepoBareRoot:        bareRoot,
 		RepoPrimaryWorktree: primaryWorktree,
-		Language:            "go",
 	}
 	tpl, ok, err := loadProjectTemplate(&project)
 	if err == nil {
@@ -6842,7 +6835,6 @@ func TestLoadProjectTemplate_BothAbsentNoTemplate(t *testing.T) {
 	project := domain.Project{
 		RepoBareRoot:        bareRoot,
 		RepoPrimaryWorktree: primaryWorktree,
-		Language:            "go",
 	}
 	// Route through the testability seam with empty homeDir so the HOME tier
 	// is always skipped.
@@ -6878,7 +6870,7 @@ func TestLoadProjectTemplate_RelativePathSafety(t *testing.T) {
 	t.Chdir(cwdTrap)
 	// Empty RepoBareRoot AND empty RepoPrimaryWorktree — must skip both
 	// candidate lookups (no relative-path os.Open) and return (zero, false, nil).
-	project := domain.Project{Language: "go"}
+	project := domain.Project{}
 	tpl, ok, err := loadProjectTemplateWithHome(&project, "", "go")
 	if err != nil {
 		t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
@@ -6902,7 +6894,7 @@ func TestLoadProjectTemplate_RelativePathSafety(t *testing.T) {
 func TestLoadProjectTemplate_NoOnDiskTemplateAnyLanguage(t *testing.T) {
 	// Route through the testability seam with empty homeDir so the HOME tier
 	// is always skipped.
-	project := domain.Project{Language: "rust"}
+	project := domain.Project{}
 	tpl, ok, err := loadProjectTemplateWithHome(&project, "", "rust")
 	if err != nil {
 		t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v; want nil (no embedded resolver called)", err)
@@ -6960,7 +6952,6 @@ func TestBakeProjectKindCatalog_MultiGroup(t *testing.T) {
 				writeHomeGroupTemplateFixture(t, fakeHome, "go", 1001, domain.KindBuild, "builder-agent")
 				writeHomeGroupTemplateFixture(t, fakeHome, "fe", 1002, domain.KindResearch, "research-agent")
 				project := domain.Project{
-					Language: "go",
 					Metadata: domain.ProjectMetadata{Groups: []string{"go", "fe"}},
 				}
 				if err := bakeProjectKindCatalogWithHome(&project, fakeHome); err != nil {
@@ -7000,7 +6991,6 @@ func TestBakeProjectKindCatalog_MultiGroup(t *testing.T) {
 				writeHomeGroupTemplateFixture(t, fakeHome, "go", 2001, domain.KindBuild, "builder-agent")
 				// No file for "fe" group.
 				project := domain.Project{
-					Language: "go",
 					Metadata: domain.ProjectMetadata{Groups: []string{"go", "fe"}},
 				}
 				if err := bakeProjectKindCatalogWithHome(&project, fakeHome); err != nil {
@@ -7044,7 +7034,6 @@ func TestBakeProjectKindCatalog_MultiGroup(t *testing.T) {
 				)
 				writeHomeTemplateFixture(t, fakeHome, "fe", feContent)
 				project := domain.Project{
-					Language: "go",
 					Metadata: domain.ProjectMetadata{Groups: []string{"go", "fe"}},
 				}
 				if err := bakeProjectKindCatalogWithHome(&project, fakeHome); err != nil {
@@ -7070,7 +7059,6 @@ func TestBakeProjectKindCatalog_MultiGroup(t *testing.T) {
 				writeHomeGroupTemplateFixture(t, fakeHome, "go", 4001, domain.KindBuild, "builder-agent")
 				// Groups contains an empty string that must be skipped.
 				project := domain.Project{
-					Language: "go",
 					Metadata: domain.ProjectMetadata{Groups: []string{"go", "", "  "}},
 				}
 				if err := bakeProjectKindCatalogWithHome(&project, fakeHome); err != nil {
@@ -7104,7 +7092,7 @@ func TestBakeProjectKindCatalog_MultiGroup(t *testing.T) {
 // empty KindCatalogJSON (ok=false from loadProjectTemplate → bake skipped).
 // Templates are project-tier opt-in only.
 func TestBakeProjectKindCatalog_NoTemplateEmptyCatalog(t *testing.T) {
-	project := domain.Project{Language: "go"}
+	project := domain.Project{}
 	if err := bakeProjectKindCatalogWithHome(&project, ""); err != nil {
 		t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v", err)
 	}
@@ -7122,7 +7110,6 @@ func TestBakeProjectKindCatalog_NonEmptyPathNoTemplateEmptyCatalog(t *testing.T)
 	project := domain.Project{
 		RepoBareRoot:        t.TempDir(),
 		RepoPrimaryWorktree: t.TempDir(),
-		Language:            "go",
 	}
 	if err := bakeProjectKindCatalogWithHome(&project, ""); err != nil {
 		t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v", err)
@@ -7132,138 +7119,68 @@ func TestBakeProjectKindCatalog_NonEmptyPathNoTemplateEmptyCatalog(t *testing.T)
 	}
 }
 
-// TestSeedStewardAnchors_LanguageAware covers Drop 4c.5 droplet F.2.4
-// acceptance criterion #3 + the table-driven test scenarios:
+// TestSeedStewardAnchors_GenericSeamWiring verifies that seedStewardAnchors
+// always invokes the loadStewardSeedTemplate seam with an empty string
+// (generic template) after Phase 4.2 removed project.Language.
 //
-//   - `Language="" → generic STEWARD seeds`
-//   - `Language="go" → go STEWARD seeds`
+// Pre-Phase-4.2 the seam was called with project.Language so the STEWARD
+// seed path was language-aware. Post-Phase-4.2 project.Language is gone;
+// the seam receives "" unconditionally until Phase 4.4 wires per-project
+// STEWARD seed migration.
 //
-// Pre-F.2.4 the STEWARD-seed seam ignored project.Language entirely —
-// every project, regardless of axis, materialized seeds from the
-// language-AGNOSTIC `LoadDefaultTemplate()` (which post-F.1.3 routes
-// to `till-gen.toml`, rebadged from `default-generic.toml` in Drop
-// 4c.6 W5.D2). Post-F.2.4 the seam takes a `lang`
-// argument so the seed path picks the correct embedded TOML per the
-// project's `Language` field. This test substitutes the seam with a
-// closure that records the received language AND returns a
-// language-uniquely-tagged seed set, then asserts:
-//
-//  1. The seam was invoked with the project's exact Language string
-//     (proves the redirect through `seedStewardAnchors → loadStewardSeedTemplate(project.Language)`
-//     is wired correctly).
-//  2. The materialized 6 STEWARD anchors carry the language-tagged
-//     titles from the corresponding fixture (proves the per-axis
-//     Template was actually used to drive seed materialization, not a
-//     hard-coded default).
-//
-// Falsification mitigations covered:
-//
-//   - F.2.4 F2 ("Test fixtures hardcode `LoadDefaultTemplate()` and
-//     start failing silently") — by funneling through the seam with a
-//     `_ string` parameter audit, this test wedges the language into
-//     the contract.
-//   - F.2.4 F3 ("Caller audit misses a non-Go consumer") — the seam is
-//     the ONLY production caller of the templates package's default
-//     loaders post-F.2.4 (the other caller `loadProjectTemplate` in
-//     this same file already passes `project.Language`).
-//
-// The two cases share a closure shape via `makeFixture`; the
-// language-specific tag distinguishes which axis the seam was invoked
-// against without having to load the live embedded TOMLs (which would
-// re-introduce content drift the existing test fixture pattern
-// deliberately avoids).
-func TestSeedStewardAnchors_LanguageAware(t *testing.T) {
-	cases := []struct {
-		name        string
-		language    string
-		anchorTitle string
-	}{
-		{
-			name:        "empty language → generic axis",
-			language:    "",
-			anchorTitle: "GENERIC_AXIS_ANCHOR",
-		},
-		{
-			name:        "go language → go axis",
-			language:    "go",
-			anchorTitle: "GO_AXIS_ANCHOR",
-		},
+// This test asserts:
+//  1. The seam is invoked exactly once per project create.
+//  2. The seam receives "" regardless of how the project was created.
+//  3. The materialized STEWARD anchors come from the fixture the seam
+//     returned (proves the fixture was actually used to drive seed
+//     materialization).
+func TestSeedStewardAnchors_GenericSeamWiring(t *testing.T) {
+	const anchorTitle = "GENERIC_SEAM_ANCHOR"
+	var seamLangsObserved []string
+	withSeedTemplateFixture(t, func(lang string) (templates.Template, error) {
+		seamLangsObserved = append(seamLangsObserved, lang)
+		return templates.Template{
+			SchemaVersion: templates.SchemaVersionV1,
+			StewardSeeds: []templates.StewardSeed{
+				{Title: anchorTitle, Description: "generic-seam seeded anchor"},
+			},
+		}, nil
+	})
+
+	svc, repo := newSeederService(t)
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name: "Generic Seam Demo",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var seamLangsObserved []string
-			withSeedTemplateFixture(t, func(lang string) (templates.Template, error) {
-				seamLangsObserved = append(seamLangsObserved, lang)
-				// Per-axis seed set — a single anchor whose title encodes
-				// the axis the seam saw. If the production code ignored
-				// project.Language and called the seam with a different
-				// argument, the wrong fixture would fire and we'd see
-				// the OTHER axis's anchor title materialized.
-				switch lang {
-				case "":
-					return templates.Template{
-						SchemaVersion: templates.SchemaVersionV1,
-						StewardSeeds: []templates.StewardSeed{
-							{Title: "GENERIC_AXIS_ANCHOR", Description: "generic-axis seeded anchor"},
-						},
-					}, nil
-				case "go":
-					return templates.Template{
-						SchemaVersion: templates.SchemaVersionV1,
-						StewardSeeds: []templates.StewardSeed{
-							{Title: "GO_AXIS_ANCHOR", Description: "go-axis seeded anchor"},
-						},
-					}, nil
-				default:
-					t.Fatalf("seam invoked with unexpected language %q; F.2.4 closed-enum routing broken", lang)
-					return templates.Template{}, nil
-				}
-			})
 
-			svc, repo := newSeederService(t)
-			project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
-				Name:     "Language-Aware Demo (" + tc.name + ")",
-				Language: tc.language,
-			})
-			if err != nil {
-				t.Fatalf("CreateProjectWithMetadata(Language=%q) error = %v", tc.language, err)
-			}
+	// Acceptance #1: exactly one invocation per project create.
+	if got := len(seamLangsObserved); got != 1 {
+		t.Fatalf("seam invocations = %d; want 1 (seedStewardAnchors fires once at project create)", got)
+	}
+	// Acceptance #2: seam receives "" (generic) post-Phase-4.2.
+	if seamLangsObserved[0] != "" {
+		t.Fatalf("seam invoked with lang = %q; want \"\" (project.Language removed in Phase 4.2; generic template until Phase 4.4)",
+			seamLangsObserved[0])
+	}
 
-			// Acceptance #1 (seam wiring): exactly one invocation, with
-			// the project's exact Language string. Multiple invocations
-			// would mean the seed path ran twice, which is a regression
-			// not in F.2.4's scope.
-			if got := len(seamLangsObserved); got != 1 {
-				t.Fatalf("seam invocations = %d; want 1 (seedStewardAnchors fires once at project create)", got)
-			}
-			if seamLangsObserved[0] != tc.language {
-				t.Fatalf("seam invoked with lang = %q; want %q (seedStewardAnchors must pass project.Language through unchanged)",
-					seamLangsObserved[0], tc.language)
-			}
-
-			// Acceptance #2 (language-tagged seed materialization): the
-			// project has exactly one STEWARD anchor whose title matches
-			// the language axis. If the production code passed a wrong
-			// `lang` (or ignored it) the wrong fixture's anchor would
-			// have materialized; reflect.DeepEqual on the title set is
-			// the strict invariant.
-			stewardTitles := make([]string, 0, 1)
-			for _, item := range repo.tasks {
-				if item.ProjectID != project.ID {
-					continue
-				}
-				if item.Owner != stewardOwner {
-					continue
-				}
-				stewardTitles = append(stewardTitles, item.Title)
-			}
-			sort.Strings(stewardTitles)
-			wantTitles := []string{tc.anchorTitle}
-			if !reflect.DeepEqual(stewardTitles, wantTitles) {
-				t.Fatalf("STEWARD anchor titles = %v; want %v (language-axis fixture mis-routed via seam)",
-					stewardTitles, wantTitles)
-			}
-		})
+	// Acceptance #3: materialized anchor title matches fixture.
+	var stewardTitles []string
+	for _, item := range repo.tasks {
+		if item.ProjectID != project.ID {
+			continue
+		}
+		if item.Owner != stewardOwner {
+			continue
+		}
+		stewardTitles = append(stewardTitles, item.Title)
+	}
+	sort.Strings(stewardTitles)
+	wantTitles := []string{anchorTitle}
+	if !reflect.DeepEqual(stewardTitles, wantTitles) {
+		t.Fatalf("STEWARD anchor titles = %v; want %v (generic fixture must drive materialization)",
+			stewardTitles, wantTitles)
 	}
 }
 
@@ -7315,7 +7232,6 @@ func TestCreateActionItem_AppliesTemplateChildRules(t *testing.T) {
 
 	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
 		Name:                "Cascade Template Test",
-		Language:            "go",
 		RepoPrimaryWorktree: worktree,
 		Metadata:            domain.ProjectMetadata{Groups: []string{"go"}},
 		UpdatedBy:           "user-1",
