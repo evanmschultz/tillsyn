@@ -4,23 +4,23 @@ Issues surfaced during joint smoke-testing on the TILLSYN project itself. Dev ex
 
 Status legend: `open` / `in-progress` / `fixed`.
 
-**Status summary (2026-05-14):**
+**Status summary (2026-05-15):**
 - E2E-1 — open (narrowed to TUI-only after E2E-4 fix verified CLI path works)
 - E2E-2 — fixed (MCP/DB reconnect after session restart)
 - E2E-3 — fixed-by-workaround (backfill via wired `till project update`; the original miss was due to pre-W2.D7 binary at first `till init`)
 - E2E-4 — fixed (orch-direct cobra wiring for `till project update`; other W3 commands still need wiring)
-- E2E-5 — open (`till project discover` output missing W2.D7 first-class fields)
-- E2E-6 — open (TUI project view missing W2.D7 first-class fields; project-edit form missing/broken too)
+- E2E-5 — fixed 2026-05-15 (commit `edfa130`; extended `writeProjectReadiness` with 6 W2.D7 rows mirroring `writeProjectDetail` order)
+- E2E-6 — fixed 2026-05-15 (commit `1a932e8`; plan-QA falsification caught the real bug — TUI `startProjectForm` at `model.go:4763` read TUI cache instead of `project.RepoPrimaryWorktree`; fix prefers canonical with cache fallback)
 - E2E-7 — fixed (root cause was `detectFLATLayout` returning a `rm -rf .tillsyn/agents/` remediation message that destroyed legitimate subdir content; replaced with surgical `cleanFLATLayout` that auto-removes only root-level `.md` files and preserves `<group>/` subdir content)
 - E2E-8 — fixed (commits `ba58ba7` + `49fa802` + `ed5f29d`; threaded `wait_timeout` through handler→adapter→app→`createAuthRequestLive`; added 5 tests covering Approval+Deny+Cancel wake + Pending-timeout + Zero-wait regression + MCP wire-layer integration; schema description on `handler.go:136` updated to enumerate honored ops `create` + `claim`)
 - E2E-9 — open (`.mcp.json` from `till init` invokes the global `till` binary instead of a project-local one — no natural path/auth scoping per dev's design intent; tracked separately in REFINEMENTS.md)
-- E2E-10 — open (`till_action_item operation=create` with `parent_id=<project_id>` fails with confusing "authorize mutation: not found"; omitting parent_id succeeds. Top-level items should accept project_id as parent OR give an actionable error.)
+- E2E-10 — fixed 2026-05-15 (commit `8ea3822`; Option A auto-clear guard at `service.go:1337` with 3-subtest regression covering top-level / legitimate-parent / not-found branches)
 
 ---
 
 ## E2E-5 — `till project discover` output missing W2.D7 first-class fields
 
-- **Status:** open
+- **Status:** fixed 2026-05-15 (commit `edfa130`)
 - **Surfaced:** 2026-05-14 — dev ran `till project discover --project-id 5d9b530c-...` after the backfill; output shows only name/id/slug/owner/archived. The four W2.D7 fields (`root_path`, `bare_root`, `language`, `groups`) are NOT in the discover summary.
 - **Expected:** `till project discover` should include the new first-class fields the way `till project update`'s post-update output does (which DOES show them per W3.D1 absorption D — `writeProjectDetail` extension).
 - **Suspected scope:** Discover-specific output path bypasses `writeProjectDetail`. Likely there's a `writeProjectReadiness` or similar helper that pre-dates W3.D1 absorption and never got the field extension.
@@ -30,7 +30,8 @@ Status legend: `open` / `in-progress` / `fixed`.
 
 ## E2E-6 — TUI project view + edit missing W2.D7 first-class fields
 
-- **Status:** open
+- **Status:** fixed 2026-05-15 (commit `1a932e8`)
+- **Resolution note:** Plan-QA falsification caught that the planner's framing was wrong — the W2.D7 fields ARE pre-populated in `startProjectForm` (`model.go:4766-4772`), rendered in `projectFormBodyLines` (`model.go:17417-17421`), and wired into submission (`model.go:11704-11781`). The REAL bug was at `model.go:4763`: `RepoPrimaryWorktree` was being read from `m.projectRoots[slug]` (TUI-local cache) instead of `project.RepoPrimaryWorktree`. For projects backfilled via `till project update --root-path` (per the E2E-3 workaround), the canonical field was populated but the form showed the stale cache value. Fix prefers `project.RepoPrimaryWorktree`, falls back to the cache when canonical is empty.
 - **Surfaced:** 2026-05-14 — dev opened TUI, navigated to project view; root path / bare root / language / groups not visible; cannot edit via TUI form.
 - **Expected:** TUI project pane should display all W2.D7 fields AND support editing them via the project-edit form (with a path picker for root-path / bare-root and an enum picker for language).
 - **Suspected scope:**
@@ -42,7 +43,8 @@ Status legend: `open` / `in-progress` / `fixed`.
 
 ## E2E-10 — `till_action_item operation=create` rejects valid top-level create when `parent_id == project_id`
 
-- **Status:** open
+- **Status:** fixed 2026-05-15 (commit `8ea3822`)
+- **Resolution:** Chose Option A (auto-clear `parent_id` when it equals `project_id`). Guard inserted at `internal/app/service.go:1333-1339`, BEFORE the existing `if strings.TrimSpace(in.ParentID) != ""` block at line 1340 (placement noted by plan-QA falsification). When the guard fires, `in.ParentID` is set to `""` and the call falls through the project-scope path to top-level item creation. `TestCreateActionItemParentIDEqualsProjectID` adds 3 subtests covering top-level / legitimate-parent / not-found branches. Build-QA falsification flagged one acceptable refinement: no MCP wire-layer test for the `parent==project` case (service-layer coverage sufficient because the MCP adapter is a thin trim-and-forward shim).
 - **Surfaced:** 2026-05-14 during the E2E-1+E2E-6 cascade setup; repro'd post-restart on the production `tillsyn` MCP.
 - **Symptom:**
   - Caller passes `parent_id` = the project's own UUID (mistakenly treating project as the implicit parent for top-level action items).
