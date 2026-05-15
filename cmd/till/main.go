@@ -242,6 +242,7 @@ type projectListCommandOptions struct {
 // failed.
 type actionItemCommandOptions struct {
 	projectSlug     string
+	projectID       string
 	actionItemID    string
 	reason          string
 	state           string
@@ -925,24 +926,24 @@ new item under an existing action item.
 		Use:   "list",
 		Short: "List action items in one project filtered by lifecycle state",
 		Long: strings.TrimSpace(`
-List action items in one project filtered by lifecycle state. The default
---state is "failed" — the canonical pre-TUI use case is "what is stuck so I
-can supersede it." Other lifecycle states (todo / in_progress / complete /
-archived) are also accepted.
+List action items in one project. By default lists all states; pass --state
+to filter to a single lifecycle state (todo / in_progress / complete / failed
+/ archived). The failure-listing use case (--state failed) is the canonical
+pre-TUI "what is stuck so I can supersede it" inventory.
 
-Project resolution requires the --project flag explicitly. Slug-prefix
-shorthand (e.g. tillsyn:1.5.2) is NOT accepted on the list command — that
-form is item-scoped, while list is project-scoped. When the system has
-exactly one project, --project is optional and the list command auto-resolves
-to it; with two or more projects an explicit --project is required.
+Project resolution: pass --project-id <UUID> (MCP-parity) or --project <slug>;
+--project-id wins when both are set. Slug-prefix shorthand (e.g. tillsyn:1.5.2)
+is NOT accepted on the list command — that form is item-scoped, while list is
+project-scoped. When the system has exactly one project, both flags are
+optional and the list command auto-resolves to it.
 
 When --state archived is selected, archived items are surfaced regardless of
 --include-archived (asking for archived implies including them). For every
-other state, --include-archived is off by default; pass the flag explicitly
-to also see rows with archived_at != nil.
+other state and the default all-states listing, --include-archived is off by
+default; pass the flag explicitly to also see rows with archived_at != nil.
 `),
 		Example: strings.Join([]string{
-			"  till action_item list --state failed --project tillsyn",
+			"  till action_item list --project-id 5d9b530c-b568-4830-9e16-058c957cfc05",
 			"  till action_item list --project tillsyn",
 			"  till action_item list --state in_progress --project tillsyn",
 			"  till action_item list --state failed --include-archived --project tillsyn",
@@ -952,8 +953,9 @@ to also see rows with archived_at != nil.
 			return runFlow(cmd.Context(), "action_item.list")
 		},
 	}
-	actionItemListCmd.Flags().StringVar(&actionItemOpts.state, "state", "failed", "Lifecycle state to filter by (todo|in_progress|complete|failed|archived)")
+	actionItemListCmd.Flags().StringVar(&actionItemOpts.state, "state", "", "Lifecycle state to filter by (todo|in_progress|complete|failed|archived); empty = list all states")
 	actionItemListCmd.Flags().StringVar(&actionItemOpts.projectSlug, "project", "", "Project slug (required when more than one project exists on the system)")
+	actionItemListCmd.Flags().StringVar(&actionItemOpts.projectID, "project-id", "", "Project UUID (MCP-parity alternative to --project slug; takes precedence when both are set)")
 	actionItemListCmd.Flags().BoolVar(&actionItemOpts.includeArchived, "include-archived", false, "Include archived items in the result (forced true when --state archived)")
 	actionItemCmd.AddCommand(
 		actionItemGetCmd,

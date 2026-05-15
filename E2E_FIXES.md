@@ -12,6 +12,9 @@ Status legend: `open` / `in-progress` / `fixed`.
 - E2E-5 — open (`till project discover` output missing W2.D7 first-class fields)
 - E2E-6 — open (TUI project view missing W2.D7 first-class fields; project-edit form missing/broken too)
 - E2E-7 — fixed (root cause was `detectFLATLayout` returning a `rm -rf .tillsyn/agents/` remediation message that destroyed legitimate subdir content; replaced with surgical `cleanFLATLayout` that auto-removes only root-level `.md` files and preserves `<group>/` subdir content)
+- E2E-8 — open (`till_auth_request operation=create` ignores `wait_timeout` — orch gets no push notification when dev approves; falls back to dev-tells-me-in-chat /loop-hack pattern)
+- E2E-9 — open (`.mcp.json` from `till init` invokes the global `till` binary instead of a project-local one — no natural path/auth scoping per dev's design intent; tracked separately in REFINEMENTS.md)
+- E2E-10 — open (`till_action_item operation=create` with `parent_id=<project_id>` fails with confusing "authorize mutation: not found"; omitting parent_id succeeds. Top-level items should accept project_id as parent OR give an actionable error.)
 
 ---
 
@@ -34,6 +37,105 @@ Status legend: `open` / `in-progress` / `fixed`.
   - TUI rendering: `internal/tui/` project pane definition predates W2.D7 / W3.D1 absorption.
   - TUI edit flow: project-edit form either doesn't have rows for these fields, or has them but doesn't call `(*Service).UpdateProject` with the new `UpdateProjectInput` shape.
 - **Fix plan:** Audit `internal/tui/` for the project view + edit forms; add display rows for the new fields; wire edit-form inputs into a `UpdateProject` call (mirror what `runProjectUpdate` does CLI-side).
+
+---
+
+## E2E-10 — `till_action_item operation=create` rejects valid top-level create when `parent_id == project_id`
+
+- **Status:** open
+- **Surfaced:** 2026-05-14 during the E2E-1+E2E-6 cascade setup; repro'd post-restart on the production `tillsyn` MCP.
+- **Symptom:**
+  - Caller passes `parent_id` = the project's own UUID (mistakenly treating project as the implicit parent for top-level action items).
+  - Server returns `not_found: authorize mutation: not found / not found`. The error message is doubly nested "not found" with no hint that `parent_id` is the wrong shape.
+  - When `parent_id` is OMITTED, the same `create` call succeeds (creates a top-level action item under the project). The `ParentID` field comes back empty in the response, confirming top-level placement is the correct shape.
+- **Repro:**
+  ```
+  # FAILS — parent_id set to project_id:
+  mcp__tillsyn__till_action_item(
+      operation="create",
+      project_id="<UUID>",
+      parent_id="<UUID-same-as-project_id>",  # <-- THIS
+      kind="build", structural_type="drop", state="todo",
+      title="...", paths=[...], packages=[...],
+      session_id="...", session_secret="...",
+      agent_instance_id="...", lease_token="..."
+  )
+  # -> not_found: authorize mutation: not found / not found
+
+  # SUCCEEDS — parent_id omitted, same call otherwise:
+  # ... same args minus parent_id ...
+  # -> action_item created with ParentID=""
+  ```
+- **Suspected scope:** Server-side mutation authorizer likely does `repo.GetActionItem(parent_id)` to check scope authorization. When parent_id matches project_id (which lives in the `projects` table, not `action_items`), the lookup returns no rows. The error is then surfaced as the authorize-mutation failure, not as the more accurate "parent_id must reference an action_item, not a project."
+- **Why it matters:**
+  - Confusing diagnostic. Cost me ~15 minutes of red-herring debugging (suspected capability_lease layer was missing, then auth_context_id wasn't being passed correctly, etc).
+  - Inconsistent with the parent_id schema description which says "Optional parent action-item id for operation=create" — the natural reading is that omitting it means top-level. But callers who think "project IS the parent for top-level items" are punished with a confusing error instead of either an actionable rejection OR auto-treating it as top-level.
+- **Fix options:**
+  - **A (preferred)**: if `parent_id == project_id`, treat as top-level (auto-clear parent_id internally). This matches the natural caller mental model and removes the foot-gun.
+  - **B**: return an explicit error like `invalid_request: parent_id must reference an action_item, not the project; omit parent_id for top-level items under the project`. More restrictive but unambiguous.
+- **Severity:** MEDIUM — workaround is trivial once known; but the confusing diagnostic costs every first-time caller 10+ minutes.
+
+---
+
+## E2E-8 — `till_auth_request operation=create` does not honor `wait_timeout` (no push to orch on approval)
+
+- **Status:** open
+- **Surfaced:** 2026-05-14 — twice in the same session (both `tillsyn-dev` and `tillsyn` MCP endpoints, post-restart).
+- **Symptom:**
+  - Orchestrator calls `till_auth_request operation=create` with `wait_timeout: 15m` (and again with `wait_timeout` omitted on a separate try — same outcome).
+  - Server returns IMMEDIATELY with `state: "pending"`, a fresh request_id, and a resume_token. Response shape matches "request just created" — NOT "blocked until approved, here's the approved state."
+  - Dev approves via TUI. Orchestrator receives no notification — has to wait for the dev to type "approved, go ahead" in chat before claiming. This is the exact `/loop`-hack pattern the LiveWait broker exists to replace.
+- **Expected:**
+  - Per tool schema (`mcp__tillsyn__till_auth_request` → `wait_timeout: "Optional how long to wait for human approval before returning the current request state, for example 30m"`): the call should block up to `wait_timeout` and return with `state: approved` once the dev approves in the TUI. The `LiveWaitEventAuthRequestResolved` broker channel exists for exactly this purpose.
+- **Suspected scope:** Server-side `operation=create` handler does NOT subscribe to `LiveWaitEventAuthRequestResolved` for the new request_id, or doesn't honor `wait_timeout` on the `create` code path. Two ways to verify:
+  1. Reproduce: call `till_auth_request operation=get` with `request_id` + `wait_timeout: 5m` BEFORE approval; if `get` also returns `pending` immediately rather than blocking, the broker isn't wired into either operation. If `get` DOES block, the bug is `create`-specific.
+  2. Code-read the handler in `internal/adapters/server/mcpapi/` (or wherever `till_auth_request` is dispatched) and trace whether `wait_timeout` is read + whether `LiveWaitBroker.Wait` is called on it.
+- **Why it matters:** Without this working, every orchestrator session needs the dev to manually type "approved" in chat after TUI approval. That's the /loop-hack workaround. Tillsyn's own auth flow is the most-used customer of the LiveWait broker; if `wait_timeout` doesn't fire here, the broker isn't earning its keep on this surface.
+- **Reproduction:**
+  ```
+  # 1. Orchestrator session:
+  mcp__tillsyn__till_auth_request(
+      operation="create",
+      path="project/<project-uuid>",
+      principal_id="TEST_ORCH",
+      principal_name="TEST_ORCH",
+      principal_type="agent",
+      principal_role="orchestrator",
+      client_id="claude-code-orchestrator",
+      reason="test wait_timeout",
+      requested_ttl="1h",
+      wait_timeout="2m"
+  )
+
+  # 2. Dev approves in TUI within 30s.
+
+  # 3. EXPECTED: call returns at t=30s with state="approved".
+  #    ACTUAL: call returns at t=0s with state="pending". Dev approval at t=30s lands in DB but
+  #            doesn't unblock the JSON-RPC reply. Orch sits idle until dev types "approved" in chat.
+  ```
+- **Fix plan:**
+  - Audit `till_auth_request operation=create` handler. Confirm `wait_timeout` is parsed; confirm `LiveWaitBroker.Wait(ctx, LiveWaitEventAuthRequestResolved, requestID, 0)` is called when `wait_timeout > 0`.
+  - Add integration test: create request with `wait_timeout: 30s`, spawn goroutine that approves at t=2s, assert call returns at t≈2s with `state: approved` (NOT at t=0s with `state: pending`).
+  - Same test for `operation=get` with `wait_timeout` parameter — verify polling consumers can also block on approval.
+  - Whichever operations don't honor `wait_timeout`: either fix the handler OR remove `wait_timeout` from the schema for that op so callers stop expecting block behavior.
+- **Severity:** HIGH — silently degrades the only documented push-to-orch path in Tillsyn's stack. Forces every cascade dispatch to fall back to chat-relay coordination.
+
+---
+
+## E2E-9 — `.mcp.json` from `till init` invokes global `till`, not project-local
+
+- **Status:** open (parking-lot in REFINEMENTS.md — see entry 2026-05-14 "Project-local `till mcp` for natural path / auth scoping")
+- **Surfaced:** 2026-05-14 during joint dogfood smoke.
+- **Symptom:**
+  - `till init` writes `.mcp.json` with `command: <result-of-exec.LookPath("till")>`, falling back to `$HOME/.local/bin/till`. Result is the GLOBAL till binary.
+  - Dev's stated design intent: each project's `.mcp.json` should invoke a PROJECT-LOCAL `till` binary so the MCP server is naturally path/auth-limited to that project. Different orchs in different projects shouldn't be able to read/mutate each other's state via the SAME MCP server.
+- **Expected:** Project-tier `till init` writes a `.mcp.json` entry that points at a project-local binary (e.g. `./till`, `.tillsyn/bin/till`, or some other project-tier path). The project-local `till mcp` instance opens a project-tier DB (or has a cwd-aware DB resolution mode) so it can only see this project's state. Global `till` auth is still available for orchs that need cross-project visibility — but the default is scoped.
+- **Suspected scope:**
+  - `registerMCPJSON` in `cmd/till/init_cmd.go`: needs a "project-local first, global fallback" resolution.
+  - DB resolution policy: today user-tier `~/.tillsyn/tillsyn.db`. For project-local, either (a) build-time embed, (b) flag-driven `--db <project>/.tillsyn/tillsyn.db`, or (c) cwd-aware resolution that picks a project-tier DB when `.tillsyn/tillsyn.db` exists in cwd or ancestor.
+  - Where does the project-local binary live? `./till`? `.tillsyn/bin/till`? Tied to `mage build` output for Go projects; unclear for non-Go projects.
+- **Fix plan:** Plan + ship in a follow-up drop. Three sub-questions to resolve before building (binary location, DB resolution policy, auth scoping semantics). Full detail in REFINEMENTS.md.
+- **Severity:** MEDIUM — not blocking dogfood today (global path + auth-scoped requests provide logical limiting); but the natural-path-limiting safety net is missing.
 
 ---
 

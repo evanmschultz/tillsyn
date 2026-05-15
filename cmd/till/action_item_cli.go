@@ -347,15 +347,17 @@ func runActionItemList(ctx context.Context, svc *app.Service, opts actionItemCom
 	if svc == nil {
 		return fmt.Errorf("app service is not configured")
 	}
+	// Empty --state (the new default) = list all states. A non-empty value is
+	// normalized + validated against the closed lifecycle set.
 	rawState := strings.TrimSpace(opts.state)
-	if rawState == "" {
-		rawState = string(domain.StateFailed)
+	var state domain.LifecycleState
+	if rawState != "" {
+		state = domain.LifecycleState(strings.ToLower(rawState))
+		if !slices.Contains(validActionItemListStates, state) {
+			return fmt.Errorf("action_item list: unknown --state %q (valid: %s)", opts.state, joinLifecycleStates(validActionItemListStates))
+		}
 	}
-	state := domain.LifecycleState(strings.ToLower(rawState))
-	if !slices.Contains(validActionItemListStates, state) {
-		return fmt.Errorf("action_item list: unknown --state %q (valid: %s)", opts.state, joinLifecycleStates(validActionItemListStates))
-	}
-	project, err := resolveActionItemListProject(ctx, svc, opts.projectSlug)
+	project, err := resolveActionItemListProject(ctx, svc, opts.projectID, opts.projectSlug)
 	if err != nil {
 		return err
 	}
@@ -366,7 +368,12 @@ func runActionItemList(ctx context.Context, svc *app.Service, opts actionItemCom
 		// project-listing path coherent with the filter the user sees.
 		includeArchived = true
 	}
-	items, err := svc.ListActionItemsByState(ctx, project.ID, state, includeArchived)
+	var items []domain.ActionItem
+	if state == "" {
+		items, err = svc.ListActionItems(ctx, project.ID, includeArchived)
+	} else {
+		items, err = svc.ListActionItemsByState(ctx, project.ID, state, includeArchived)
+	}
 	if err != nil {
 		return fmt.Errorf("action_item list: %w", err)
 	}
@@ -386,26 +393,41 @@ func runActionItemList(ctx context.Context, svc *app.Service, opts actionItemCom
 			firstNonEmptyTrimmed(item.ID, "-"),
 			firstNonEmptyTrimmed(item.Title, "-"),
 			firstNonEmptyTrimmed(string(item.Kind), "-"),
+			firstNonEmptyTrimmed(string(item.LifecycleState), "-"),
 			firstNonEmptyTrimmed(string(item.Role), "-"),
 			formatActionItemListUpdatedAt(item.UpdatedAt),
 		})
 	}
-	emptyMsg := fmt.Sprintf("No %s action items in project %s.", state, project.Slug)
+	var emptyMsg string
+	if state == "" {
+		emptyMsg = fmt.Sprintf("No action items in project %s.", project.Slug)
+	} else {
+		emptyMsg = fmt.Sprintf("No %s action items in project %s.", state, project.Slug)
+	}
 	return writeCLITable(
 		stdout,
 		"Action Items",
-		[]string{"DOTTED", "UUID", "TITLE", "KIND", "ROLE", "UPDATED"},
+		[]string{"DOTTED", "UUID", "TITLE", "KIND", "STATE", "ROLE", "UPDATED"},
 		rows,
 		emptyMsg,
 	)
 }
 
 // resolveActionItemListProject resolves the project context for the
-// `till action_item list` command. When the operator supplied --project the
-// slug is looked up directly; otherwise the command falls back to the
-// single-project-on-system shortcut and surfaces a clear hint when more than
-// one project exists without explicit selection.
-func resolveActionItemListProject(ctx context.Context, svc *app.Service, projectSlug string) (domain.Project, error) {
+// `till action_item list` command. The lookup precedence is:
+//  1. --project-id <UUID> wins when set (MCP-parity path).
+//  2. --project <slug> looked up via GetProjectBySlug.
+//  3. Single-project-on-system shortcut; clear hint when more than one
+//     project exists without explicit selection.
+func resolveActionItemListProject(ctx context.Context, svc *app.Service, projectID, projectSlug string) (domain.Project, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID != "" {
+		project, err := svc.GetProject(ctx, projectID)
+		if err != nil {
+			return domain.Project{}, fmt.Errorf("action_item list: look up project for id %q: %w", projectID, err)
+		}
+		return project, nil
+	}
 	projectSlug = strings.TrimSpace(projectSlug)
 	if projectSlug != "" {
 		project, err := svc.GetProjectBySlug(ctx, projectSlug)
