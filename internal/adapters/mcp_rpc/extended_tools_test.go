@@ -5738,14 +5738,16 @@ func TestActionItemMCPEndCommitRoundTrip(t *testing.T) {
 	})
 }
 
-// TestProjectMCPFirstClassFieldsRoundTrip verifies the six Drop 4a L4
+// TestProjectMCPFirstClassFieldsRoundTrip verifies the five Drop 4a L4
 // project-node first-class fields (HyllaArtifactRef, RepoBareRoot,
-// RepoPrimaryWorktree, Language, BuildTool, DevMcpServerName) plumb
-// cleanly through the till.project MCP tool on both create and update
-// operations. Each field is asserted on the CreateProjectRequest /
-// UpdateProjectRequest the boundary forwards to the service stub, so the
-// JSON-RPC → CreateProjectRequest → service hop is exercised end-to-end
-// without a full app-service stack.
+// RepoPrimaryWorktree, BuildTool, DevMcpServerName) plumb cleanly
+// through the till.project MCP tool on both create and update operations.
+// Each field is asserted on the CreateProjectRequest / UpdateProjectRequest
+// the boundary forwards to the service stub, so the JSON-RPC →
+// CreateProjectRequest → service hop is exercised end-to-end without a
+// full app-service stack. Language was removed from the request struct in
+// Phase 4.2 Droplet 3; the schema parameter (mcp.WithString("language",…))
+// is preserved for Phase 4.3.
 //
 // Per WAVE_1_PLAN.md §1.8 the Project surface uses value-typed (not
 // pointer-sentineled) update fields because admin-driven mutations rarely
@@ -5771,7 +5773,7 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 		return service, server
 	}
 
-	t.Run("create plumbs all six first-class fields", func(t *testing.T) {
+	t.Run("create plumbs all five first-class fields", func(t *testing.T) {
 		t.Parallel()
 		service, server := newServer(t)
 		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7800, "till.project", mergeArgs(validSessionArgs(), map[string]any{
@@ -5781,7 +5783,6 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 			"hylla_artifact_ref":    "github.com/evanmschultz/tillsyn@main",
 			"repo_bare_root":        "/Users/evan/code/tillsyn",
 			"repo_primary_worktree": "/Users/evan/code/tillsyn/main",
-			"language":              "go",
 			"build_tool":            "mage",
 			"dev_mcp_server_name":   "tillsyn-dev",
 			"agent_instance_id":     "inst-1",
@@ -5800,7 +5801,7 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 		if got.RepoPrimaryWorktree != "/Users/evan/code/tillsyn/main" {
 			t.Fatalf("RepoPrimaryWorktree = %q", got.RepoPrimaryWorktree)
 		}
-		if got.Language != "go" || got.BuildTool != "mage" || got.DevMcpServerName != "tillsyn-dev" {
+		if got.BuildTool != "mage" || got.DevMcpServerName != "tillsyn-dev" {
 			t.Fatalf("scalar fields not plumbed: %+v", got)
 		}
 	})
@@ -5819,12 +5820,12 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 		}
 		got := service.lastCreateProjectReq
 		if got.HyllaArtifactRef != "" || got.RepoBareRoot != "" || got.RepoPrimaryWorktree != "" ||
-			got.Language != "" || got.BuildTool != "" || got.DevMcpServerName != "" {
+			got.BuildTool != "" || got.DevMcpServerName != "" {
 			t.Fatalf("expected empty defaults, got %+v", got)
 		}
 	})
 
-	t.Run("update plumbs all six first-class fields as value-typed strings", func(t *testing.T) {
+	t.Run("update plumbs all five first-class fields as value-typed strings", func(t *testing.T) {
 		t.Parallel()
 		service, server := newServer(t)
 		_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7802, "till.project", mergeArgs(validSessionArgs(), map[string]any{
@@ -5834,7 +5835,6 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 			"hylla_artifact_ref":    "github.com/x/y@v2",
 			"repo_bare_root":        "/abs/x",
 			"repo_primary_worktree": "/abs/x/main",
-			"language":              "fe",
 			"build_tool":            "npm",
 			"dev_mcp_server_name":   "x-dev",
 			"agent_instance_id":     "inst-1",
@@ -5845,7 +5845,7 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 		}
 		got := service.lastUpdateProjectReq
 		if got.HyllaArtifactRef != "github.com/x/y@v2" || got.RepoBareRoot != "/abs/x" ||
-			got.RepoPrimaryWorktree != "/abs/x/main" || got.Language != "fe" ||
+			got.RepoPrimaryWorktree != "/abs/x/main" ||
 			got.BuildTool != "npm" || got.DevMcpServerName != "x-dev" {
 			t.Fatalf("UpdateProjectRequest first-class fields not plumbed: %+v", got)
 		}

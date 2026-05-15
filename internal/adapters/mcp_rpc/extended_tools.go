@@ -467,7 +467,6 @@ func registerProjectTools(
 				HyllaArtifactRef    string                 `json:"hylla_artifact_ref"`
 				RepoBareRoot        string                 `json:"repo_bare_root"`
 				RepoPrimaryWorktree string                 `json:"repo_primary_worktree"`
-				Language            string                 `json:"language"`
 				BuildTool           string                 `json:"build_tool"`
 				DevMcpServerName    string                 `json:"dev_mcp_server_name"`
 				SessionID           string                 `json:"session_id"`
@@ -537,7 +536,6 @@ func registerProjectTools(
 					HyllaArtifactRef:    args.HyllaArtifactRef,
 					RepoBareRoot:        args.RepoBareRoot,
 					RepoPrimaryWorktree: args.RepoPrimaryWorktree,
-					Language:            args.Language,
 					BuildTool:           args.BuildTool,
 					DevMcpServerName:    args.DevMcpServerName,
 					Metadata:            args.Metadata,
@@ -592,7 +590,6 @@ func registerProjectTools(
 					HyllaArtifactRef:    args.HyllaArtifactRef,
 					RepoBareRoot:        args.RepoBareRoot,
 					RepoPrimaryWorktree: args.RepoPrimaryWorktree,
-					Language:            args.Language,
 					BuildTool:           args.BuildTool,
 					DevMcpServerName:    args.DevMcpServerName,
 					Metadata:            args.Metadata,
