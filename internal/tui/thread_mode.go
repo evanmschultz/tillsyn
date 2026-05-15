@@ -485,13 +485,19 @@ func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
 				return actionMsg{err: fmt.Errorf("thread details update: project %q not found", projectID)}
 			}
 			_, err := m.svc.UpdateProject(context.Background(), app.UpdateProjectInput{
-				ProjectID:     project.ID,
-				Name:          project.Name,
-				Description:   description,
-				Metadata:      project.Metadata,
-				UpdatedBy:     actorID,
-				UpdatedByName: actorName,
-				UpdatedType:   actorType,
+				ProjectID:           project.ID,
+				Name:                project.Name,
+				Description:         description,
+				Metadata:            project.Metadata,
+				HyllaArtifactRef:    project.HyllaArtifactRef,
+				RepoBareRoot:        project.RepoBareRoot,
+				RepoPrimaryWorktree: project.RepoPrimaryWorktree,
+				Language:            project.Language,
+				BuildTool:           project.BuildTool,
+				DevMcpServerName:    project.DevMcpServerName,
+				UpdatedBy:           actorID,
+				UpdatedByName:       actorName,
+				UpdatedType:         actorType,
 			})
 			if err != nil {
 				return actionMsg{err: err}

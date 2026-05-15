@@ -14990,6 +14990,15 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		"Name":        {},
 		"Description": {},
 		"Metadata":    {},
+		// W2.D7 first-class fields (E2E-1 + E2E-6): surfaced in the project
+		// form repository section since this drop. RepoPrimaryWorktree maps
+		// to root_path (primary worktree path).
+		"HyllaArtifactRef":    {},
+		"RepoBareRoot":        {},
+		"RepoPrimaryWorktree": {},
+		"Language":            {},
+		"BuildTool":           {},
+		"DevMcpServerName":    {},
 	}
 	readOnly := map[string]struct{}{
 		"ID":         {},
@@ -15004,21 +15013,6 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		// neither user-editable through the TUI nor part of the read-only
 		// system surface — internal scaffolding the TUI does not render.
 		"KindCatalogJSON": {},
-		// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree / Language
-		// / BuildTool / DevMcpServerName are the Drop 4a droplet 4a.12
-		// (L4) project-node first-class fields. They are admin-driven
-		// config — set on project create or via till.project update — and
-		// consumed by the Wave 2 dispatcher when constructing agent-spawn
-		// invocations. The TUI does NOT render or edit them today;
-		// project-bootstrap UI is a future drop. Classified as internal
-		// scaffolding for now so TestProjectSchemaCoverageIsExplicit
-		// stays green without forcing premature TUI surface design.
-		"HyllaArtifactRef":    {},
-		"RepoBareRoot":        {},
-		"RepoPrimaryWorktree": {},
-		"Language":            {},
-		"BuildTool":           {},
-		"DevMcpServerName":    {},
 	}
 	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.Project{}), editable, readOnly, projectInternal)
 
@@ -15028,6 +15022,9 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		"Color":    {},
 		"Homepage": {},
 		"Tags":     {},
+		// Groups is the Drop 4c.6.1 W1.D2 multi-group template-resolution
+		// field surfaced in the project form repository section (E2E-1 + E2E-6).
+		"Groups": {},
 	}
 	projectMetadataInternal := map[string]struct{}{
 		"StandardsMarkdown": {},
@@ -15037,27 +15034,14 @@ func TestProjectSchemaCoverageIsExplicit(t *testing.T) {
 		// opt-out toggle for the orch-self-approval cascade. Pointer-bool
 		// (*bool) keyed off nil-means-enabled. Admin / policy field — set via
 		// till.project(operation=update) Metadata payload, never edited
-		// through the project form TUI surface today. Classified internal so
-		// this coverage test stays green without forcing premature TUI
-		// design.
+		// through the project form TUI surface today.
 		"OrchSelfApprovalEnabled": {},
 		// DispatcherCommitEnabled / DispatcherPushEnabled are the Drop 4c
-		// F.7.15 dispatcher-gate toggles (Master PLAN.md L20). Pointer-bool
-		// (*bool) keyed off nil-means-disabled — opposite default polarity
-		// from OrchSelfApprovalEnabled because both gates ship unproven and
-		// must default OFF until Drop 5 dogfood. Admin / policy fields —
-		// set via till.project(operation=update) Metadata payload or template
-		// TOML, never edited through the project form TUI surface today.
-		// Classified internal for the same reason as OrchSelfApprovalEnabled.
+		// F.7.15 dispatcher-gate toggles (Master PLAN.md L20). Admin / policy
+		// fields — set via till.project(operation=update) Metadata payload or
+		// template TOML, never edited through the project form TUI surface.
 		"DispatcherCommitEnabled": {},
 		"DispatcherPushEnabled":   {},
-		// Groups is the Drop 4c.6.1 W1.D2 multi-group template-resolution
-		// field. It carries the list of template-group identifiers a project
-		// belongs to (e.g. ["go", "fe"]). Admin / policy field — set via
-		// till.project(operation=update) Metadata payload, never edited
-		// through the project form TUI surface today. Classified internal
-		// for the same reason as DispatcherCommitEnabled.
-		"Groups": {},
 	}
 	assertExplicitFieldCoverage(t, reflect.TypeOf(domain.ProjectMetadata{}), projectMetadataEditable, nil, projectMetadataInternal)
 }
@@ -15080,6 +15064,246 @@ func TestProjectFormBodyLinesRenderSystemSectionWhenEditing(t *testing.T) {
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected project edit system section to contain %q, got\n%s", want, rendered)
+		}
+	}
+}
+
+// TestProjectFormW2D7FieldsInitializedFromProject verifies that opening the edit project form
+// populates all W2.D7 first-class fields from the loaded domain.Project (E2E-6).
+func TestProjectFormW2D7FieldsInitializedFromProject(t *testing.T) {
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{
+		ID:                  "p1",
+		Name:                "Inbox",
+		HyllaArtifactRef:    "github.com/org/repo@main",
+		RepoBareRoot:        "/tmp/repo",
+		RepoPrimaryWorktree: "/tmp/repo/main",
+		Language:            "go",
+		BuildTool:           "mage",
+		DevMcpServerName:    "tillsyn-dev",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput error = %v", err)
+	}
+	project.Metadata.Groups = []string{"go", "fe"}
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, nil, nil)))
+	_ = m.startProjectForm(&project)
+
+	if got := m.projectFormInputs[projectFieldBareRoot].Value(); got != "/tmp/repo" {
+		t.Errorf("projectFieldBareRoot = %q, want %q", got, "/tmp/repo")
+	}
+	if got := m.projectFormInputs[projectFieldLanguage].Value(); got != "go" {
+		t.Errorf("projectFieldLanguage = %q, want %q", got, "go")
+	}
+	if got := m.projectFormInputs[projectFieldGroups].Value(); got != "go,fe" {
+		t.Errorf("projectFieldGroups = %q, want %q", got, "go,fe")
+	}
+	if got := m.projectFormInputs[projectFieldHyllaArtifactRef].Value(); got != "github.com/org/repo@main" {
+		t.Errorf("projectFieldHyllaArtifactRef = %q, want %q", got, "github.com/org/repo@main")
+	}
+	if got := m.projectFormInputs[projectFieldBuildTool].Value(); got != "mage" {
+		t.Errorf("projectFieldBuildTool = %q, want %q", got, "mage")
+	}
+	if got := m.projectFormInputs[projectFieldDevMcpServerName].Value(); got != "tillsyn-dev" {
+		t.Errorf("projectFieldDevMcpServerName = %q, want %q", got, "tillsyn-dev")
+	}
+}
+
+// TestProjectFormW2D7FieldsPassedThroughOnUpdate verifies that the edit-project save path
+// passes all W2.D7 fields to UpdateProject (E2E-1 save round-trip).
+func TestProjectFormW2D7FieldsPassedThroughOnUpdate(t *testing.T) {
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{
+		ID:   "p1",
+		Name: "Inbox",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput error = %v", err)
+	}
+	c, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{c}, nil)
+	m := loadReadyModel(t, NewModel(svc))
+	_ = m.startProjectForm(&project)
+	m.mode = modeEditProject
+	m.editingProjectID = project.ID
+
+	// Set W2.D7 field values.
+	m.projectFormInputs[projectFieldName].SetValue("Inbox")
+	m.projectFormInputs[projectFieldBareRoot].SetValue("/abs/bare")
+	m.projectFormInputs[projectFieldLanguage].SetValue("go")
+	m.projectFormInputs[projectFieldGroups].SetValue("go,fe")
+	m.projectFormInputs[projectFieldHyllaArtifactRef].SetValue("github.com/org/repo@main")
+	m.projectFormInputs[projectFieldBuildTool].SetValue("mage")
+	m.projectFormInputs[projectFieldDevMcpServerName].SetValue("tillsyn-dev")
+
+	// Submit the form via enter (ctrl+s is not wired in the project form handler).
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	got := svc.lastUpdateProject
+	if got.RepoBareRoot != "/abs/bare" {
+		t.Errorf("UpdateProject.RepoBareRoot = %q, want %q", got.RepoBareRoot, "/abs/bare")
+	}
+	if got.Language != "go" {
+		t.Errorf("UpdateProject.Language = %q, want %q", got.Language, "go")
+	}
+	if got.HyllaArtifactRef != "github.com/org/repo@main" {
+		t.Errorf("UpdateProject.HyllaArtifactRef = %q, want %q", got.HyllaArtifactRef, "github.com/org/repo@main")
+	}
+	if got.BuildTool != "mage" {
+		t.Errorf("UpdateProject.BuildTool = %q, want %q", got.BuildTool, "mage")
+	}
+	if got.DevMcpServerName != "tillsyn-dev" {
+		t.Errorf("UpdateProject.DevMcpServerName = %q, want %q", got.DevMcpServerName, "tillsyn-dev")
+	}
+	if groups := got.Metadata.Groups; len(groups) != 2 || groups[0] != "go" || groups[1] != "fe" {
+		t.Errorf("UpdateProject.Metadata.Groups = %v, want [go fe]", groups)
+	}
+}
+
+// TestProjectFormW2D7FieldsPassedThroughOnCreate verifies that the new-project save path
+// passes all W2.D7 fields to CreateProjectWithMetadata.
+func TestProjectFormW2D7FieldsPassedThroughOnCreate(t *testing.T) {
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+	c, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{c}, nil)
+	m := loadReadyModel(t, NewModel(svc))
+	_ = m.startProjectForm(nil)
+	m.mode = modeAddProject
+
+	m.projectFormInputs[projectFieldName].SetValue("NewProject")
+	m.projectFormInputs[projectFieldBareRoot].SetValue("/abs/bare")
+	m.projectFormInputs[projectFieldLanguage].SetValue("fe")
+	m.projectFormInputs[projectFieldGroups].SetValue("fe,gen")
+	m.projectFormInputs[projectFieldHyllaArtifactRef].SetValue("github.com/org/fe@main")
+	m.projectFormInputs[projectFieldBuildTool].SetValue("npm")
+	m.projectFormInputs[projectFieldDevMcpServerName].SetValue("fe-dev")
+
+	// Submit the form via enter (ctrl+s is not wired in the project form handler).
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	got := svc.lastCreateProject
+	if got.Name != "NewProject" {
+		t.Errorf("CreateProjectInput.Name = %q, want %q", got.Name, "NewProject")
+	}
+	if got.RepoBareRoot != "/abs/bare" {
+		t.Errorf("CreateProjectInput.RepoBareRoot = %q, want %q", got.RepoBareRoot, "/abs/bare")
+	}
+	if got.Language != "fe" {
+		t.Errorf("CreateProjectInput.Language = %q, want %q", got.Language, "fe")
+	}
+	if got.HyllaArtifactRef != "github.com/org/fe@main" {
+		t.Errorf("CreateProjectInput.HyllaArtifactRef = %q, want %q", got.HyllaArtifactRef, "github.com/org/fe@main")
+	}
+	if got.BuildTool != "npm" {
+		t.Errorf("CreateProjectInput.BuildTool = %q, want %q", got.BuildTool, "npm")
+	}
+	if got.DevMcpServerName != "fe-dev" {
+		t.Errorf("CreateProjectInput.DevMcpServerName = %q, want %q", got.DevMcpServerName, "fe-dev")
+	}
+	if len(got.Metadata.Groups) != 2 || got.Metadata.Groups[0] != "fe" || got.Metadata.Groups[1] != "gen" {
+		t.Errorf("CreateProjectInput.Metadata.Groups = %v, want [fe gen]", got.Metadata.Groups)
+	}
+}
+
+// TestUpdateThreadDescriptionPreservesW2D7Fields is the QA-falsification-driven regression
+// for the sibling save path bug: editing a project's thread description previously called
+// Service.UpdateProject with only Name/Description/Metadata, silently wiping the six W2.D7
+// typed fields (HyllaArtifactRef, RepoBareRoot, RepoPrimaryWorktree, Language, BuildTool,
+// DevMcpServerName). The fix forwards the values from the in-scope project snapshot.
+func TestUpdateThreadDescriptionPreservesW2D7Fields(t *testing.T) {
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{
+		ID:                  "p1",
+		Name:                "Inbox",
+		HyllaArtifactRef:    "github.com/org/repo@main",
+		RepoBareRoot:        "/abs/bare",
+		RepoPrimaryWorktree: "/abs/main",
+		Language:            "go",
+		BuildTool:           "mage",
+		DevMcpServerName:    "tillsyn-dev",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput: %v", err)
+	}
+	c, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{c}, nil)
+	m := loadReadyModel(t, NewModel(svc))
+	m.threadTarget = domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeProject,
+		TargetID:   project.ID,
+	}
+
+	cmd := m.updateThreadDescriptionCmd("new description body")
+	if cmd == nil {
+		t.Fatalf("updateThreadDescriptionCmd returned nil cmd")
+	}
+	msg := cmd()
+	if am, ok := msg.(actionMsg); ok && am.err != nil {
+		t.Fatalf("updateThreadDescriptionCmd error: %v", am.err)
+	}
+
+	got := svc.lastUpdateProject
+	if got.HyllaArtifactRef != "github.com/org/repo@main" {
+		t.Errorf("HyllaArtifactRef = %q, want %q (silent wipe regression)", got.HyllaArtifactRef, "github.com/org/repo@main")
+	}
+	if got.RepoBareRoot != "/abs/bare" {
+		t.Errorf("RepoBareRoot = %q, want %q (silent wipe regression)", got.RepoBareRoot, "/abs/bare")
+	}
+	if got.RepoPrimaryWorktree != "/abs/main" {
+		t.Errorf("RepoPrimaryWorktree = %q, want %q (silent wipe regression)", got.RepoPrimaryWorktree, "/abs/main")
+	}
+	if got.Language != "go" {
+		t.Errorf("Language = %q, want %q (silent wipe regression)", got.Language, "go")
+	}
+	if got.BuildTool != "mage" {
+		t.Errorf("BuildTool = %q, want %q (silent wipe regression)", got.BuildTool, "mage")
+	}
+	if got.DevMcpServerName != "tillsyn-dev" {
+		t.Errorf("DevMcpServerName = %q, want %q (silent wipe regression)", got.DevMcpServerName, "tillsyn-dev")
+	}
+	if got.Description != "new description body" {
+		t.Errorf("Description = %q, want %q", got.Description, "new description body")
+	}
+}
+
+// TestProjectFormBodyLinesRendersW2D7Repository verifies the project form renders the
+// W2.D7 repository section labels (E2E-6 display).
+func TestProjectFormBodyLinesRendersW2D7Repository(t *testing.T) {
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{
+		ID:                  "p1",
+		Name:                "Inbox",
+		HyllaArtifactRef:    "github.com/org/repo@main",
+		RepoBareRoot:        "/abs/bare",
+		RepoPrimaryWorktree: "/abs/bare/main",
+		Language:            "go",
+		BuildTool:           "mage",
+		DevMcpServerName:    "tillsyn-dev",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput error = %v", err)
+	}
+	project.Metadata.Groups = []string{"go"}
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, nil, nil)))
+	_ = m.startProjectForm(&project)
+	m.mode = modeEditProject
+	m.width = 120
+	m.height = 40
+
+	accent := projectAccentColor(project)
+	muted := lipgloss.Color("241")
+	hintStyle := lipgloss.NewStyle().Foreground(muted)
+	bodyLines, _ := m.projectFormBodyLines(80, hintStyle, accent)
+	body := strings.Join(bodyLines, "\n")
+	stripped := stripANSI(body)
+
+	for _, want := range []string{"repository", "bare_root", "language", "groups", "hylla_artifact_ref", "build_tool", "dev_mcp_server_name"} {
+		if !strings.Contains(stripped, want) {
+			t.Errorf("expected project form body to contain %q, got:\n%s", want, stripped)
 		}
 	}
 }

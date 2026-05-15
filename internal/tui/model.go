@@ -210,6 +210,13 @@ const (
 	projectFieldHomepage
 	projectFieldTags
 	projectFieldRootPath
+	// W2.D7 first-class fields (E2E-1 + E2E-6).
+	projectFieldBareRoot
+	projectFieldLanguage
+	projectFieldGroups
+	projectFieldHyllaArtifactRef
+	projectFieldBuildTool
+	projectFieldDevMcpServerName
 	projectFieldComments
 )
 
@@ -4729,7 +4736,14 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		newModalInput("", "accent color (e.g. 62)", "", 32),
 		newModalInput("", "https://...", "", 200),
 		newModalInput("", "csv tags", "", 200),
-		newModalInput("", "project root path (optional)", "", 512),
+		newModalInput("", "primary worktree path (optional, must be absolute)", "", 512),
+		// W2.D7 first-class fields (E2E-1 + E2E-6).
+		newModalInput("", "bare repo root path (optional, must be absolute)", "", 512),
+		newModalInput("", "go | fe | (empty)", "", 32),
+		newModalInput("", "csv groups e.g. go,fe (optional)", "", 200),
+		newModalInput("", "e.g. github.com/org/repo@main", "", 256),
+		newModalInput("", "e.g. mage | npm | yarn (optional)", "", 64),
+		newModalInput("", "e.g. tillsyn-dev (optional)", "", 120),
 	}
 	m.editingProjectID = ""
 	m.projectFormDescription = ""
@@ -4750,6 +4764,15 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		if slug := strings.TrimSpace(strings.ToLower(project.Slug)); slug != "" {
 			m.projectFormInputs[projectFieldRootPath].SetValue(strings.TrimSpace(m.projectRoots[slug]))
 		}
+		// W2.D7 first-class fields (E2E-1 + E2E-6).
+		m.projectFormInputs[projectFieldBareRoot].SetValue(project.RepoBareRoot)
+		m.projectFormInputs[projectFieldLanguage].SetValue(project.Language)
+		if len(project.Metadata.Groups) > 0 {
+			m.projectFormInputs[projectFieldGroups].SetValue(strings.Join(project.Metadata.Groups, ","))
+		}
+		m.projectFormInputs[projectFieldHyllaArtifactRef].SetValue(project.HyllaArtifactRef)
+		m.projectFormInputs[projectFieldBuildTool].SetValue(project.BuildTool)
+		m.projectFormInputs[projectFieldDevMcpServerName].SetValue(project.DevMcpServerName)
 	} else {
 		m.mode = modeAddProject
 		m.status = "new project"
@@ -5760,7 +5783,8 @@ func (m Model) allowedLabelsForSelectedProject() []string {
 }
 
 // projectFormFields stores a package-level helper value.
-var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags", "root_path"}
+// Order must match the projectField* iota const block above (E2E-1 + E2E-6).
+var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags", "root_path", "bare_root", "language", "groups", "hylla_artifact_ref", "build_tool", "dev_mcp_server_name"}
 
 // projectFormValues returns project form values.
 func (m Model) projectFormValues() map[string]string {
@@ -11685,12 +11709,20 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			m.status = err.Error()
 			return m, nil
 		}
+		// W2.D7 first-class fields (E2E-1 + E2E-6).
+		bareRoot := strings.TrimSpace(vals["bare_root"])
+		language := strings.TrimSpace(vals["language"])
+		hyllaArtifactRef := strings.TrimSpace(vals["hylla_artifact_ref"])
+		buildTool := strings.TrimSpace(vals["build_tool"])
+		devMcpServerName := strings.TrimSpace(vals["dev_mcp_server_name"])
+		groupsRaw := parseLabelsInput(vals["groups"], nil)
 		metadata := domain.ProjectMetadata{
 			Owner:    vals["owner"],
 			Icon:     vals["icon"],
 			Color:    vals["color"],
 			Homepage: vals["homepage"],
 			Tags:     parseLabelsInput(vals["tags"], nil),
+			Groups:   groupsRaw,
 		}
 		description := vals["description"]
 		projectID := m.editingProjectID
@@ -11705,12 +11737,18 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			m.resetProjectFormState()
 			return m, func() tea.Msg {
 				project, err := m.svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
-					Name:          name,
-					Description:   description,
-					Metadata:      metadata,
-					UpdatedBy:     m.threadActorID(),
-					UpdatedByName: m.threadActorName(),
-					UpdatedType:   m.threadActorType(),
+					Name:                name,
+					Description:         description,
+					Metadata:            metadata,
+					HyllaArtifactRef:    hyllaArtifactRef,
+					RepoBareRoot:        bareRoot,
+					RepoPrimaryWorktree: rootPath,
+					Language:            language,
+					BuildTool:           buildTool,
+					DevMcpServerName:    devMcpServerName,
+					UpdatedBy:           m.threadActorID(),
+					UpdatedByName:       m.threadActorName(),
+					UpdatedType:         m.threadActorType(),
 				})
 				if err != nil {
 					return actionMsg{err: err}
@@ -11733,13 +11771,19 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.resetProjectFormState()
 		return m, func() tea.Msg {
 			project, err := m.svc.UpdateProject(context.Background(), app.UpdateProjectInput{
-				ProjectID:     projectID,
-				Name:          name,
-				Description:   description,
-				Metadata:      metadata,
-				UpdatedBy:     m.threadActorID(),
-				UpdatedByName: m.threadActorName(),
-				UpdatedType:   m.threadActorType(),
+				ProjectID:           projectID,
+				Name:                name,
+				Description:         description,
+				Metadata:            metadata,
+				HyllaArtifactRef:    hyllaArtifactRef,
+				RepoBareRoot:        bareRoot,
+				RepoPrimaryWorktree: rootPath,
+				Language:            language,
+				BuildTool:           buildTool,
+				DevMcpServerName:    devMcpServerName,
+				UpdatedBy:           m.threadActorID(),
+				UpdatedByName:       m.threadActorName(),
+				UpdatedType:         m.threadActorType(),
 			})
 			if err != nil {
 				return actionMsg{err: err}
@@ -17366,7 +17410,15 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	renderProjectInput("color", projectFieldColor)
 	renderProjectInput("homepage", projectFieldHomepage)
 	renderProjectInput("tags", projectFieldTags)
+	lines = append(lines, "")
+	lines = append(lines, hintStyle.Render("repository"))
 	renderProjectInput("root_path", projectFieldRootPath)
+	renderProjectInput("bare_root", projectFieldBareRoot)
+	renderProjectInput("language", projectFieldLanguage)
+	renderProjectInput("groups", projectFieldGroups)
+	renderProjectInput("hylla_artifact_ref", projectFieldHyllaArtifactRef)
+	renderProjectInput("build_tool", projectFieldBuildTool)
+	renderProjectInput("dev_mcp_server_name", projectFieldDevMcpServerName)
 	if m.mode == modeEditProject && len(m.projectFormInputs) > projectFieldComments {
 		lines = append(lines, "")
 		lines = append(lines, hintStyle.Render("coordination"))
