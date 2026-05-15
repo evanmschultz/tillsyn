@@ -136,6 +136,40 @@ func TestWriteProjectReadiness(t *testing.T) {
 	}
 }
 
+// TestWriteProjectReadinessW2D7Fields asserts that the six W2.D7 first-class
+// project fields appear in the collaboration readiness output when populated.
+func TestWriteProjectReadinessW2D7Fields(t *testing.T) {
+	now := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Alpha"}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput() error = %v", err)
+	}
+	project.RepoPrimaryWorktree = "/Users/evan/code/tillsyn/main"
+	project.RepoBareRoot = "/Users/evan/code/tillsyn"
+	project.BuildTool = "mage"
+	project.DevMcpServerName = "tillsyn-dev"
+	project.HyllaArtifactRef = "github.com/evanmschultz/tillsyn@main"
+	project.Metadata.Groups = []string{"go", "fe"}
+
+	var out strings.Builder
+	if err := writeProjectReadiness(&out, project, nil, nil, nil, nil); err != nil {
+		t.Fatalf("writeProjectReadiness() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"root_path",
+		"bare_root",
+		"build_tool",
+		"dev_mcp_server_name",
+		"hylla_artifact_ref",
+		"groups",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected W2.D7 key %q in project readiness output, got %q", want, got)
+		}
+	}
+}
+
 // TestProjectWithOwnerFallbackUsesDisplayName verifies local config identity fills empty owner labels.
 func TestProjectWithOwnerFallbackUsesDisplayName(t *testing.T) {
 	project := domain.Project{Metadata: domain.ProjectMetadata{}}

@@ -571,6 +571,12 @@ func writeProjectReadiness(stdout io.Writer, project domain.Project, pendingRequ
 		{"slug", compactText(project.Slug)},
 		{"owner", compactText(project.Metadata.Owner)},
 		{"archived", projectArchivedText(project.ArchivedAt)},
+		{"root_path", compactText(project.RepoPrimaryWorktree)},
+		{"bare_root", compactText(project.RepoBareRoot)},
+		{"build_tool", compactText(project.BuildTool)},
+		{"dev_mcp_server_name", compactText(project.DevMcpServerName)},
+		{"hylla_artifact_ref", compactText(project.HyllaArtifactRef)},
+		{"groups", compactText(strings.Join(project.Metadata.Groups, ", "))},
 	}
 	if err := writeCLIKVWithPrinter(printer, "Project Collaboration Readiness", rows); err != nil {
 		return err
