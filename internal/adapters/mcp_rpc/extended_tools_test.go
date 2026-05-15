@@ -3834,9 +3834,9 @@ func TestTillTemplate_ListBuiltin(t *testing.T) {
 // in the test surface for free without per-test fixture maintenance.
 func validTemplateFixtureTOML(t *testing.T) string {
 	t.Helper()
-	tpl, err := templates.LoadDefaultTemplateForLanguage("go")
+	tpl, err := templates.LoadBuiltinTemplate("till-go")
 	if err != nil {
-		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\") error = %v", err)
+		t.Fatalf("LoadBuiltinTemplate(\"till-go\") error = %v", err)
 	}
 	body, err := templates.MarshalTOML(tpl)
 	if err != nil {
