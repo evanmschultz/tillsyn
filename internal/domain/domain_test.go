@@ -72,7 +72,6 @@ func TestProjectUpdateDetailsWithMetadata(t *testing.T) {
 		"",
 		"",
 		"",
-		"",
 		ProjectMetadata{
 			Owner:    "  Evan ",
 			Icon:     ":rocket:",
@@ -102,13 +101,12 @@ func TestProjectUpdateDetailsWithMetadata(t *testing.T) {
 	}
 }
 
-// TestNewProjectFromInputFirstClassFields verifies the six Drop 4a L4
+// TestNewProjectFromInputFirstClassFields verifies the five Drop 4a L4
 // project-node first-class fields (HyllaArtifactRef, RepoBareRoot,
-// RepoPrimaryWorktree, Language, BuildTool, DevMcpServerName) round-trip
-// through NewProjectFromInput, applying field validation per
-// WAVE_1_PLAN.md §1.8: Language against the closed enum
-// ("" | "go" | "fe"); RepoBareRoot + RepoPrimaryWorktree as absolute
-// paths (empty allowed); other fields trim-only.
+// RepoPrimaryWorktree, BuildTool, DevMcpServerName) round-trip through
+// NewProjectFromInput, applying field validation per WAVE_1_PLAN.md
+// §1.8: RepoBareRoot + RepoPrimaryWorktree as absolute paths (empty
+// allowed); other fields trim-only.
 func TestNewProjectFromInputFirstClassFields(t *testing.T) {
 	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
@@ -118,7 +116,7 @@ func TestNewProjectFromInputFirstClassFields(t *testing.T) {
 		assert  func(t *testing.T, p Project)
 	}{
 		{
-			name: "all-six-populated-happy-path",
+			name: "all-five-populated-happy-path",
 			input: ProjectInput{
 				ID:                  "p1",
 				Name:                "Tillsyn",
@@ -126,7 +124,6 @@ func TestNewProjectFromInputFirstClassFields(t *testing.T) {
 				HyllaArtifactRef:    "github.com/evanmschultz/tillsyn@main",
 				RepoBareRoot:        "/Users/evan/code/tillsyn",
 				RepoPrimaryWorktree: "/Users/evan/code/tillsyn/main",
-				Language:            "go",
 				BuildTool:           "mage",
 				DevMcpServerName:    "tillsyn-dev",
 			},
@@ -139,9 +136,6 @@ func TestNewProjectFromInputFirstClassFields(t *testing.T) {
 				}
 				if p.RepoPrimaryWorktree != "/Users/evan/code/tillsyn/main" {
 					t.Fatalf("RepoPrimaryWorktree = %q", p.RepoPrimaryWorktree)
-				}
-				if p.Language != "go" {
-					t.Fatalf("Language = %q", p.Language)
 				}
 				if p.BuildTool != "mage" {
 					t.Fatalf("BuildTool = %q", p.BuildTool)
@@ -159,45 +153,10 @@ func TestNewProjectFromInputFirstClassFields(t *testing.T) {
 			},
 			assert: func(t *testing.T, p Project) {
 				if p.HyllaArtifactRef != "" || p.RepoBareRoot != "" || p.RepoPrimaryWorktree != "" ||
-					p.Language != "" || p.BuildTool != "" || p.DevMcpServerName != "" {
+					p.BuildTool != "" || p.DevMcpServerName != "" {
 					t.Fatalf("expected empty defaults, got %+v", p)
 				}
 			},
-		},
-		{
-			name: "language-fe-accepted",
-			input: ProjectInput{
-				ID:       "p3",
-				Name:     "FE",
-				Language: "fe",
-			},
-			assert: func(t *testing.T, p Project) {
-				if p.Language != "fe" {
-					t.Fatalf("Language = %q, want fe", p.Language)
-				}
-			},
-		},
-		{
-			name: "language-trim-and-validate",
-			input: ProjectInput{
-				ID:       "p4",
-				Name:     "Trim",
-				Language: "  go  ",
-			},
-			assert: func(t *testing.T, p Project) {
-				if p.Language != "go" {
-					t.Fatalf("Language = %q, want trimmed go", p.Language)
-				}
-			},
-		},
-		{
-			name: "language-invalid-rejected",
-			input: ProjectInput{
-				ID:       "p5",
-				Name:     "Bad Lang",
-				Language: "rust",
-			},
-			wantErr: ErrInvalidLanguage,
 		},
 		{
 			name: "repo-bare-root-relative-rejected",
@@ -238,19 +197,6 @@ func TestNewProjectFromInputFirstClassFields(t *testing.T) {
 				}
 			},
 		},
-		{
-			name: "whitespace-only-language-collapses-to-empty",
-			input: ProjectInput{
-				ID:       "p9",
-				Name:     "WS Lang",
-				Language: "   ",
-			},
-			assert: func(t *testing.T, p Project) {
-				if p.Language != "" {
-					t.Fatalf("Language = %q, want empty after trim", p.Language)
-				}
-			},
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -284,14 +230,13 @@ func TestProjectUpdateDetailsFirstClassFields(t *testing.T) {
 		t.Fatalf("NewProjectFromInput() error = %v", err)
 	}
 
-	// Happy-path update sets all six fields.
+	// Happy-path update sets all five fields.
 	if err := p.UpdateDetails(
 		"Renamed",
 		"new desc",
 		"github.com/x/y@main",
 		"/abs/bare",
 		"/abs/wt",
-		"go",
 		"mage",
 		"my-mcp",
 		ProjectMetadata{},
@@ -305,22 +250,16 @@ func TestProjectUpdateDetailsFirstClassFields(t *testing.T) {
 	if p.RepoBareRoot != "/abs/bare" || p.RepoPrimaryWorktree != "/abs/wt" {
 		t.Fatalf("repo paths not updated: bare=%q wt=%q", p.RepoBareRoot, p.RepoPrimaryWorktree)
 	}
-	if p.Language != "go" || p.BuildTool != "mage" || p.DevMcpServerName != "my-mcp" {
-		t.Fatalf("language/build/mcp not updated: %+v", p)
-	}
-
-	// Invalid language rejects.
-	err = p.UpdateDetails("Renamed", "", "", "", "", "rust", "", "", ProjectMetadata{}, now.Add(2*time.Minute))
-	if err != ErrInvalidLanguage {
-		t.Fatalf("UpdateDetails() language err = %v, want ErrInvalidLanguage", err)
+	if p.BuildTool != "mage" || p.DevMcpServerName != "my-mcp" {
+		t.Fatalf("build/mcp not updated: %+v", p)
 	}
 
 	// Relative repo paths reject.
-	err = p.UpdateDetails("Renamed", "", "", "relative/x", "", "", "", "", ProjectMetadata{}, now.Add(2*time.Minute))
+	err = p.UpdateDetails("Renamed", "", "", "relative/x", "", "", "", ProjectMetadata{}, now.Add(2*time.Minute))
 	if err != ErrInvalidRepoPath {
 		t.Fatalf("UpdateDetails() bare-root err = %v, want ErrInvalidRepoPath", err)
 	}
-	err = p.UpdateDetails("Renamed", "", "", "", "./wt", "", "", "", ProjectMetadata{}, now.Add(2*time.Minute))
+	err = p.UpdateDetails("Renamed", "", "", "", "./wt", "", "", ProjectMetadata{}, now.Add(2*time.Minute))
 	if err != ErrInvalidRepoPath {
 		t.Fatalf("UpdateDetails() worktree err = %v, want ErrInvalidRepoPath", err)
 	}

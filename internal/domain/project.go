@@ -40,13 +40,6 @@ type Project struct {
 	// reads this as `cd` target when spawning subagents (Dir on
 	// *exec.Cmd).
 	RepoPrimaryWorktree string
-	// Language carries the project's primary language axis. Closed enum:
-	// "" | "go" | "fe". Empty is permitted for un-typed projects
-	// pre-bootstrap. Non-empty values outside the enum reject with
-	// ErrInvalidLanguage. First-class per Drop 4a L4 / WAVE_1_PLAN.md
-	// §1.8. Wave 2 dispatcher reads this to pick the language-specific
-	// agent variant (go-builder-agent vs fe-builder-agent).
-	Language string
 	// BuildTool carries the project's build-driver name (e.g. "mage" |
 	// "npm" | "yarn" | "pnpm"). Free-form trimmed string — no closed enum
 	// (build tools proliferate). Empty string is the meaningful zero
@@ -230,18 +223,15 @@ type ProjectInput struct {
 	HyllaArtifactRef    string
 	RepoBareRoot        string
 	RepoPrimaryWorktree string
-	Language            string
 	BuildTool           string
 	DevMcpServerName    string
 }
 
 // NewProjectFromInput constructs a new project from a populated
 // ProjectInput, applying all Drop 4a L4 validations. Fields are
-// trimmed; Language is checked against the closed enum
-// ("" | "go" | "fe") with ErrInvalidLanguage; RepoBareRoot and
-// RepoPrimaryWorktree must be absolute paths (or empty) with
-// ErrInvalidRepoPath; HyllaArtifactRef, BuildTool, and DevMcpServerName
-// are free-form trimmed strings.
+// trimmed; RepoBareRoot and RepoPrimaryWorktree must be absolute paths
+// (or empty) with ErrInvalidRepoPath; HyllaArtifactRef, BuildTool, and
+// DevMcpServerName are free-form trimmed strings.
 func NewProjectFromInput(in ProjectInput, now time.Time) (Project, error) {
 	id := strings.TrimSpace(in.ID)
 	name := strings.TrimSpace(in.Name)
@@ -255,13 +245,9 @@ func NewProjectFromInput(in ProjectInput, now time.Time) (Project, error) {
 	hyllaArtifactRef := strings.TrimSpace(in.HyllaArtifactRef)
 	repoBareRoot := strings.TrimSpace(in.RepoBareRoot)
 	repoPrimaryWorktree := strings.TrimSpace(in.RepoPrimaryWorktree)
-	language := strings.TrimSpace(in.Language)
 	buildTool := strings.TrimSpace(in.BuildTool)
 	devMcpServerName := strings.TrimSpace(in.DevMcpServerName)
 
-	if !isValidProjectLanguage(language) {
-		return Project{}, ErrInvalidLanguage
-	}
 	if repoBareRoot != "" && !filepath.IsAbs(repoBareRoot) {
 		return Project{}, ErrInvalidRepoPath
 	}
@@ -279,24 +265,12 @@ func NewProjectFromInput(in ProjectInput, now time.Time) (Project, error) {
 		HyllaArtifactRef:    hyllaArtifactRef,
 		RepoBareRoot:        repoBareRoot,
 		RepoPrimaryWorktree: repoPrimaryWorktree,
-		Language:            language,
 		BuildTool:           buildTool,
 		DevMcpServerName:    devMcpServerName,
 		Metadata:            ProjectMetadata{},
 		CreatedAt:           now.UTC(),
 		UpdatedAt:           now.UTC(),
 	}, nil
-}
-
-// isValidProjectLanguage reports whether the supplied language string is a
-// member of the closed Drop 4a L4 enum: "" | "go" | "fe".
-func isValidProjectLanguage(lang string) bool {
-	switch lang {
-	case "", "go", "fe":
-		return true
-	default:
-		return false
-	}
 }
 
 // Rename renames the requested operation.
@@ -313,16 +287,16 @@ func (p *Project) Rename(name string, now time.Time) error {
 
 // UpdateDetails updates state for the requested operation.
 //
-// The six Drop 4a L4 first-class fields (HyllaArtifactRef, RepoBareRoot,
-// RepoPrimaryWorktree, Language, BuildTool, DevMcpServerName) are
-// value-typed — not pointer-sentineled. Per WAVE_1_PLAN.md §1.8, the
-// Project surface is admin-driven (not agent-driven), so explicit-empty
-// intent is rare and the simpler value-shape is preferred. Validation
-// matches NewProjectFromInput: Language against the closed enum,
-// RepoBareRoot + RepoPrimaryWorktree as absolute paths (when non-empty).
+// The five Drop 4a L4 first-class fields (HyllaArtifactRef, RepoBareRoot,
+// RepoPrimaryWorktree, BuildTool, DevMcpServerName) are value-typed —
+// not pointer-sentineled. Per WAVE_1_PLAN.md §1.8, the Project surface
+// is admin-driven (not agent-driven), so explicit-empty intent is rare
+// and the simpler value-shape is preferred. Validation matches
+// NewProjectFromInput: RepoBareRoot + RepoPrimaryWorktree as absolute
+// paths (when non-empty).
 func (p *Project) UpdateDetails(
 	name, description string,
-	hyllaArtifactRef, repoBareRoot, repoPrimaryWorktree, language, buildTool, devMcpServerName string,
+	hyllaArtifactRef, repoBareRoot, repoPrimaryWorktree, buildTool, devMcpServerName string,
 	metadata ProjectMetadata,
 	now time.Time,
 ) error {
@@ -334,13 +308,9 @@ func (p *Project) UpdateDetails(
 	hyllaArtifactRef = strings.TrimSpace(hyllaArtifactRef)
 	repoBareRoot = strings.TrimSpace(repoBareRoot)
 	repoPrimaryWorktree = strings.TrimSpace(repoPrimaryWorktree)
-	language = strings.TrimSpace(language)
 	buildTool = strings.TrimSpace(buildTool)
 	devMcpServerName = strings.TrimSpace(devMcpServerName)
 
-	if !isValidProjectLanguage(language) {
-		return ErrInvalidLanguage
-	}
 	if repoBareRoot != "" && !filepath.IsAbs(repoBareRoot) {
 		return ErrInvalidRepoPath
 	}
@@ -354,7 +324,6 @@ func (p *Project) UpdateDetails(
 	p.HyllaArtifactRef = hyllaArtifactRef
 	p.RepoBareRoot = repoBareRoot
 	p.RepoPrimaryWorktree = repoPrimaryWorktree
-	p.Language = language
 	p.BuildTool = buildTool
 	p.DevMcpServerName = devMcpServerName
 	normalized, err := normalizeProjectMetadata(metadata)
