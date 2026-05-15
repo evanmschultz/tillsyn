@@ -7343,3 +7343,92 @@ func TestSeedStewardAnchors_LanguageAware(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateActionItem_AppliesTemplateChildRules is the canonical regression for
+// the cascade template's auto-create contract: when CreateActionItem persists a
+// parent whose (Kind, StructuralType) matches a [[child_rules]] entry in the
+// project's template, the matching child action items are auto-created with
+// blocked_by_parent edges wired. The canonical case under till-go.toml is:
+//
+//   - parent kind=build, structural_type=droplet -> build-qa-proof +
+//     build-qa-falsification, both with metadata.BlockedBy = [parent.ID].
+//
+// Failure modes guarded against:
+//   - the parent landing in the repo without spawning the cascade-mandated
+//     QA twins (template-bound but rules silently ignored at create time);
+//   - the auto-children missing the blocked_by edge (cascade dispatcher then
+//     fires the QA agents before the build has actually completed);
+//   - recursive cascade explosion (the auto-children themselves match no
+//     [[child_rules]] in till-go.toml, so the recursion terminates after one
+//     level — this test asserts exactly 2 auto-children, not 4 or more).
+func TestCreateActionItem_AppliesTemplateChildRules(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	idCounter := 0
+	svc := NewService(repo, func() string {
+		idCounter++
+		return fmt.Sprintf("id-%04d", idCounter)
+	}, func() time.Time {
+		return now
+	}, ServiceConfig{})
+
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name:        "Cascade Template Test",
+		Language:    "go",
+		Metadata:    domain.ProjectMetadata{Groups: []string{"go"}},
+		UpdatedBy:   "user-1",
+		UpdatedType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	parent, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.KindBuild,
+		StructuralType: domain.StructuralTypeDroplet,
+		Title:          "PARENT BUILD",
+		UpdatedByType:  domain.ActorTypeUser,
+		UpdatedByActor: "user-1",
+		CreatedByActor: "user-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateActionItem(parent build) error = %v", err)
+	}
+
+	items, err := svc.ListActionItems(context.Background(), project.ID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	var children []domain.ActionItem
+	for _, item := range items {
+		if item.ParentID == parent.ID {
+			children = append(children, item)
+		}
+	}
+	if len(children) != 2 {
+		t.Fatalf("expected 2 auto-created children of parent build; got %d (items: %d)", len(children), len(items))
+	}
+	kinds := map[domain.Kind]int{}
+	for _, c := range children {
+		kinds[c.Kind]++
+		if len(c.Metadata.BlockedBy) != 1 || c.Metadata.BlockedBy[0] != parent.ID {
+			t.Errorf("child kind=%s BlockedBy = %v; want [%s] (cascade gate requires blocked_by parent)",
+				c.Kind, c.Metadata.BlockedBy, parent.ID)
+		}
+		if c.ProjectID != project.ID {
+			t.Errorf("child ProjectID = %q; want %q", c.ProjectID, project.ID)
+		}
+	}
+	if kinds[domain.KindBuildQAProof] != 1 {
+		t.Errorf("expected exactly 1 build-qa-proof child; got %d", kinds[domain.KindBuildQAProof])
+	}
+	if kinds[domain.KindBuildQAFalsification] != 1 {
+		t.Errorf("expected exactly 1 build-qa-falsification child; got %d", kinds[domain.KindBuildQAFalsification])
+	}
+}

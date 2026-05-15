@@ -1447,8 +1447,103 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 			return domain.ActionItem{}, err
 		}
 	}
+	if err := s.applyChildRulesForCreate(ctx, actionItem); err != nil {
+		return domain.ActionItem{}, fmt.Errorf("apply template child_rules: %w", err)
+	}
 	s.publishActionItemChanged(actionItem.ProjectID)
 	return actionItem, nil
+}
+
+// applyChildRulesForCreate auto-creates child action items per the project's
+// template ChildRules whenever a parent action item's (Kind, StructuralType)
+// matches a [[child_rules]] entry. The canonical case is:
+//
+//   - build  parent  -> build-qa-proof + build-qa-falsification children
+//   - plan   parent  -> plan-qa-proof  + plan-qa-falsification  children
+//
+// Recursion terminates naturally because the QA kinds typically generated as
+// children have no child_rules of their own. The recursive CreateActionItem
+// call inherits the caller's auth ctx, so no fresh auth provisioning is
+// required for the auto-children: the caller that was authorized to create
+// the parent is implicitly authorized to materialize the cascade's mandated
+// siblings/twins of that parent.
+//
+// Errors from individual child creates bubble up — partial cascade trees are
+// the worst class of failure to leave behind silently. If a child fails the
+// parent still exists in the repo (already committed by the time we get
+// here); callers can re-run via supersede after diagnosing.
+//
+// The Owner field on the auto-created child is taken from the resolved kind
+// rule (e.g. STEWARD-owned kinds carry the owner forward); BlockedBy is set
+// when the rule declares blocked_by_parent. CreatedBy/UpdatedBy fields
+// inherit from the parent so the audit trail traces back to the original
+// human or agent that triggered the cascade.
+func (s *Service) applyChildRulesForCreate(ctx context.Context, parent domain.ActionItem) error {
+	project, err := s.repo.GetProject(ctx, parent.ProjectID)
+	if err != nil {
+		return fmt.Errorf("load project: %w", err)
+	}
+	// Skip when the project has neither Groups nor Language: such "pre-
+	// bootstrap" projects have no template binding and the embedded
+	// language-default fallback would surface arbitrary rules a caller has
+	// not opted into. The TILLSYN-style real projects always carry Groups
+	// (set by `till init`); legacy or unit-test projects often do not.
+	if strings.TrimSpace(project.Language) == "" && len(project.Metadata.Groups) == 0 {
+		return nil
+	}
+	homeDir, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		// No HOME — best-effort skip. The dispatcher will still see the
+		// parent action item; the missing auto-children just won't fire.
+		return nil
+	}
+	tpl, ok, err := loadProjectTemplatesForGroups(&project, homeDir)
+	if err != nil {
+		return fmt.Errorf("load project templates: %w", err)
+	}
+	if !ok {
+		return nil
+	}
+	rules := tpl.ChildRulesFor(parent.Kind, parent.StructuralType)
+	if len(rules) == 0 {
+		return nil
+	}
+	columns, err := s.repo.ListColumns(ctx, parent.ProjectID, false)
+	if err != nil {
+		return fmt.Errorf("list columns: %w", err)
+	}
+	if len(columns) == 0 {
+		return fmt.Errorf("project %q has no columns for auto-children", parent.ProjectID)
+	}
+	for _, rule := range rules {
+		meta := domain.ActionItemMetadata{}
+		if rule.BlockedByParent {
+			meta.BlockedBy = []string{parent.ID}
+		}
+		childDescription := fmt.Sprintf("Auto-created by template child_rule on parent action item %s (kind=%s, structural_type=%s).",
+			parent.ID, parent.Kind, parent.StructuralType)
+		childOwner := strings.TrimSpace(string(rule.Owner))
+		if _, createErr := s.CreateActionItem(ctx, CreateActionItemInput{
+			ProjectID:      parent.ProjectID,
+			ParentID:       parent.ID,
+			Kind:           rule.Kind,
+			StructuralType: rule.StructuralType,
+			Owner:          childOwner,
+			ColumnID:       columns[0].ID,
+			Title:          rule.Title,
+			Description:    childDescription,
+			Priority:       domain.PriorityMedium,
+			Metadata:       meta,
+			CreatedByActor: parent.CreatedByActor,
+			CreatedByName:  parent.CreatedByName,
+			UpdatedByActor: parent.UpdatedByActor,
+			UpdatedByName:  parent.UpdatedByName,
+			UpdatedByType:  parent.UpdatedByType,
+		}); createErr != nil {
+			return fmt.Errorf("auto-create child kind=%s title=%q: %w", rule.Kind, rule.Title, createErr)
+		}
+	}
+	return nil
 }
 
 // runGitStatusPreCheck enforces the droplet 4b.6 invariant that no action

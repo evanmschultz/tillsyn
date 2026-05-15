@@ -61,8 +61,11 @@ func TestDispatcherRunCmdSkipsWhenItemNotInTodo(t *testing.T) {
 
 	svc, broker, _, _, completeColumnID := newDispatcherCLIServiceForTest(t)
 
-	// Create a build action item, then move it to complete so RunOnce
-	// short-circuits at the non-todo gate.
+	// Create a build action item. The cascade template auto-creates
+	// build-qa-proof + build-qa-falsification children with blocked_by_parent
+	// edges, so the parent cannot transition to complete until each child
+	// also completes. Drive every node to complete here so the dispatcher's
+	// non-todo skip gate is the only behavior under test.
 	item, err := svc.CreateActionItem(context.Background(), app.CreateActionItemInput{
 		ProjectID:      defaultDispatcherTestProjectID,
 		ColumnID:       defaultDispatcherTestTodoColumnID,
@@ -73,6 +76,18 @@ func TestDispatcherRunCmdSkipsWhenItemNotInTodo(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("CreateActionItem() error = %v", err)
+	}
+	allItems, err := svc.ListActionItems(context.Background(), defaultDispatcherTestProjectID, false)
+	if err != nil {
+		t.Fatalf("ListActionItems() error = %v", err)
+	}
+	for _, child := range allItems {
+		if child.ParentID != item.ID {
+			continue
+		}
+		if _, err := svc.MoveActionItem(context.Background(), child.ID, completeColumnID, child.Position); err != nil {
+			t.Fatalf("MoveActionItem(child=%s, complete) error = %v", child.ID, err)
+		}
 	}
 	if _, err := svc.MoveActionItem(context.Background(), item.ID, completeColumnID, item.Position); err != nil {
 		t.Fatalf("MoveActionItem(complete) error = %v", err)
