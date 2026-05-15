@@ -119,8 +119,6 @@ import (
 //go:embed builtin/agents/till-gdd/commit-message-agent.md
 var DefaultTemplateFS embed.FS
 
-var ErrLanguageNotSupported = errors.New("template language not supported")
-
 // ErrBuiltinNotFound is the closed sentinel returned by LoadBuiltinTemplate
 // when the caller-supplied name is outside the closed builtin-name list
 // returned by BuiltinTemplateNames (currently "till-fe", "till-gen",

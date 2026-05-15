@@ -98,9 +98,9 @@ func (s *Service) GetProjectTemplate(ctx context.Context, in GetProjectTemplateI
 // names that LoadBuiltinTemplate can resolve. Read-only,
 // project-context-free, deterministic across processes.
 //
-// Drop 4c.5 droplet F.3.1 acceptance criterion #3: returns
-// `["till-gen", "till-go"]` post-F.2 (rebadged from
-// `["default-generic", "default-go"]` in Drop 4c.6 W5.D1 + W5.D2).
+// Returns `["till-fe", "till-gen", "till-go"]` in stable lexical order
+// (post-Drop-4c.6.1 W4.D2, which added till-fe alongside the till-gen +
+// till-go pair rebadged in Drop 4c.6 W5).
 func (s *Service) ListBuiltinTemplates(_ context.Context) (ListBuiltinTemplatesOutput, error) {
 	return ListBuiltinTemplatesOutput{
 		Templates: templates.BuiltinTemplateNames(),
