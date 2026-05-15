@@ -4125,7 +4125,6 @@ func TestTillTemplate_Set_HappyPath(t *testing.T) {
 	project, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
 		Name:         "F33 Set HappyPath",
 		RepoBareRoot: bareRoot,
-		Language:     "go",
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
@@ -4198,7 +4197,6 @@ func TestTillTemplate_Set_ValidationFailureNoWrite(t *testing.T) {
 	project, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
 		Name:         "F33 Set ValidateFail",
 		RepoBareRoot: bareRoot,
-		Language:     "go",
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
@@ -4351,8 +4349,7 @@ func TestTillTemplate_Set_NoCheckoutPath(t *testing.T) {
 	svc, auth, server := newRealAdapterSetServer(t)
 	// Project with NO RepoBareRoot and NO RepoPrimaryWorktree.
 	project, err := svc.CreateProjectWithMetadata(context.Background(), app.CreateProjectInput{
-		Name:     "F33 Set NoCheckout",
-		Language: "go",
+		Name: "F33 Set NoCheckout",
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
