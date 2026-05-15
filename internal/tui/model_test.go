@@ -15088,9 +15088,6 @@ func TestProjectFormW2D7FieldsInitializedFromProject(t *testing.T) {
 	if got := m.projectFormInputs[projectFieldBareRoot].Value(); got != "/tmp/repo" {
 		t.Errorf("projectFieldBareRoot = %q, want %q", got, "/tmp/repo")
 	}
-	if got := m.projectFormInputs[projectFieldLanguage].Value(); got != "" {
-		t.Errorf("projectFieldLanguage = %q, want %q (Language removed from domain)", got, "")
-	}
 	if got := m.projectFormInputs[projectFieldGroups].Value(); got != "go,fe" {
 		t.Errorf("projectFieldGroups = %q, want %q", got, "go,fe")
 	}
@@ -15126,7 +15123,6 @@ func TestProjectFormW2D7FieldsPassedThroughOnUpdate(t *testing.T) {
 	// Set W2.D7 field values.
 	m.projectFormInputs[projectFieldName].SetValue("Inbox")
 	m.projectFormInputs[projectFieldBareRoot].SetValue("/abs/bare")
-	m.projectFormInputs[projectFieldLanguage].SetValue("go")
 	m.projectFormInputs[projectFieldGroups].SetValue("go,fe")
 	m.projectFormInputs[projectFieldHyllaArtifactRef].SetValue("github.com/org/repo@main")
 	m.projectFormInputs[projectFieldBuildTool].SetValue("mage")
@@ -15284,7 +15280,7 @@ func TestProjectFormBodyLinesRendersW2D7Repository(t *testing.T) {
 	body := strings.Join(bodyLines, "\n")
 	stripped := stripANSI(body)
 
-	for _, want := range []string{"repository", "bare_root", "language", "groups", "hylla_artifact_ref", "build_tool", "dev_mcp_server_name"} {
+	for _, want := range []string{"repository", "bare_root", "groups", "hylla_artifact_ref", "build_tool", "dev_mcp_server_name"} {
 		if !strings.Contains(stripped, want) {
 			t.Errorf("expected project form body to contain %q, got:\n%s", want, stripped)
 		}

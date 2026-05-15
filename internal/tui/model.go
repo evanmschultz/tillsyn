@@ -212,7 +212,6 @@ const (
 	projectFieldRootPath
 	// W2.D7 first-class fields (E2E-1 + E2E-6).
 	projectFieldBareRoot
-	projectFieldLanguage
 	projectFieldGroups
 	projectFieldHyllaArtifactRef
 	projectFieldBuildTool
@@ -4739,7 +4738,6 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		newModalInput("", "primary worktree path (optional, must be absolute)", "", 512),
 		// W2.D7 first-class fields (E2E-1 + E2E-6).
 		newModalInput("", "bare repo root path (optional, must be absolute)", "", 512),
-		newModalInput("", "go | fe | (empty)", "", 32),
 		newModalInput("", "csv groups e.g. go,fe (optional)", "", 200),
 		newModalInput("", "e.g. github.com/org/repo@main", "", 256),
 		newModalInput("", "e.g. mage | npm | yarn (optional)", "", 64),
@@ -4766,7 +4764,6 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		}
 		// W2.D7 first-class fields (E2E-1 + E2E-6).
 		m.projectFormInputs[projectFieldBareRoot].SetValue(project.RepoBareRoot)
-		m.projectFormInputs[projectFieldLanguage].SetValue("")
 		if len(project.Metadata.Groups) > 0 {
 			m.projectFormInputs[projectFieldGroups].SetValue(strings.Join(project.Metadata.Groups, ","))
 		}
@@ -5784,7 +5781,7 @@ func (m Model) allowedLabelsForSelectedProject() []string {
 
 // projectFormFields stores a package-level helper value.
 // Order must match the projectField* iota const block above (E2E-1 + E2E-6).
-var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags", "root_path", "bare_root", "language", "groups", "hylla_artifact_ref", "build_tool", "dev_mcp_server_name"}
+var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags", "root_path", "bare_root", "groups", "hylla_artifact_ref", "build_tool", "dev_mcp_server_name"}
 
 // projectFormValues returns project form values.
 func (m Model) projectFormValues() map[string]string {
@@ -17418,7 +17415,6 @@ func (m Model) projectFormBodyLines(contentWidth int, hintStyle lipgloss.Style, 
 	lines = append(lines, hintStyle.Render("repository"))
 	renderProjectInput("root_path", projectFieldRootPath)
 	renderProjectInput("bare_root", projectFieldBareRoot)
-	renderProjectInput("language", projectFieldLanguage)
 	renderProjectInput("groups", projectFieldGroups)
 	renderProjectInput("hylla_artifact_ref", projectFieldHyllaArtifactRef)
 	renderProjectInput("build_tool", projectFieldBuildTool)
