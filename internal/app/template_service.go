@@ -165,11 +165,15 @@ func resolveProjectTemplateWithSource(project *domain.Project) (templates.Templa
 			return tpl, cand.source, nil
 		}
 	}
-	tpl, err := templates.LoadDefaultTemplateForLanguage(project.Language)
-	if err != nil {
-		return templates.Template{}, "", fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)
-	}
-	return tpl, embeddedSourceForLanguage(project.Language), nil
+	// No project-tier candidate found. Per REFINEMENTS.md 2026-05-14
+	// "Remove project.Language; templates are project-tier opt-in only",
+	// templates are project-tier opt-in only — no embedded language-default
+	// fallback. Mirroring the bake-time loadProjectTemplate / loadProjectTemplatesForGroups
+	// contract, return a zero Template + empty bake-source token to signal
+	// "no template bound." The MCP `till.template get` wire shape carries
+	// the empty result; callers interpret an empty BakeSource as "this
+	// project has not authored a template."
+	return templates.Template{}, "", nil
 }
 
 // embeddedSourceForLanguage maps the project Language axis to the
