@@ -149,8 +149,8 @@ type ProjectMetadata struct {
 	// belongs to (e.g. ["go", "fe"]). When non-empty, bakeProjectKindCatalog
 	// walks the HOME tier (~/.tillsyn/templates/<group>.toml) for each group
 	// and aggregates the resulting templates via mergeTemplates. When nil or
-	// empty, the existing single-group path (project.Language → single HOME
-	// tier candidate) is used unchanged.
+	// empty, the project-tier `.tillsyn/template.toml` is the only resolver
+	// candidate; no HOME-tier walk happens.
 	//
 	// Per Go encoding/json semantics, omitempty on []string omits BOTH nil
 	// AND empty-non-nil slices (len(s) == 0 is treated as empty for slices).
