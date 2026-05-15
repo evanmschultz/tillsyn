@@ -100,10 +100,58 @@ func TestGoldenUpdate() error {
 	return runGoTest("./internal/tui", "-run", "Golden", "-update")
 }
 
-// Build compiles the local till binary at `./till`.
+// Build compiles the local till binary at `./till` with build-stamp ldflags
+// (version from `git describe`, commit SHA + dirty flag from the working tree).
+// Falls back to "dev" / "unknown" / "" when git probes fail (rare; e.g. a
+// shallow CI checkout). Build-stamped binaries report a real `till --version`
+// instead of the unstamped "dev / unknown" defaults.
 func Build() error {
 	printer := newMagePrinter()
-	return runCommandWithProgress(printer, "Building till from ./cmd/till", "Built till from ./cmd/till", "go", "build", localBuildVCSFlag, "-o", "./till", "./cmd/till")
+	args := append([]string{"build"}, buildStampArgs()...)
+	args = append(args, localBuildVCSFlag, "-o", "./till", "./cmd/till")
+	return runCommandWithProgress(printer, "Building till from ./cmd/till", "Built till from ./cmd/till", "go", args...)
+}
+
+// buildStampArgs returns the -ldflags slice that injects version + commit SHA +
+// dirty flag into the built binary. Each value is best-effort — git failures
+// produce empty strings which fall back to the package-level defaults
+// ("dev" / "unknown" / "").
+func buildStampArgs() []string {
+	version := strings.TrimSpace(runOutputOrEmpty("git", "describe", "--tags", "--always", "--dirty"))
+	if version == "" {
+		version = strings.TrimSpace(runOutputOrEmpty("git", "rev-parse", "--short", "HEAD"))
+	}
+	commit := strings.TrimSpace(runOutputOrEmpty("git", "rev-parse", "HEAD"))
+	dirty := ""
+	if strings.TrimSpace(runOutputOrEmpty("git", "status", "--porcelain")) != "" {
+		dirty = "true"
+	}
+	ldflags := []string{}
+	if version != "" {
+		ldflags = append(ldflags, "-X", "main.version="+version)
+	}
+	if commit != "" {
+		ldflags = append(ldflags, "-X", "github.com/evanmschultz/tillsyn/internal/buildinfo.Commit="+commit)
+	}
+	if dirty != "" {
+		ldflags = append(ldflags, "-X", "github.com/evanmschultz/tillsyn/internal/buildinfo.Dirty="+dirty)
+	}
+	if len(ldflags) == 0 {
+		return nil
+	}
+	return []string{"-ldflags", strings.Join(ldflags, " ")}
+}
+
+// runOutputOrEmpty runs the command and returns its stdout, swallowing errors
+// (empty string on any failure). Used by buildStampArgs so a broken git probe
+// degrades the binary stamp to the unstamped defaults rather than failing the
+// build outright.
+func runOutputOrEmpty(name string, args ...string) string {
+	out, err := exec.Command(name, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
 
 // Run executes till directly from source.
@@ -142,7 +190,9 @@ func Install() error {
 		return fmt.Errorf("create install dir %q: %w", installDir, err)
 	}
 	installedPath := filepath.Join(installDir, "till")
-	return runCommand("go", "build", localBuildVCSFlag, "-o", installedPath, "./cmd/till")
+	args := append([]string{"build"}, buildStampArgs()...)
+	args = append(args, localBuildVCSFlag, "-o", installedPath, "./cmd/till")
+	return runCommand("go", args...)
 }
 
 // CI runs the canonical full gate.

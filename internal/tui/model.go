@@ -13664,10 +13664,17 @@ func (m Model) boardActionItemsForColumn(columnID string) []domain.ActionItem {
 	includeSubtasks := m.focusedScopeShowsSubtasks()
 	out := make([]domain.ActionItem, 0, len(columnActionItems))
 	for _, actionItem := range columnActionItems {
-		// Post-Drop-1.75 kind-collapse: the "subtask" concept maps to KindBuild
-		// (the leaf code-changing kind). Compile-fix only; subtask/board-pill
-		// polish is deferred to Drop 4.5.
-		if actionItem.Kind == domain.KindBuild && !includeSubtasks {
+		// Post-Drop-1.75 kind-collapse: the legacy "subtask" concept maps to
+		// KindBuild (the leaf code-changing kind), so the project-root view
+		// historically hid all builds to avoid surfacing nested subtask noise.
+		// That filter is now PARENT-AWARE: top-level builds (ParentID == "")
+		// are valid first-class cascade work and must remain visible at the
+		// project root; only NESTED builds (those with a parent in the
+		// projected tree) are hidden when not focused. Projection already
+		// excludes nested items at the root level, so this guard is effectively
+		// a belt-and-suspenders defense for orphan builds with a stale parent
+		// reference.
+		if actionItem.Kind == domain.KindBuild && strings.TrimSpace(actionItem.ParentID) != "" && !includeSubtasks {
 			continue
 		}
 		out = append(out, actionItem)
