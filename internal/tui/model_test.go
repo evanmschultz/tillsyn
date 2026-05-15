@@ -15102,6 +15102,49 @@ func TestProjectFormW2D7FieldsInitializedFromProject(t *testing.T) {
 	}
 }
 
+// TestStartProjectFormPrefersRepoPrimaryWorktreeOverCache verifies that startProjectForm
+// reads the canonical RepoPrimaryWorktree field first, falling back to the TUI
+// projectRoots cache only when the canonical field is empty (E2E-6 D2 fix).
+func TestStartProjectFormPrefersRepoPrimaryWorktreeOverCache(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+
+	t.Run("canonical field preferred over stale cache", func(t *testing.T) {
+		project, err := domain.NewProjectFromInput(domain.ProjectInput{
+			ID:                  "p1",
+			Name:                "Inbox",
+			RepoPrimaryWorktree: "/canonical/worktree",
+		}, now)
+		if err != nil {
+			t.Fatalf("NewProjectFromInput error = %v", err)
+		}
+		m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, nil, nil)))
+		// Seed the TUI cache with a stale path; canonical field must win.
+		m.projectRoots = map[string]string{"inbox": "/stale/cache"}
+		_ = m.startProjectForm(&project)
+		if got := m.projectFormInputs[projectFieldRootPath].Value(); got != "/canonical/worktree" {
+			t.Fatalf("projectFieldRootPath = %q, want %q (canonical RepoPrimaryWorktree)", got, "/canonical/worktree")
+		}
+	})
+
+	t.Run("cache fallback when canonical field is empty", func(t *testing.T) {
+		project, err := domain.NewProjectFromInput(domain.ProjectInput{
+			ID:   "p2",
+			Name: "Roadmap",
+			// RepoPrimaryWorktree intentionally omitted — empty canonical field.
+		}, now)
+		if err != nil {
+			t.Fatalf("NewProjectFromInput error = %v", err)
+		}
+		m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, nil, nil)))
+		// Cache is the only source of truth when canonical field is empty.
+		m.projectRoots = map[string]string{"roadmap": "/cache/worktree"}
+		_ = m.startProjectForm(&project)
+		if got := m.projectFormInputs[projectFieldRootPath].Value(); got != "/cache/worktree" {
+			t.Fatalf("projectFieldRootPath = %q, want %q (cache fallback)", got, "/cache/worktree")
+		}
+	})
+}
+
 // TestProjectFormW2D7FieldsPassedThroughOnUpdate verifies that the edit-project save path
 // passes all W2.D7 fields to UpdateProject (E2E-1 save round-trip).
 func TestProjectFormW2D7FieldsPassedThroughOnUpdate(t *testing.T) {

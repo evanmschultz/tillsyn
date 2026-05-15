@@ -4760,7 +4760,11 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 			m.projectFormInputs[projectFieldTags].SetValue(strings.Join(project.Metadata.Tags, ","))
 		}
 		if slug := strings.TrimSpace(strings.ToLower(project.Slug)); slug != "" {
-			m.projectFormInputs[projectFieldRootPath].SetValue(strings.TrimSpace(m.projectRoots[slug]))
+			rootPath := strings.TrimSpace(project.RepoPrimaryWorktree)
+			if rootPath == "" {
+				rootPath = strings.TrimSpace(m.projectRoots[slug])
+			}
+			m.projectFormInputs[projectFieldRootPath].SetValue(rootPath)
 		}
 		// W2.D7 first-class fields (E2E-1 + E2E-6).
 		m.projectFormInputs[projectFieldBareRoot].SetValue(project.RepoBareRoot)
