@@ -5742,9 +5742,8 @@ func TestActionItemMCPEndCommitRoundTrip(t *testing.T) {
 // Each field is asserted on the CreateProjectRequest / UpdateProjectRequest
 // the boundary forwards to the service stub, so the JSON-RPC →
 // CreateProjectRequest → service hop is exercised end-to-end without a
-// full app-service stack. Language was removed from the request struct in
-// Phase 4.2 Droplet 3; the schema parameter (mcp.WithString("language",…))
-// is preserved for Phase 4.3.
+// full app-service stack.
+// Language was removed from both struct and schema as of Phase 4.3.
 //
 // Per WAVE_1_PLAN.md §1.8 the Project surface uses value-typed (not
 // pointer-sentineled) update fields because admin-driven mutations rarely
@@ -5845,6 +5844,30 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 			got.RepoPrimaryWorktree != "/abs/x/main" ||
 			got.BuildTool != "npm" || got.DevMcpServerName != "x-dev" {
 			t.Fatalf("UpdateProjectRequest first-class fields not plumbed: %+v", got)
+		}
+	})
+
+	// Phase 4.3: language was removed from both the args struct and the schema.
+	// A client that still sends "language":"go" (following the pre-Phase-4.3
+	// published schema) must receive an unknown-field rejection from the strict
+	// decoder — not a silent drop.
+	t.Run("language field rejected as unknown", func(t *testing.T) {
+		t.Parallel()
+		_, server := newServer(t)
+		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7803, "till.project", mergeArgs(validSessionArgs(), map[string]any{
+			"operation": "create",
+			"name":      "Tillsyn",
+			"language":  "go",
+		})))
+		if isError, _ := createResp.Result["isError"].(bool); !isError {
+			t.Fatalf("project create with legacy language field: isError = false, want true (strict decoder must reject unknown field)")
+		}
+		text := toolResultText(t, createResp.Result)
+		if !strings.Contains(text, `invalid_request:`) {
+			t.Fatalf("error text = %q, want invalid_request: prefix", text)
+		}
+		if !strings.Contains(text, `unknown field "language"`) {
+			t.Fatalf("error text = %q, want unknown field \"language\" named in rejection", text)
 		}
 	})
 }
