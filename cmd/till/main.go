@@ -1024,6 +1024,32 @@ exits non-zero with the failure reason on stderr.
 	mustMarkFlagRequired(dispatcherRunCmd, "action-item")
 	dispatcherCmd.AddCommand(dispatcherRunCmd)
 
+	dispatcherServeCmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Run the dispatcher continuous-mode subscriber loop (auto-trigger)",
+		Long: strings.TrimSpace(`
+Start the dispatcher's continuous-mode subscriber loop. The dispatcher
+subscribes to LiveWaitEventActionItemChanged per project; on every event the
+walker enumerates eligible items and RunOnce evaluates each candidate. This
+retires the manual `+"`"+`till dispatcher run --action-item <id>`+"`"+` invocation for
+in-progress state-change auto-spawn.
+
+Blocks until SIGINT / SIGTERM. On signal the subscriber goroutines are drained
+with a 5s shutdown timeout.
+
+Per-subagent Tillsyn auth provisioning (Phase 2b) is NOT included: subagents
+spawned by this loop will not carry MCP credentials until the AuthBundle
+materializer lands. The trigger machinery and walker behavior are observable
+in dispatcher logs regardless.
+`),
+		Example: "  till dispatcher serve",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFlow(cmd.Context(), "dispatcher.serve")
+		},
+	}
+	dispatcherCmd.AddCommand(dispatcherServeCmd)
+
 	embeddingsCmd := &cobra.Command{
 		Use:   "embeddings",
 		Short: "Inspect and operate the background embeddings lifecycle",
@@ -2061,7 +2087,7 @@ func resolveRuntimePaths(command string, opts rootCommandOptions, paths platform
 
 // ensureRuntimePathParents creates any required runtime parent directories before startup.
 func ensureRuntimePathParents(command string, paths resolvedRuntimePaths) error {
-	if command == "" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" || command == "dispatcher.run" {
+	if command == "" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" || command == "dispatcher.run" || command == "dispatcher.serve" {
 		if err := os.MkdirAll(filepath.Dir(paths.ConfigPath), 0o755); err != nil {
 			return fmt.Errorf("create config directory: %w", err)
 		}
@@ -2615,6 +2641,18 @@ func executeCommandFlow(
 		return runOneShotCommand("dispatcher.run", "dispatcher run", func() error {
 			return runDispatcherRun(ctx, svc, liveWaitBroker, dispatcherRunOpts, stdout, stderr)
 		})
+	case "dispatcher.serve":
+		logger.Info("command flow start", "command", "dispatcher.serve")
+		if err := runDispatcherServe(ctx, svc, liveWaitBroker, stdout, stderr); err != nil {
+			if errors.Is(err, context.Canceled) {
+				logger.Info("command flow complete", "command", "dispatcher.serve", "shutdown", "interrupt")
+				return nil
+			}
+			logger.Error("command flow failed", "command", "dispatcher.serve", "err", err)
+			return fmt.Errorf("run dispatcher serve command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "dispatcher.serve")
+		return nil
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
