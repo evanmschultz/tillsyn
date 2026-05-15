@@ -39,6 +39,119 @@ Transitions are recorded by appending a dated status note to the entry, not by r
 
 ---
 
+## 2026-05-15 — Phase 4.3 — bundle `--language` CLI flag teardown
+
+### Context
+Phase 4.2 removed `domain.Project.Language` + every read/write across the codebase. The CLI surface (`cmd/till project init` + `till project update`) still parses `--language` into a local var and discards via `_ = language`; helpers + UX paths remain. Deferred to Phase 4.3 by deliberate scope guard during Phase 4.2.
+
+### Observation
+Four surviving artifacts (D7 QA-falsification 1.3/1.4/1.5/1.6), all rooted in the still-declared `--language` flag:
+
+1. **`_ = language` suppression** at `cmd/till/project_cli.go:~204-220` (update) and `~196` (init) — flag parsed, value dropped.
+2. **Dead helper `mapGroupsToLanguage`** at `cmd/till/init_cmd.go:654` — zero live callers, still has its unit test at `init_cmd_test.go:2547`. Both can go.
+3. **Init/update validation inconsistency** — `runProjectUpdate` rejects unknown values with `"invalid language"`; `runProjectInit` silently accepts any string. Test `TestRunProjectUpdate_LanguageValidation` (`project_cli_test.go:609`) still asserts the rejection.
+4. **`writeProjectDetail` empty Language row** at `cmd/till/project_detail.go:~91` — row still renders with empty value via `compactText("")`. Phase 4.3 should drop the row outright.
+
+Also: **mcp_rpc schema-vs-decoder mismatch** (D6 QA-falsification REFINEMENT). `internal/adapters/mcp_rpc/extended_tools.go:446` still declares `mcp.WithString("language", ...)` as a valid `till.project` schema parameter; args struct no longer carries the field; `bindArgumentsStrict` with `DisallowUnknownFields()` will reject `{"language":"go"}` with `invalid_request: unknown field "language"`. Published schema does not match decoder behavior. No production caller hits it today (CLI/TUI bypass MCP RPC), but agent-MCP callers following the schema will break.
+
+### Proposed fix
+Single Phase 4.3 droplet: "Retire `--language` CLI/MCP surface."
+
+1. Remove the `--language` flag declaration from `till project init` and `till project update`.
+2. Delete `mapGroupsToLanguage` helper + its test.
+3. Delete the language local var + `_ = language` suppression lines.
+4. Delete the "invalid language" CLI validation guard + its test (`TestRunProjectUpdate_LanguageValidation`).
+5. Remove the Language row from `writeProjectDetail`.
+6. Remove `mcp.WithString("language", ...)` from `extended_tools.go:446` (schema-side).
+7. `mage ci` green at the end.
+
+### Target drop
+Phase 4.3.
+
+### Tags
+`cli`, `mcp`, `cleanup`, `phase-4.3`
+
+---
+
+## 2026-05-15 — Phase 4.2 close — planner missed 3 of 7 surfaces
+
+### Context
+Phase 4.2 (`PHASE 4.2 REMOVE PROJECT LANGUAGE FIELD`) was originally decomposed into 5 droplets by the planner spawn: D1 domain → D2 app → D3 sqlite → D4 mcp_common → D5 mcp_rpc. Actual landed surface required 7 droplets: D1-D7 covering domain, app, mcp_common, tui (planner-miss), sqlite-finalize, mcp_rpc, cmd/till+dispatcher-fixtures (planner-miss + D7 absorbed D8's scope).
+
+### Observation
+Three packages were not in the original plan despite holding `project.Language` reads / `app.*ProjectInput.Language` writes that broke `mage build` and/or `mage test`:
+
+1. **`internal/tui`** — 5 compile errors in `model.go` + `thread_mode.go`. Caught only after running `mage build` post-D2.
+2. **`cmd/till`** — 5 compile errors in `init_cmd.go` + `project_cli.go`. Caught only after running `mage build` post-D6.
+3. **`internal/app/dispatcher` + `cli_claude/render`** — test fixtures `Language: "go"` in `domain.Project{}` literals. Caught only by D4 QA-falsification's full `mage ci` rerun.
+
+Pattern: planner relied on `grep -l Language internal/` against a tree where `domain.Project.Language` itself was still present (Phase 4.2 was BEFORE the field removal). Once the field was gone, every transitive consumer surfaced.
+
+### Proposed fix
+Planner spawn-prompt addition for cross-package refactor plans: BEFORE decomposing, planner runs `git grep -n '<symbol>' <broad-paths>` against the CURRENT tree AND simulates the post-removal state by examining each `domain.Project{...}` / `app.*ProjectInput{...}` struct-literal site. The simulation catches consumer breakage that simple grep misses when the field still exists.
+
+Concrete implementation: add a "Cross-package consumer audit" section to `go-planning-agent.md`'s decomposition workflow — before sizing droplets, enumerate every struct-literal site that references the to-be-removed field + every reader of that field. Each site → one droplet OR explicitly bundled into an adjacent droplet.
+
+### Target drop
+`~/.claude/agents/go-planning-agent.md` update (no Tillsyn drop needed — agent definition file). Could land as part of methodology refinement or independently.
+
+### Tags
+`planner`, `methodology`, `refactor`, `decomp`
+
+---
+
+## 2026-05-15 — Phase 4.2 — `mage testPkg` suppresses compiler error text
+
+### Context
+Phase 4.2 builders for mcp_rpc (D6) and tui (D4) both reported "outcome UNKNOWN — `mage test-pkg` reports `build errors: 1` but the gotestout renderer suppresses the actual compiler error messages." Builders could not diagnose the failure without orchestrator-direct help.
+
+### Observation
+Running `mage test-pkg ./internal/adapters/mcp_rpc` on a package with one compile error in a test file emits:
+
+```
+[PKG FAIL] github.com/evanmschultz/tillsyn/internal/adapters/mcp_rpc (0.00s)
+Test summary
+  build errors: 1
+...
+```
+
+But the actual `go test` stderr (which carries the `unknown field Foo in struct literal` text) is filtered out by the gotestout JSON renderer. Builders must either (a) ask the orchestrator to look directly, (b) blind-grep, or (c) fall back to `mage build` (which DOES surface errors, but only for production code, not test files).
+
+`mage build` is informative; `mage test-pkg` is not. Both should be informative.
+
+### Proposed fix
+Update the gotestout renderer used by `mage test-pkg` (and probably `mage ci`'s test phase) to forward build-error stderr to the user terminal when `build errors > 0`. Either:
+
+1. Stream `go test -json` build-error events to stderr as plain text alongside the JSON parse.
+2. Add a final "build errors" section that dumps the raw `go test` stderr accumulated.
+
+### Target drop
+Mage tooling refinement drop (no specific target yet — parking-lot until next dev-tooling pass).
+
+### Tags
+`mage`, `tooling`, `diagnostics`, `dx`
+
+---
+
+## 2026-05-15 — Phase 4.2 — `projectFieldLanguage` dead form state until Phase 4.3
+
+### Context
+Phase 4.2 D4 (`refactor(tui): drop project.Language reads + struct fields`) preserved `projectFieldLanguage` enum + form-input rendering per Phase 4.3 deferral. The input still allocates + renders, accepts user typing, but submit + pre-population paths no longer read or write it.
+
+### Observation
+Edit-form flow: open project, focus moves through fields including the Language input, user types "go", hits enter. Submit silently drops the typed value (no `Language:` field in `app.UpdateProjectInput`); pre-population sets `""` instead of reading from project. Mildly confusing UX: looks like a working field, behaves like `/dev/null`.
+
+### Proposed fix
+Phase 4.3 either: (a) remove `projectFieldLanguage` from `projectFormFields` + `renderProjectInput("language", ...)` call site + the iota entry + every form-test assertion, OR (b) re-wire it to a real `metadata.language` storage path if there's a remaining design need. Likely (a) given Phase 4.2's direction.
+
+### Target drop
+Phase 4.3 (alongside `--language` CLI flag teardown above).
+
+### Tags
+`tui`, `cleanup`, `phase-4.3`
+
+---
+
 ## 2026-05-15 — methodology — compile-coupled droplet chains defer `mage ci` to the chain tail
 
 ### Context
