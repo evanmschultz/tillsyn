@@ -1330,6 +1330,13 @@ func (s *Service) CreateActionItem(ctx context.Context, in CreateActionItemInput
 	guardScopes := []mutationScopeCandidate{
 		newProjectMutationScopeCandidate(in.ProjectID),
 	}
+	// Auto-treat parent_id == project_id as top-level: a project UUID is not
+	// an action-item UUID. Callers who think "project IS the parent for top-level
+	// items" pass project_id here; clearing it produces the correct outcome
+	// (top-level item) without a confusing not_found error.
+	if strings.TrimSpace(in.ParentID) == strings.TrimSpace(in.ProjectID) {
+		in.ParentID = ""
+	}
 	if strings.TrimSpace(in.ParentID) != "" {
 		parentActionItem, err := s.repo.GetActionItem(ctx, in.ParentID)
 		if err != nil {

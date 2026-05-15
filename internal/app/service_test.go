@@ -7290,3 +7290,134 @@ func TestCreateActionItem_AppliesTemplateChildRules(t *testing.T) {
 		t.Errorf("expected exactly 1 build-qa-falsification child; got %d", kinds[domain.KindBuildQAFalsification])
 	}
 }
+
+// TestCreateActionItemParentIDEqualsProjectID covers three parent-ID paths:
+// Case 1 — ParentID == ProjectID is auto-cleared, producing a top-level item.
+// Case 2 — a legitimate action-item ParentID succeeds and wires the child correctly.
+// Case 3 — a non-existent ParentID (neither project nor any action item) returns ErrNotFound.
+func TestCreateActionItemParentIDEqualsProjectID(t *testing.T) {
+	now := time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC)
+
+	// seedFixture seeds one project + column directly into the fakeRepo and
+	// returns them. Bypasses svc.CreateProject to avoid template/file I/O
+	// and child_rules side-effects, matching the pattern used by
+	// TestCreateActionItemCarriesHumanActorName.
+	seedFixture := func(t *testing.T, repo *fakeRepo, projectID, colID string) (domain.Project, domain.Column) {
+		t.Helper()
+		project, err := domain.NewProjectFromInput(domain.ProjectInput{
+			ID:   projectID,
+			Name: "Test Project",
+		}, now)
+		if err != nil {
+			t.Fatalf("NewProjectFromInput() error = %v", err)
+		}
+		if repoErr := repo.CreateProject(context.Background(), project); repoErr != nil {
+			t.Fatalf("repo.CreateProject() error = %v", repoErr)
+		}
+		col, colErr := domain.NewColumn(colID, project.ID, "To Do", 0, 0, now)
+		if colErr != nil {
+			t.Fatalf("NewColumn() error = %v", colErr)
+		}
+		if repoErr := repo.CreateColumn(context.Background(), col); repoErr != nil {
+			t.Fatalf("repo.CreateColumn() error = %v", repoErr)
+		}
+		return project, col
+	}
+
+	// ---- Case 1: ParentID == ProjectID → auto-cleared → top-level item. ----
+	t.Run("parent_id_equals_project_id_produces_top_level", func(t *testing.T) {
+		repo := newFakeRepo()
+		svc := NewService(repo, func() string { return "item-1a" }, func() time.Time { return now }, ServiceConfig{})
+		project, col := seedFixture(t, repo, "proj-1", "col-1")
+
+		item, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+			Kind:           domain.KindPlan,
+			ProjectID:      project.ID,
+			ParentID:       project.ID, // caller passes project UUID as parent
+			ColumnID:       col.ID,
+			Title:          "Top-level item",
+			Priority:       domain.PriorityMedium,
+			StructuralType: domain.StructuralTypeDroplet,
+		})
+		if err != nil {
+			t.Fatalf("CreateActionItem(parent==project) error = %v; want nil", err)
+		}
+		if item.ParentID != "" {
+			t.Errorf("item.ParentID = %q; want empty (top-level)", item.ParentID)
+		}
+		// Verify the stored row also has an empty ParentID.
+		stored, getErr := repo.GetActionItem(context.Background(), item.ID)
+		if getErr != nil {
+			t.Fatalf("GetActionItem() error = %v", getErr)
+		}
+		if stored.ParentID != "" {
+			t.Errorf("stored.ParentID = %q; want empty (top-level)", stored.ParentID)
+		}
+	})
+
+	// ---- Case 2: legitimate action-item ParentID succeeds. ----
+	t.Run("legitimate_parent_id_succeeds", func(t *testing.T) {
+		repo := newFakeRepo()
+		ids := []string{"child-2a"}
+		idIdx := 0
+		svc := NewService(repo, func() string {
+			id := ids[idIdx]
+			idIdx++
+			return id
+		}, func() time.Time { return now }, ServiceConfig{})
+		project, col := seedFixture(t, repo, "proj-2", "col-2")
+
+		// Seed a parent action item directly to avoid ID-generator side-effects.
+		parentItem, newErr := domain.NewActionItemForTest(domain.ActionItemInput{
+			Kind:      domain.KindPlan,
+			ID:        "parent-2",
+			ProjectID: project.ID,
+			ColumnID:  col.ID,
+			Position:  0,
+			Title:     "Parent item",
+			Priority:  domain.PriorityMedium,
+		}, now)
+		if newErr != nil {
+			t.Fatalf("NewActionItemForTest() error = %v", newErr)
+		}
+		if repoErr := repo.CreateActionItem(context.Background(), parentItem); repoErr != nil {
+			t.Fatalf("repo.CreateActionItem(parent) error = %v", repoErr)
+		}
+
+		child, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+			Kind:           domain.KindBuild,
+			ProjectID:      project.ID,
+			ParentID:       parentItem.ID, // a real action-item UUID
+			ColumnID:       col.ID,
+			Title:          "Child item",
+			Priority:       domain.PriorityLow,
+			StructuralType: domain.StructuralTypeDroplet,
+		})
+		if err != nil {
+			t.Fatalf("CreateActionItem(legitimate parent) error = %v; want nil", err)
+		}
+		if child.ParentID != parentItem.ID {
+			t.Errorf("child.ParentID = %q; want %q", child.ParentID, parentItem.ID)
+		}
+	})
+
+	// ---- Case 3: non-existent ParentID returns ErrNotFound. ----
+	t.Run("nonexistent_parent_id_returns_not_found", func(t *testing.T) {
+		repo := newFakeRepo()
+		svc := NewService(repo, func() string { return "item-3a" }, func() time.Time { return now }, ServiceConfig{})
+		project, col := seedFixture(t, repo, "proj-3", "col-3")
+
+		_, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
+			Kind:           domain.KindPlan,
+			ProjectID:      project.ID,
+			ParentID:       "nonexistent-action-item-id", // in neither table
+			ColumnID:       col.ID,
+			Title:          "Orphan item",
+			Priority:       domain.PriorityLow,
+			StructuralType: domain.StructuralTypeDroplet,
+		})
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("CreateActionItem(bad parent) error = %v; want ErrNotFound", err)
+		}
+	})
+}
