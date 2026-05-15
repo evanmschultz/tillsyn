@@ -492,7 +492,6 @@ func (m Model) updateThreadDescriptionCmd(description string) tea.Cmd {
 				HyllaArtifactRef:    project.HyllaArtifactRef,
 				RepoBareRoot:        project.RepoBareRoot,
 				RepoPrimaryWorktree: project.RepoPrimaryWorktree,
-				Language:            project.Language,
 				BuildTool:           project.BuildTool,
 				DevMcpServerName:    project.DevMcpServerName,
 				UpdatedBy:           actorID,

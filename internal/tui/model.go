@@ -4766,7 +4766,7 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		}
 		// W2.D7 first-class fields (E2E-1 + E2E-6).
 		m.projectFormInputs[projectFieldBareRoot].SetValue(project.RepoBareRoot)
-		m.projectFormInputs[projectFieldLanguage].SetValue(project.Language)
+		m.projectFormInputs[projectFieldLanguage].SetValue("")
 		if len(project.Metadata.Groups) > 0 {
 			m.projectFormInputs[projectFieldGroups].SetValue(strings.Join(project.Metadata.Groups, ","))
 		}
@@ -11711,7 +11711,6 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		}
 		// W2.D7 first-class fields (E2E-1 + E2E-6).
 		bareRoot := strings.TrimSpace(vals["bare_root"])
-		language := strings.TrimSpace(vals["language"])
 		hyllaArtifactRef := strings.TrimSpace(vals["hylla_artifact_ref"])
 		buildTool := strings.TrimSpace(vals["build_tool"])
 		devMcpServerName := strings.TrimSpace(vals["dev_mcp_server_name"])
@@ -11743,7 +11742,6 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 					HyllaArtifactRef:    hyllaArtifactRef,
 					RepoBareRoot:        bareRoot,
 					RepoPrimaryWorktree: rootPath,
-					Language:            language,
 					BuildTool:           buildTool,
 					DevMcpServerName:    devMcpServerName,
 					UpdatedBy:           m.threadActorID(),
@@ -11778,7 +11776,6 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 				HyllaArtifactRef:    hyllaArtifactRef,
 				RepoBareRoot:        bareRoot,
 				RepoPrimaryWorktree: rootPath,
-				Language:            language,
 				BuildTool:           buildTool,
 				DevMcpServerName:    devMcpServerName,
 				UpdatedBy:           m.threadActorID(),

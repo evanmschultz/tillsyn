@@ -822,7 +822,6 @@ func (f *fakeService) CreateProjectWithMetadata(_ context.Context, in app.Create
 		project.HyllaArtifactRef,
 		project.RepoBareRoot,
 		project.RepoPrimaryWorktree,
-		project.Language,
 		project.BuildTool,
 		project.DevMcpServerName,
 		in.Metadata,
@@ -857,7 +856,6 @@ func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput
 			in.HyllaArtifactRef,
 			in.RepoBareRoot,
 			in.RepoPrimaryWorktree,
-			in.Language,
 			in.BuildTool,
 			in.DevMcpServerName,
 			in.Metadata,
@@ -15078,7 +15076,6 @@ func TestProjectFormW2D7FieldsInitializedFromProject(t *testing.T) {
 		HyllaArtifactRef:    "github.com/org/repo@main",
 		RepoBareRoot:        "/tmp/repo",
 		RepoPrimaryWorktree: "/tmp/repo/main",
-		Language:            "go",
 		BuildTool:           "mage",
 		DevMcpServerName:    "tillsyn-dev",
 	}, now)
@@ -15093,8 +15090,8 @@ func TestProjectFormW2D7FieldsInitializedFromProject(t *testing.T) {
 	if got := m.projectFormInputs[projectFieldBareRoot].Value(); got != "/tmp/repo" {
 		t.Errorf("projectFieldBareRoot = %q, want %q", got, "/tmp/repo")
 	}
-	if got := m.projectFormInputs[projectFieldLanguage].Value(); got != "go" {
-		t.Errorf("projectFieldLanguage = %q, want %q", got, "go")
+	if got := m.projectFormInputs[projectFieldLanguage].Value(); got != "" {
+		t.Errorf("projectFieldLanguage = %q, want %q (Language removed from domain)", got, "")
 	}
 	if got := m.projectFormInputs[projectFieldGroups].Value(); got != "go,fe" {
 		t.Errorf("projectFieldGroups = %q, want %q", got, "go,fe")
@@ -15144,9 +15141,6 @@ func TestProjectFormW2D7FieldsPassedThroughOnUpdate(t *testing.T) {
 	if got.RepoBareRoot != "/abs/bare" {
 		t.Errorf("UpdateProject.RepoBareRoot = %q, want %q", got.RepoBareRoot, "/abs/bare")
 	}
-	if got.Language != "go" {
-		t.Errorf("UpdateProject.Language = %q, want %q", got.Language, "go")
-	}
 	if got.HyllaArtifactRef != "github.com/org/repo@main" {
 		t.Errorf("UpdateProject.HyllaArtifactRef = %q, want %q", got.HyllaArtifactRef, "github.com/org/repo@main")
 	}
@@ -15174,7 +15168,6 @@ func TestProjectFormW2D7FieldsPassedThroughOnCreate(t *testing.T) {
 
 	m.projectFormInputs[projectFieldName].SetValue("NewProject")
 	m.projectFormInputs[projectFieldBareRoot].SetValue("/abs/bare")
-	m.projectFormInputs[projectFieldLanguage].SetValue("fe")
 	m.projectFormInputs[projectFieldGroups].SetValue("fe,gen")
 	m.projectFormInputs[projectFieldHyllaArtifactRef].SetValue("github.com/org/fe@main")
 	m.projectFormInputs[projectFieldBuildTool].SetValue("npm")
@@ -15189,9 +15182,6 @@ func TestProjectFormW2D7FieldsPassedThroughOnCreate(t *testing.T) {
 	}
 	if got.RepoBareRoot != "/abs/bare" {
 		t.Errorf("CreateProjectInput.RepoBareRoot = %q, want %q", got.RepoBareRoot, "/abs/bare")
-	}
-	if got.Language != "fe" {
-		t.Errorf("CreateProjectInput.Language = %q, want %q", got.Language, "fe")
 	}
 	if got.HyllaArtifactRef != "github.com/org/fe@main" {
 		t.Errorf("CreateProjectInput.HyllaArtifactRef = %q, want %q", got.HyllaArtifactRef, "github.com/org/fe@main")
@@ -15220,7 +15210,6 @@ func TestUpdateThreadDescriptionPreservesW2D7Fields(t *testing.T) {
 		HyllaArtifactRef:    "github.com/org/repo@main",
 		RepoBareRoot:        "/abs/bare",
 		RepoPrimaryWorktree: "/abs/main",
-		Language:            "go",
 		BuildTool:           "mage",
 		DevMcpServerName:    "tillsyn-dev",
 	}, now)
@@ -15255,9 +15244,6 @@ func TestUpdateThreadDescriptionPreservesW2D7Fields(t *testing.T) {
 	if got.RepoPrimaryWorktree != "/abs/main" {
 		t.Errorf("RepoPrimaryWorktree = %q, want %q (silent wipe regression)", got.RepoPrimaryWorktree, "/abs/main")
 	}
-	if got.Language != "go" {
-		t.Errorf("Language = %q, want %q (silent wipe regression)", got.Language, "go")
-	}
 	if got.BuildTool != "mage" {
 		t.Errorf("BuildTool = %q, want %q (silent wipe regression)", got.BuildTool, "mage")
 	}
@@ -15279,7 +15265,6 @@ func TestProjectFormBodyLinesRendersW2D7Repository(t *testing.T) {
 		HyllaArtifactRef:    "github.com/org/repo@main",
 		RepoBareRoot:        "/abs/bare",
 		RepoPrimaryWorktree: "/abs/bare/main",
-		Language:            "go",
 		BuildTool:           "mage",
 		DevMcpServerName:    "tillsyn-dev",
 	}, now)
