@@ -39,6 +39,136 @@ Transitions are recorded by appending a dated status note to the entry, not by r
 
 ---
 
+## 2026-05-14 — pre-dogfood — Remove `project.Language` field; templates are project-tier opt-in only
+
+### Context
+Dev caught architecture drift while diagnosing why TILLSYN's `till action_item create --kind build` did NOT auto-spawn QA twins. Tracing the load path revealed:
+
+1. `project.Language` is a closed enum (`"" | "go" | "fe"`) added in Drop 4a L4 (`a334f20`).
+2. The dispatcher / service-layer template resolver uses `project.Language` to pick an EMBEDDED-default template (`till-go.toml`, `till-fe.toml`, `till-gen.toml`) when no project-tier `template.toml` exists.
+3. Dev's stated design (forgotten / drifted): **Tillsyn projects are not language-bound.** Projects can be multi-language, non-coding, or have any other shape. The `Language` field bakes a coding-project assumption into a domain primitive that should be vocabulary-neutral.
+
+### Observation
+Three coupled problems:
+
+1. **`project.Language` is a wrong abstraction** for a general-purpose project tracker. Carries an implicit "this is a coding project in language X" assumption.
+2. **Embedded-default template fallback in production** is a wrong design. If a project has no template, Tillsyn should do NOTHING — no child_rules, no enforced kinds, no auto-creation. Templates are user-authored OPT-IN at project tier. Embedded templates exist solely as starter content that `till init` can OFFER to copy into the project on first run.
+3. **Multi-group projects (`Metadata.Groups`)** are the partial workaround for the wrong-language assumption (multi-group sidesteps the single-Language constraint by per-group resolution). But this preserves the embedded-fallback antipattern and adds its own complexity.
+
+### Proposed fix
+1. **Remove `project.Language` field entirely.** Strip from `domain.Project`, `app.UpdateProjectInput` / `CreateProjectInput`, `till project update --language` CLI flag, `till init --language` JSON payload, TUI form, MCP schema. Migrate persisted Project rows by dropping the column.
+2. **Remove `project.Metadata.Groups`** OR re-purpose it as a "starter content selector" (which embedded templates to OFFER on `till init`, not a runtime resolver). Open design question.
+3. **Make template resolution project-tier-only at runtime.** `loadProjectTemplate` and `loadProjectTemplatesForGroups` should check `<project>/.tillsyn/template.toml` and `<project>/.tillsyn/templates/*.toml` (multi-file aggregation) ONLY. No HOME tier. No embedded fallback. Empty result is valid — Tillsyn just doesn't auto-create children for that project.
+4. **`till init` becomes an opt-in template starter.** Optional flag `--starter-template <name>` (or interactive picker) copies one or more embedded templates into the project's `.tillsyn/templates/`. User can edit afterwards. No starter = no template = no auto-create. Pure tracking-only Tillsyn.
+5. **Two-and-only-two validators** on aggregated templates: conflict detection (same kind/child_rule ID with different content) + cycle detection (rules that prevent terminal completion). NO structural-type enforcement. NO kind-enum enforcement. NO closed vocabulary checks.
+
+### Target drop
+**Pre-dogfood architectural cleanup drop.** Substantial scope — touches domain primitives, migrations, CLI, TUI, multiple service-layer helpers, all template load tests. Likely a dedicated drop. Should ship BEFORE the cascade-dispatcher auto-trigger lands (Drop 4c.7) so the dispatcher's template resolution path is the right shape from day one.
+
+### Tags
+`architecture`, `domain`, `templates`, `breaking-change`, `migration`, `cli`, `tui`, `dogfood-blocker`
+
+---
+
+## 2026-05-14 — pre-dogfood — Multi-template aggregation per project tier
+
+### Context
+Tied to the `project.Language` removal above. With the language field gone, the question "how do multiple template files at project tier combine" becomes load-bearing.
+
+### Observation
+- Today's multi-group path (`loadProjectTemplatesForGroups`) is a primitive iterate-and-merge that mixes embedded fallback into a multi-group walk. It does not implement the dev's design: project tier supports multiple `template.toml` files (e.g. `<project>/.tillsyn/templates/refactor.toml`, `feature.toml`, `bugfix.toml`) and they aggregate by ID merge with conflict + cycle checks only.
+- W2.D6 SKIPPED writing project-tier `template.toml` for multi-group projects (per `init_cmd.go:854`) because naive concat of two embedded templates trips the load-time "table plan already exists" error. The right fix is a semantic ID-merge.
+
+### Proposed fix
+1. Add `<project>/.tillsyn/templates/*.toml` discovery (glob the directory).
+2. Implement `templates.Aggregate([]Template) (Template, error)` that ID-merges kinds, agent_bindings, child_rules. Last-loaded wins on collision OR error on collision — design choice TBD (probably "error on conflict, force the user to resolve").
+3. Cycle check across the aggregated graph — heuristic only, ensures no completion deadlock.
+4. Update `loadProjectTemplate` to discover-and-aggregate the `templates/` directory in addition to (or instead of) the single `template.toml` legacy file.
+
+### Target drop
+Same drop as `project.Language` removal — they share migration surface.
+
+### Tags
+`templates`, `aggregation`, `validation`, `dogfood-blocker`
+
+---
+
+## 2026-05-14 — pre-dogfood — User-defined kinds (dynamic enum from template)
+
+### Context
+Dev's design: templates define the vocabulary of kinds for that project. A project could declare `refactor-segment`, `feature-drop`, `bugfix-droplet` as its own kinds. The closed 12-value enum at `internal/domain/kind.go` is a stopgap.
+
+### Observation
+Today, `domain.Kind` is a closed Go enum. Template `[kinds.<name>]` sections are validated against this enum at load time (unknown kinds reject). User-defined kinds require:
+
+1. `domain.Kind` becomes a free-form `string` type, validated dynamically against the project's loaded template's `kinds` map.
+2. Template-load validators stop rejecting unknown kind names — they only validate against the template's own declared set.
+3. Cycle detection in child_rules updates to operate on the dynamic kind set.
+4. CLI / TUI / MCP surfaces accept any string kind, surface validation errors when the kind isn't in the bound template.
+5. `domain.KindAppliesTo` (the scope mapping) becomes per-template metadata rather than a Go-level closed enum.
+
+### Proposed fix
+Land AFTER the `project.Language` removal + multi-template aggregation refinements. User-defined kinds is the keystone of the open-vocabulary design but depends on the template plumbing being right first.
+
+### Target drop
+**Post-MVP** — closed 12-kind enum works for the immediate dogfood. Dynamic enum is the next architectural layer.
+
+### Tags
+`architecture`, `domain`, `templates`, `kinds`, `post-mvp`
+
+---
+
+## 2026-05-14 — pre-dogfood — Toml-driven agent dispatch split (`-p headless` vs orch-signal)
+
+### Context
+Dev's design: not every agent in the cascade should be launched directly by Tillsyn's dispatcher. Some agents need to run as the user's Claude Code orchestrator subagents (oauth-billed, June-15-ToS-compliant interactive sub-spawn). The split is **toml-driven**.
+
+### Observation
+Today's dispatcher path (Drop 4a Wave 2 + manual-trigger CLI in Wave 2.2) treats every agent identically: spawn a subprocess via `claude --agent ...` (or equivalent). This doesn't accommodate the split.
+
+The intended model:
+
+- **Tillsyn-launched agents** (`agent.dispatch_mode = "headless"` in agents.toml): codex, openrouter, openai-compat, ollama, claude-api-key, claude-oauth-headless. Tillsyn dispatcher spawns them directly. User pays via their own credential setup (`env_from_shell`, `--api-key`, etc.).
+- **Orch-signaled agents** (`agent.dispatch_mode = "orch_subagent"`): typically `oauth-claude-subagent`. Tillsyn does NOT launch. Tillsyn pushes a wake-up event to the orchestrator's MCP client via LiveWait (see separate refinement); the orch's `Agent` tool spawns the subagent using the user's Claude OAuth subscription.
+
+### Proposed fix
+1. Add `dispatch_mode` field to `AgentBinding` schema. Closed enum: `headless | orch_subagent`. Default to `headless` for backwards compat.
+2. Dispatcher routes by `dispatch_mode`. `headless` continues the existing path. `orch_subagent` publishes a `LiveWaitEventOrchSpawnRequested` event with the action_item ID + agent binding.
+3. Orch's MCP client subscribes to that event channel via the Channels API (or equivalent push surface) and routes the wake-up into the orch's conversation context as a system reminder asking the orch to spawn the specified agent.
+4. The orch confirms (or declines per its own policy) and uses its `Agent` tool to spawn the subagent.
+
+### Target drop
+**Pre-MVP-dogfood phase 2**: after the basic dispatcher path works end-to-end (Drop 4c.7 auto-trigger), the split lands as a follow-on.
+
+### Tags
+`dispatcher`, `agents`, `architecture`, `tos`, `oauth`, `dogfood-blocker-phase-2`
+
+---
+
+## 2026-05-14 — pre-dogfood — LiveWait → MCP push to orch (replace `/loop` hack)
+
+### Context
+Today the orchestrator polls Tillsyn state via `/loop` cadence to learn about attention items, completed action items, approval requests. The LiveWait broker (`internal/app/live_wait.go`) exists for in-process / cross-process Tillsyn-side wake-ups but does NOT push events through the MCP boundary to the orchestrator's conversation.
+
+Per Claude Code's Channels research-preview feature (https://code.claude.com/docs/en/channels.md), MCP servers can be wrapped as channel plugins that push events into a running session. The Tillsyn MCP server should adopt this so the orch wakes immediately on relevant state changes instead of polling.
+
+### Observation
+Coupled with the toml-driven dispatcher split above: when Tillsyn determines an `orch_subagent` agent should fire, it publishes `LiveWaitEventOrchSpawnRequested`. The MCP-as-channel surface receives that event and routes a system reminder into the orch's conversation. The orch's tool surface includes a way to "claim" the wake-up (acknowledge + spawn) so duplicate dispatches don't fire.
+
+### Proposed fix
+1. Wrap Tillsyn MCP as a Claude Code channel plugin (Channels API).
+2. Channel publishes events for: auth_request approval, attention item raised, action_item state change, handoff created, orch_subagent spawn request.
+3. Channel events route into the orch's conversation as system reminders or similar.
+4. Orch tool surface includes ack/claim for spawn requests.
+
+### Target drop
+**Pre-MVP-dogfood phase 2**. Replaces `/loop` polling entirely for orch-side coordination. Depends on the Channels API stability.
+
+### Tags
+`mcp`, `live-wait`, `orch-coordination`, `channels`, `wake-up`, `dogfood-blocker-phase-2`
+
+---
+
 ## 2026-05-14 — pre-dogfood — Project-local `till mcp` for natural path / auth scoping
 
 ### Context
