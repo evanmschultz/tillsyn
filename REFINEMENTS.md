@@ -71,6 +71,10 @@ Phase 4.3.
 ### Tags
 `cli`, `mcp`, `cleanup`, `phase-4.3`
 
+### 2026-05-15 — Shipped + corrigendum
+- **Shipped** as Phase 4.3 in 4 droplets: D1 `0d9009a` (mapGroupsToLanguage helper + test) + D3 `90e870d` (mcp_rpc schema param + REQUIRED rejection sub-test) + D4 `536ba3a` (TUI `projectFieldLanguage` form input) + D2 `aecf640` (`--language` flag teardown). `mage ci` GREEN 3280/3280 at chain tail; cmd/till coverage 77.5%.
+- **Corrigendum** (plan-QA falsification 2.1): the original Observation/Proposed-fix referred to `cmd/till project init` having a `--language` flag — factually wrong. The flag was only on `till project update` (`cmd/till/main.go:745` pre-fix). Original Observation line referencing `cmd/till/project_detail.go:~91` is also off — the function lives in `cmd/till/project_cli.go` (~line 91 was approximate). Entries kept as-written per REFINEMENTS append-only schema; corrigendum here records the actual surface.
+
 ---
 
 ## 2026-05-15 — Phase 4.2 close — planner missed 3 of 7 surfaces
@@ -97,6 +101,9 @@ Concrete implementation: add a "Cross-package consumer audit" section to `go-pla
 
 ### Tags
 `planner`, `methodology`, `refactor`, `decomp`
+
+### 2026-05-15 — Validated by Phase 4.3
+The Phase 4.3 planner spawn ran the cross-package audit recommended here AND the plan-QA pair caught 5 additional NITs before any builder dispatched. Result: 4-droplet decomp shipped clean in one pass (no planner-miss, no reactive add-on droplets). Methodology refinement validated end-to-end. The `go-planning-agent.md` update remains a future durable change to capture the pattern across all Go projects.
 
 ---
 
