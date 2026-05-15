@@ -46,8 +46,8 @@ type ActorLeaseTuple struct {
 
 // CreateProjectRequest stores transport input for project creation.
 //
-// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree / Language /
-// BuildTool / DevMcpServerName are the six Drop 4a L4 first-class
+// HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree /
+// BuildTool / DevMcpServerName are the five Drop 4a L4 first-class
 // project-node fields. Plumbed through the till.project create tool;
 // adapter forwards them to app.CreateProjectInput unchanged. Empty string
 // is the meaningful zero value for each (pre-bootstrap project).
@@ -57,7 +57,6 @@ type CreateProjectRequest struct {
 	HyllaArtifactRef    string
 	RepoBareRoot        string
 	RepoPrimaryWorktree string
-	Language            string
 	BuildTool           string
 	DevMcpServerName    string
 	Metadata            domain.ProjectMetadata
@@ -66,7 +65,7 @@ type CreateProjectRequest struct {
 
 // UpdateProjectRequest stores transport input for project updates.
 //
-// Six Drop 4a L4 first-class fields ride alongside Name / Description.
+// Five Drop 4a L4 first-class fields ride alongside Name / Description.
 // Per WAVE_1_PLAN.md §1.8 the Project surface is admin-driven, so the
 // fields are value-typed (no pointer-sentinels). MCP callers that omit a
 // field must pass the existing value through (same shape as Metadata).
@@ -77,7 +76,6 @@ type UpdateProjectRequest struct {
 	HyllaArtifactRef    string
 	RepoBareRoot        string
 	RepoPrimaryWorktree string
-	Language            string
 	BuildTool           string
 	DevMcpServerName    string
 	Metadata            domain.ProjectMetadata
