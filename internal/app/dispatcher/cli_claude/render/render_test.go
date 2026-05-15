@@ -93,7 +93,6 @@ func fixtureProject() domain.Project {
 		ID:                  "proj-fixture",
 		RepoPrimaryWorktree: "/tmp/tillsyn/main",
 		HyllaArtifactRef:    "github.com/evanmschultz/tillsyn@main",
-		Language:            "go",
 	}
 }
 

@@ -732,7 +732,6 @@ func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, payload
 		Name:                payload.Name,
 		RepoPrimaryWorktree: cwd,
 		RepoBareRoot:        detectBareRoot(ctx, cwd),
-		Language:            mapGroupsToLanguage(payload.Groups),
 		Metadata: domain.ProjectMetadata{
 			Groups: payload.Groups,
 		},

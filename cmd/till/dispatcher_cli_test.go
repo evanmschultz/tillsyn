@@ -325,7 +325,6 @@ func newDispatcherCLITestEnv(t *testing.T) dispatcherCLITestEnv {
 		Name:                "Dispatcher CLI Test",
 		RepoPrimaryWorktree: worktree,
 		HyllaArtifactRef:    "github.com/evanmschultz/tillsyn@main",
-		Language:            "go",
 	}, now)
 	if err != nil {
 		t.Fatalf("NewProjectFromInput() error = %v", err)

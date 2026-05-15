@@ -940,7 +940,6 @@ func TestRunProjectUpdate_SingleFlagDoesNotClobberOthers(t *testing.T) {
 		HyllaArtifactRef:    "github.com/org/repo@main",
 		RepoBareRoot:        "/tmp/bare",
 		RepoPrimaryWorktree: "/tmp/main",
-		Language:            "go",
 		BuildTool:           "mage",
 		DevMcpServerName:    "tillsyn-dev",
 		Metadata: domain.ProjectMetadata{
@@ -970,9 +969,6 @@ func TestRunProjectUpdate_SingleFlagDoesNotClobberOthers(t *testing.T) {
 			found = p
 			break
 		}
-	}
-	if found.Language != "fe" {
-		t.Fatalf("expected Language=%q after update, got %q", "fe", found.Language)
 	}
 	if found.Description != "Original description" {
 		t.Fatalf("expected Description preserved, got %q", found.Description)
@@ -1047,7 +1043,6 @@ func TestWriteProjectDetail_IncludesFirstClassFields(t *testing.T) {
 		Name:                "TestProject",
 		RepoPrimaryWorktree: "/tmp/main",
 		RepoBareRoot:        "/tmp/bare",
-		Language:            "go",
 		BuildTool:           "mage",
 		DevMcpServerName:    "tillsyn-dev",
 		HyllaArtifactRef:    "github.com/org/repo@main",
@@ -1293,7 +1288,6 @@ func TestRunProjectRename_PreservesAllOtherFields(t *testing.T) {
 		HyllaArtifactRef:    "github.com/org/repo@main",
 		RepoBareRoot:        "/tmp/bare",
 		RepoPrimaryWorktree: "/tmp/main",
-		Language:            "go",
 		BuildTool:           "mage",
 		DevMcpServerName:    "tillsyn-dev",
 		Metadata: domain.ProjectMetadata{
@@ -1340,9 +1334,6 @@ func TestRunProjectRename_PreservesAllOtherFields(t *testing.T) {
 	}
 	if found.HyllaArtifactRef != "github.com/org/repo@main" {
 		t.Fatalf("expected HyllaArtifactRef preserved, got %q", found.HyllaArtifactRef)
-	}
-	if found.Language != "go" {
-		t.Fatalf("expected Language preserved, got %q", found.Language)
 	}
 	if found.Metadata.Owner != "original-owner" {
 		t.Fatalf("expected Owner preserved, got %q", found.Metadata.Owner)

@@ -2275,10 +2275,6 @@ func TestCreateProjectDBRecord_GitRepoCase(t *testing.T) {
 	if found.RepoBareRoot == "" {
 		t.Fatalf("RepoBareRoot = empty; want non-empty (git repo was initialised in tmp)")
 	}
-	// Language must map groups[0]="go" -> "go".
-	if found.Language != "go" {
-		t.Fatalf("Language = %q; want %q for groups=[go]", found.Language, "go")
-	}
 	// Metadata.Groups must be set from payload.Groups.
 	if len(found.Metadata.Groups) != 1 || found.Metadata.Groups[0] != "go" {
 		t.Fatalf("Metadata.Groups = %v; want [go]", found.Metadata.Groups)
@@ -2335,10 +2331,6 @@ func TestCreateProjectDBRecord_NonGitDirCase(t *testing.T) {
 	// RepoPrimaryWorktree must still be non-empty absolute path.
 	if found.RepoPrimaryWorktree == "" {
 		t.Fatalf("RepoPrimaryWorktree = empty; want non-empty absolute path even in non-git dir")
-	}
-	// Language must map groups[0]="fe" -> "fe".
-	if found.Language != "fe" {
-		t.Fatalf("Language = %q; want %q for groups=[fe]", found.Language, "fe")
 	}
 	// Metadata.Groups must be set.
 	if len(found.Metadata.Groups) != 1 || found.Metadata.Groups[0] != "fe" {
@@ -2496,11 +2488,6 @@ func TestCreateProjectDBRecord_MultiGroup(t *testing.T) {
 	// Metadata.Groups must carry both groups in order.
 	if len(found.Metadata.Groups) != 2 || found.Metadata.Groups[0] != "go" || found.Metadata.Groups[1] != "fe" {
 		t.Fatalf("Metadata.Groups = %v; want [go fe]", found.Metadata.Groups)
-	}
-
-	// Language must map groups[0]="go" -> "go" (selection-order policy).
-	if found.Language != "go" {
-		t.Fatalf("Language = %q; want %q (first group wins in multi-group case)", found.Language, "go")
 	}
 
 	// template.toml must NOT be created for multi-group projects.
