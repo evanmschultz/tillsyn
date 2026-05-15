@@ -7,65 +7,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
 )
-
-// dispatcherServeShutdownTimeout caps how long Stop will wait for subscriber
-// goroutines to drain on shutdown. A hung subscriber should not stall process
-// exit indefinitely; 5s gives the in-flight walker pass a chance to finish
-// while keeping CTRL-C responsive.
-const dispatcherServeShutdownTimeout = 5 * time.Second
-
-// runDispatcherServe starts the dispatcher's continuous-mode subscriber loop
-// (Drop 4b.7 internal/app/dispatcher/subscriber.go) and blocks until ctx is
-// canceled. Per-project subscriber goroutines subscribe to
-// LiveWaitEventActionItemChanged via the broker; on each event the walker
-// enumerates eligible items and the dispatcher invokes RunOnce for each
-// candidate. This is the long-running daemon entry point that retires the
-// manual `till dispatcher run --action-item <id>` invocation for in-progress
-// state-change auto-spawn.
-//
-// Shutdown contract: when ctx is canceled (SIGINT / SIGTERM at the process
-// level), Stop drains subscriber goroutines for up to
-// dispatcherServeShutdownTimeout. Returns nil on graceful shutdown and a
-// wrapped error on Start / Stop failure.
-//
-// Out of scope for this entry point: per-subagent Tillsyn auth provisioning
-// via spawn-env (Phase 2b). The AuthBundle materializer is still a stub at
-// internal/app/dispatcher/spawn.go; subagents spawned by this loop will not
-// carry MCP credentials until Phase 2b lands.
-func runDispatcherServe(ctx context.Context, svc *app.Service, broker app.LiveWaitBroker, stdout, stderr io.Writer) error {
-	if svc == nil {
-		return fmt.Errorf("dispatcher serve: app service is not configured")
-	}
-	if broker == nil {
-		return fmt.Errorf("dispatcher serve: live wait broker is not configured")
-	}
-
-	disp, err := dispatcher.NewDispatcher(svc, broker, dispatcher.Options{})
-	if err != nil {
-		return fmt.Errorf("dispatcher serve: construct dispatcher: %w", err)
-	}
-
-	if err := disp.Start(ctx); err != nil {
-		return fmt.Errorf("dispatcher serve: start: %w", err)
-	}
-	fmt.Fprintln(stderr, "dispatcher serve: started; subscribing to LiveWaitEventActionItemChanged per project (CTRL-C to stop)")
-
-	<-ctx.Done()
-	fmt.Fprintln(stderr, "dispatcher serve: shutdown signal received; draining subscribers")
-
-	stopCtx, cancel := context.WithTimeout(context.Background(), dispatcherServeShutdownTimeout)
-	defer cancel()
-	if err := disp.Stop(stopCtx); err != nil {
-		return fmt.Errorf("dispatcher serve: stop: %w", err)
-	}
-	fmt.Fprintln(stderr, "dispatcher serve: stopped")
-	return nil
-}
 
 // dispatcherRunCommandOptions carries the flags consumed by `till dispatcher
 // run`. The CLI exposes the cascade dispatcher's manual-trigger entry point:

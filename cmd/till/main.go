@@ -24,6 +24,7 @@ import (
 	mcpstdio "github.com/evanmschultz/tillsyn/internal/adapters/mcp_stdio"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
+	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
 	// Side-effect import: cli_claude.init() registers the claude adapter
 	// with the dispatcher's CLIKind→adapter registry at process start. Drop
 	// 4c F.7.17.5 adapter wiring; Drop 4d adds a parallel cli_codex import.
@@ -1023,32 +1024,6 @@ exits non-zero with the failure reason on stderr.
 	dispatcherRunCmd.Flags().BoolVar(&dispatcherRunOpts.dryRun, "dry-run", false, "Build and print the spawn descriptor without executing the spawn")
 	mustMarkFlagRequired(dispatcherRunCmd, "action-item")
 	dispatcherCmd.AddCommand(dispatcherRunCmd)
-
-	dispatcherServeCmd := &cobra.Command{
-		Use:   "serve",
-		Short: "Run the dispatcher continuous-mode subscriber loop (auto-trigger)",
-		Long: strings.TrimSpace(`
-Start the dispatcher's continuous-mode subscriber loop. The dispatcher
-subscribes to LiveWaitEventActionItemChanged per project; on every event the
-walker enumerates eligible items and RunOnce evaluates each candidate. This
-retires the manual `+"`"+`till dispatcher run --action-item <id>`+"`"+` invocation for
-in-progress state-change auto-spawn.
-
-Blocks until SIGINT / SIGTERM. On signal the subscriber goroutines are drained
-with a 5s shutdown timeout.
-
-Per-subagent Tillsyn auth provisioning (Phase 2b) is NOT included: subagents
-spawned by this loop will not carry MCP credentials until the AuthBundle
-materializer lands. The trigger machinery and walker behavior are observable
-in dispatcher logs regardless.
-`),
-		Example: "  till dispatcher serve",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFlow(cmd.Context(), "dispatcher.serve")
-		},
-	}
-	dispatcherCmd.AddCommand(dispatcherServeCmd)
 
 	embeddingsCmd := &cobra.Command{
 		Use:   "embeddings",
@@ -2087,7 +2062,7 @@ func resolveRuntimePaths(command string, opts rootCommandOptions, paths platform
 
 // ensureRuntimePathParents creates any required runtime parent directories before startup.
 func ensureRuntimePathParents(command string, paths resolvedRuntimePaths) error {
-	if command == "" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" || command == "dispatcher.run" || command == "dispatcher.serve" {
+	if command == "" || command == "mcp" || command == "export" || command == "import" || command == "capture-state" || command == "project" || command == "kind" || command == "lease" || command == "handoff" || command == "auth" || command == "embeddings" || command == "dispatcher.run" {
 		if err := os.MkdirAll(filepath.Dir(paths.ConfigPath), 0o755); err != nil {
 			return fmt.Errorf("create config directory: %w", err)
 		}
@@ -2469,7 +2444,7 @@ func executeCommandFlow(
 	case "mcp":
 		logger.Info("command flow start", "command", "mcp", "transport", "stdio")
 		if err := withInterruptEchoSuppressedFunc(func() error {
-			return runMCP(ctx, svc, authSvc, rootOpts.appName, mcpOpts)
+			return runMCP(ctx, svc, liveWaitBroker, authSvc, rootOpts.appName, mcpOpts)
 		}); err != nil {
 			if errors.Is(err, context.Canceled) {
 				logger.Info("command flow complete", "command", "mcp", "transport", "stdio", "shutdown", "interrupt")
@@ -2641,18 +2616,6 @@ func executeCommandFlow(
 		return runOneShotCommand("dispatcher.run", "dispatcher run", func() error {
 			return runDispatcherRun(ctx, svc, liveWaitBroker, dispatcherRunOpts, stdout, stderr)
 		})
-	case "dispatcher.serve":
-		logger.Info("command flow start", "command", "dispatcher.serve")
-		if err := runDispatcherServe(ctx, svc, liveWaitBroker, stdout, stderr); err != nil {
-			if errors.Is(err, context.Canceled) {
-				logger.Info("command flow complete", "command", "dispatcher.serve", "shutdown", "interrupt")
-				return nil
-			}
-			logger.Error("command flow failed", "command", "dispatcher.serve", "err", err)
-			return fmt.Errorf("run dispatcher serve command: %w", err)
-		}
-		logger.Info("command flow complete", "command", "dispatcher.serve")
-		return nil
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
@@ -2733,7 +2696,28 @@ func shouldMuteRuntimeConsole(command string) bool {
 }
 
 // runMCP runs the stdio MCP subcommand flow.
-func runMCP(ctx context.Context, svc *app.Service, auth *autentauth.Service, appName string, opts mcpCommandOptions) error {
+func runMCP(ctx context.Context, svc *app.Service, broker app.LiveWaitBroker, auth *autentauth.Service, appName string, opts mcpCommandOptions) error {
+	// Run the cascade dispatcher's continuous-mode subscriber loop alongside
+	// the MCP server. The MCP process is already long-lived and holds the
+	// app.Service + localipc broker; co-hosting the dispatcher in the same
+	// process avoids a duplicate-daemon pattern and lets every action-item
+	// state change publish via the broker route into the dispatcher's
+	// walker without cross-process serialization. Dispatcher errors at Start
+	// fall back to MCP-only mode rather than aborting the MCP serve — the
+	// MCP surface is the primary client interface and must remain responsive
+	// even if the dispatcher's project enumeration fails (e.g. on a fresh
+	// install with zero projects).
+	disp, err := dispatcher.NewDispatcher(svc, broker, dispatcher.Options{})
+	if err == nil {
+		if startErr := disp.Start(ctx); startErr == nil {
+			defer func() {
+				stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = disp.Stop(stopCtx)
+			}()
+		}
+	}
+
 	appAdapter := mcpcommon.NewAppServiceAdapter(svc, auth)
 	return mcpCommandRunner(ctx, mcpcommon.Config{
 		MCPEndpoint:   opts.mcpEndpoint,
