@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	autent "github.com/evanmschultz/autent"
 	"github.com/evanmschultz/tillsyn/internal/adapters/auth/autentauth"
@@ -408,6 +409,165 @@ func TestHandlerUpdateHandoffResolvesApprovedPathContext(t *testing.T) {
 	if resolutionNote != "done" {
 		t.Fatalf("handoff resolution_note = %q, want done", resolutionNote)
 	}
+}
+
+// newRealMCPAuthRequestHandlerForTest constructs one real auth-backed MCP handler
+// with AuthRequests and AuthBackend wired so auth-request lifecycle operations
+// (create/approve/claim) work end-to-end. Returns the handler, the app.Service
+// (for direct approve calls in tests), the autentauth.Service, and the project ID.
+func newRealMCPAuthRequestHandlerForTest(t *testing.T) (*Handler, *app.Service, *autentauth.Service, string) {
+	t.Helper()
+
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	auth, err := autentauth.NewSharedDB(autentauth.Config{DB: repo.DB()})
+	if err != nil {
+		t.Fatalf("NewSharedDB() error = %v", err)
+	}
+	if err := auth.EnsureDogfoodPolicy(context.Background()); err != nil {
+		t.Fatalf("EnsureDogfoodPolicy() error = %v", err)
+	}
+
+	nextID := 0
+	svc := app.NewService(repo, func() string {
+		nextID++
+		return fmt.Sprintf("id-%03d", nextID)
+	}, nil, app.ServiceConfig{
+		AutoCreateProjectColumns: true,
+		AuthRequests:             auth,
+		AuthBackend:              auth,
+	})
+	project, err := svc.CreateProject(context.Background(), "Demo", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	adapter := mcpcommon.NewAppServiceAdapter(svc, auth)
+	handler, err := NewHandler(Config{}, adapter, adapter)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	return handler, svc, auth, project.ID
+}
+
+// TestAuthRequestCreateWaitTimeoutBlocksAndWakesOnApproval verifies that
+// till.auth_request operation=create with wait_timeout blocks until an
+// approval arrives, then returns the approved state — proving E2E-8 is
+// fixed at the MCP wire layer.
+func TestAuthRequestCreateWaitTimeoutBlocksAndWakesOnApproval(t *testing.T) {
+	handler, svc, _, projectID := newRealMCPAuthRequestHandlerForTest(t)
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	// approveAfter is the delay before the background goroutine approves the
+	// pending request. The value is deliberately coarse (2s real-wall) so the
+	// test stays robust on a loaded CI runner.
+	const approveAfter = 2 * time.Second
+
+	// approveErrCh carries any error from the background goroutine so the
+	// main test body can surface it as a t.Fatal after the blocking call.
+	approveErrCh := make(chan error, 1)
+
+	go func() {
+		time.Sleep(approveAfter)
+
+		// Poll ListAuthRequests until the pending request appears. The
+		// request is persisted before the live-wait begins, so it is
+		// observable immediately after CreateAuthRequest writes to SQLite.
+		var requestID string
+		for attempt := 0; attempt < 20; attempt++ {
+			requests, listErr := svc.ListAuthRequests(context.Background(), domain.AuthRequestListFilter{
+				ProjectID: projectID,
+				State:     domain.AuthRequestStatePending,
+				Limit:     1,
+			})
+			if listErr != nil {
+				approveErrCh <- fmt.Errorf("ListAuthRequests attempt %d: %w", attempt, listErr)
+				return
+			}
+			if len(requests) > 0 {
+				requestID = requests[0].ID
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if requestID == "" {
+			approveErrCh <- fmt.Errorf("no pending auth request found after polling")
+			return
+		}
+
+		_, approveErr := svc.ApproveAuthRequest(context.Background(), app.ApproveAuthRequestInput{
+			RequestID:    requestID,
+			ResolvedBy:   "dev",
+			ResolvedType: domain.ActorTypeUser,
+		})
+		approveErrCh <- approveErr
+	}()
+
+	// Call till.auth_request operation=create with wait_timeout. This blocks
+	// until the goroutine approves the request or the 5s timeout fires.
+	start := time.Now()
+	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", map[string]any{
+		"operation":      "create",
+		"path":           "project/" + projectID,
+		"principal_id":   "builder-agent-1",
+		"principal_type": "agent",
+		"principal_role": "builder",
+		"client_id":      "till-mcp-stdio",
+		"reason":         "integration test wait_timeout",
+		"wait_timeout":   "5s",
+	}))
+	elapsed := time.Since(start)
+
+	// Surface background goroutine errors before other assertions.
+	if approveErr := <-approveErrCh; approveErr != nil {
+		t.Fatalf("background approve goroutine error = %v", approveErr)
+	}
+
+	// No protocol-level error.
+	if createResp.Error != nil {
+		t.Fatalf("create response protocol error = %#v, want nil", createResp.Error)
+	}
+
+	// Tool-level success (isError must be false or absent).
+	if isErr, _ := createResp.Result["isError"].(bool); isErr {
+		t.Fatalf("create response isError = true: %s", toolResultText(t, createResp.Result))
+	}
+
+	result := toolResultStructured(t, createResp.Result)
+
+	// State must be approved after the goroutine's approval woke the live-waiter.
+	if got, _ := result["state"].(string); got != "approved" {
+		t.Fatalf("state = %q, want approved", got)
+	}
+
+	// resume_token must be non-empty (continuation ownership proof).
+	if got, _ := result["resume_token"].(string); strings.TrimSpace(got) == "" {
+		t.Fatalf("resume_token = empty, want non-empty")
+	}
+
+	// Elapsed time must reflect blocking until approval, not immediate return
+	// and not a full timeout. Tolerance: [1500ms, 4500ms].
+	const (
+		minElapsed = 1500 * time.Millisecond
+		maxElapsed = 4500 * time.Millisecond
+	)
+	if elapsed < minElapsed {
+		t.Fatalf("elapsed = %v, want >= %v (call returned too fast — should have blocked)", elapsed, minElapsed)
+	}
+	if elapsed > maxElapsed {
+		t.Fatalf("elapsed = %v, want <= %v (call timed out before approval arrived)", elapsed, maxElapsed)
+	}
+
+	t.Logf("wait_timeout blocking test: elapsed=%v, approved state confirmed, resume_token non-empty", elapsed)
 }
 
 // TestHandlerUpdateHandoffOutOfScopeApprovedPathDenied verifies the MCP transport still fails closed for out-of-scope approved-path sessions.
