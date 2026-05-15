@@ -12,7 +12,7 @@ Status legend: `open` / `in-progress` / `fixed`.
 - E2E-5 — open (`till project discover` output missing W2.D7 first-class fields)
 - E2E-6 — open (TUI project view missing W2.D7 first-class fields; project-edit form missing/broken too)
 - E2E-7 — fixed (root cause was `detectFLATLayout` returning a `rm -rf .tillsyn/agents/` remediation message that destroyed legitimate subdir content; replaced with surgical `cleanFLATLayout` that auto-removes only root-level `.md` files and preserves `<group>/` subdir content)
-- E2E-8 — open (`till_auth_request operation=create` ignores `wait_timeout` — orch gets no push notification when dev approves; falls back to dev-tells-me-in-chat /loop-hack pattern)
+- E2E-8 — fixed (commits `ba58ba7` + `49fa802` + `ed5f29d`; threaded `wait_timeout` through handler→adapter→app→`createAuthRequestLive`; added 5 tests covering Approval+Deny+Cancel wake + Pending-timeout + Zero-wait regression + MCP wire-layer integration; schema description on `handler.go:136` updated to enumerate honored ops `create` + `claim`)
 - E2E-9 — open (`.mcp.json` from `till init` invokes the global `till` binary instead of a project-local one — no natural path/auth scoping per dev's design intent; tracked separately in REFINEMENTS.md)
 - E2E-10 — open (`till_action_item operation=create` with `parent_id=<project_id>` fails with confusing "authorize mutation: not found"; omitting parent_id succeeds. Top-level items should accept project_id as parent OR give an actionable error.)
 
@@ -79,7 +79,7 @@ Status legend: `open` / `in-progress` / `fixed`.
 
 ## E2E-8 — `till_auth_request operation=create` does not honor `wait_timeout` (no push to orch on approval)
 
-- **Status:** open
+- **Status:** fixed 2026-05-15
 - **Surfaced:** 2026-05-14 — twice in the same session (both `tillsyn-dev` and `tillsyn` MCP endpoints, post-restart).
 - **Symptom:**
   - Orchestrator calls `till_auth_request operation=create` with `wait_timeout: 15m` (and again with `wait_timeout` omitted on a separate try — same outcome).

@@ -39,6 +39,28 @@ Transitions are recorded by appending a dated status note to the entry, not by r
 
 ---
 
+## 2026-05-15 — E2E-8 — `createAuthRequestLive` baseline-ordering latency-only race (NIT, deferred)
+
+### Context
+E2E-8 (`till_auth_request operation=create` honor `wait_timeout`) shipped at HEAD `ed5f29d` (commits `ba58ba7` + `49fa802` + `ed5f29d`). D1 QA-falsification surfaced a latency-only race window in `createAuthRequestLive` at `internal/app/auth_requests.go:297-313`: the live-wait baseline-sequence subscribe happens AFTER `s.authRequests.CreateAuthRequest` returns (correct — the request ID doesn't exist before), but a publish event firing between persist (~line 274) and baseline capture (~line 298) is theoretically lost. Functional correctness is preserved by the post-deadline `GetAuthRequest` re-read; the only consequence is a full `wait_timeout` delay on that rare race.
+
+### Observation
+Probability is very low in practice — between persist and baseline-capture is a few hundred microseconds, and no external caller has the request ID before create returns. Sibling `claimAuthRequestLive` captures baseline BEFORE the action, avoiding the window entirely, but for create the field doesn't exist pre-persist.
+
+### Proposed fix
+Investigate whether the gateway can return the request ID synchronously BEFORE persist commits (allowing pre-baseline subscribe). If yes, restructure `Service.CreateAuthRequest` to capture baseline immediately after ID mint. If no, accept the latency-only window as designed and document.
+
+### Target drop
+Parking-lot — latency-only, functional correctness preserved, no user-visible impact. Revisit only if a real-world race is observed in dogfood.
+
+### Tags
+`auth`, `live-wait`, `latency`, `parking-lot`
+
+### 2026-05-15 — Shipped state
+E2E-8 entry in `E2E_FIXES.md` flipped to `fixed`. Schema description on `internal/adapters/mcp_rpc/handler.go:136` now enumerates honored ops (`create` + `claim`).
+
+---
+
 ## 2026-05-15 — Phase 4.3 — bundle `--language` CLI flag teardown
 
 ### Context
