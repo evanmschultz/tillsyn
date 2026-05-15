@@ -4076,7 +4076,6 @@ func TestModelProjectIconEmojiSupport(t *testing.T) {
 		p1.HyllaArtifactRef,
 		p1.RepoBareRoot,
 		p1.RepoPrimaryWorktree,
-		p1.Language,
 		p1.BuildTool,
 		p1.DevMcpServerName,
 		domain.ProjectMetadata{Icon: "🚀"},
