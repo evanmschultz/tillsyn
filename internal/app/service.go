@@ -484,9 +484,11 @@ func bakeProjectKindCatalogWithHome(project *domain.Project, homeDir string) err
 // tests pass t.TempDir() to avoid touching the real $HOME.
 //
 // Returns (zero, false, err) if any non-empty group's template load fails.
-// Returns (merged, true, nil) on success. The embedded fallback inside
-// loadProjectTemplateWithHome ensures every group produces a non-zero template
-// even when its HOME file is absent, so ok is always true on nil-error return.
+// Returns (zero, false, nil) when all groups are empty/whitespace-only or
+// when all non-empty groups have no on-disk template at any tier — no embedded
+// fallback fires. Templates are project-tier opt-in only per REFINEMENTS.md
+// 2026-05-14. Returns (merged, true, nil) when at least one group resolved
+// an on-disk template.
 func loadProjectTemplatesForGroups(project *domain.Project, homeDir string) (templates.Template, bool, error) {
 	merged := templates.Template{}
 	hasMerged := false
@@ -494,9 +496,13 @@ func loadProjectTemplatesForGroups(project *domain.Project, homeDir string) (tem
 		if strings.TrimSpace(group) == "" {
 			continue
 		}
-		tpl, _, err := loadProjectTemplateWithHome(project, homeDir, group)
+		tpl, ok, err := loadProjectTemplateWithHome(project, homeDir, group)
 		if err != nil {
 			return templates.Template{}, false, err
+		}
+		if !ok {
+			// No on-disk template for this group; skip — do not merge zero value.
+			continue
 		}
 		if !hasMerged {
 			merged = tpl
@@ -506,14 +512,9 @@ func loadProjectTemplatesForGroups(project *domain.Project, homeDir string) (tem
 		}
 	}
 	if !hasMerged {
-		// All groups were empty or whitespace-only strings. Fall through to
-		// the embedded default for the project's language, consistent with
-		// the single-group path.
-		tpl, err := templates.LoadDefaultTemplateForLanguage(project.Language)
-		if err != nil {
-			return templates.Template{}, false, fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)
-		}
-		return tpl, true, nil
+		// All groups were empty/whitespace-only, or all non-empty groups had no
+		// on-disk template. Return (zero, false, nil) — no embedded fallback.
+		return templates.Template{}, false, nil
 	}
 	return merged, true, nil
 }
@@ -750,7 +751,7 @@ func loadProjectTemplate(project *domain.Project) (templates.Template, bool, err
 	return loadProjectTemplateWithHome(project, homeDir, strings.TrimSpace(project.Language))
 }
 
-// loadProjectTemplateWithHome is the testability seam for the 4-tier template
+// loadProjectTemplateWithHome is the testability seam for the 3-tier template
 // resolution walk. loadProjectTemplate calls it with the real os.UserHomeDir()
 // result and the project's Language (TrimSpace applied). D2's multi-group
 // coordinator calls it per element in project.Metadata.Groups with the same
@@ -761,7 +762,12 @@ func loadProjectTemplate(project *domain.Project) (templates.Template, bool, err
 //  1. <project.RepoBareRoot>/.tillsyn/template.toml
 //  2. <project.RepoPrimaryWorktree>/.tillsyn/template.toml
 //  3. <homeDir>/.tillsyn/templates/<group>.toml (HOME tier — new in D1)
-//  4. Embedded default via templates.LoadDefaultTemplateForLanguage
+//
+// When all on-disk candidates are absent (or no candidates exist because repo
+// paths are empty and the HOME tier was skipped), returns (zero, false, nil).
+// The caller (bakeProjectKindCatalogWithHome) handles ok=false by leaving
+// KindCatalogJSON empty — templates are project-tier opt-in only per
+// REFINEMENTS.md 2026-05-14.
 //
 // HOME tier is skipped when homeDir is empty (os.UserHomeDir() failed or
 // returned whitespace) or when group is empty (empty Language → no meaningful
@@ -801,13 +807,10 @@ func loadProjectTemplateWithHome(project *domain.Project, homeDir, group string)
 		}
 	}
 	// All on-disk candidates absent (or no candidates at all because both
-	// repo-path fields are empty and HOME tier was skipped). Fall through
-	// to the language-aware embedded default per F.1.3.
-	tpl, err := templates.LoadDefaultTemplateForLanguage(project.Language)
-	if err != nil {
-		return templates.Template{}, false, fmt.Errorf("load embedded default template for language %q: %w", project.Language, err)
-	}
-	return tpl, true, nil
+	// repo-path fields are empty and HOME tier was skipped). Return
+	// (zero, false, nil) — no embedded fallback. Templates are project-tier
+	// opt-in only per REFINEMENTS.md 2026-05-14.
+	return templates.Template{}, false, nil
 }
 
 // loadProjectTierTemplateOnly resolves a project's template via the

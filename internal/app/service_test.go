@@ -6436,41 +6436,30 @@ func TestService_ListActionItemsByState(t *testing.T) {
 	})
 }
 
-// TestLoadProjectTemplate_EmbeddedFallback covers Drop 4c.5 droplet F.1.1's
-// core acceptance: when a project's RepoBareRoot AND RepoPrimaryWorktree
-// are both empty, loadProjectTemplate must return ok=true with a parsed
-// embedded template selected by the Language axis (NOT the prior Drop 3.14
-// stub's ok=false). Each row exercises a closed-enum Language value that
-// the embedded resolver supports today.
+// TestLoadProjectTemplate_NoOnDiskTemplate covers the post-REFINEMENTS-2026-05-14
+// contract: when a project has no on-disk template at any tier (project-tier,
+// HOME tier), loadProjectTemplateWithHome returns (zero, false, nil).
+// Templates are project-tier opt-in only — no embedded fallback fires.
 //
-// Acceptance criteria covered:
-//   - #1: signature now accepts *domain.Project (compile-time check via
-//     direct call below).
-//   - #2: empty-path project returns ok=true.
-//   - #3: returned Template round-trips templates.Bake without panic and
-//     SchemaVersion == "v1".
-//   - #4: this is the canonical embedded-fallback test.
-//
-// F.1.1 spec falsification mitigation #3 ("empty-path zero-value
-// collision") is exercised by the whitespace-only row, which trims to
-// empty and routes through the same fallback.
-func TestLoadProjectTemplate_EmbeddedFallback(t *testing.T) {
+// Each row exercises a path variant that previously fell through to the embedded
+// fallback; after the removal, all return ok=false without error.
+func TestLoadProjectTemplate_NoOnDiskTemplate(t *testing.T) {
 	tests := []struct {
 		name    string
 		project domain.Project
 	}{
 		{
-			name:    "zero-value project (Language empty) → generic embedded default",
+			name:    "zero-value project (Language empty) → no template",
 			project: domain.Project{},
 		},
 		{
-			name: "Language=go → go embedded default",
+			name: "Language=go, empty paths → no template",
 			project: domain.Project{
 				Language: "go",
 			},
 		},
 		{
-			name: "whitespace-only RepoBareRoot trims to empty → embedded fallback",
+			name: "whitespace-only RepoBareRoot trims to empty → no template",
 			project: domain.Project{
 				RepoBareRoot:        "   ",
 				RepoPrimaryWorktree: "\t  ",
@@ -6482,26 +6471,16 @@ func TestLoadProjectTemplate_EmbeddedFallback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			project := tc.project
 			// Route through the testability seam with empty homeDir so the
-			// HOME tier is always skipped regardless of the dev's real
-			// ~/.tillsyn/templates/ state (Drop 4c.6.1 W1.D1 hermeticity fix
-			// per W1.D1 BUILD-QA-FALSIFICATION H11).
+			// HOME tier is always skipped.
 			tpl, ok, err := loadProjectTemplateWithHome(&project, "", strings.TrimSpace(project.Language))
 			if err != nil {
 				t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
 			}
-			if !ok {
-				t.Fatalf("loadProjectTemplateWithHome(): ok = false; want true (empty-path fallback per F.1.1)")
+			if ok {
+				t.Fatalf("loadProjectTemplateWithHome(): ok = true; want false (no on-disk template at any tier)")
 			}
-			if tpl.SchemaVersion != templates.SchemaVersionV1 {
-				t.Fatalf("Template.SchemaVersion = %q; want %q", tpl.SchemaVersion, templates.SchemaVersionV1)
-			}
-			// Round-trip Bake to satisfy acceptance criterion #3.
-			catalog := templates.Bake(tpl)
-			if catalog.SchemaVersion != templates.SchemaVersionV1 {
-				t.Fatalf("Bake(tpl).SchemaVersion = %q; want %q", catalog.SchemaVersion, templates.SchemaVersionV1)
-			}
-			if len(catalog.Kinds) == 0 {
-				t.Fatalf("Bake(tpl).Kinds is empty; embedded default must populate the closed kind catalog")
+			if tpl.SchemaVersion != "" {
+				t.Fatalf("loadProjectTemplateWithHome(): tpl.SchemaVersion = %q; want \"\" (zero-value Template when ok=false)", tpl.SchemaVersion)
 			}
 		})
 	}
@@ -6634,10 +6613,11 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 			},
 		},
 		{
-			// AC #2 + #5 (partial): when the HOME file is absent the walk
-			// falls through to the embedded default. homeDir is a real
-			// tempdir but contains no .tillsyn/templates/go.toml.
-			name: "HOME file absent falls through to embedded",
+			// Post-REFINEMENTS-2026-05-14: when the HOME file is absent and no
+			// repo-path candidates exist, returns (zero, false, nil) — no
+			// embedded fallback. homeDir is a real tempdir but contains no
+			// .tillsyn/templates/go.toml.
+			name: "HOME file absent returns no template",
 			fn: func(t *testing.T) {
 				fakeHome := t.TempDir() // real dir; no .tillsyn/templates/ inside
 				project := domain.Project{Language: "go"}
@@ -6645,14 +6625,11 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 				if err != nil {
 					t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
 				}
-				if !ok {
-					t.Fatal("loadProjectTemplateWithHome(): ok = false; want true (embedded fallback)")
+				if ok {
+					t.Fatal("loadProjectTemplateWithHome(): ok = true; want false (no on-disk template at any tier)")
 				}
-				if tpl.Tillsyn.MaxContextBundleChars == homeMarker {
-					t.Fatalf("Tillsyn.MaxContextBundleChars = %d; HOME tier must not be consulted when file absent", homeMarker)
-				}
-				if tpl.SchemaVersion != templates.SchemaVersionV1 {
-					t.Fatalf("Template.SchemaVersion = %q; want %q (embedded default loaded)", tpl.SchemaVersion, templates.SchemaVersionV1)
+				if tpl.SchemaVersion != "" {
+					t.Fatalf("loadProjectTemplateWithHome(): tpl.SchemaVersion = %q; want \"\" (zero-value when ok=false)", tpl.SchemaVersion)
 				}
 			},
 		},
@@ -6680,10 +6657,11 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 			},
 		},
 		{
-			// AC #2 + empty worktrees: both RepoBareRoot and
+			// Post-REFINEMENTS-2026-05-14: both RepoBareRoot and
 			// RepoPrimaryWorktree are empty, HOME file absent. Walk has no
-			// on-disk candidates for any tier and falls through to embedded.
-			name: "empty worktree paths and no HOME file falls through to embedded",
+			// on-disk candidates for any tier; returns (zero, false, nil) —
+			// no embedded fallback.
+			name: "empty worktree paths and no HOME file returns no template",
 			fn: func(t *testing.T) {
 				fakeHome := t.TempDir() // no .tillsyn/templates/ inside
 				project := domain.Project{Language: "go"}
@@ -6691,25 +6669,19 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 				if err != nil {
 					t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
 				}
-				if !ok {
-					t.Fatal("loadProjectTemplateWithHome(): ok = false; want true (embedded fallback)")
+				if ok {
+					t.Fatal("loadProjectTemplateWithHome(): ok = true; want false (no on-disk template at any tier)")
 				}
-				if tpl.SchemaVersion != templates.SchemaVersionV1 {
-					t.Fatalf("Template.SchemaVersion = %q; want %q (embedded default loaded)", tpl.SchemaVersion, templates.SchemaVersionV1)
-				}
-				if tpl.Tillsyn.MaxContextBundleChars != 0 {
-					t.Fatalf("Tillsyn.MaxContextBundleChars = %d; want 0 (embedded default has no [tillsyn] table)", tpl.Tillsyn.MaxContextBundleChars)
+				if tpl.SchemaVersion != "" {
+					t.Fatalf("loadProjectTemplateWithHome(): tpl.SchemaVersion = %q; want \"\" (zero-value when ok=false)", tpl.SchemaVersion)
 				}
 			},
 		},
 		{
-			// AC #2 / NIT #1 from W1.D1 BUILD-QA-PROOF: empty group ("") causes
-			// the HOME-tier candidate construction to be skipped
-			// (loadProjectTemplateWithHome's "homeDir != "" && group != ""`
-			// guard at service.go:584). A populated fakeHome is passed so the
-			// guard is exercised by the group condition, not the homeDir
-			// condition. The embedded default must win.
-			name: "empty-group skip — HOME tier not constructed",
+			// Post-REFINEMENTS-2026-05-14: empty group ("") causes the HOME-tier
+			// candidate construction to be skipped. No repo-path candidates
+			// exist either. Returns (zero, false, nil) — no embedded fallback.
+			name: "empty-group skip — HOME tier not constructed, no template",
 			fn: func(t *testing.T) {
 				fakeHome := t.TempDir() // real dir; guard fires on empty group, not on homeDir
 				project := domain.Project{Language: "go"}
@@ -6717,31 +6689,30 @@ func TestLoadProjectTemplate_HomeTier(t *testing.T) {
 				if err != nil {
 					t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
 				}
-				if !ok {
-					t.Fatal("loadProjectTemplateWithHome(): ok = false; want true (embedded fallback when group empty)")
+				if ok {
+					t.Fatal("loadProjectTemplateWithHome(): ok = true; want false (no on-disk template, group empty)")
 				}
-				if tpl.SchemaVersion != templates.SchemaVersionV1 {
-					t.Fatalf("Template.SchemaVersion = %q; want %q (embedded default loaded)", tpl.SchemaVersion, templates.SchemaVersionV1)
+				if tpl.SchemaVersion != "" {
+					t.Fatalf("loadProjectTemplateWithHome(): tpl.SchemaVersion = %q; want \"\" (zero-value when ok=false)", tpl.SchemaVersion)
 				}
 			},
 		},
 		{
-			// AC #5 / NIT #2 from W1.D1 BUILD-QA-PROOF: empty homeDir causes
-			// the HOME-tier candidate construction to be skipped. The walk
-			// falls through to the embedded default. Empty homeDir simulates
-			// os.UserHomeDir() returning an error or whitespace-only path.
-			name: "empty-homeDir skip — HOME tier not constructed",
+			// Post-REFINEMENTS-2026-05-14: empty homeDir causes the HOME-tier
+			// candidate construction to be skipped. No repo-path candidates
+			// exist. Returns (zero, false, nil) — no embedded fallback.
+			name: "empty-homeDir skip — HOME tier not constructed, no template",
 			fn: func(t *testing.T) {
 				project := domain.Project{Language: "go"}
 				tpl, ok, err := loadProjectTemplateWithHome(&project, "", "go")
 				if err != nil {
 					t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
 				}
-				if !ok {
-					t.Fatal("loadProjectTemplateWithHome(): ok = false; want true (embedded fallback when homeDir empty)")
+				if ok {
+					t.Fatal("loadProjectTemplateWithHome(): ok = true; want false (no on-disk template, homeDir empty)")
 				}
-				if tpl.SchemaVersion != templates.SchemaVersionV1 {
-					t.Fatalf("Template.SchemaVersion = %q; want %q (embedded default loaded)", tpl.SchemaVersion, templates.SchemaVersionV1)
+				if tpl.SchemaVersion != "" {
+					t.Fatalf("loadProjectTemplateWithHome(): tpl.SchemaVersion = %q; want \"\" (zero-value when ok=false)", tpl.SchemaVersion)
 				}
 			},
 		},
@@ -6860,14 +6831,12 @@ func TestLoadProjectTemplate_BareRootSyntaxErrorPropagates(t *testing.T) {
 	}
 }
 
-// TestLoadProjectTemplate_BothAbsentEmbedded covers Drop 4c.5 droplet
-// F.1.2 acceptance criterion #1.3: when both repo-path fields are
-// non-empty but neither carries an on-disk .tillsyn/template.toml, the
-// walk falls through to the embedded default. Distinct from
-// TestLoadProjectTemplate_EmbeddedFallback (which exercises the
-// empty-string path branch); here both paths point to real
-// directories that simply don't contain the candidate file.
-func TestLoadProjectTemplate_BothAbsentEmbedded(t *testing.T) {
+// TestLoadProjectTemplate_BothAbsentNoTemplate covers the
+// post-REFINEMENTS-2026-05-14 contract: when both repo-path fields are
+// non-empty but neither carries an on-disk .tillsyn/template.toml, and the
+// HOME tier is skipped, loadProjectTemplateWithHome returns (zero, false, nil)
+// — no embedded fallback. Templates are project-tier opt-in only.
+func TestLoadProjectTemplate_BothAbsentNoTemplate(t *testing.T) {
 	bareRoot := t.TempDir()
 	primaryWorktree := t.TempDir()
 	project := domain.Project{
@@ -6876,21 +6845,16 @@ func TestLoadProjectTemplate_BothAbsentEmbedded(t *testing.T) {
 		Language:            "go",
 	}
 	// Route through the testability seam with empty homeDir so the HOME tier
-	// is always skipped regardless of the dev's real ~/.tillsyn/templates/
-	// state (Drop 4c.6.1 W1.D1 hermeticity fix per W1.D1
-	// BUILD-QA-FALSIFICATION H11).
+	// is always skipped.
 	tpl, ok, err := loadProjectTemplateWithHome(&project, "", "go")
 	if err != nil {
 		t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
 	}
-	if !ok {
-		t.Fatalf("loadProjectTemplateWithHome(): ok = false; want true (embedded fallback when both candidates absent)")
+	if ok {
+		t.Fatalf("loadProjectTemplateWithHome(): ok = true; want false (no on-disk template at any tier)")
 	}
-	if tpl.SchemaVersion != templates.SchemaVersionV1 {
-		t.Fatalf("Template.SchemaVersion = %q; want %q (embedded default loaded)", tpl.SchemaVersion, templates.SchemaVersionV1)
-	}
-	if tpl.Tillsyn.MaxContextBundleChars != 0 {
-		t.Fatalf("Tillsyn.MaxContextBundleChars = %d; want 0 (embedded till-go.toml ships without [tillsyn] table); marker collision suggests an on-disk fixture leaked into the walk", tpl.Tillsyn.MaxContextBundleChars)
+	if tpl.SchemaVersion != "" {
+		t.Fatalf("loadProjectTemplateWithHome(): tpl.SchemaVersion = %q; want \"\" (zero-value when ok=false)", tpl.SchemaVersion)
 	}
 }
 
@@ -6904,66 +6868,50 @@ func TestLoadProjectTemplate_BothAbsentEmbedded(t *testing.T) {
 //
 // Test technique: t.Chdir into a tempdir that contains a
 // `.tillsyn/template.toml` with a unique marker. If the implementation
-// accidentally opened the relative path, the test would observe the
-// marker. Empty-path projects must instead load the embedded default
-// (marker absent → MaxContextBundleChars == 0).
+// accidentally opened the relative path, the test would return ok=true
+// (the file exists in CWD). Post-REFINEMENTS-2026-05-14, empty-path
+// projects return (zero, false, nil) — no embedded fallback.
 func TestLoadProjectTemplate_RelativePathSafety(t *testing.T) {
 	const cwdMarker = 9999
 	cwdTrap := t.TempDir()
 	writeProjectTemplateFixture(t, cwdTrap, withTillsynMarker(mustReadDefaultGoTOML(t), cwdMarker))
 	t.Chdir(cwdTrap)
 	// Empty RepoBareRoot AND empty RepoPrimaryWorktree — must skip both
-	// candidate lookups (no relative-path os.Open) and fall through to
-	// the embedded language-default.
-	//
-	// Route through the testability seam with empty homeDir so the HOME tier
-	// is always skipped regardless of the dev's real ~/.tillsyn/templates/
-	// state (Drop 4c.6.1 W1.D1 hermeticity fix per W1.D1
-	// BUILD-QA-FALSIFICATION H11).
+	// candidate lookups (no relative-path os.Open) and return (zero, false, nil).
 	project := domain.Project{Language: "go"}
 	tpl, ok, err := loadProjectTemplateWithHome(&project, "", "go")
 	if err != nil {
 		t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v", err)
 	}
-	if !ok {
-		t.Fatalf("loadProjectTemplateWithHome(): ok = false; want true (empty paths fall through to embedded)")
+	if ok {
+		// If ok=true, the CWD-relative file was (incorrectly) opened.
+		t.Fatalf("loadProjectTemplateWithHome(): ok = true; want false (empty paths must NOT open CWD-relative .tillsyn/template.toml; cwd trap marker=%d, got MaxContextBundleChars=%d)",
+			cwdMarker, tpl.Tillsyn.MaxContextBundleChars)
 	}
-	if tpl.Tillsyn.MaxContextBundleChars == cwdMarker {
-		t.Fatalf("loadProjectTemplateWithHome(): observed cwd-relative marker %d; empty RepoBareRoot must NOT trigger os.Open(\".tillsyn/template.toml\") relative to CWD", cwdMarker)
-	}
-	if tpl.SchemaVersion != templates.SchemaVersionV1 {
-		t.Fatalf("Template.SchemaVersion = %q; want %q (embedded default loaded, not cwd trap)", tpl.SchemaVersion, templates.SchemaVersionV1)
+	if tpl.SchemaVersion != "" {
+		t.Fatalf("loadProjectTemplateWithHome(): tpl.SchemaVersion = %q; want \"\" (zero-value when ok=false)", tpl.SchemaVersion)
 	}
 }
 
-// TestLoadProjectTemplate_UnsupportedLanguagePropagatesError covers Drop
-// 4c.5 droplet F.1.1's spec falsification mitigation #2: parse errors
-// from templates.LoadDefaultTemplateForLanguage propagate as
-// (zero, false, err) rather than silently falling through to the empty-
-// catalog branch. Uses "rust" (outside the closed Language enum) as the
-// canonical unsupported-language axis. "fe" was used in the original test
-// but Drop 4c.6.1 W4.D2 resolved the Q1 deferral and shipped till-fe.toml,
-// so "fe" is now a supported language; "rust" remains unsupported.
-func TestLoadProjectTemplate_UnsupportedLanguagePropagatesError(t *testing.T) {
+// TestLoadProjectTemplate_NoOnDiskTemplateAnyLanguage covers the
+// post-REFINEMENTS-2026-05-14 contract: language value is irrelevant when
+// no on-disk template exists — loadProjectTemplateWithHome returns
+// (zero, false, nil) regardless of Language. The embedded language resolver
+// is no longer consulted; unsupported language values like "rust" are
+// silently accepted without error.
+func TestLoadProjectTemplate_NoOnDiskTemplateAnyLanguage(t *testing.T) {
 	// Route through the testability seam with empty homeDir so the HOME tier
-	// is always skipped regardless of the dev's real ~/.tillsyn/templates/
-	// state (Drop 4c.6.1 W1.D1 hermeticity fix per W1.D1
-	// BUILD-QA-FALSIFICATION H11). With empty homeDir the walk falls through
-	// to LoadDefaultTemplateForLanguage("rust"), which returns
-	// ErrLanguageNotSupported — the assertion under test.
+	// is always skipped.
 	project := domain.Project{Language: "rust"}
 	tpl, ok, err := loadProjectTemplateWithHome(&project, "", "rust")
-	if err == nil {
-		t.Fatalf("loadProjectTemplateWithHome(): err = nil; want wrapped ErrLanguageNotSupported")
-	}
-	if !errors.Is(err, templates.ErrLanguageNotSupported) {
-		t.Fatalf("loadProjectTemplateWithHome(): err = %v; want errors.Is(ErrLanguageNotSupported)", err)
+	if err != nil {
+		t.Fatalf("loadProjectTemplateWithHome(): unexpected error = %v; want nil (no embedded resolver called)", err)
 	}
 	if ok {
-		t.Fatalf("loadProjectTemplateWithHome(): ok = true on error; want false")
+		t.Fatalf("loadProjectTemplateWithHome(): ok = true; want false (no on-disk template at any tier)")
 	}
 	if tpl.SchemaVersion != "" {
-		t.Fatalf("loadProjectTemplateWithHome(): tpl = %+v; want zero-value Template on error", tpl)
+		t.Fatalf("loadProjectTemplateWithHome(): tpl = %+v; want zero-value Template when ok=false", tpl)
 	}
 }
 
@@ -7041,10 +6989,11 @@ func TestBakeProjectKindCatalog_MultiGroup(t *testing.T) {
 			},
 		},
 		{
-			// AC3 (b): 2 groups, one HOME file absent. Absent group falls
-			// through to embedded default (no error). Both groups produce a
-			// template; merge proceeds normally.
-			name: "one_group_absent_uses_embedded_fallback",
+			// Post-REFINEMENTS-2026-05-14: 2 groups, one HOME file absent.
+			// Absent group is skipped (no embedded fallback). Present group
+			// contributes its template; the catalog is populated from the
+			// present group only.
+			name: "one_group_absent_skipped_present_group_contributes",
 			fn: func(t *testing.T) {
 				fakeHome := t.TempDir()
 				// Only "go" has a HOME file; "fe" is absent.
@@ -7058,7 +7007,7 @@ func TestBakeProjectKindCatalog_MultiGroup(t *testing.T) {
 					t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v (absent HOME file must not error)", err)
 				}
 				if len(project.KindCatalogJSON) == 0 {
-					t.Fatal("KindCatalogJSON is empty; absent-group fallback to embedded must still produce a catalog")
+					t.Fatal("KindCatalogJSON is empty; present go group must contribute a catalog")
 				}
 				var catalog templates.KindCatalog
 				if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
@@ -7149,43 +7098,27 @@ func TestBakeProjectKindCatalog_MultiGroup(t *testing.T) {
 	}
 }
 
-// TestBakeProjectKindCatalog_EmbeddedFallbackPopulatesCatalog covers Drop
-// 4c.5 droplet F.1.1's downstream effect at the bake-helper boundary:
-// post-F.1.1 a project with empty repo paths receives a non-empty
-// KindCatalogJSON (the change vs Drop 3.14, where every project got
-// length-zero JSON). Round-trip-decodes the JSON to assert it is a valid
-// catalog envelope rather than just a non-empty byte slice. F.1.1 spec
-// falsification mitigation #1 (release-note discoverability) is
-// exercised here: the test name names the change explicitly.
-func TestBakeProjectKindCatalog_EmbeddedFallbackPopulatesCatalog(t *testing.T) {
+// TestBakeProjectKindCatalog_NoTemplateEmptyCatalog covers the
+// post-REFINEMENTS-2026-05-14 contract at the bake-helper boundary:
+// a project with empty repo paths and no HOME-tier template receives
+// empty KindCatalogJSON (ok=false from loadProjectTemplate → bake skipped).
+// Templates are project-tier opt-in only.
+func TestBakeProjectKindCatalog_NoTemplateEmptyCatalog(t *testing.T) {
 	project := domain.Project{Language: "go"}
 	if err := bakeProjectKindCatalogWithHome(&project, ""); err != nil {
 		t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v", err)
 	}
-	if len(project.KindCatalogJSON) == 0 {
-		t.Fatalf("project.KindCatalogJSON is empty; F.1.1 must populate from embedded default for empty-path projects")
-	}
-	var catalog templates.KindCatalog
-	if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
-		t.Fatalf("json.Unmarshal(KindCatalogJSON): unexpected error = %v", err)
-	}
-	if catalog.SchemaVersion != templates.SchemaVersionV1 {
-		t.Fatalf("decoded catalog.SchemaVersion = %q; want %q", catalog.SchemaVersion, templates.SchemaVersionV1)
-	}
-	if len(catalog.Kinds) == 0 {
-		t.Fatalf("decoded catalog.Kinds is empty; embedded default must populate the closed kind catalog")
+	if len(project.KindCatalogJSON) != 0 {
+		t.Fatalf("project.KindCatalogJSON is non-empty (%d bytes); want empty (no on-disk template → catalog not baked)", len(project.KindCatalogJSON))
 	}
 }
 
-// TestBakeProjectKindCatalog_NonEmptyPathFallsThroughToEmbedded mirrors
-// the loadProjectTemplate non-empty-path test from the bake-helper
-// side post-F.1.2: when the repo paths are non-empty but neither
-// carries an on-disk .tillsyn/template.toml (real directories
-// resolved by t.TempDir() but empty of the candidate file), the walk
-// falls through to the embedded language-default and the catalog is
-// populated. Pre-F.1.2 this branch silently produced an empty catalog;
-// post-F.1.2 silent-empty is no longer reachable through this path.
-func TestBakeProjectKindCatalog_NonEmptyPathFallsThroughToEmbedded(t *testing.T) {
+// TestBakeProjectKindCatalog_NonEmptyPathNoTemplateEmptyCatalog covers the
+// post-REFINEMENTS-2026-05-14 contract: when repo paths are non-empty but
+// neither carries an on-disk .tillsyn/template.toml, bakeProjectKindCatalog
+// leaves KindCatalogJSON empty — no embedded fallback. Templates are
+// project-tier opt-in only.
+func TestBakeProjectKindCatalog_NonEmptyPathNoTemplateEmptyCatalog(t *testing.T) {
 	project := domain.Project{
 		RepoBareRoot:        t.TempDir(),
 		RepoPrimaryWorktree: t.TempDir(),
@@ -7194,18 +7127,8 @@ func TestBakeProjectKindCatalog_NonEmptyPathFallsThroughToEmbedded(t *testing.T)
 	if err := bakeProjectKindCatalogWithHome(&project, ""); err != nil {
 		t.Fatalf("bakeProjectKindCatalogWithHome(): unexpected error = %v", err)
 	}
-	if len(project.KindCatalogJSON) == 0 {
-		t.Fatalf("project.KindCatalogJSON is empty; F.1.2 walk must fall through to embedded default when no on-disk candidate matches")
-	}
-	var catalog templates.KindCatalog
-	if err := json.Unmarshal(project.KindCatalogJSON, &catalog); err != nil {
-		t.Fatalf("json.Unmarshal(KindCatalogJSON): unexpected error = %v", err)
-	}
-	if catalog.SchemaVersion != templates.SchemaVersionV1 {
-		t.Fatalf("decoded catalog.SchemaVersion = %q; want %q", catalog.SchemaVersion, templates.SchemaVersionV1)
-	}
-	if len(catalog.Kinds) == 0 {
-		t.Fatalf("decoded catalog.Kinds is empty; embedded fallback must populate the closed kind catalog")
+	if len(project.KindCatalogJSON) != 0 {
+		t.Fatalf("project.KindCatalogJSON is non-empty (%d bytes); want empty (no on-disk template → catalog not baked)", len(project.KindCatalogJSON))
 	}
 }
 
