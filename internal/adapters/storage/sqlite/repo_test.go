@@ -857,9 +857,9 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	}
 }
 
-// TestRepository_ProjectFirstClassFieldsRoundTrip verifies that the six
+// TestRepository_ProjectFirstClassFieldsRoundTrip verifies that the five
 // Drop 4a L4 first-class project-node fields (HyllaArtifactRef,
-// RepoBareRoot, RepoPrimaryWorktree, Language, BuildTool,
+// RepoBareRoot, RepoPrimaryWorktree, BuildTool,
 // DevMcpServerName) survive INSERT → SELECT (single + list paths) and
 // UPDATE round-trips through the SQLite repository.
 func TestRepository_ProjectFirstClassFieldsRoundTrip(t *testing.T) {
@@ -880,7 +880,6 @@ func TestRepository_ProjectFirstClassFieldsRoundTrip(t *testing.T) {
 		HyllaArtifactRef:    "github.com/evanmschultz/tillsyn@main",
 		RepoBareRoot:        "/Users/evan/code/tillsyn",
 		RepoPrimaryWorktree: "/Users/evan/code/tillsyn/main",
-		Language:            "go",
 		BuildTool:           "mage",
 		DevMcpServerName:    "tillsyn-dev",
 	}, now)
@@ -904,7 +903,7 @@ func TestRepository_ProjectFirstClassFieldsRoundTrip(t *testing.T) {
 	if loaded.RepoPrimaryWorktree != "/Users/evan/code/tillsyn/main" {
 		t.Fatalf("RepoPrimaryWorktree = %q", loaded.RepoPrimaryWorktree)
 	}
-	if loaded.Language != "go" || loaded.BuildTool != "mage" || loaded.DevMcpServerName != "tillsyn-dev" {
+	if loaded.BuildTool != "mage" || loaded.DevMcpServerName != "tillsyn-dev" {
 		t.Fatalf("scalar fields not persisted: %+v", loaded)
 	}
 
@@ -915,7 +914,7 @@ func TestRepository_ProjectFirstClassFieldsRoundTrip(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("ListProjects len = %d, want 1", len(listed))
 	}
-	if listed[0].HyllaArtifactRef != "github.com/evanmschultz/tillsyn@main" || listed[0].Language != "go" {
+	if listed[0].HyllaArtifactRef != "github.com/evanmschultz/tillsyn@main" {
 		t.Fatalf("ListProjects field decode missed: %+v", listed[0])
 	}
 
@@ -923,7 +922,6 @@ func TestRepository_ProjectFirstClassFieldsRoundTrip(t *testing.T) {
 	loaded.HyllaArtifactRef = "github.com/x/y@v1"
 	loaded.RepoBareRoot = "/abs/x"
 	loaded.RepoPrimaryWorktree = "/abs/x/main"
-	loaded.Language = "fe"
 	loaded.BuildTool = "npm"
 	loaded.DevMcpServerName = "x-dev"
 	if err := repo.UpdateProject(ctx, loaded); err != nil {
@@ -934,7 +932,7 @@ func TestRepository_ProjectFirstClassFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("GetProject(reload) error = %v", err)
 	}
 	if reloaded.HyllaArtifactRef != "github.com/x/y@v1" || reloaded.RepoBareRoot != "/abs/x" ||
-		reloaded.RepoPrimaryWorktree != "/abs/x/main" || reloaded.Language != "fe" ||
+		reloaded.RepoPrimaryWorktree != "/abs/x/main" ||
 		reloaded.BuildTool != "npm" || reloaded.DevMcpServerName != "x-dev" {
 		t.Fatalf("UpdateProject field round-trip failed: %+v", reloaded)
 	}

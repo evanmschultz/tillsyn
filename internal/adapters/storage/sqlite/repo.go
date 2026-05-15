@@ -153,7 +153,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 			hylla_artifact_ref TEXT NOT NULL DEFAULT '',
 			repo_bare_root TEXT NOT NULL DEFAULT '',
 			repo_primary_worktree TEXT NOT NULL DEFAULT '',
-			language TEXT NOT NULL DEFAULT '',
 			build_tool TEXT NOT NULL DEFAULT '',
 			dev_mcp_server_name TEXT NOT NULL DEFAULT '',
 			kind_catalog_json TEXT NOT NULL DEFAULT '',
@@ -507,7 +506,6 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`ALTER TABLE projects ADD COLUMN hylla_artifact_ref TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE projects ADD COLUMN repo_bare_root TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE projects ADD COLUMN repo_primary_worktree TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE projects ADD COLUMN language TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE projects ADD COLUMN build_tool TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE projects ADD COLUMN dev_mcp_server_name TEXT NOT NULL DEFAULT ''`,
 		// Drop 4a droplet 4a.23: kind_catalog_json persists the
@@ -868,14 +866,14 @@ func (r *Repository) CreateProject(ctx context.Context, p domain.Project) error 
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO projects(
 			id, slug, name, description, metadata_json,
-			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, language, build_tool, dev_mcp_server_name,
+			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, build_tool, dev_mcp_server_name,
 			kind_catalog_json,
 			created_at, updated_at, archived_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		p.ID, p.Slug, p.Name, p.Description, string(metaJSON),
-		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, "", p.BuildTool, p.DevMcpServerName,
+		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, p.BuildTool, p.DevMcpServerName,
 		string(p.KindCatalogJSON),
 		ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt),
 	)
@@ -891,13 +889,13 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE projects
 		SET slug = ?, name = ?, description = ?, metadata_json = ?,
-			hylla_artifact_ref = ?, repo_bare_root = ?, repo_primary_worktree = ?, language = ?, build_tool = ?, dev_mcp_server_name = ?,
+			hylla_artifact_ref = ?, repo_bare_root = ?, repo_primary_worktree = ?, build_tool = ?, dev_mcp_server_name = ?,
 			kind_catalog_json = ?,
 			updated_at = ?, archived_at = ?
 		WHERE id = ?
 	`,
 		p.Slug, p.Name, p.Description, string(metaJSON),
-		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, "", p.BuildTool, p.DevMcpServerName,
+		p.HyllaArtifactRef, p.RepoBareRoot, p.RepoPrimaryWorktree, p.BuildTool, p.DevMcpServerName,
 		string(p.KindCatalogJSON),
 		ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID,
 	)
@@ -923,7 +921,7 @@ func (r *Repository) DeleteProject(ctx context.Context, id string) error {
 func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, slug, name, description, metadata_json,
-			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, language, build_tool, dev_mcp_server_name,
+			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, build_tool, dev_mcp_server_name,
 			kind_catalog_json,
 			created_at, updated_at, archived_at
 		FROM projects
@@ -940,7 +938,7 @@ func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project,
 func (r *Repository) GetProjectBySlug(ctx context.Context, slug string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, slug, name, description, metadata_json,
-			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, language, build_tool, dev_mcp_server_name,
+			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, build_tool, dev_mcp_server_name,
 			kind_catalog_json,
 			created_at, updated_at, archived_at
 		FROM projects
@@ -953,7 +951,7 @@ func (r *Repository) GetProjectBySlug(ctx context.Context, slug string) (domain.
 func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error) {
 	query := `
 		SELECT id, slug, name, description, metadata_json,
-			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, language, build_tool, dev_mcp_server_name,
+			hylla_artifact_ref, repo_bare_root, repo_primary_worktree, build_tool, dev_mcp_server_name,
 			kind_catalog_json,
 			created_at, updated_at, archived_at
 		FROM projects
@@ -2878,11 +2876,10 @@ func scanProject(s scanner) (domain.Project, error) {
 		createdRaw     string
 		updatedRaw     string
 		archived       sql.NullString
-		_language      string // Phase 4.2: project.Language removed from domain; column kept for schema compat
 	)
 	if err := s.Scan(
 		&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw,
-		&p.HyllaArtifactRef, &p.RepoBareRoot, &p.RepoPrimaryWorktree, &_language, &p.BuildTool, &p.DevMcpServerName,
+		&p.HyllaArtifactRef, &p.RepoBareRoot, &p.RepoPrimaryWorktree, &p.BuildTool, &p.DevMcpServerName,
 		&kindCatalogRaw,
 		&createdRaw, &updatedRaw, &archived,
 	); err != nil {
