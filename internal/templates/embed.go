@@ -146,6 +146,21 @@ var DefaultTemplateFS embed.FS
 // the gap rather than silently returning the Go default.
 var ErrLanguageNotSupported = errors.New("template language not supported")
 
+// ErrBuiltinNotFound is the closed sentinel returned by LoadBuiltinTemplate
+// when the caller-supplied name is outside the closed builtin-name list
+// returned by BuiltinTemplateNames (currently "till-fe", "till-gen",
+// "till-go"). Callers programmatically distinguish "no builtin by that name"
+// from a TOML parse error or embed.FS open failure via
+// `errors.Is(err, ErrBuiltinNotFound)`. The wrapped error always includes
+// the offending name verbatim so CLI / MCP surfaces can name the input.
+//
+// Closed-list drift guard: when a future drop ships a new builtin (e.g.
+// `till-rust`), the new name MUST be wired into LoadBuiltinTemplate's switch
+// AND shipped as a matching `builtin/till-<lang>.toml` in the embed.FS AND
+// returned by BuiltinTemplateNames. The sentinel exists so unknown names
+// fail loud rather than silently falling through.
+var ErrBuiltinNotFound = errors.New("builtin template not found")
+
 // LoadDefaultTemplate parses and validates the language-AGNOSTIC builtin
 // embedded at `builtin/till-gen.toml` (rebadged from `default-generic.toml`
 // in Drop 4c.6 W5.D2 alongside the W5.D1 + F.2.1 dual-history).
@@ -274,6 +289,55 @@ func LoadDefaultTemplateForLanguage(lang string) (Template, error) {
 // (`till-fe` < `till-gen` < `till-go`).
 func BuiltinTemplateNames() []string {
 	return []string{"till-fe", "till-gen", "till-go"}
+}
+
+// LoadBuiltinTemplate resolves a builtin template by its canonical name
+// (the name-axis identifier, not the language-axis value) and returns the
+// parsed + validated Template. The accepted closed list mirrors
+// BuiltinTemplateNames() exactly:
+//
+//   - "till-go"  → loads builtin/till-go.toml (Go-flavored full catalog).
+//   - "till-gen" → loads builtin/till-gen.toml (language-agnostic generic).
+//   - "till-fe"  → loads builtin/till-fe.toml (FE / Wails catalog, shipped
+//     in Drop 4c.6.1 W4.D2).
+//
+// For any other name, returns (Template{}, err) wrapping ErrBuiltinNotFound
+// with the offending name in the message, e.g.:
+//
+//	LoadBuiltinTemplate("rust"): builtin template not found
+//
+// Equivalence guarantee: LoadBuiltinTemplate("till-go") returns the same
+// Template as LoadDefaultTemplateForLanguage("go"), and likewise for the
+// other two names. The two entry points resolve to the same embedded TOML
+// files — the name-axis and language-axis are parallel routes to the same
+// content.
+//
+// Closed-list drift guard: when BuiltinTemplateNames() is extended (e.g. by
+// a future "till-rust" entry), the switch below and the //go:embed directive
+// on DefaultTemplateFS must extend in the same drop. The sentinel exists so
+// unknown names fail loud rather than silently returning a default.
+//
+// Pure function: no I/O beyond the embed.FS open + TOML parse, no global
+// mutation. Safe to call from any goroutine.
+func LoadBuiltinTemplate(name string) (Template, error) {
+	var path string
+	switch name {
+	case "till-go":
+		path = "builtin/till-go.toml"
+	case "till-gen":
+		path = "builtin/till-gen.toml"
+	case "till-fe":
+		path = "builtin/till-fe.toml"
+	default:
+		return Template{}, fmt.Errorf("LoadBuiltinTemplate(%q): %w", name, ErrBuiltinNotFound)
+	}
+
+	f, err := DefaultTemplateFS.Open(path)
+	if err != nil {
+		return Template{}, fmt.Errorf("open embedded %q: %w", path, err)
+	}
+	defer f.Close()
+	return Load(f)
 }
 
 // MarshalTOML serializes a Template back to canonical TOML bytes via

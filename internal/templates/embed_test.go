@@ -1059,6 +1059,96 @@ func TestLoadDefaultTemplateForLanguage_UnknownRejected(t *testing.T) {
 	}
 }
 
+// TestLoadBuiltinTemplate_TillGo asserts that LoadBuiltinTemplate("till-go")
+// returns a Template deep-equal to LoadDefaultTemplateForLanguage("go").
+// This pins the name-axis → language-axis equivalence for the Go builtin:
+// the two entry points must resolve to the same embedded TOML, so any
+// divergence in path wiring surfaces here immediately.
+func TestLoadBuiltinTemplate_TillGo(t *testing.T) {
+	t.Parallel()
+
+	got, err := LoadBuiltinTemplate("till-go")
+	if err != nil {
+		t.Fatalf("LoadBuiltinTemplate(\"till-go\"): unexpected error: %v", err)
+	}
+
+	want, err := LoadDefaultTemplateForLanguage("go")
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\"): unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadBuiltinTemplate(\"till-go\") != LoadDefaultTemplateForLanguage(\"go\"); name→language path wiring diverged")
+	}
+}
+
+// TestLoadBuiltinTemplate_TillGen asserts that LoadBuiltinTemplate("till-gen")
+// returns a Template deep-equal to LoadDefaultTemplateForLanguage("") (the
+// language-agnostic generic template). Pins the name-axis → language-axis
+// equivalence for the generic builtin.
+func TestLoadBuiltinTemplate_TillGen(t *testing.T) {
+	t.Parallel()
+
+	got, err := LoadBuiltinTemplate("till-gen")
+	if err != nil {
+		t.Fatalf("LoadBuiltinTemplate(\"till-gen\"): unexpected error: %v", err)
+	}
+
+	want, err := LoadDefaultTemplateForLanguage("")
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"\"): unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadBuiltinTemplate(\"till-gen\") != LoadDefaultTemplateForLanguage(\"\"); name→language path wiring diverged")
+	}
+}
+
+// TestLoadBuiltinTemplate_TillFE asserts that LoadBuiltinTemplate("till-fe")
+// returns a Template deep-equal to LoadDefaultTemplateForLanguage("fe").
+// Pins the name-axis → language-axis equivalence for the FE builtin (shipped
+// in Drop 4c.6.1 W4.D2).
+func TestLoadBuiltinTemplate_TillFE(t *testing.T) {
+	t.Parallel()
+
+	got, err := LoadBuiltinTemplate("till-fe")
+	if err != nil {
+		t.Fatalf("LoadBuiltinTemplate(\"till-fe\"): unexpected error: %v", err)
+	}
+
+	want, err := LoadDefaultTemplateForLanguage("fe")
+	if err != nil {
+		t.Fatalf("LoadDefaultTemplateForLanguage(\"fe\"): unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadBuiltinTemplate(\"till-fe\") != LoadDefaultTemplateForLanguage(\"fe\"); name→language path wiring diverged")
+	}
+}
+
+// TestLoadBuiltinTemplate_UnknownRejected asserts that a name outside the
+// closed builtin-name list (e.g. "rust") returns an error wrapping
+// ErrBuiltinNotFound, includes the offending name in the error message, and
+// returns a zero-value Template. Mirrors the closed-enum drift guard of
+// TestLoadDefaultTemplateForLanguage_UnknownRejected for the name-axis API.
+func TestLoadBuiltinTemplate_UnknownRejected(t *testing.T) {
+	t.Parallel()
+
+	tpl, err := LoadBuiltinTemplate("rust")
+	if err == nil {
+		t.Fatalf("LoadBuiltinTemplate(\"rust\"): err = nil; want wrapped ErrBuiltinNotFound")
+	}
+	if !errors.Is(err, ErrBuiltinNotFound) {
+		t.Fatalf("LoadBuiltinTemplate(\"rust\"): err %v not errors.Is(ErrBuiltinNotFound); closed-name drift guard broken", err)
+	}
+	if got := err.Error(); !strings.Contains(got, `"rust"`) {
+		t.Fatalf("LoadBuiltinTemplate(\"rust\"): error message = %q; want to contain offending name value `\"rust\"`", got)
+	}
+	if tpl.SchemaVersion != "" || len(tpl.Kinds) != 0 {
+		t.Fatalf("LoadBuiltinTemplate(\"rust\"): returned non-zero Template = %+v; want zero value on rejection", tpl)
+	}
+}
+
 // TestLoadDefaultTemplate_WrapsLanguageEmpty asserts the thin-wrapper
 // contract: `LoadDefaultTemplate()` returns the SAME Template (deep-equal)
 // as `LoadDefaultTemplateForLanguage("")`. Drop 4c.5 droplet F.1.3
