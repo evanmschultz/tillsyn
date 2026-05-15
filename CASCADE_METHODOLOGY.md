@@ -182,6 +182,71 @@ Concrete benchmark axes — token cost per drop, end-to-end wall-clock per drop,
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
+## Dogfood Evidence (2026-05-15)
+
+First worked-example data from running the methodology against Tillsyn's own development. Three cascades shipped end-to-end with growing methodology discipline; the progression itself is the most load-bearing finding.
+
+### Phase 4.2 — `domain.Project.Language` removal (single-pass planner, no plan-QA gating)
+
+**Shape:** 5-droplet plan → 7 droplets actually shipped. HEAD `94dd934`. `mage ci` GREEN 3290/3290 across 28 packages.
+
+**Methodology gap surfaced:** the planner subagent ran ONCE at phase start, decomposed against the still-present field, and missed 3 transitive consumers because `git grep` against the current tree didn't reveal what would break post-removal. The misses were caught only by build-QA-falsification + `mage build` after intermediate commits:
+
+- `internal/tui` — 5 compile errors caught after D2.
+- `cmd/till` — 5 compile errors caught after D6.
+- `internal/app/dispatcher` + `cli_claude/render` test fixtures — caught by D4 QA-falsification's `mage ci` rerun.
+
+Each miss spawned a reactive add-on droplet (`D4 tui`, `D7 cmd/till`, would-be `D8 dispatcher` absorbed by D7). The cascade still shipped clean, but with 40% more droplets than planned and an orchestrator-direct stabilization commit chain on top.
+
+**Refinement filed:** `REFINEMENTS.md` "Phase 4.2 close — planner missed 3 of 7 surfaces" — proposes a "Cross-package consumer audit" step in planner decomposition: before sizing droplets, enumerate every struct-literal site that references the to-be-removed field + every reader of that field.
+
+### Phase 4.3 — `--language` CLI/MCP/TUI surface teardown (Phase 4.2's refinement applied)
+
+**Shape:** 4-droplet plan → 4 droplets shipped. HEAD `086f255`. `mage ci` GREEN 3280/3280.
+
+**Methodology discipline:** plan-QA pair (proof + falsification) gated BEFORE any builder dispatched — caught 5 NITs upfront and folded them into builder spawn briefs:
+- D2 line-729 mid-sentence-clause clarity (proof 1.1).
+- D2 doc-comment 548 wording (proof 1.2).
+- D2 post-condition `git grep` gate added (proof 1.4).
+- D2 `TestRunProjectUpdate_SingleFlagDoesNotClobberOthers` test-rewrite guidance (proof 2.1 + falsification 2.2).
+- D3 mcp-rejection sub-test upgraded from "optional" to "REQUIRED" (falsification 2.3).
+
+**Outcome:** ZERO planner-misses, ZERO reactive add-on droplets. The cross-package consumer audit refinement was implicit in the plan-QA pair's verification — proof asked "is every consumer accounted for?" before any code moved.
+
+### E2E-8 — `till_auth_request` `wait_timeout` fix (recursive build-QA follow-up exercised)
+
+**Shape:** 3-droplet plan (D1 + D3 + optional D3) → 4 droplets shipped (D2 absorbed by D1's builder; D4 added recursively from build-QA-falsification finding). HEAD `8e2acfe`. `mage ci` GREEN 3286/3286.
+
+**Recursive cascade exercised cleanly:** D1's build-QA-falsification surfaced sibling-parity gap (sibling claim-side has `WakesOnDeny` + `WakesOnCancel` tests; new create-side tests only covered Approval). Rather than absorbing inline orchestrator-direct, the orchestrator spawned D4 with its own builder + build-QA pair — the cascade ran with proper recursion through the build-QA finding, not just the plan-QA finding.
+
+**Orchestrator-direct QA-falsification fallback:** D3's QA-falsification subagent hit a rate limit mid-run. Per `feedback_orchestrator_no_build.md` mid-flight stabilization allowance, the orchestrator ran the 7-attack pass inline with `git grep` evidence and recorded the verdict directly. The cascade tolerated subagent-availability friction without losing the verification discipline.
+
+### Methodology progression (Phase 4.2 → 4.3 → E2E-8)
+
+| Cascade   | Planner spawns | Reactive droplets | Plan-QA gating | Result               |
+|-----------|----------------|-------------------|----------------|----------------------|
+| Phase 4.2 | 1              | 3 (40% overhead)  | post-hoc retro | Caught at build-QA   |
+| Phase 4.3 | 1              | 0                 | pre-builder    | Caught at plan-QA    |
+| E2E-8     | 1              | 1 (recursive)     | pre-builder    | Caught at build-QA, recursed cleanly |
+
+The delta from Phase 4.2 → 4.3 is the single largest discipline lever observed: plan-QA pair gating BEFORE builder dispatch converts what would have been 3 reactive droplets into 5 inline NIT fixes inside the original 4 builder briefs. The E2E-8 reactive D4 is a legitimate exception — it surfaced from build-QA-falsification on already-shipped code, not from plan-QA on the original decomposition.
+
+### Observations against methodology claims
+
+- **Plan-down-build-up** holds in practice — every cascade decomposed top-down then built bottom-up with `blocked_by` serialization. No droplet had to be split mid-build for sizing.
+- **Atomic-droplet sizing (1-4 code blocks)** is approximate but workable. Phase 4.3 D2 was at the upper bound (5-6 atomic edits across 3 files); accepted as cohesive single-surface change. The methodology's "by cohesion not by region count" framing carried this case.
+- **Three orthogonal axes** (`kind` × `role` × `structural_type`) — orthogonality earned its keep on QA kinds. Every QA pair carried `role=qa-proof` or `role=qa-falsification` regardless of parent `kind` (`plan-qa-proof` on level-1 plans + `build-qa-proof` on leaf builds), and the dispatch + reasoning differed based on parent context.
+- **Asymmetric QA pair** caught complementary surfaces. Proof PASS verdicts confirmed acceptance criteria; falsification PASS verdicts surfaced 12+ NITs / REFINEMENTS across the 3 cascades that proof never flagged. Running them separately (not as one combined review) was load-bearing — the orchestrator-direct D3 QA-falsification fallback verified the asymmetry: even a single-orchestrator run hits different findings on the falsification axis than on the proof axis.
+- **Build-QA-falsification → recursive droplet** is a real pattern. E2E-8's D4 demonstrates: build-QA can legitimately surface a follow-up scope that warrants its own droplet rather than orchestrator-direct absorption. The methodology framing handles this via "any new scope discovered mid-cascade gets its own droplet with full QA pair."
+
+### Systematic benchmark axes (still pending)
+
+Token cost per cascade, end-to-end wall-clock per cascade, subagent failure-and-retry rates, escalation rate to human review — still unmeasured. These need instrumentation in Tillsyn itself (Drop 4d+ scope) before they can be populated. The qualitative discipline progression above is the load-bearing finding for the methodology shape; the quantitative numbers come once Tillsyn measures itself.
+
+<!-- TODO populate post-dogfood with measured benchmarks -->
+
+---
+
 ## Provenance
 
 This methodology is the synthesis of multiple threads:

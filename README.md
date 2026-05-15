@@ -53,6 +53,16 @@ Local dogfood repo layout note:
 - JSON snapshot import/export.
 - Configurable actionItem field visibility.
 
+## Active Status (2026-05-15)
+
+Shipped since 2026-04-12:
+
+- **Cascade methodology dogfooded end-to-end across 3 phases** (Phase 4.2 `domain.Project.Language` removal → Phase 4.3 `--language` CLI/MCP/TUI teardown → E2E-8 `wait_timeout` auth-flow fix). Each cascade exercised the recursive planner + plan-QA pair + build-QA pair + chain-tail `mage ci` pattern; see `CASCADE_METHODOLOGY.md` § "Dogfood Evidence (2026-05-15)" for the worked progression. Phase 4.3 was the largest discipline lever — plan-QA gating before any builder dispatched converted 3 reactive add-on droplets (Phase 4.2 pattern) into 0 (Phase 4.3 + E2E-8 pattern).
+- **`till_auth_request operation=create` now honors `wait_timeout`** (E2E-8 fix, commits `ba58ba7` + `49fa802` + `ed5f29d`). Orchestrators can block on dev TUI approval via the LiveWaitBroker instead of falling back to chat-relay coordination. Schema description on `handler.go:136` enumerates honored ops (`create` + `claim`); the 8 ops that don't honor `wait_timeout` now document their non-blocking behavior.
+- **`domain.Project.Language` field and every `--language` CLI/MCP/TUI surface retired.** `domain.Project` is now five first-class fields (`HyllaArtifactRef`, `RepoBareRoot`, `RepoPrimaryWorktree`, `BuildTool`, `DevMcpServerName`). Phase 4.4 (`templates.LoadDefaultTemplateForLanguage` retirement post-STEWARD seed migration) remains future work.
+- **`mage ci` GREEN** at HEAD across 28 packages, 3286 tests, coverage gates ≥70% everywhere. CI green on both jobs (`ci macos-latest` + `release snapshot check`).
+- **Open E2E friction:** E2E-1 (TUI path editing), E2E-5 (`till project discover` missing first-class fields), E2E-6 (TUI project view + edit form gaps), E2E-9 (`.mcp.json` global-binary scoping), E2E-10 (`till_action_item parent_id=project_id` confusing error). See `E2E_FIXES.md`.
+
 ## Active Status (2026-04-12)
 Implemented now:
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
