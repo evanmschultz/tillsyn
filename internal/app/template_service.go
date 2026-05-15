@@ -95,7 +95,7 @@ func (s *Service) GetProjectTemplate(ctx context.Context, in GetProjectTemplateI
 }
 
 // ListBuiltinTemplates returns the closed list of embedded builtin template
-// names that LoadDefaultTemplateForLanguage can resolve. Read-only,
+// names that LoadBuiltinTemplate can resolve. Read-only,
 // project-context-free, deterministic across processes.
 //
 // Drop 4c.5 droplet F.3.1 acceptance criterion #3: returns

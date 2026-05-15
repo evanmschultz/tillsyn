@@ -58,7 +58,7 @@ type LoadOptions struct {
 	// walker returns false for every name — exercising the default in a
 	// unit test without an explicit injection deliberately fails-loud per
 	// W0.5 round-2 FF2 disclosure: tests inject; production callers
-	// (LoadDefaultTemplate*) inherit the post-W1.D1 reality where the
+	// (LoadBuiltinTemplate) inherit the post-W1.D1 reality where the
 	// real placeholder files satisfy the floor.
 	AgentLookupFn func(name string) bool
 
@@ -79,7 +79,7 @@ type LoadOptions struct {
 	// `BlockedByKinds []domain.Kind` field), the DFS already covers
 	// cycles in that graph and the injection point becomes vestigial.
 	//
-	// Production callers (LoadDefaultTemplate*) leave this nil and
+	// Production callers (LoadBuiltinTemplate) leave this nil and
 	// inherit the production walker. Test callers MAY inject a synthetic
 	// graph fn that returns whatever shape exercises the validator.
 	BlockedByGraphFn func(rules []ChildRule) map[domain.Kind][]domain.Kind
@@ -107,7 +107,7 @@ type LoadOptions struct {
 	// claimed consumers from the parsed Template and the injection point
 	// becomes vestigial.
 	//
-	// Production callers (LoadDefaultTemplate*) leave this nil and
+	// Production callers (LoadBuiltinTemplate) leave this nil and
 	// inherit the production walker. Test callers MAY inject a synthetic
 	// claim list that returns whatever shape exercises the validator.
 	ClaimedConsumersFn func(tpl Template) []string
@@ -2159,7 +2159,7 @@ func defaultAgentLookupFn(name string) bool {
 	if !embeddedAgentLibraryShipped {
 		// Pre-W1.D1 fail-permissive mode: the embedded agent library
 		// has not yet shipped, so the floor is structurally vacuous.
-		// Production callers (LoadDefaultTemplate*) get a no-op pass on
+		// Production callers (LoadBuiltinTemplate) get a no-op pass on
 		// the validator until W1.D1 lights the library. Tests that need
 		// to exercise the hard-fail path inject an explicit
 		// LoadOptions.AgentLookupFn.

@@ -1988,22 +1988,19 @@ BULID = ["mage_ci"]
 
 // TestValidateMapKeysDefaultTemplateRegression is the regression hedge for the
 // embedded default-template path: every key in the Go default template
-// (`builtin/default-go.toml`, the language-aware resolver's primary
-// agent-bindings-rich payload) is already lowercase, so the canonicalization
+// (`builtin/till-go.toml`) is already lowercase, so the canonicalization
 // rebuild MUST be a no-op (the pre-scan short-circuit returns nil and Load
 // leaves the maps untouched). Failing this test signals either the embedded
 // default drifted to mixed-case (template-author error) or the rebuild path
 // runs even when not needed (performance regression on the cold-load happy
 // path).
 //
-// Uses LoadDefaultTemplateForLanguage("go") rather than reading the embed
-// bytes directly — exercises the canonical adopter entry point, which
-// guarantees the canonicalization contract holds end-to-end (FS open + TOML
-// decode + Load + validateMapKeys), not just on the raw-byte path.
+// Uses LoadBuiltinTemplate("till-go") — the single load API for named builtins —
+// which exercises the full FS open + TOML decode + Load + validateMapKeys chain.
 func TestValidateMapKeysDefaultTemplateRegression(t *testing.T) {
-	tpl, err := LoadDefaultTemplateForLanguage("go")
+	tpl, err := LoadBuiltinTemplate("till-go")
 	if err != nil {
-		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\"): unexpected error: %v", err)
+		t.Fatalf("LoadBuiltinTemplate(\"till-go\"): unexpected error: %v", err)
 	}
 	// Every key in the embedded default must be already-canonical.
 	for k := range tpl.Kinds {
@@ -2206,23 +2203,22 @@ blocked_by_parent = true
 }
 
 // TestValidateChildRuleReachability_AllReachable verifies the F.5.2 vacuously-
-// true happy-path: the embedded `default-go.toml` template loads cleanly
+// true happy-path: the embedded `till-go.toml` template loads cleanly
 // because its 4 standard child_rules cover every non-standalone kind in the
 // closed 12-value enum — `plan` / `build` / the four QA twins all appear as
 // either WhenParentKind or CreateChildKind. Standalone kinds (`closeout`,
 // `commit`, `refinement`, `discussion`, `human-verify`, `research`) are
 // exempt and need not appear in child_rules.
 //
-// Loads via LoadDefaultTemplateForLanguage("go") rather than reading the
-// embed bytes directly so the entire validation chain (including F.5.2's
-// new validators) runs end-to-end against the canonical adopter entry
-// point. Failing this test signals either the embedded default drifted —
-// missing a kind or a child_rule — or the reachability validator's
-// vocabulary diverged from `domain.Kind` (e.g. a new kind landed without
-// either a child_rule reference OR a reachabilityStandaloneKinds entry).
+// Loads via LoadBuiltinTemplate("till-go") — the single load API for named
+// builtins — so the entire validation chain (including F.5.2's new validators)
+// runs end-to-end. Failing this test signals either the embedded default drifted —
+// missing a kind or a child_rule — or the reachability validator's vocabulary
+// diverged from `domain.Kind` (e.g. a new kind landed without either a
+// child_rule reference OR a reachabilityStandaloneKinds entry).
 func TestValidateChildRuleReachability_AllReachable(t *testing.T) {
-	if _, err := LoadDefaultTemplateForLanguage("go"); err != nil {
-		t.Fatalf("LoadDefaultTemplateForLanguage(\"go\"): unexpected error: %v", err)
+	if _, err := LoadBuiltinTemplate("till-go"); err != nil {
+		t.Fatalf("LoadBuiltinTemplate(\"till-go\"): unexpected error: %v", err)
 	}
 }
 

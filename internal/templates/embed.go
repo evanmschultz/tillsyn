@@ -34,12 +34,6 @@ import (
 // an explicit list cannot accidentally pick up unrelated .toml fixtures
 // or leftover files in builtin/.
 //
-// Drop 4c.5 droplet F.1.3 added the language-aware resolver
-// `LoadDefaultTemplateForLanguage` and reduced `LoadDefaultTemplate` to a
-// thin wrapper that selects the language-AGNOSTIC (generic) file. See the
-// SEMANTIC SHIFT note on `LoadDefaultTemplate` for the implications for
-// existing callers.
-//
 // Drop 4c.6 W1.D1 extended the directive with placeholder agent .md files
 // and the agents.example.toml runtime-config fixture. Per the W1.D1
 // acceptance bullet + ContextBlocks `constraint` (high), the directive uses
@@ -125,25 +119,6 @@ import (
 //go:embed builtin/agents/till-gdd/commit-message-agent.md
 var DefaultTemplateFS embed.FS
 
-// ErrLanguageNotSupported is the closed sentinel returned by
-// `LoadDefaultTemplateForLanguage` when the caller-supplied language axis
-// is outside the closed `domain.Project.Language` enum entirely (e.g. a
-// hand-rolled `"rust"`). Drop 4c.6.1 W4.D2 resolved the Q1 deferral and
-// shipped `till-fe.toml`, so `"fe"` is now a supported language and no
-// longer returns this error.
-//
-// Routing contract: callers programmatically distinguish "no template for
-// this language" from a TOML parse error or schema-version mismatch via
-// `errors.Is(err, ErrLanguageNotSupported)`. The wrapped error always
-// includes the offending language string verbatim so dev surfaces (CLI,
-// MCP error envelopes) can name the input that failed.
-//
-// Closed-enum drift guard: when a future drop extends
-// `domain.Project.Language` (e.g. landing Rust adopter support), the new
-// language MUST also be wired into `LoadDefaultTemplateForLanguage`'s
-// switch AND ship a matching `builtin/till-<lang>.toml` file in the
-// embed.FS. The sentinel exists precisely so the resolver fails LOUD on
-// the gap rather than silently returning the Go default.
 var ErrLanguageNotSupported = errors.New("template language not supported")
 
 // ErrBuiltinNotFound is the closed sentinel returned by LoadBuiltinTemplate
@@ -161,119 +136,10 @@ var ErrLanguageNotSupported = errors.New("template language not supported")
 // fail loud rather than silently falling through.
 var ErrBuiltinNotFound = errors.New("builtin template not found")
 
-// LoadDefaultTemplate parses and validates the language-AGNOSTIC builtin
-// embedded at `builtin/till-gen.toml` (rebadged from `default-generic.toml`
-// in Drop 4c.6 W5.D2 alongside the W5.D1 + F.2.1 dual-history).
-//
-// SEMANTIC SHIFT (Drop 4c.5 droplet F.1.3): pre-F.1.3 this function read
-// `default-go.toml` directly, so every caller received the Go-flavored
-// catalog (12 kinds + 4 child_rules + 6 STEWARD seeds + the full
-// agent-bindings + gates + context tables). Post-F.1.3 this function is
-// a thin wrapper around `LoadDefaultTemplateForLanguage("")`, which
-// resolves to `till-gen.toml`. The generic template ships the same
-// 12 kinds + 4 child_rules + 6 STEWARD seeds BUT INTENTIONALLY OMITS
-// `[agent_bindings]` entirely (per F.2.2 acceptance criterion #2).
-// Adopters declare bindings in their project-local
-// `<project_root>/.tillsyn/template.toml`.
-//
-// Existing pre-F.1.3 callers (`seedStewardAnchors` at
-// `internal/app/auto_generate_steward.go:44` and the Drop-3.14 stub
-// `loadProjectTemplate` in `internal/app/service.go`) WILL inherit this
-// shift. Drop 4c.5 droplet F.2.4 (later in Theme F's chain) audits each
-// caller and redirects to the language-explicit form
-// `LoadDefaultTemplateForLanguage(project.Language)` so language-aware
-// behavior lands at the correct seam. Until F.2.4 lands, callers using
-// the unsuffixed `LoadDefaultTemplate()` get the GENERIC catalog — which
-// for `seedStewardAnchors` happens to materialize the same 6 STEWARD
-// seeds (the seed set is identical across both builtins per F.2.2
-// criterion #5), but for a future drop that depends on agent_bindings
-// the change would matter.
-//
-// Pure function: no I/O beyond the embed.FS open + TOML parse, no clock
-// or random dependency. Safe to call from any goroutine; the embed.FS
-// is read-only.
-//
-// Returns (Template{}, err) on:
-//   - embed.FS open failure (programmer error — the file is compiled in).
-//   - any error returned by Load — schema-version mismatch, unknown key,
-//     unknown kind reference, child-rule cycle, etc. See load.go's
-//     sentinel errors for the closed routing set.
-func LoadDefaultTemplate() (Template, error) {
-	return LoadDefaultTemplateForLanguage("")
-}
-
-// LoadDefaultTemplateForLanguage parses + validates the embedded builtin
-// template that matches the supplied project-language axis. The accepted
-// closed enum mirrors `domain.Project.Language` (see
-// `internal/domain/project.go` `isValidProjectLanguage`):
-//
-//   - `""`     → loads `builtin/till-gen.toml` (the
-//     language-agnostic showcase shipped by F.2.2 as
-//     `default-generic.toml` and rebadged by Drop 4c.6 W5.D2 to the
-//     `till-` prefix family — 12 kinds + 4 child rules + 6 STEWARD
-//     seeds, ZERO `[agent_bindings]`).
-//   - `"go"`   → loads `builtin/till-go.toml` (the Go-flavored full
-//     catalog rebadged by F.2.1 from `default.toml` and again by Drop
-//     4c.6 W5.D1 to the `till-` prefix family — 12 kinds + child rules +
-//     STEWARD seeds + agent bindings + gates + context).
-//   - `"fe"`   → loads `builtin/till-fe.toml` (the FE / Wails catalog
-//     shipped in Drop 4c.6.1 W4.D2 — 12 kinds + child_rules + STEWARD
-//     seeds + gates + agent_bindings referencing the 10 standard FE
-//     agent names from builtin/agents/fe/). The Q1 deferral from
-//     workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5 is resolved.
-//   - Anything else → returns an error wrapping
-//     `ErrLanguageNotSupported` with the offending value verbatim.
-//
-// Closed-enum drift contract: `domain.Project.Language` and this
-// resolver must extend together. A future drop that adds (e.g.) `"rust"`
-// to the domain validator MUST also wire the new value into the switch
-// below AND ship `builtin/default-rust.toml` (or be willing to surface
-// `ErrLanguageNotSupported` for the new lang until a builtin lands).
-//
-// Pure function: no I/O beyond the embed.FS open + TOML parse, no
-// global mutation. Safe to call from any goroutine.
-//
-// Returns (Template{}, err) on:
-//   - `lang` outside the closed enum (e.g. `"rust"` — not yet shipped).
-//   - embed.FS open failure (programmer error — files compiled in).
-//   - any error returned by Load — schema-version mismatch, unknown
-//     key, unknown kind reference, child-rule cycle, etc.
-func LoadDefaultTemplateForLanguage(lang string) (Template, error) {
-	var path string
-	switch lang {
-	case "":
-		path = "builtin/till-gen.toml"
-	case "go":
-		path = "builtin/till-go.toml"
-	case "fe":
-		// Shipped in Drop 4c.6.1 W4.D2 alongside the FE agent scaffold
-		// (W4.D1) and FE cascade template TOML (this drop). The Q1
-		// deferral from workflow/drop_4c_5/THEME_F_PLAN.md §3 Note 5 is
-		// resolved: the `fe` group ships `builtin/till-fe.toml` with the
-		// same 12-kind catalog + child_rules + STEWARD seeds + gates +
-		// agent_bindings as till-go.toml, using the 10 standard FE agent
-		// names from builtin/agents/fe/*.md.
-		path = "builtin/till-fe.toml"
-	default:
-		return Template{}, fmt.Errorf("language %q: outside closed Project.Language enum: %w", lang, ErrLanguageNotSupported)
-	}
-
-	f, err := DefaultTemplateFS.Open(path)
-	if err != nil {
-		// embed.FS open failure is a programmer-error path — the file
-		// is compiled into the binary by the //go:embed directive
-		// above. Surfaced rather than panicked so callers in
-		// release-mode builds can route via toolResultFromError.
-		return Template{}, fmt.Errorf("open embedded %q: %w", path, err)
-	}
-	defer f.Close()
-	return Load(f)
-}
-
-// BuiltinTemplateNames returns the closed list of language-axis names that
-// LoadDefaultTemplateForLanguage can resolve to an embedded TOML file. The
-// list is kept in stable lexical order so MCP / CLI surfaces enumerate the
-// builtins deterministically across processes.
+// BuiltinTemplateNames returns the closed list of builtin template names that
+// LoadBuiltinTemplate can resolve to an embedded TOML file. The list is kept
+// in stable lexical order so MCP / CLI surfaces enumerate the builtins
+// deterministically across processes.
 //
 // Drop 4c.5 droplet F.3.1: `till.template list_builtin` consumes this list to
 // answer the wire surface without walking DefaultTemplateFS. Per F.3.1
@@ -306,11 +172,8 @@ func BuiltinTemplateNames() []string {
 //
 //	LoadBuiltinTemplate("rust"): builtin template not found
 //
-// Equivalence guarantee: LoadBuiltinTemplate("till-go") returns the same
-// Template as LoadDefaultTemplateForLanguage("go"), and likewise for the
-// other two names. The two entry points resolve to the same embedded TOML
-// files — the name-axis and language-axis are parallel routes to the same
-// content.
+// ErrBuiltinNotFound is the sentinel for unknown names; callers distinguish
+// "no builtin by that name" from a TOML parse error via errors.Is.
 //
 // Closed-list drift guard: when BuiltinTemplateNames() is extended (e.g. by
 // a future "till-rust" entry), the switch below and the //go:embed directive
