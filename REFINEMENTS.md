@@ -39,6 +39,36 @@ Transitions are recorded by appending a dated status note to the entry, not by r
 
 ---
 
+## 2026-05-15 — phase-4.2-orphans — Predicted orphans after `project.Language` removal
+
+### Context
+Phase 4.2 (PHASE 4.2 REMOVE PROJECT LANGUAGE FIELD, Tillsyn plan `6e41ec19-347e-4acc-835e-f96137c41fbf`) is decomposed by `go-planning-agent` into 5 atomic droplets. The decomposition predicts the following orphans — pre-logged so each becomes its own future plan rather than expanding Phase 4.2's scope.
+
+### Orphans predicted
+
+1. **`mcp.WithString("language", ...)` tool-schema declaration in `internal/adapters/mcp_rpc/extended_tools.go:446`** — the MCP transport still declares `language` as a request key after Phase 4.2 removes the field from `mcpcommon.CreateProjectRequest` / `UpdateProjectRequest` and from the inline args struct. Phase 4.3 retires this declaration (alongside `--language` CLI flag + TUI `projectFieldLanguage`). Until Phase 4.3 lands, callers that pass `language` in JSON have it accepted-then-dropped at the request boundary.
+
+2. **`loadStewardSeedTemplate(project.Language)` at `internal/app/auto_generate_steward.go:116`** — Phase 4.2 Droplet 2 replaces this with `loadStewardSeedTemplate("")` as a temporary stub. The empty-language path selects the generic embedded template for every project. Phase 4.4 retires `templates.LoadDefaultTemplateForLanguage` and migrates STEWARD seed materialization to a project-tier or aggregated-template mechanism. The `""` stub is intentional transitional state.
+
+3. **`templates.LoadDefaultTemplateForLanguage`** in `internal/templates/embed.go` — still called by `loadStewardSeedTemplate` after Phase 4.2. Phase 4.4 retires it entirely after STEWARD seed migration. Until then, the function is the only remaining production consumer of the language→embedded-template mapping.
+
+4. **`embeddedSourceForLanguage` + `templateBakeSourceEmbeddedGeneric` + `templateBakeSourceEmbeddedGo`** in `internal/app/template_service.go` — already dead-code after Phase 4.1's `f3a9df7` commit (the only caller `resolveProjectTemplateWithSource` no longer fires the fallback). Deleted in Phase 4.2 Droplet 2 cleanup (NOT a separate plan).
+
+### Proposed fix
+Each orphan is addressed by its already-scheduled phase:
+
+- Orphan 1: Phase 4.3 (CLI / TUI / MCP schema removal).
+- Orphan 2 + 3: Phase 4.4 (STEWARD seed migration + `LoadDefaultTemplateForLanguage` retirement).
+- Orphan 4: handled inline in Phase 4.2 Droplet 2 — already dead, just deletion.
+
+### Target drop
+N/A — this entry is the index of orphans for Phase 4.2; the fixes live in 4.3 + 4.4 above (which are also entries in this file). This entry exists so future readers can grep "orphan" and find the connection between phases.
+
+### Tags
+`phase-4.2`, `orphans`, `language-removal`, `tracking`
+
+---
+
 ## 2026-05-14 — pre-dogfood — Remove `project.Language` field; templates are project-tier opt-in only
 
 ### Context
