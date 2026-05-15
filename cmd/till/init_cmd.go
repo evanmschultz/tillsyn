@@ -1175,8 +1175,10 @@ func registerMCPJSON(destDir string, includeMCP bool) (int, int, error) {
 	}
 
 	// Serialize the new tillsyn entry once; reused in both the file-exists
-	// and the fresh-file branches.
-	tillsyn := mcpServerEntry{Command: tillBin}
+	// and the fresh-file branches. Args carries the `mcp` subcommand so the
+	// MCP client launches the stdio MCP server — bare `till` invocation
+	// defaults to the TUI which cannot speak MCP stdio.
+	tillsyn := mcpServerEntry{Command: tillBin, Args: []string{"mcp"}}
 	tillsynRaw, marshalErr := json.Marshal(tillsyn)
 	if marshalErr != nil {
 		return 0, 0, fmt.Errorf("marshal tillsyn entry: %w", marshalErr)

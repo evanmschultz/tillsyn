@@ -662,6 +662,11 @@ func TestInit_MCPJSON_FreshFile(t *testing.T) {
 	if entry.Command == "" {
 		t.Fatalf(".mcp.json entry %q has empty command", mcpServerKey)
 	}
+	// args MUST carry "mcp" so the MCP client launches the stdio MCP server;
+	// bare `till` invocation defaults to the TUI which cannot speak MCP stdio.
+	if len(entry.Args) != 1 || entry.Args[0] != "mcp" {
+		t.Fatalf(".mcp.json entry %q args = %v; want [\"mcp\"]", mcpServerKey, entry.Args)
+	}
 }
 
 // TestInit_MCPJSON_AppendsToExisting verifies that `registerMCPJSON` adds
@@ -701,9 +706,17 @@ func TestInit_MCPJSON_AppendsToExisting(t *testing.T) {
 		t.Fatalf("json.Unmarshal .mcp.json mcpServers: %v", unmarshalErr)
 	}
 
-	// tillsyn entry must be present.
-	if _, ok := servers[mcpServerKey]; !ok {
+	// tillsyn entry must be present and carry args=["mcp"].
+	tillsynRaw, ok := servers[mcpServerKey]
+	if !ok {
 		t.Fatalf(".mcp.json missing %q entry after append; servers = %v", mcpServerKey, servers)
+	}
+	var tillsynEntry mcpServerEntry
+	if unmarshalErr := json.Unmarshal(tillsynRaw, &tillsynEntry); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal tillsyn entry: %v", unmarshalErr)
+	}
+	if len(tillsynEntry.Args) != 1 || tillsynEntry.Args[0] != "mcp" {
+		t.Fatalf(".mcp.json entry %q args = %v; want [\"mcp\"]", mcpServerKey, tillsynEntry.Args)
 	}
 	// Pre-existing entry must survive.
 	if _, ok := servers["other-server"]; !ok {

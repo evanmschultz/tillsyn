@@ -39,6 +39,34 @@ Transitions are recorded by appending a dated status note to the entry, not by r
 
 ---
 
+## 2026-05-14 — pre-dogfood — Project-local `till mcp` for natural path / auth scoping
+
+### Context
+Joint dogfood smoke session surfaced two related issues in `till init`'s `.mcp.json` generation:
+
+1. **Args bug (fixed inline 2026-05-14).** `registerMCPJSON` wrote `{Command: tillBin}` with no Args, so the entry invoked bare `till` which defaults to the TUI, not the MCP stdio server. Manifested as `claude mcp list` showing `tillsyn: ... ✗ Failed to connect` while a separately-registered `tillsyn-dev: main/till mcp` worked. Fixed in this drop; W2.D6 test gap closed.
+2. **Project-local-binary design intent (this refinement).** The dev's stated intent for project-tier `till init` is that the `.mcp.json` entry should invoke a PROJECT-LOCAL `till mcp` binary (e.g. `./till` or some `$PROJECT/till` path), not the global `~/.local/bin/till`. Goal: natural path / auth scope limiting so one orch in project A is less likely to reach into project B's state. Orchs can still request global `till` auth explicitly, but the default invocation stays scoped.
+
+### Observation
+- Current `registerMCPJSON` (`cmd/till/init_cmd.go`) resolves the binary via `exec.LookPath("till")` then falls back to `~/.local/bin/till`. Neither path is project-local.
+- DB resolution today (user-tier `~/.tillsyn/tillsyn.db`) is independent of which binary invokes `till mcp` — so even a project-local binary wouldn't currently get a project-scoped DB. The scoping has to be either (a) build-time embedded into the project-local binary, or (b) flag-driven (`--db <project>/.tillsyn/tillsyn.db`), or (c) cwd-aware resolution that picks a project-tier DB when `.tillsyn/` is found.
+- The `tillsyn-dev` MCP registration today already uses `main/till mcp` — but only because the dev registered it that way by hand. Default `till init` output never produces that shape.
+
+### Proposed fix
+Plan + ship in a follow-up drop. Three sub-questions to resolve before building:
+
+1. **Where does the project-local `till` binary live?** Options: `./till` (project root), `.tillsyn/bin/till` (hidden project-tier path), `$REPO_ROOT/till` (whatever the project's build pipeline puts there). Likely the answer depends on whether tillsyn is a Go project (mage builds `./till`) or a non-Go project (where does the binary come from?).
+2. **DB resolution policy for project-local `till mcp`.** Decide between (a)/(b)/(c) above. Probably (c) cwd-aware: project-local DB when `.tillsyn/tillsyn.db` exists in cwd or any ancestor, else user-tier fallback. This is symmetric with the FLAT-vs-subdir detection pattern.
+3. **Auth scoping semantics.** What does "natural path limit" mean concretely? Auth_request paths today already require an explicit `project/<id>` scope — so the limit is more about which projects the orch can SEE / mutate. If the MCP only opens the project-local DB, the orch literally can't list other projects.
+
+### Target drop
+**Parking-lot until dogfood backlog priority surfaces.** Not blocking immediate dogfood since global `till mcp` works and the orch-self-restriction (via scope-bounded auth requests) provides logical limiting today. Surface again during the next dogfood-readiness pass.
+
+### Tags
+`till-init`, `mcp`, `auth`, `path-scoping`, `dogfood`, `design`
+
+---
+
 ## 2026-04-14 — Drop 0 — Local git hooks for gofumpt + `mage ci` parity
 
 ### Context

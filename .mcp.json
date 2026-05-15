@@ -1,7 +1,8 @@
 {
   "mcpServers": {
     "tillsyn": {
-      "command": "/Users/evanschultz/.local/bin/till"
+      "command": "/Users/evanschultz/.local/bin/till",
+      "args": ["mcp"]
     }
   }
 }
