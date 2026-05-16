@@ -184,7 +184,7 @@ Concrete benchmark axes — token cost per drop, end-to-end wall-clock per drop,
 
 ## Dogfood Evidence (2026-05-15)
 
-First worked-example data from running the methodology against Tillsyn's own development. Three cascades shipped end-to-end with growing methodology discipline; the progression itself is the most load-bearing finding.
+First worked-example data from running the methodology against Tillsyn's own development. Five cascades shipped end-to-end with growing methodology discipline; the progression itself is the most load-bearing finding.
 
 ### Phase 4.2 — `domain.Project.Language` removal (single-pass planner, no plan-QA gating)
 
@@ -221,15 +221,44 @@ Each miss spawned a reactive add-on droplet (`D4 tui`, `D7 cmd/till`, would-be `
 
 **Orchestrator-direct QA-falsification fallback:** D3's QA-falsification subagent hit a rate limit mid-run. Per `feedback_orchestrator_no_build.md` mid-flight stabilization allowance, the orchestrator ran the 7-attack pass inline with `git grep` evidence and recorded the verdict directly. The cascade tolerated subagent-availability friction without losing the verification discipline.
 
-### Methodology progression (Phase 4.2 → 4.3 → E2E-8)
+### Phase 4.4 — `LoadDefaultTemplateForLanguage` retirement (plan-QA falsification forced a 4-droplet restructure)
 
-| Cascade   | Planner spawns | Reactive droplets | Plan-QA gating | Result               |
-|-----------|----------------|-------------------|----------------|----------------------|
-| Phase 4.2 | 1              | 3 (40% overhead)  | post-hoc retro | Caught at build-QA   |
-| Phase 4.3 | 1              | 0                 | pre-builder    | Caught at plan-QA    |
-| E2E-8     | 1              | 1 (recursive)     | pre-builder    | Caught at build-QA, recursed cleanly |
+**Shape:** Initial 1-droplet "delete the function" plan → 4 droplets after plan-QA falsification rejection (ADD / MIGRATE / MIGRATE / DELETE). HEAD `bb110c1`. `mage ci` GREEN 3294/3294 across 28 packages.
 
-The delta from Phase 4.2 → 4.3 is the single largest discipline lever observed: plan-QA pair gating BEFORE builder dispatch converts what would have been 3 reactive droplets into 5 inline NIT fixes inside the original 4 builder briefs. The E2E-8 reactive D4 is a legitimate exception — it surfaced from build-QA-falsification on already-shipped code, not from plan-QA on the original decomposition.
+**Plan-QA falsification's load-bearing intervention:** the initial planner's single-droplet "delete `LoadDefaultTemplateForLanguage` + clean up callers in one commit" decomposition would have stranded 2 callers (`internal/app/auto_generate_steward.go:44` and `internal/adapters/mcp_rpc/extended_tools_test.go:3837`) mid-commit, breaking `mage ci` at HEAD. Plan-QA falsification rejected the decomposition with BLOCKER verdict and proposed the 4-droplet ADD/MIGRATE/MIGRATE/DELETE pattern:
+
+- D1 `b156594` (ADD-only) — added `LoadBuiltinTemplate(name string) (Template, error)` + `ErrBuiltinNotFound` sentinel + 4 tests. Old API untouched. `mage ci` GREEN.
+- D3 `ce9e36c` (MIGRATE) — migrated `mcp_rpc/extended_tools_test.go` fixture to the new API. Single-site change. `mage ci` GREEN.
+- D2 `441c093` (MIGRATE) — migrated `loadStewardSeedTemplate` seam from `func(lang string)` to `func(project domain.Project)`. Production tries `loadProjectTierTemplateOnly(&project)` first, falls back to `LoadBuiltinTemplate("till-gen")`. 6 fixture sites migrated. `mage ci` GREEN.
+- D4 `8f84693` (DELETE) — deleted `LoadDefaultTemplate` + `LoadDefaultTemplateForLanguage` + 5 language-axis tests + refreshed doc-comments across 5 files (`-372/+67` LOC delta). `mage ci` GREEN.
+
+**Build-QA NITs all addressed inline:** D2 falsification flagged the docstring's "6 STEWARD anchor seeds" claim as misleading (fallback-only invariant) — fixed at `e55fc22`. D4 falsification flagged orphan `ErrLanguageNotSupported` + pre-existing `ListBuiltinTemplates` doc-comment drift (missing `till-fe`) — both fixed at `bb110c1`. Per `feedback_nits_are_first_class.md`, every NIT addressed in-chain; no NITs deferred to future drops.
+
+### E2E-5/6/10 — Heterogeneous E2E friction bundle (plan-QA falsification caught a load-bearing planner premise error)
+
+**Shape:** 3 disjoint droplets (one per ticket). HEAD `8ea3822` (final ticket commit). `mage ci` GREEN 3298/3298.
+
+**Plan-QA falsification's load-bearing intervention:** the planner's E2E-6 brief framed the bug as "W2.D7 fields not displayed/edited in TUI form." Plan-QA falsification ran the actual surface audit and surfaced a different reality: `startProjectForm` ALREADY pre-populates all 5 W2.D7 fields at `model.go:4766-4772`, `projectFormBodyLines` ALREADY renders them at `model.go:17417-17421`, and form submission ALREADY wires them at `model.go:11704-11781`. The planner's premise was wrong.
+
+The REAL bug lived at `model.go:4763`: the form was reading `m.projectRoots[slug]` (TUI-local cache) instead of `project.RepoPrimaryWorktree`. For projects backfilled via `till project update --root-path` (the E2E-3 workaround), the canonical field was populated but the form displayed the stale cache value. Plan-QA falsification rescoped D2 from "add missing fields" to "read canonical over cache (1-line fix + TUI test)."
+
+- E2E-5 D1 `edfa130` — extended `writeProjectReadiness` with 6 W2.D7 rows mirroring `writeProjectDetail` order. Build-QA proof PASS 7/7; falsification PASS 8/8 + 1 NIT (table-driven `Groups` edge-case fixture — transitively safe via `strings.Join` + `compactText` contracts).
+- E2E-6 D2 `1a932e8` — fixed at `model.go:4763`: prefer `project.RepoPrimaryWorktree`, fall back to `m.projectRoots[slug]` when canonical empty. Both fields `TrimSpace`'d. Build-QA proof PASS 7/7; falsification PASS 8/8 + 1 refinement (cache-vs-canonical UX split between paths/roots modal + project-edit modal — two-cache design noted as non-obvious for maintainers).
+- E2E-10 D3 `8ea3822` — Option A auto-clear guard at `service.go:1337` (BEFORE existing `if !=""` at 1340 — placement noted by plan-QA falsification). 3-subtest regression covering top-level / legitimate-parent / not-found branches. Build-QA proof PASS all 7 checks; falsification PASS (7 MITIGATE + 1 ACCEPT-AS-REFINEMENT: MCP wire-layer test for `parent==project` — service-layer coverage sufficient because the MCP adapter is a thin trim-and-forward shim).
+
+**Methodology lesson:** plan-QA falsification is not "check the planner's math" — it is "verify the planner's premise holds against actual code." The E2E-6 catch demonstrates plan-QA's value beyond decomposition-shape verification: it can surface that the planner framed the wrong problem entirely.
+
+### Methodology progression (5 cascades, 2026-05-15)
+
+| Cascade        | Planner spawns | Plan-QA gating | Plan-QA intervention                                                                                       | Reactive droplets | Result                                |
+|----------------|----------------|----------------|------------------------------------------------------------------------------------------------------------|-------------------|----------------------------------------|
+| Phase 4.2      | 1              | post-hoc retro | none (gating not yet adopted)                                                                              | 3 (40% overhead)  | Caught at build-QA                    |
+| Phase 4.3      | 1              | pre-builder    | 5 NITs folded into builder spawn briefs                                                                    | 0                 | Caught at plan-QA                     |
+| E2E-8          | 1              | pre-builder    | none (D4 surfaced from build-QA on shipped code)                                                           | 1 (recursive)     | Caught at build-QA, recursed cleanly  |
+| Phase 4.4      | 1              | pre-builder    | rejected 1-droplet decomp; forced 4-droplet ADD/MIGRATE/MIGRATE/DELETE                                     | 0                 | Caught at plan-QA, restructure landed |
+| E2E-5/6/10     | 1              | pre-builder    | rejected E2E-6 planner premise (fields already wired); rescoped D2 to actual TUI cache-vs-canonical bug    | 0                 | Caught at plan-QA, premise corrected  |
+
+The Phase 4.2 → 4.3 jump established the plan-QA discipline. Phase 4.4 and E2E-5/6/10 confirmed plan-QA earns its keep on every cascade shape — restructure forcing (Phase 4.4), premise correction (E2E-6), and routine NIT folding (Phase 4.3 + E2E-5 + E2E-10). Across 4 plan-QA-gated cascades, plan-QA caught 2 load-bearing decomposition errors (Phase 4.4 ADD/MIGRATE structure + E2E-6 premise) that would have manifested as failed `mage ci` commits or wrong-surface fixes if the gate didn't exist.
 
 ### Observations against methodology claims
 
