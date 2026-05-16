@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -139,17 +140,31 @@ func runProjectCreate(ctx context.Context, svc *app.Service, cfg config.Config, 
 	if err != nil {
 		return err
 	}
+	worktree := strings.TrimSpace(opts.rootPath)
+	if worktree == "" {
+		cwd, err := osGetwd()
+		if err != nil {
+			return fmt.Errorf("resolve current working directory for --root-path default: %w", err)
+		}
+		worktree = cwd
+	}
 	ctx = cliMutationContext(ctx, cfg)
 	project, err := svc.CreateProjectWithMetadata(ctx, app.CreateProjectInput{
-		Name:        opts.name,
-		Description: opts.description,
-		Metadata:    metadata,
+		Name:                opts.name,
+		Description:         opts.description,
+		Metadata:            metadata,
+		RepoPrimaryWorktree: worktree,
 	})
 	if err != nil {
 		return fmt.Errorf("create project: %w", err)
 	}
 	return writeProjectDetail(stdout, project, "Created Project")
 }
+
+// osGetwd is a package-level variable pointing at os.Getwd, allowing tests to
+// inject a stub that simulates os.Getwd failure without changing the real
+// working directory.
+var osGetwd = os.Getwd
 
 // runProjectUpdate reads the existing project, merges explicit flag values, then
 // calls (*app.Service).UpdateProject. Fields not supplied in opts are preserved

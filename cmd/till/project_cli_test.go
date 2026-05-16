@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -907,6 +908,131 @@ func TestRunProjectUpdate_MetadataFlagsIconColorHomepageTags(t *testing.T) {
 				}
 			}
 			tc.check(t, found)
+		})
+	}
+}
+
+// newServiceForProjectCreateTest opens a fresh in-memory-equivalent SQLite repo and
+// wraps it in a minimal *app.Service for runProjectCreate unit tests.
+func newServiceForProjectCreateTest(t *testing.T) *app.Service {
+	t.Helper()
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "tillsyn.db"))
+	if err != nil {
+		t.Fatalf("sqlite.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	noopLease := false
+	svc := app.NewService(repo, func() string { return uuid.NewString() }, nil, app.ServiceConfig{
+		RequireAgentLease: &noopLease,
+	})
+	return svc
+}
+
+// TestRunProjectCreate_RootPathFlagParity verifies that --root-path is accepted,
+// defaults to the current working directory when absent, and surfaces os.Getwd
+// errors loudly per the W1 D3 acceptance criteria.
+func TestRunProjectCreate_RootPathFlagParity(t *testing.T) {
+	cases := []struct {
+		name         string
+		opts         projectCreateCommandOptions
+		setupGetwd   func(t *testing.T)
+		teardown     func()
+		wantWorktree string
+		wantErrFrag  string
+	}{
+		{
+			name: "explicit root-path populates RepoPrimaryWorktree",
+			opts: projectCreateCommandOptions{
+				name:     "ExplicitPath",
+				rootPath: "/explicit/path",
+			},
+			wantWorktree: "/explicit/path",
+		},
+		{
+			name: "flag omitted defaults to cwd",
+			opts: projectCreateCommandOptions{
+				name: "CwdDefault",
+			},
+			setupGetwd: func(t *testing.T) {
+				t.Helper()
+				dir := t.TempDir()
+				// Override the package-level stub so runProjectCreate resolves
+				// this dir as the cwd without actually changing os.Getwd().
+				orig := osGetwd
+				osGetwd = func() (string, error) { return dir, nil }
+				t.Cleanup(func() { osGetwd = orig })
+			},
+			// wantWorktree is set inside the test after querying the created project.
+		},
+		{
+			name: "explicitly empty root-path defaults to cwd via trimspace",
+			opts: projectCreateCommandOptions{
+				name:     "EmptyPath",
+				rootPath: "   ",
+			},
+			setupGetwd: func(t *testing.T) {
+				t.Helper()
+				dir := t.TempDir()
+				orig := osGetwd
+				osGetwd = func() (string, error) { return dir, nil }
+				t.Cleanup(func() { osGetwd = orig })
+			},
+			// wantWorktree is set inside the test.
+		},
+		{
+			name: "os.Getwd failure surfaces as wrapped error",
+			opts: projectCreateCommandOptions{
+				name: "GetWdFail",
+			},
+			setupGetwd: func(t *testing.T) {
+				t.Helper()
+				orig := osGetwd
+				osGetwd = func() (string, error) { return "", fmt.Errorf("simulated getwd failure") }
+				t.Cleanup(func() { osGetwd = orig })
+			},
+			wantErrFrag: "resolve current working directory for --root-path default",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.setupGetwd != nil {
+				tc.setupGetwd(t)
+			}
+			svc := newServiceForProjectCreateTest(t)
+			var out strings.Builder
+			err := runProjectCreate(context.Background(), svc, config.Config{}, tc.opts, &out)
+			if tc.wantErrFrag != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.wantErrFrag)
+				}
+				if !strings.Contains(err.Error(), tc.wantErrFrag) {
+					t.Fatalf("error = %v, want substring %q", err, tc.wantErrFrag)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("runProjectCreate() error = %v", err)
+			}
+			// Locate the created project to verify RepoPrimaryWorktree.
+			projects, listErr := svc.ListProjects(context.Background(), false)
+			if listErr != nil {
+				t.Fatalf("ListProjects() error = %v", listErr)
+			}
+			if len(projects) != 1 {
+				t.Fatalf("expected 1 project, got %d", len(projects))
+			}
+			got := projects[0].RepoPrimaryWorktree
+			if tc.wantWorktree != "" {
+				if got != tc.wantWorktree {
+					t.Fatalf("RepoPrimaryWorktree = %q, want %q", got, tc.wantWorktree)
+				}
+				return
+			}
+			// For cwd-default cases: assert non-empty (the stub returned t.TempDir()).
+			if strings.TrimSpace(got) == "" {
+				t.Fatalf("RepoPrimaryWorktree is empty, expected cwd default")
+			}
 		})
 	}
 }

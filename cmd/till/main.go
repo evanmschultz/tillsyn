@@ -280,6 +280,7 @@ type projectCreateCommandOptions struct {
 	homepage          string
 	tags              []string
 	standardsMarkdown string
+	rootPath          string
 }
 
 // projectShowCommandOptions stores project show flag values.
@@ -656,6 +657,7 @@ bridge after creation.
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.homepage, "homepage", "", "Optional project homepage")
 	projectCreateCmd.Flags().StringSliceVar(&projectCreateOpts.tags, "tag", nil, "Optional project tag")
 	projectCreateCmd.Flags().StringVar(&projectCreateOpts.standardsMarkdown, "standards-markdown", "", "Optional project standards markdown")
+	projectCreateCmd.Flags().StringVar(&projectCreateOpts.rootPath, "root-path", "", "Filesystem path to the project's primary worktree (defaults to current working directory if not supplied; required for agent-isolation hook bootstrap)")
 	projectShowCmd := &cobra.Command{
 		Use:   "show [project-id]",
 		Short: "Show one project",
