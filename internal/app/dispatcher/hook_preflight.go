@@ -58,8 +58,8 @@ type agentHooks struct {
 // may declare multiple hooks; CheckHookArtifacts searches the nested hooks
 // slice for any command containing validate-action-item-paths.sh.
 type agentPreToolUseEntry struct {
-	Matcher string          `yaml:"matcher"`
-	Hooks   []agentHookCmd  `yaml:"hooks"`
+	Matcher string         `yaml:"matcher"`
+	Hooks   []agentHookCmd `yaml:"hooks"`
 }
 
 // agentHookCmd is one hook declaration inside a PreToolUse entry.

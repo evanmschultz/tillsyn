@@ -28,6 +28,7 @@ var Aliases = map[string]interface{}{
 	"dev":                Dev,
 	"test-golden":        TestGolden,
 	"test-golden-update": TestGoldenUpdate,
+	"test-integration":   TestIntegration,
 	"test-pkg":           TestPkg,
 	"test-func":          TestFunc,
 	"fmt":                Format,
@@ -98,6 +99,18 @@ func TestGolden() error {
 // TestGoldenUpdate refreshes golden fixtures and reruns the focused TUI golden suite.
 func TestGoldenUpdate() error {
 	return runGoTest("./internal/tui", "-run", "Golden", "-update")
+}
+
+// TestIntegration runs integration tests gated by the "integration" build tag.
+// These tests require external binaries (bash, jq) and are excluded from the
+// default "mage ci" run (which uses "go test ./..." without the tag).  Use
+// this target to exercise shell-script integration tests such as the
+// validate-action-item-paths hook behavioural suite.
+//
+// Invocation: mage testIntegration
+// Equivalent go command: go test -tags integration ./internal/templates/...
+func TestIntegration() error {
+	return runGoTest("-tags", "integration", "./internal/templates/...")
 }
 
 // Build compiles the local till binary at `./till` with build-stamp ldflags
