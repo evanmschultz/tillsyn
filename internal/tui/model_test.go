@@ -15397,6 +15397,57 @@ func TestFullPageSurfaceMetricsShrinkBodyToFitShortTerminal(t *testing.T) {
 	}
 }
 
+// TestEditProjectPathFieldRoundtrip verifies the full path-edit roundtrip for the
+// edit-project form: open form with a project whose RepoPrimaryWorktree is populated,
+// modify the path field, submit via enter, and confirm UpdateProject is called with the
+// modified path. Regression guard for the PC1 audit (Papercuts C, Drop 4c.6.1).
+func TestEditProjectPathFieldRoundtrip(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+
+	// Both paths must be real directories: normalizeProjectRootPathInput calls os.Stat.
+	originalPath := t.TempDir()
+	newPath := t.TempDir()
+
+	project, err := domain.NewProjectFromInput(domain.ProjectInput{
+		ID:                  "p1",
+		Name:                "Inbox",
+		RepoPrimaryWorktree: originalPath,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewProjectFromInput: %v", err)
+	}
+	c, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{project}, []domain.Column{c}, nil)
+	m := loadReadyModel(t, NewModel(svc))
+
+	// Link 1 (open + prepopulate): startProjectForm reads RepoPrimaryWorktree into root_path.
+	_ = m.startProjectForm(&project)
+	m.mode = modeEditProject
+	m.editingProjectID = project.ID
+	if got := m.projectFormInputs[projectFieldRootPath].Value(); got != originalPath {
+		t.Fatalf("prepopulate: projectFieldRootPath = %q, want %q", got, originalPath)
+	}
+
+	// Link 2 (typing): update root_path field to newPath. SetValue mirrors what
+	// isProjectFormDirectTextInputField + textinput.Update produces on printable input.
+	m.projectFormInputs[projectFieldRootPath].SetValue(newPath)
+
+	// Focus the name field so enter triggers submitInputMode not the description editor.
+	m = applyCmd(t, m, m.focusProjectFormField(projectFieldName))
+
+	// Links 3+4 (submit + service-call): enter -> submitInputMode -> projectFormValues ->
+	// normalizeProjectRootPathInput -> svc.UpdateProject. applyMsg drains the cmd.
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	result := svc.lastUpdateProject
+	if result.ProjectID != project.ID {
+		t.Fatalf("UpdateProject.ProjectID = %q, want %q", result.ProjectID, project.ID)
+	}
+	if result.RepoPrimaryWorktree != newPath {
+		t.Fatalf("UpdateProject.RepoPrimaryWorktree = %q, want %q (path-edit roundtrip broken)", result.RepoPrimaryWorktree, newPath)
+	}
+}
+
 // assertExplicitFieldCoverage ensures every exported struct field is classified as editable, read-only, or internal.
 func assertExplicitFieldCoverage(
 	t *testing.T,
