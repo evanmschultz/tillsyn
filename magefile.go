@@ -219,6 +219,7 @@ func CI() error {
 		{title: "Formatting", run: formatCheck},
 		{title: "Coverage", run: coverage},
 		{title: "Build", run: Build},
+		{title: "Integration", run: TestIntegration},
 	} {
 		if err := runStage(printer, stage.title, stage.run); err != nil {
 			return err
