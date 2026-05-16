@@ -700,6 +700,9 @@ func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, payload
 	}
 	defer func() { _ = repo.Close() }()
 
+	// DO NOT wire BootstrapProjectHooks here — runInitPipeline runs the
+	// claude-hook writers (writeClaudeHooks + writeClaudeSettings) inline
+	// before this call. Wiring the hook here would double-fire the writers.
 	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
 		AutoCreateProjectColumns: true,
 	})
@@ -1540,4 +1543,19 @@ func registerMCPJSON(destDir string, includeMCP bool) (int, int, error) {
 	default:
 		return 0, 0, fmt.Errorf("read %q: %w", target, readErr)
 	}
+}
+
+// bootstrapClaudeHooks writes the agent-isolation hook artifacts into worktreePath.
+// Called by app.Service via ServiceConfig.BootstrapProjectHooks after project create.
+// Returns the first non-nil error from writeClaudeHooks or writeClaudeSettings.
+// Discards added/skipped/refreshed counters returned by the writers — the seam
+// fires post-creation and has no UI surface for those counters.
+func bootstrapClaudeHooks(worktreePath string) error {
+	if _, _, _, err := writeClaudeHooks(worktreePath); err != nil {
+		return fmt.Errorf("bootstrap claude hooks: %w", err)
+	}
+	if _, _, _, err := writeClaudeSettings(worktreePath); err != nil {
+		return fmt.Errorf("bootstrap claude settings: %w", err)
+	}
+	return nil
 }

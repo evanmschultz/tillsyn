@@ -2948,6 +2948,61 @@ func TestWriteClaudeHooksAndSettings_RerunSafety(t *testing.T) {
 	}
 }
 
+// TestBootstrapClaudeHooks_TableDriven verifies bootstrapClaudeHooks
+// across three representative cases: happy path, hooks-write failure,
+// and settings-write failure after hooks succeed.
+func TestBootstrapClaudeHooks_TableDriven(t *testing.T) {
+	cases := []struct {
+		name       string
+		setup      func(t *testing.T) string
+		wantErr    bool
+		wantErrSub string
+	}{
+		{
+			name:    "success path — both files written",
+			setup:   func(t *testing.T) string { return t.TempDir() },
+			wantErr: false,
+		},
+		{
+			name: "hooks-write failure — read-only worktree",
+			setup: func(t *testing.T) string {
+				d := t.TempDir()
+				if err := os.Chmod(d, 0o500); err != nil {
+					t.Fatalf("chmod: %v", err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(d, 0o700) })
+				return d
+			},
+			wantErr:    true,
+			wantErrSub: "bootstrap claude hooks",
+		},
+		{
+			name: "hooks-succeed-settings-fail — settings.json path occupied by directory",
+			setup: func(t *testing.T) string {
+				d := t.TempDir()
+				if err := os.MkdirAll(filepath.Join(d, ".claude", "settings.json"), 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				return d
+			},
+			wantErr:    true,
+			wantErrSub: "bootstrap claude settings",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := tc.setup(t)
+			err := bootstrapClaudeHooks(dir)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("got err=%v wantErr=%v", err, tc.wantErr)
+			}
+			if tc.wantErr && tc.wantErrSub != "" && !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Errorf("err=%v does not contain %q", err, tc.wantErrSub)
+			}
+		})
+	}
+}
+
 // truncate returns the first n bytes of s, or s itself if len(s) <= n.
 // Used in test failure messages to avoid printing enormous file bodies.
 func truncate(s string, n int) string {

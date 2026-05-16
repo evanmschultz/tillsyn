@@ -2422,6 +2422,7 @@ func executeCommandFlow(
 		SearchLexicalWeight:      cfg.Embeddings.LexicalWeight,
 		SearchSemanticWeight:     cfg.Embeddings.SemanticWeight,
 		SearchSemanticCandidates: cfg.Embeddings.QueryTopK,
+		BootstrapProjectHooks:    bootstrapClaudeHooks,
 	})
 	logger.Debug("application service initialized", "default_delete_mode", cfg.Delete.DefaultMode)
 
