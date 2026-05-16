@@ -268,6 +268,35 @@ func (s *Service) IssueCapabilityLease(ctx context.Context, in IssueCapabilityLe
 		}
 	}
 
+	// Auto-supersede prior same-identity orchestrator leases on rotation.
+	// This runs before ensureOrchestratorOverlapPolicy so that the policy check
+	// (read-only) sees a clean state. Continue-and-collect on revoke failure:
+	// the subsequent policy check is the safety net — if revoke did not take,
+	// the policy check fires loud.
+	if lease.Role == domain.CapabilityRoleOrchestrator && strings.TrimSpace(lease.AgentName) != "" {
+		prior, listErr := s.repo.ListCapabilityLeasesByScope(ctx, lease.ProjectID, lease.ScopeType, lease.ScopeID)
+		if listErr == nil {
+			for _, existing := range prior {
+				if existing.InstanceID == lease.InstanceID {
+					continue
+				}
+				if !existing.IsActive(now) {
+					continue
+				}
+				if existing.Role != domain.CapabilityRoleOrchestrator {
+					continue
+				}
+				if strings.TrimSpace(existing.AgentName) != strings.TrimSpace(lease.AgentName) {
+					continue
+				}
+				existing.Revoke("superseded by same-identity re-issue", now)
+				if updateErr := s.repo.UpdateCapabilityLease(ctx, existing); updateErr != nil {
+					log.Warn("auto-supersede revoke failed; policy check will surface overlap if any remains", "err", updateErr, "lease_id", existing.InstanceID)
+				}
+			}
+		}
+	}
+
 	if lease.Role == domain.CapabilityRoleOrchestrator {
 		if err := s.ensureOrchestratorOverlapPolicy(ctx, project, lease, strings.TrimSpace(in.OverrideToken)); err != nil {
 			return domain.CapabilityLease{}, err

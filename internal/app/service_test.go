@@ -3956,10 +3956,10 @@ func TestSnapshotCommentTargetTypeForActionItemAlwaysActionItem(t *testing.T) {
 }
 
 // TestIssueCapabilityLeaseOverlapPolicy verifies same-identity orchestrator overlap
-// behavior and override token handling. All four sub-cases use the same AgentName so
-// the overlap gate at kind_capability.go:ensureOrchestratorOverlapPolicy is exercised
-// on the same-identity lane (distinct AgentInstanceIDs keep the short-circuit at the
-// top of the loop from suppressing the check).
+// behavior. Same-AgentName re-issues now auto-supersede the prior active lease before
+// ensureOrchestratorOverlapPolicy runs (pre-revoke pass), so the override-token path
+// is no longer reached for active same-identity overlap. The test verifies that each
+// successive same-name re-issue succeeds and the prior lease is revoked.
 func TestIssueCapabilityLeaseOverlapPolicy(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "lease-a", "lease-token-a", "lease-b", "lease-token-b", "lease-c", "lease-token-c", "lease-d", "lease-token-d"}
@@ -3986,46 +3986,57 @@ func TestIssueCapabilityLeaseOverlapPolicy(t *testing.T) {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
 
-	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+	// First lease issues without conflict.
+	lease1, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		Role:            domain.CapabilityRoleOrchestrator,
 		AgentName:       "orch-alpha",
 		AgentInstanceID: "orch-alpha-1",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("IssueCapabilityLease(first) error = %v", err)
 	}
 
-	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+	// Second lease with the same AgentName auto-supersedes the first (no override token needed).
+	lease2, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		Role:            domain.CapabilityRoleOrchestrator,
 		AgentName:       "orch-alpha",
 		AgentInstanceID: "orch-alpha-2",
-	}); err != domain.ErrOverrideTokenRequired {
-		t.Fatalf("expected ErrOverrideTokenRequired, got %v", err)
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(second same-identity) error = %v; same-identity re-issue must succeed", err)
+	}
+	stored1, getErr := repo.GetCapabilityLease(context.Background(), lease1.InstanceID)
+	if getErr != nil {
+		t.Fatalf("GetCapabilityLease(lease1) error = %v", getErr)
+	}
+	if !stored1.IsRevoked() {
+		t.Fatal("lease1 must be auto-revoked when lease2 is issued with the same AgentName")
 	}
 
-	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+	// Third lease also auto-supersedes the second.
+	lease3, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		Role:            domain.CapabilityRoleOrchestrator,
 		AgentName:       "orch-alpha",
 		AgentInstanceID: "orch-alpha-3",
-		OverrideToken:   "wrong",
-	}); err != domain.ErrOverrideTokenInvalid {
-		t.Fatalf("expected ErrOverrideTokenInvalid, got %v", err)
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(third same-identity) error = %v", err)
 	}
-
-	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
-		ProjectID:       project.ID,
-		ScopeType:       domain.CapabilityScopeProject,
-		Role:            domain.CapabilityRoleOrchestrator,
-		AgentName:       "orch-alpha",
-		AgentInstanceID: "orch-alpha-4",
-		OverrideToken:   "override-123",
-	}); err != nil {
-		t.Fatalf("IssueCapabilityLease(override) error = %v", err)
+	stored2, getErr := repo.GetCapabilityLease(context.Background(), lease2.InstanceID)
+	if getErr != nil {
+		t.Fatalf("GetCapabilityLease(lease2) error = %v", getErr)
+	}
+	if !stored2.IsRevoked() {
+		t.Fatal("lease2 must be auto-revoked when lease3 is issued with the same AgentName")
+	}
+	if lease3.AgentName != "orch-alpha" {
+		t.Fatalf("lease3 AgentName = %q, want %q", lease3.AgentName, "orch-alpha")
 	}
 }
 
@@ -4089,9 +4100,9 @@ func TestIssueCapabilityLeaseAllowsDistinctOrchestratorIdentities(t *testing.T) 
 }
 
 // TestIssueCapabilityLeaseRejectsSameIdentityReclaim verifies a second orchestrator lease
-// issued by the same AgentName at the same scope is rejected with an override-token error
-// when the project allows override-with-token, exercising the same-identity lane of
-// ensureOrchestratorOverlapPolicy. Cements acceptance 2.2.
+// issued by the same AgentName at the same scope auto-supersedes the prior active lease
+// (pre-revoke pass) and succeeds without requiring an override token. Cements acceptance 2.2
+// updated semantics: same-identity rotation no longer requires override-token.
 func TestIssueCapabilityLeaseRejectsSameIdentityReclaim(t *testing.T) {
 	repo := newFakeRepo()
 	ids := []string{"p1", "lease-token-a", "lease-token-b"}
@@ -4117,24 +4128,39 @@ func TestIssueCapabilityLeaseRejectsSameIdentityReclaim(t *testing.T) {
 		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
 	}
 
-	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+	prior, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		Role:            domain.CapabilityRoleOrchestrator,
 		AgentName:       "orch-a",
 		AgentInstanceID: "orch-a-inst-1",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("IssueCapabilityLease(first) error = %v", err)
 	}
 
-	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+	// Same-identity re-issue must auto-supersede the prior lease and succeed without
+	// an override token — session rotation is the intended use case.
+	fresh, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		Role:            domain.CapabilityRoleOrchestrator,
 		AgentName:       "orch-a",
 		AgentInstanceID: "orch-a-inst-2",
-	}); err != domain.ErrOverrideTokenRequired {
-		t.Fatalf("IssueCapabilityLease(same-identity reclaim) error = %v, want ErrOverrideTokenRequired", err)
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(same-identity reclaim) error = %v; expected success via auto-supersede", err)
+	}
+	storedPrior, getErr := repo.GetCapabilityLease(context.Background(), prior.InstanceID)
+	if getErr != nil {
+		t.Fatalf("GetCapabilityLease(prior) error = %v", getErr)
+	}
+	if !storedPrior.IsRevoked() {
+		t.Fatal("prior lease must be auto-revoked on same-identity re-issue")
+	}
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	if !fresh.IsActive(now) {
+		t.Fatal("fresh lease must be active immediately after issue")
 	}
 }
 

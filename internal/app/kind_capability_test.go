@@ -913,6 +913,154 @@ func TestQALeaseActionPolicy(t *testing.T) {
 	}
 }
 
+// TestIssueCapabilityLeaseSameIdentityAutoSupersede verifies that a same-name orchestrator
+// lease is automatically revoked when the same agent name re-issues, that a different agent
+// name still returns ErrOrchestratorOverlap, and that non-orchestrator roles are unaffected.
+func TestIssueCapabilityLeaseSameIdentityAutoSupersede(t *testing.T) {
+	t.Run("same agent name is auto-revoked and new lease issued", func(t *testing.T) {
+		repo := newFakeRepo()
+		now := time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC)
+		svc := newDeterministicService(repo, now, ServiceConfig{CapabilityLeaseTTL: time.Hour})
+
+		project, err := svc.CreateProject(context.Background(), "Supersede", "")
+		if err != nil {
+			t.Fatalf("CreateProject() error = %v", err)
+		}
+		// Issue the first orchestrator lease under agent name "DROP-1-ORCH".
+		prior, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+			ProjectID:       project.ID,
+			ScopeType:       domain.CapabilityScopeProject,
+			ScopeID:         project.ID,
+			Role:            domain.CapabilityRoleOrchestrator,
+			AgentName:       "DROP-1-ORCH",
+			AgentInstanceID: "drop-1-orch-instance-1",
+		})
+		if err != nil {
+			t.Fatalf("IssueCapabilityLease(prior) error = %v", err)
+		}
+		// Re-issue with the same agent name but a new instance ID (session rotation).
+		fresh, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+			ProjectID:       project.ID,
+			ScopeType:       domain.CapabilityScopeProject,
+			ScopeID:         project.ID,
+			Role:            domain.CapabilityRoleOrchestrator,
+			AgentName:       "DROP-1-ORCH",
+			AgentInstanceID: "drop-1-orch-instance-2",
+		})
+		if err != nil {
+			t.Fatalf("IssueCapabilityLease(fresh re-issue) error = %v", err)
+		}
+		if fresh.InstanceID == prior.InstanceID {
+			t.Fatal("fresh lease must have a different InstanceID from the prior lease")
+		}
+		// Prior lease must now be revoked in the repo.
+		stored, err := repo.GetCapabilityLease(context.Background(), prior.InstanceID)
+		if err != nil {
+			t.Fatalf("GetCapabilityLease(prior) error = %v", err)
+		}
+		if !stored.IsRevoked() {
+			t.Fatal("prior same-identity lease must be revoked after re-issue")
+		}
+		// Fresh lease must be active.
+		if !fresh.IsActive(now) {
+			t.Fatal("fresh lease must be active immediately after issue")
+		}
+	})
+
+	t.Run("different agent name is not affected by pre-revoke and both leases remain active", func(t *testing.T) {
+		repo := newFakeRepo()
+		now := time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC)
+		svc := newDeterministicService(repo, now, ServiceConfig{CapabilityLeaseTTL: time.Hour})
+
+		project, err := svc.CreateProject(context.Background(), "Parallel Orch", "")
+		if err != nil {
+			t.Fatalf("CreateProject() error = %v", err)
+		}
+		// First orchestrator with a distinct name.
+		leaseA, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+			ProjectID:       project.ID,
+			ScopeType:       domain.CapabilityScopeProject,
+			ScopeID:         project.ID,
+			Role:            domain.CapabilityRoleOrchestrator,
+			AgentName:       "ORCH-A",
+			AgentInstanceID: "orch-a-instance",
+		})
+		if err != nil {
+			t.Fatalf("IssueCapabilityLease(ORCH-A) error = %v", err)
+		}
+		// Second orchestrator with a DIFFERENT name — pre-revoke must skip it
+		// (parallel-orchestrator pattern must remain unblocked).
+		leaseB, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+			ProjectID:       project.ID,
+			ScopeType:       domain.CapabilityScopeProject,
+			ScopeID:         project.ID,
+			Role:            domain.CapabilityRoleOrchestrator,
+			AgentName:       "ORCH-B",
+			AgentInstanceID: "orch-b-instance",
+		})
+		if err != nil {
+			t.Fatalf("IssueCapabilityLease(ORCH-B) error = %v; different-name orchestrators must coexist", err)
+		}
+		// ORCH-A must NOT have been revoked by the pre-revoke pass.
+		storedA, err := repo.GetCapabilityLease(context.Background(), leaseA.InstanceID)
+		if err != nil {
+			t.Fatalf("GetCapabilityLease(ORCH-A) error = %v", err)
+		}
+		if storedA.IsRevoked() {
+			t.Fatal("ORCH-A must NOT be revoked when a different-name orchestrator is issued")
+		}
+		// ORCH-B must be active.
+		if !leaseB.IsActive(now) {
+			t.Fatal("ORCH-B lease must be active after issue")
+		}
+	})
+
+	t.Run("non-orchestrator role is unaffected by pre-revoke pass", func(t *testing.T) {
+		repo := newFakeRepo()
+		now := time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC)
+		svc := newDeterministicService(repo, now, ServiceConfig{CapabilityLeaseTTL: time.Hour})
+
+		project, err := svc.CreateProject(context.Background(), "Builder Unaffected", "")
+		if err != nil {
+			t.Fatalf("CreateProject() error = %v", err)
+		}
+		// Issue two builder leases under the same agent name — must both succeed.
+		first, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+			ProjectID:       project.ID,
+			ScopeType:       domain.CapabilityScopeProject,
+			ScopeID:         project.ID,
+			Role:            domain.CapabilityRoleBuilder,
+			AgentName:       "go-builder-agent",
+			AgentInstanceID: "builder-instance-1",
+		})
+		if err != nil {
+			t.Fatalf("IssueCapabilityLease(builder first) error = %v", err)
+		}
+		second, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+			ProjectID:       project.ID,
+			ScopeType:       domain.CapabilityScopeProject,
+			ScopeID:         project.ID,
+			Role:            domain.CapabilityRoleBuilder,
+			AgentName:       "go-builder-agent",
+			AgentInstanceID: "builder-instance-2",
+		})
+		if err != nil {
+			t.Fatalf("IssueCapabilityLease(builder second) error = %v", err)
+		}
+		// First builder lease must remain active — no auto-revoke for non-orchestrators.
+		storedFirst, err := repo.GetCapabilityLease(context.Background(), first.InstanceID)
+		if err != nil {
+			t.Fatalf("GetCapabilityLease(first) error = %v", err)
+		}
+		if storedFirst.IsRevoked() {
+			t.Fatal("first builder lease must NOT be revoked when a second builder is issued")
+		}
+		if !second.IsActive(now) {
+			t.Fatal("second builder lease must be active")
+		}
+	})
+}
+
 // TestKindCapabilityHelpers verifies deterministic helper behavior used by service methods.
 func TestKindCapabilityHelpers(t *testing.T) {
 	// NormalizeKindID now trims + lowercases (no camelCase rewriting).
