@@ -64,6 +64,36 @@ Next ergonomics drop — short single-droplet fix in the MCP server layer. High 
 
 ---
 
+## 2026-05-16 — W1 D4 follow-up — MCP error-class drift on adapter-returned `invalid_request:` errors
+
+### Context
+W1 D4 (`b3e0840`) added an adapter-layer guard in `internal/adapters/mcp_common/app_service_adapter_mcp.go:634-636` returning `fmt.Errorf("invalid_request: repo_primary_worktree is required ...")`. W1 D4 plan-QA-falsification (`aba648c94473e5396`, VERDICT FAIL counterexample A2) caught a real semantic drift: the adapter's error is not a registered MCP sentinel, so `mapToolError` (`internal/adapters/mcp_rpc/handler.go:914`) falls through to `default:` and stamps it as `internal_error: invalid_request: ...` with `error_class: internal, error_code: internal_error`. MCP clients see this categorized as a 5xx-equivalent rather than a 4xx-class validation failure.
+
+### Observation
+The "loud invalid_request" intent of `feedback_parity_clarity_no_silent_failures` is partially undermined: the error message contains `invalid_request:` BUT the MCP error-class field says `internal`. Adopters' retry logic / error routing will treat this as transient/server-side rather than "fix your request and don't retry."
+
+Attempted in-line fix (move guard to `internal/adapters/mcp_rpc/extended_tools.go` next to `args.Name == ""`) BROKE 11 tests because:
+- Placement before auth → tests expecting auth errors get validation error first.
+- `TestProjectMCPFirstClassFieldsRoundTrip/create_without_first-class_fields_round-trips_empty_values` explicitly tests the OLD permissive behavior.
+- Coverage dropped in `mcp_rpc` package.
+
+Revert was clean; mage ci green restored.
+
+### Proposed fix (refinement)
+Two-step fix in a separate cascade:
+
+1. **Define `mcpcommon.ErrInvalidRequest` sentinel**, wrap the adapter error with `%w`, add an `errors.Is` case in `mapToolError` to route to `Class: "invalid_request" / Code: "invalid_request"`. This preserves adapter-layer behavior + fixes error class for MCP transport.
+2. **Update `TestProjectMCPFirstClassFieldsRoundTrip/create_without_first-class_fields_round-trips_empty_values`** to assert the new required-field behavior (or delete the sub-case if "empty round-trip" is no longer a valid contract).
+3. **Tighten `TestCreateProjectRepoPrimaryWorktreeRequired`** to assert MCP error CLASS, not just substring (post-sentinel-route).
+
+### Target drop
+Post-W1 single-droplet refinement — small, contained, but touches handler error-mapping which warrants its own plan-QA pair.
+
+### Tags
+`mcp`, `error-class`, `parity-clarity`, `refinement`, `w1-d4-followup`
+
+---
+
 ## 2026-05-16 — agent-isolation-followup — Hook `..`-traversal hardening: out-of-scope attack surfaces raised by W2 plan-QA-falsification
 
 ### Context
