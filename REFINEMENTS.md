@@ -94,6 +94,34 @@ Post-W1 single-droplet refinement — small, contained, but touches handler erro
 
 ---
 
+## 2026-05-16 — plan-QA methodology — three refinements raised by 2.C falsification
+
+### Context
+The 2.C Drop 4b plan-QA-falsification pass surfaced load-bearing counterexamples (C1/C2/C3/C5) that the original planner missed. While analyzing those, the falsification agent raised three standing methodology refinements that apply across cascades, not just to this one.
+
+### Observation
+
+**(R1) Shipped-but-not-wired pattern is recurrent.** Drop 3 droplet 3.20 anti-pattern (template-resolver shipped without consumer) and Drop 4b (gate runner + 4 gate impls shipped, zero `Register` / zero call-sites) have the same shape: a runner / registry / adapter type ships without any production code consuming it. Plan-QA-falsification does not currently have a standing attack family for this. Without one, the pattern keeps slipping through closeouts.
+
+**(R2) Planner spec must land on disk before plan-QA dispatch.** Both 2.C and 2.B.1 planner outputs lived ONLY in Tillsyn descriptions during this session. Plan-QA-falsification flagged "I cannot directly read the Tillsyn descriptions" as degrading the review — the agent had to reconstruct the spec from the orchestrator's spawn-prompt summary. Confidence in the FAIL verdict was high anyway because the counterexamples were objective state-machine facts, but the absence of an on-disk spec made the review harder than necessary.
+
+**(R3) Drop closeouts must include "every shipped runner has a consumer call site" checklist item.** Drop 4b shipped with the gate runner + 4 gate impls but no consumer wiring; closeout did not catch this. Generalize: any drop landing a Register-style or Run-style infrastructure piece must verify, before close, that at least one production call site invokes the consumer side.
+
+### Proposed fix
+
+- **R1** — Add a standing plan-QA-falsification attack family: "for every shipped runner / registry / adapter type, verify a `Register` / consumer call site exists in production code." Encode this in `go-qa-falsification-agent.md` (or equivalent template) as a default attack.
+- **R2** — Pre-cascade workflow should formalize "planner writes spec to disk at `workflow/<drop>/PLAN.md` (or equivalent) BEFORE plan-QA dispatch." Tillsyn descriptions can supplement but the on-disk artifact is the source of truth plan-QA agents read.
+- **R3** — Add to drop-closeout checklist (whether MD-encoded or template-enforced): "every shipped runner / registry / adapter type has at least one production consumer call site." Cascade closeout-agent picks this up automatically.
+
+### Target drop
+
+Methodology drop — not a Go-code drop. Lives in agent templates + WORKFLOW.md + closeout checklist. Pre-cascade-dispatcher era: orchestrator threads the discipline into spawn prompts manually until templates encode it.
+
+### Tags
+`methodology`, `plan-qa`, `falsification`, `closeout`, `workflow`, `cascade-methodology`
+
+---
+
 ## 2026-05-16 — agent-isolation-followup — Hook `..`-traversal hardening: out-of-scope attack surfaces raised by W2 plan-QA-falsification
 
 ### Context
