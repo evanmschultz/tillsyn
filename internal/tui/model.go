@@ -18197,6 +18197,12 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 		}
 		return staticHelpKeyMap{short: short, full: [][]key.Binding{short}}
 	case modeAddProject, modeEditProject:
+		// The path picker uses ctrl+r (not plain r) because projectFieldRootPath
+		// is a textinput that consumes printable keys via isProjectFormDirectTextInputField
+		// — plain r would type "r" into the path field instead of opening the picker.
+		// Other modes' plain-r bindings (modeEmbeddingsStatus/AuthInventory/CoordinationDetail
+		// at ~18251/18294/18319) are safe because those modes are list/detail surfaces
+		// without focused textinputs.
 		short := []key.Binding{
 			helpBinding("enter", "save"),
 			helpBinding("tab", "next field"),

@@ -442,9 +442,20 @@ func scopeLevelForActionItem(actionItem domain.ActionItem) domain.ScopeLevel {
 	return domain.ScopeLevelActionItem
 }
 
-// ensureOrchestratorOverlapPolicy enforces project policy for overlapping orchestrator leases
-// held by a DIFFERENT agent identity. Same-identity overlap continues to block unless the
-// project override policy is satisfied.
+// ensureOrchestratorOverlapPolicy enforces project policy for overlapping orchestrator
+// leases held by the SAME agent identity.
+//
+// Post-Papercuts-B (commit d5f9342), IssueCapabilityLease performs a same-identity
+// pre-revoke pass BEFORE calling this function — so under normal flow this guard
+// finds no same-identity conflict and returns nil. The guard remains load-bearing as
+// the SAFETY NET for the failure path where UpdateCapabilityLease errors during
+// pre-revoke (continue-and-collect): if the prior lease was not revoked, this guard
+// still fires loud with ErrOrchestratorOverlap / ErrOverrideTokenRequired /
+// ErrOverrideTokenInvalid per project policy.
+//
+// Different-identity overlap is the "parallel orchestrators in one project" pattern
+// and is intentionally NOT blocked here (the per-identity check at line ~466
+// short-circuits with `continue`).
 func (s *Service) ensureOrchestratorOverlapPolicy(ctx context.Context, project domain.Project, next domain.CapabilityLease, overrideToken string) error {
 	leases, err := s.repo.ListCapabilityLeasesByScope(ctx, next.ProjectID, next.ScopeType, next.ScopeID)
 	if err != nil {
