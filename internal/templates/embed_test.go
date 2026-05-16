@@ -470,16 +470,12 @@ func TestDefaultTemplateStewardOwnedKinds(t *testing.T) {
 }
 
 // TestDefaultTemplateLoadsWithGates asserts the embedded till-go.toml
-// decodes the [gates] section with the Drop 4c F.7.16 shape:
-// [gates.build] = ["mage_ci", "commit", "push"]. Drop 4b Wave A 4b.1 originally
-// shipped only ["mage_ci"]; Drop 4c F.7.16 expanded the sequence per master
-// PLAN.md L20 — commit + push gates ship in the LIST but are INDEPENDENTLY
-// GATED via ProjectMetadata.DispatcherCommitEnabled / DispatcherPushEnabled,
-// which both default OFF (nil/false). Slice ORDER is load-bearing because the
-// gate runner halts on first failure: mage_ci must run before commit (a green
-// build is a precondition for committing the work) and commit must run before
-// push (push without a fresh local commit on the working ref is a no-op or a
-// stale-state push).
+// decodes the [gates] section with exactly ["mage_ci"] for the build kind.
+// Drop 4b ships only the mage_ci gate implementation; commit + push gates are
+// deferred to Drop 4c F.7 (commit-agent + push-gate implementations). Including
+// them in the TOML before their gate implementations land trips
+// ErrGateNotRegistered on every build dispatch. They are re-added when Drop 4c
+// F.7 ships.
 //
 // Other kinds (plan-qa-proof, build-qa-proof, closeout, etc.) are ABSENT from
 // [gates.*]; the gate runner treats absence as "no gates" not "all gates" per
@@ -491,11 +487,11 @@ func TestDefaultTemplateLoadsWithGates(t *testing.T) {
 
 	gateSeq, ok := tpl.Gates[domain.KindBuild]
 	if !ok {
-		t.Fatalf("Gates[%q] missing — Drop 4c F.7.16 ships [gates.build] = [\"mage_ci\", \"commit\", \"push\"]", domain.KindBuild)
+		t.Fatalf("Gates[%q] missing — [gates.build] must carry [\"mage_ci\"] (commit + push deferred to Drop 4c F.7)", domain.KindBuild)
 	}
-	want := []GateKind{GateKindMageCI, GateKindCommit, GateKindPush}
+	want := []GateKind{GateKindMageCI}
 	if !slices.Equal(gateSeq, want) {
-		t.Fatalf("Gates[%q] = %v; want %v (Drop 4c F.7.16 — order is load-bearing: mage_ci then commit then push)", domain.KindBuild, gateSeq, want)
+		t.Fatalf("Gates[%q] = %v; want %v (only mage_ci registered in Drop 4b; commit+push deferred to Drop 4c F.7)", domain.KindBuild, gateSeq, want)
 	}
 
 	// Sibling kinds carry no gate sequence — the gate runner treats absence

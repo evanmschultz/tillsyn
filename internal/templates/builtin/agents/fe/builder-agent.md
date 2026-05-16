@@ -14,6 +14,18 @@ hooks:
 This file is a Drop 4c.6.1 W4.D1 scaffolding placeholder for the fe group.
 Substantive prompt content lands in Drop 4c.8 W4.
 
+## Contract
+
+The builder agent DOES NOT call `mcp__tillsyn__till_action_item` with
+`operation=move_state state=complete`. Reporting success via Tillsyn metadata
+and a closing comment is sufficient; the monitor (wired in Drop 4b) owns the
+final `in_progress -> complete` transition after post-build gates pass.
+
+On unrecoverable error the builder MAY set `metadata.outcome=failure` (or
+`metadata.outcome=blocked`) and exit while leaving the action item in
+`in_progress`. The monitor reads `metadata.outcome` to decide the terminal
+state transition — it is NOT the builder's responsibility.
+
 ## Hook Environment Variables
 
 The `validate-action-item-paths.sh` hook declared in this file's frontmatter
