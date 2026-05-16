@@ -107,10 +107,11 @@ func TestAppServiceAdapterProjectActionItemCommentLifecycle(t *testing.T) {
 	}
 
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:        "Inbox",
-		Description: "Project description",
-		Metadata:    domain.ProjectMetadata{Color: "amber"},
-		Actor:       actor,
+		Name:                "Inbox",
+		Description:         "Project description",
+		RepoPrimaryWorktree: "/test/worktree",
+		Metadata:            domain.ProjectMetadata{Color: "amber"},
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -402,8 +403,9 @@ func TestAppServiceAdapterGetEmbeddingsStatusValidatesInputs(t *testing.T) {
 	}
 
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:  "Embeddings",
-		Actor: actor,
+		Name:                "Embeddings",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -468,9 +470,10 @@ func TestAppServiceAdapterEmbeddingsStatusAndSearchExposeMixedSubjectFamilies(t 
 	}
 
 	project, err := adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:        "Embeddings",
-		Description: "Project document content for embeddings inventory",
-		Actor:       actor,
+		Name:                "Embeddings",
+		Description:         "Project document content for embeddings inventory",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -576,7 +579,7 @@ func TestAppServiceAdapterKindAndAllowlistLifecycle(t *testing.T) {
 
 	fixture := newCommonLifecycleFixture(t)
 	ctx := context.Background()
-	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{Name: "Inbox"})
+	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{Name: "Inbox", RepoPrimaryWorktree: "/test/worktree"})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -628,8 +631,9 @@ func TestAppServiceAdapterAttentionAndLeaseLifecycle(t *testing.T) {
 	}
 
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:  "Ops",
-		Actor: actor,
+		Name:                "Ops",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -768,8 +772,9 @@ func TestAppServiceAdapterAttentionAndCaptureLifecycle(t *testing.T) {
 	}
 
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:  "Inbox",
-		Actor: actor,
+		Name:                "Inbox",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -869,7 +874,7 @@ func TestAppServiceAdapterCapabilityLeaseLifecycle(t *testing.T) {
 
 	fixture := newCommonLifecycleFixture(t)
 	ctx := context.Background()
-	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{Name: "Lease Project"})
+	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{Name: "Lease Project", RepoPrimaryWorktree: "/test/worktree"})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -966,9 +971,10 @@ func TestMoveActionItemStateToFailed(t *testing.T) {
 	}
 
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:        "FailedTest",
-		Description: "Test project",
-		Actor:       actor,
+		Name:                "FailedTest",
+		Description:         "Test project",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -1043,9 +1049,10 @@ func TestCreateActionItemResolvesStateToColumn(t *testing.T) {
 	}
 
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:        "CreateStateTest",
-		Description: "Test project for create-by-state resolution",
-		Actor:       actor,
+		Name:                "CreateStateTest",
+		Description:         "Test project for create-by-state resolution",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -1139,9 +1146,10 @@ func TestMoveActionItemResolvesStateToColumn(t *testing.T) {
 	}
 
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:        "MoveStateTest",
-		Description: "Test project for move-by-state resolution",
-		Actor:       actor,
+		Name:                "MoveStateTest",
+		Description:         "Test project for move-by-state resolution",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -1217,5 +1225,69 @@ func TestMoveActionItemResolvesStateToColumn(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "specify exactly one of to_column_id or state") {
 		t.Fatalf("MoveActionItem(both-non-empty) error = %q, want substring %q", err.Error(), "specify exactly one of to_column_id or state")
+	}
+}
+
+// TestCreateProjectRepoPrimaryWorktreeRequired verifies that CreateProject rejects
+// calls with an empty or whitespace-only repo_primary_worktree with an
+// invalid_request error that names the field and explains its purpose.
+func TestCreateProjectRepoPrimaryWorktreeRequired(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	actor := ActorLeaseTuple{
+		ActorID:   "user-1",
+		ActorName: "User One",
+		ActorType: string(domain.ActorTypeUser),
+	}
+
+	tests := []struct {
+		name       string
+		worktree   string
+		wantErr    bool
+		wantErrSub string
+	}{
+		{
+			name:       "empty string rejected",
+			worktree:   "",
+			wantErr:    true,
+			wantErrSub: "invalid_request: repo_primary_worktree is required",
+		},
+		{
+			name:       "whitespace-only rejected",
+			worktree:   "   ",
+			wantErr:    true,
+			wantErrSub: "invalid_request: repo_primary_worktree is required",
+		},
+		{
+			name:     "non-empty path accepted",
+			worktree: "/some/path",
+			wantErr:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
+				Name:                "Test Project",
+				RepoPrimaryWorktree: tc.worktree,
+				Actor:               actor,
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("CreateProject() expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("CreateProject() error = %q, want substring %q", err.Error(), tc.wantErrSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateProject() unexpected error: %v", err)
+			}
+		})
 	}
 }

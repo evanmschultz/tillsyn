@@ -122,9 +122,10 @@ func TestUpdateActionItemRejectsInvalidOutcome(t *testing.T) {
 
 	// Create a project and column so we can create a real actionItem.
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:        "OutcomeTest",
-		Description: "Test project for outcome validation",
-		Actor:       actor,
+		Name:                "OutcomeTest",
+		Description:         "Test project for outcome validation",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
@@ -203,9 +204,10 @@ func TestCreateActionItemRejectsInvalidOutcome(t *testing.T) {
 
 	// Create a project and column so we can attempt actionItem creation.
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:        "CreateOutcomeTest",
-		Description: "Test project for create outcome validation",
-		Actor:       actor,
+		Name:                "CreateOutcomeTest",
+		Description:         "Test project for create outcome validation",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)

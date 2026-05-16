@@ -49,8 +49,13 @@ type ActorLeaseTuple struct {
 // HyllaArtifactRef / RepoBareRoot / RepoPrimaryWorktree /
 // BuildTool / DevMcpServerName are the five Drop 4a L4 first-class
 // project-node fields. Plumbed through the till.project create tool;
-// adapter forwards them to app.CreateProjectInput unchanged. Empty string
-// is the meaningful zero value for each (pre-bootstrap project).
+// adapter forwards them to app.CreateProjectInput unchanged.
+//
+// RepoPrimaryWorktree is REQUIRED (non-empty, non-whitespace-only). The
+// CreateProject adapter rejects calls with an empty or whitespace-only
+// value with an invalid_request error; the dispatcher reads this field
+// as the `cd` target for agent-isolation hook bootstrap. All other
+// fields accept empty string as the meaningful zero value.
 type CreateProjectRequest struct {
 	Name                string
 	Description         string

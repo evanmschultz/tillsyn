@@ -510,9 +510,10 @@ func newStewardGatedActionItem(t *testing.T, fixture commonLifecycleFixture, own
 	}
 
 	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
-		Name:        "STEWARD-gated lifecycle",
-		Description: "fixture project for the owner-state-lock tests",
-		Actor:       bootstrapActor,
+		Name:                "STEWARD-gated lifecycle",
+		Description:         "fixture project for the owner-state-lock tests",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               bootstrapActor,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
