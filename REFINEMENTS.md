@@ -122,6 +122,45 @@ Methodology drop — not a Go-code drop. Lives in agent templates + WORKFLOW.md 
 
 ---
 
+## 2026-05-16 — 2.C decomp Wave 1 — sibling-builder commit-bundling incident + path-overshoot
+
+### Context
+Wave 1 of the revised 5-droplet 2.C Drop 4b decomp dispatched 4 builders in parallel against the same worktree: D1 (till-go template gate cleanup, `internal/templates`), D2 (builder agent contract, `internal/templates`), D3 (template resolver, `internal/app/dispatcher` + `cmd/till`), A2 (sentinel fix, `internal/adapters/mcp_common` + `internal/adapters/mcp_rpc`). D3 + A2 shipped clean independent commits (`0360dc6` + `99a5030`). D1 + D2 collided.
+
+### Observation
+
+**Bundled commit.** D1 and D2 both ran in the same `internal/templates` package, file-disjoint by declaration. D2 committed `66ffb28 chore(templates): builder agents stop self-completing; monitor handles transition` and `git add` picked up D1's working-tree changes alongside D2's intended ones. D1's till-go.toml edit + embed_test.go edit landed in `66ffb28` even though the commit subject describes only D2's scope. D1 reported success pointing at the same commit, no D1-attributable commit exists.
+
+**Path-overshoot.** D1's declared paths were `[till-go.toml, load_test.go]`. D1 actually edited `[till-go.toml, embed_test.go]` — `embed_test.go` was in D2's declared paths, not D1's. The agent-isolation `validate-action-item-paths.sh` PreToolUse hook (shipped 2026-05-16 in the agent-isolation cascade) would have blocked this — but the hook only activates when `till init` is run on a project AND the dispatcher fires gate preflight. Our current pre-cascade orch-managed dogfood does not run the hook, so D1's path-overshoot was not enforced at tool-use time.
+
+`mage ci` PASSED at `66ffb28` (3350 tests, all packages >= 70% coverage). The WORK is functionally correct on both D1 and D2 scopes. The problems are audit-trail and methodology compliance.
+
+### Proposed fix (immediate)
+Accept the bundled commit. Both D1 and D2 action items close with `end_commit=66ffb28`. Completion_notes on each describe its portion of the diff. This doc commit is the audit-trail-completion follow-on referenced in `CLAUDE.md` git-commit-format rule ("a bad message or forgotten file gets a follow-on commit, not a rewrite").
+
+D1 portion of `66ffb28`:
+- `internal/templates/builtin/till-go.toml`: `[gates] build` array narrowed from `["mage_ci", "commit", "push"]` to `["mage_ci"]`. Closes 2.C plan-QA-falsification counterexample C1.
+- `internal/templates/embed_test.go`: `TestDefaultTemplateLoadsWithGates` assertion updated to expect the 1-element gates list.
+
+D2 portion of `66ffb28`:
+- `internal/templates/builtin/agents/go/builder-agent.md`, `fe/builder-agent.md`, `gen/builder-agent.md`: each +12 lines adding a "Contract" section stating builders DO NOT self-move to `complete`. Closes 2.C plan-QA-falsification counterexample C2.
+
+### Proposed fix (systemic)
+
+**Near-term mitigation (no code change required):** sibling builders in the same Go package must declare strictly disjoint files AND be prepared for `git add -A`-style commits to bundle siblings' WIP. Builder spawn prompts should require `git add <specific-files>` (not `git add -A` or `git add .`) to avoid absorbing sibling working-tree state. Update builder-agent template prose accordingly in a future drop.
+
+**Structural fix (future drop):** ephemeral `git worktree add` per builder. Each parallel builder gets its own checkout pointed at the same branch; the orchestrator merges results sequentially after each builder's clean exit. Lock-domain conflicts evaporate because there is no shared filesystem. Cost: setup overhead + merge orchestration in the dispatcher; benefit: no class-of-incident like this recurs. Logged as future work, NOT blocking pre-MVP.
+
+**Path-overshoot enforcement gap (cascade dispatcher dependency):** the `validate-action-item-paths.sh` hook is shipped but inert for orch-managed dogfood. Once Drop 4b lands (auto-dispatch on `in_progress` transitions) the hook fires per spawn and blocks at tool-use time. Until then, builders edit on the honor system. Acceptable for pre-cascade dogfood; not acceptable post-cascade.
+
+### Target drop
+Future ergonomics drop — ephemeral-worktree-per-builder is a substantial dispatcher change. Lands when the cascade dispatcher matures past Drop 4b. Near-term: tighten builder spawn-prompt language around `git add` scope.
+
+### Tags
+`methodology`, `parallel-builders`, `git-hygiene`, `sibling-wip`, `path-enforcement`, `cascade-methodology`
+
+---
+
 ## 2026-05-16 — agent-isolation-followup — Hook `..`-traversal hardening: out-of-scope attack surfaces raised by W2 plan-QA-falsification
 
 ### Context
