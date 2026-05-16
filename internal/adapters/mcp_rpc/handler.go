@@ -981,6 +981,12 @@ func mapToolError(err error) toolErrorMapping {
 			Code:  "invalid_request",
 			Text:  "invalid_request: " + err.Error(),
 		}
+	case errors.Is(err, mcpcommon.ErrInvalidRequest):
+		return toolErrorMapping{
+			Class: "invalid",
+			Code:  "invalid_request",
+			Text:  "invalid_request: " + err.Error(),
+		}
 	case errors.Is(err, mcpcommon.ErrNotFound):
 		return toolErrorMapping{
 			Class: "not_found",

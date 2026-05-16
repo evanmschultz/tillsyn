@@ -1003,6 +1003,13 @@ func TestToolResultFromErrorMapping(t *testing.T) {
 			wantLogClass: "invalid",
 		},
 		{
+			name:         "invalid_request_sentinel",
+			err:          fmt.Errorf("repo_primary_worktree is required: %w", mcpcommon.ErrInvalidRequest),
+			wantPrefix:   "invalid_request:",
+			wantLogCode:  "invalid_request",
+			wantLogClass: "invalid",
+		},
+		{
 			name:         "not found",
 			err:          errors.Join(mcpcommon.ErrNotFound, errors.New("missing")),
 			wantPrefix:   "not_found:",

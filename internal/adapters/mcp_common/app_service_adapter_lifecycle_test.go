@@ -1252,13 +1252,13 @@ func TestCreateProjectRepoPrimaryWorktreeRequired(t *testing.T) {
 			name:       "empty string rejected",
 			worktree:   "",
 			wantErr:    true,
-			wantErrSub: "invalid_request: repo_primary_worktree is required",
+			wantErrSub: "repo_primary_worktree is required",
 		},
 		{
 			name:       "whitespace-only rejected",
 			worktree:   "   ",
 			wantErr:    true,
-			wantErrSub: "invalid_request: repo_primary_worktree is required",
+			wantErrSub: "repo_primary_worktree is required",
 		},
 		{
 			name:     "non-empty path accepted",
@@ -1282,6 +1282,9 @@ func TestCreateProjectRepoPrimaryWorktreeRequired(t *testing.T) {
 				}
 				if !strings.Contains(err.Error(), tc.wantErrSub) {
 					t.Fatalf("CreateProject() error = %q, want substring %q", err.Error(), tc.wantErrSub)
+				}
+				if !errors.Is(err, ErrInvalidRequest) {
+					t.Fatalf("CreateProject() error does not wrap ErrInvalidRequest: %v", err)
 				}
 				return
 			}

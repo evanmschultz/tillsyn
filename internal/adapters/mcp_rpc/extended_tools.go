@@ -71,7 +71,7 @@ func authorizeMCPMutation(
 func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mcpMutationGuardArgs, allowUnguardedAgent bool) (mcpcommon.ActorLeaseTuple, error) {
 	caller = domain.NormalizeAuthenticatedCaller(caller)
 	if caller.IsZero() {
-		return mcpcommon.ActorLeaseTuple{}, fmt.Errorf("invalid_request: authenticated caller is required for mutating MCP tools")
+		return mcpcommon.ActorLeaseTuple{}, fmt.Errorf("authenticated caller is required for mutating MCP tools: %w", mcpcommon.ErrInvalidRequest)
 	}
 	// Drop 3 droplet 3.19: thread AuthRequestPrincipalType through the
 	// MCP-layer actor tuple so the STEWARD owner-state-lock survives the
@@ -91,8 +91,9 @@ func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mc
 	if caller.PrincipalType != domain.ActorTypeAgent {
 		if hasGuardTuple {
 			return mcpcommon.ActorLeaseTuple{}, fmt.Errorf(
-				"invalid_request: guarded mutation tuple requires an authenticated agent session; current session principal_type=%s. Remove agent_instance_id/lease_token to act as a human, or claim/validate a project-scoped approved agent session before retrying",
+				"guarded mutation tuple requires an authenticated agent session; current session principal_type=%s. Remove agent_instance_id/lease_token to act as a human, or claim/validate a project-scoped approved agent session before retrying: %w",
 				caller.PrincipalType,
+				mcpcommon.ErrInvalidRequest,
 			)
 		}
 		return actor, nil
@@ -101,7 +102,7 @@ func buildAuthenticatedMutationActor(caller domain.AuthenticatedCaller, guard mc
 		return actor, nil
 	}
 	if guard.AgentInstanceID == "" || guard.LeaseToken == "" {
-		return mcpcommon.ActorLeaseTuple{}, fmt.Errorf("invalid_request: agent_instance_id and lease_token are required for authenticated agent mutations; agent identity comes from the authenticated session")
+		return mcpcommon.ActorLeaseTuple{}, fmt.Errorf("agent_instance_id and lease_token are required for authenticated agent mutations; agent identity comes from the authenticated session: %w", mcpcommon.ErrInvalidRequest)
 	}
 
 	// Lease identity must stay tied to the stable principal id; display name remains
@@ -2400,7 +2401,7 @@ func invalidRequestToolResult(err error) *mcp.CallToolResult {
 func resolveActionItemIDForRead(ctx context.Context, tasks mcpcommon.ActionItemService, projectID, idOrDotted string) (string, error) {
 	idOrDotted = strings.TrimSpace(idOrDotted)
 	if idOrDotted == "" {
-		return "", fmt.Errorf(`invalid_request: required argument "action_item_id" not found`)
+		return "", fmt.Errorf(`required argument "action_item_id" not found: %w`, mcpcommon.ErrInvalidRequest)
 	}
 	if !app.IsLikelyDottedAddress(idOrDotted) {
 		// Not dotted — let ResolveActionItemID validate UUID shape and pass through.
@@ -2414,7 +2415,7 @@ func resolveActionItemIDForRead(ctx context.Context, tasks mcpcommon.ActionItemS
 		projectID = project.ID
 	}
 	if strings.TrimSpace(projectID) == "" {
-		return "", fmt.Errorf(`invalid_request: project_id is required when action_item_id is a dotted address without a slug prefix`)
+		return "", fmt.Errorf(`project_id is required when action_item_id is a dotted address without a slug prefix: %w`, mcpcommon.ErrInvalidRequest)
 	}
 	return tasks.ResolveActionItemID(ctx, projectID, idOrDotted)
 }

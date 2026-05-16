@@ -5806,18 +5806,22 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 		t.Parallel()
 		service, server := newServer(t)
 		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7801, "till.project", mergeArgs(validSessionArgs(), map[string]any{
-			"operation":         "create",
-			"name":              "Plain",
-			"agent_instance_id": "inst-1",
-			"lease_token":       "tok-1",
+			"operation":             "create",
+			"name":                  "Plain",
+			"repo_primary_worktree": "/test/worktree",
+			"agent_instance_id":     "inst-1",
+			"lease_token":           "tok-1",
 		})))
 		if isError, _ := createResp.Result["isError"].(bool); isError {
 			t.Fatalf("project create returned isError=true: %#v", createResp.Result)
 		}
 		got := service.lastCreateProjectReq
-		if got.HyllaArtifactRef != "" || got.RepoBareRoot != "" || got.RepoPrimaryWorktree != "" ||
+		if got.HyllaArtifactRef != "" || got.RepoBareRoot != "" ||
 			got.BuildTool != "" || got.DevMcpServerName != "" {
 			t.Fatalf("expected empty defaults, got %+v", got)
+		}
+		if got.RepoPrimaryWorktree != "/test/worktree" {
+			t.Fatalf("RepoPrimaryWorktree = %q, want %q", got.RepoPrimaryWorktree, "/test/worktree")
 		}
 	})
 

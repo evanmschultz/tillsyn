@@ -632,7 +632,7 @@ func (a *AppServiceAdapter) CreateProject(ctx context.Context, in CreateProjectR
 		return domain.Project{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
 	if strings.TrimSpace(in.RepoPrimaryWorktree) == "" {
-		return domain.Project{}, fmt.Errorf("invalid_request: repo_primary_worktree is required (filesystem path to project's primary worktree; needed for agent-isolation hook bootstrap)")
+		return domain.Project{}, fmt.Errorf("repo_primary_worktree is required (filesystem path to project's primary worktree; needed for agent-isolation hook bootstrap): %w", ErrInvalidRequest)
 	}
 	ctx, actorType, err := withMutationGuardContextAllowUnguardedAgent(ctx, in.Actor, true)
 	if err != nil {
