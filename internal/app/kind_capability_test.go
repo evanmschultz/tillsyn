@@ -915,7 +915,8 @@ func TestQALeaseActionPolicy(t *testing.T) {
 
 // TestIssueCapabilityLeaseSameIdentityAutoSupersede verifies that a same-name orchestrator
 // lease is automatically revoked when the same agent name re-issues, that a different agent
-// name still returns ErrOrchestratorOverlap, and that non-orchestrator roles are unaffected.
+// name is unaffected by the pre-revoke (parallel orchestrators coexist), and that
+// non-orchestrator roles are unaffected.
 func TestIssueCapabilityLeaseSameIdentityAutoSupersede(t *testing.T) {
 	t.Run("same agent name is auto-revoked and new lease issued", func(t *testing.T) {
 		repo := newFakeRepo()
