@@ -151,6 +151,62 @@ Next ergonomics drop — `internal/app/action_item.go` move_state logic. Small f
 
 ---
 
+## 2026-05-16 — agent-isolation — cascade rollup of 12 QA-raised refinements (parent `fab45453`)
+
+### Context
+The agent-isolation cascade (`fab45453-ec63-4188-a301-3320b20aa976`, "AGENT ISOLATION PROJECT LOCAL HOOK PATH ENFORCEMENT") shipped 6 build droplets (D-A through D-F, commits `7f7dfe2` / `b08bc06` / `f91987b` / `fb0b3ec` / `009a273` / `94d4abf`). Across the 12 build-QA verdicts (6 proof + 6 falsification), QA raised refinements that were tracked in QA completion_notes but not propagated into REFINEMENTS.md at close time. This entry is the rollup — one umbrella covering all 12 so each is independently triagable in future drops.
+
+### Observation
+
+**(R1) D-A normalize_path `..`-traversal rejection** — hook script's `normalize_path` lacked explicit `..` rejection. SHIPPED 2026-05-16 by W2 D1 commit `b9925e3` (`fix(templates): reject .. components in hook path validation`). Logged here for audit-trail continuity. **Status: Shipped.**
+
+**(R2) D-A tab-tokenization NIT** — hook script's Bash command tokenizer splits on `IFS` default (space + tab + newline) but explicit tab handling in test cases is incomplete. Defense-in-depth class; not a real bypass on POSIX commands but worth covering when the tokenizer is hardened next. **Status: Pending.**
+
+**(R3) D-D dispatcher-staging doc clarification in builder-agent body** — the 3 builder-agent.md files (`go`, `fe`, `gen` groups) declare the PreToolUse hook in YAML frontmatter but the body doesn't describe how the dispatcher stages the `TILLSYN_ACTION_ITEM_ID` + `TILLSYN_BIN` env vars at spawn time. Adopters reading the agent file see the hook but not the contract that makes it work. **Status: Pending. Target: Drop 4c.8 W4 embedded-prompt content.**
+
+**(R4) D-D tools allowlist on builder agents** — the 3 builder-agent.md files do NOT declare a `tools:` allowlist in frontmatter. Adopters running these agents inherit the orchestrator's full tool surface. Per Claude Code SDK semantics, declaring `tools: Read, Edit, Write, Bash` enforces the allowlist strictly when the agent is spawned background. **Status: Pending. Target: Drop 4c.8 W4 embedded-prompt content.**
+
+**(R5) D-B user-set hash sentinel collision in `.claude/settings.json`** — `writeClaudeSettings` uses `tillsyn_hook_hash` as the top-level field name to version-pin. If a downstream user adds their own custom field of the same name, the preserve-and-merge logic could clobber or misread it. Low real-world probability (the key is Tillsyn-namespaced enough) but worth either renaming to `__tillsyn_hook_hash__` or documenting collision behavior. **Status: Pending.**
+
+**(R6) D-B `fsatomic` stale-temp on SIGKILL** — `fsatomic.WriteFile` writes to a temp file then renames. If the process gets SIGKILL'd between temp write and rename, the temp file is orphaned in `.claude/hooks/` (or wherever). Cosmetic housekeeping NIT — a fresh `till init` doesn't pick the temp up, and the file is in a hidden dir, but it's still cruft. **Status: Pending. Class: housekeeping NIT.**
+
+**(R7) D-E substring match on script name vs exact path** — dispatcher's `CheckHookArtifacts` uses substring match (`strings.Contains(command, "validate-action-item-paths.sh")`) to find the hook reference in the agent's YAML frontmatter. A future agent that mentions the script name in a doc-string but not as a real `hooks.PreToolUse.command` entry would trigger a false-positive preflight requirement. Dormant pre-team-feature; surfaces when adopters customize agent frontmatter. **Status: Pending.**
+
+**(R8) D-E yaml.v3 strict mode for duplicate-key override** — `yaml.v3` Unmarshal silently accepts duplicate keys at the same level, with the last value winning. A malicious or buggy agent.md with `hooks:` declared twice would have one block silently dropped. Strict mode (`yaml.Decoder.KnownFields(true)` + manual duplicate-detection) would loud-fail. Dormant pre-team-feature; surfaces when adopters share agent files. **Status: Pending.**
+
+**(R9) D-E multi-tier agent lookup beyond project tier** — dispatcher's preflight resolves the agent file by walking ONLY the project tier (`<worktree>/.claude/agents/`). The 3-tier walk pattern (project → user `~/.claude/agents/` → embedded `internal/templates/builtin/agents/`) exists elsewhere in the dispatcher but the hook preflight doesn't use it. Latent until a builtin agent declares the hook — at that point the preflight would never find the agent file in the project tier and would skip (silent-disable surface). **Status: Pending. Class: latent-bug.**
+
+**(R10) D-E 10-line hash-header scan window fragility** — `CheckHookArtifacts` scans the first 10 lines of the hook script for the `# tillsyn-hook-hash:` header. If the template grows a longer shebang preamble or license header, the hash line could push past line 10 and the preflight silently classifies the script as "stale." Widening the window (to ~30 lines or reading until first non-comment line) would be more robust. **Status: Pending.**
+
+**(R11) D-C update-path seam for project mutation** — `ServiceConfig.BootstrapProjectHooks` fires on CREATE only. When a project's `repo_primary_worktree` is later changed via `till.project operation=update`, the hook bootstrap does NOT re-run for the new worktree. The `update` path needs its own seam (or the create-seam needs to be invoked from update on field change). Real-world relevance: any adopter who creates a project with empty `repo_primary_worktree` then sets it later via update will not get auto-bootstrap. **Status: Pending. Related: W1-D4-R2 from W1 falsification (partial-update merge semantic when `repo_primary_worktree` omitted).**
+
+**(R12) D-F newline-prefix bypass in Bash command tokenizer** — same defense-in-depth class as the accepted `eval` / `bash -c` / `sh -c` bypasses. `command="\ngit checkout -- another/dir/bar.go"` slips past the front-of-command keyword match because the tokenizer doesn't strip leading whitespace. Future tokenizer hardening territory. **Status: Pending. Class: defense-in-depth NIT.**
+
+### Proposed fix
+
+Each refinement is independently triagable:
+- **R1**: already shipped. No action.
+- **R2, R6, R12**: housekeeping / defense-in-depth NIT class. Batch into a future "hook hardening" droplet when there's a real bypass observed in dogfood.
+- **R3, R4**: Drop 4c.8 W4 embedded-prompt content. Frontmatter + body edits to all 3 builder-agent.md files.
+- **R5**: tiny one-line rename + test. Anytime.
+- **R7, R10**: small dispatcher tightening. Single droplet, ~50 LOC + tests.
+- **R8**: yaml.v3 strict mode. Cross-cutting (affects any yaml.Unmarshal call); separate sweep.
+- **R9**: extend `CheckHookArtifacts` to use the 3-tier walk. Single droplet when a builtin agent declares the hook (currently nothing forces this).
+- **R11**: update-path seam. Single droplet under `internal/app/service.go` (`UpdateProject` or wherever the partial-update logic lives). Pairs naturally with W1-D4-R2.
+
+### Target drop
+
+R3 + R4 → Drop 4c.8 W4 embedded-prompt content (already known target).
+R5, R7, R10 → next ergonomics droplet under `internal/app/dispatcher` + `cmd/till`.
+R11 → pairs with W1-D4-R2 in a project-update partial-merge droplet.
+R8 → cross-cutting; parking-lot until a real duplicate-key incident surfaces.
+R2, R6, R9, R12 → parking-lot; revisit on real bypass / dogfood incident.
+
+### Tags
+`agent-isolation`, `hook`, `dispatcher`, `templates`, `parity-clarity`, `rollup`, `cascade-followup`
+
+---
+
 ## 2026-05-15 — E2E-8 — `createAuthRequestLive` baseline-ordering latency-only race (NIT, deferred)
 
 ### Context
