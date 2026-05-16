@@ -2506,3 +2506,453 @@ func TestCreateProjectDBRecord_MultiGroup(t *testing.T) {
 		t.Fatalf("agents/fe dir not found at %q: %v", feAgentsDir, statErr)
 	}
 }
+
+// TestWriteClaudeHooks_TableDriven exercises writeClaudeHooks across the five
+// cases mandated by the D-B acceptance criteria.
+func TestWriteClaudeHooks_TableDriven(t *testing.T) {
+	// computeExpectedHash retrieves the real ComputeHookHash so tests can build
+	// matching or mismatching headers without hardcoding a value.
+	realHash, hashErr := templates.ComputeHookHash()
+	if hashErr != nil {
+		t.Fatalf("templates.ComputeHookHash: %v", hashErr)
+	}
+
+	hookRelPath := filepath.Join(".claude", "hooks", "validate-action-item-paths.sh")
+
+	t.Run("green_path_write_to_empty_dir", func(t *testing.T) {
+		destDir := t.TempDir()
+		added, skipped, refreshed, err := writeClaudeHooks(destDir)
+		if err != nil {
+			t.Fatalf("writeClaudeHooks error = %v; want nil", err)
+		}
+		if added != 1 || skipped != 0 || refreshed != 0 {
+			t.Fatalf("writeClaudeHooks counters = added=%d skipped=%d refreshed=%d; want added=1 skipped=0 refreshed=0", added, skipped, refreshed)
+		}
+		hookPath := filepath.Join(destDir, hookRelPath)
+		data, readErr := os.ReadFile(hookPath)
+		if readErr != nil {
+			t.Fatalf("os.ReadFile(%q): %v", hookPath, readErr)
+		}
+		body := string(data)
+		// Must contain real hash in header (no __HASH__ placeholder).
+		wantHeader := "# tillsyn-hook-hash: " + realHash
+		if !strings.Contains(body, wantHeader) {
+			t.Fatalf("hook file missing header %q; body[:200]=%q", wantHeader, truncate(body, 200))
+		}
+		if strings.Contains(body, "__HASH__") {
+			t.Fatalf("hook file still contains __HASH__ placeholder; body[:200]=%q", truncate(body, 200))
+		}
+		// Mode must be 0755.
+		info, statErr := os.Stat(hookPath)
+		if statErr != nil {
+			t.Fatalf("os.Stat(%q): %v", hookPath, statErr)
+		}
+		if got := info.Mode().Perm(); got != 0o755 {
+			t.Fatalf("hook file mode = %04o; want 0755", got)
+		}
+	})
+
+	t.Run("skip_on_identical_hash", func(t *testing.T) {
+		destDir := t.TempDir()
+		// First write.
+		if _, _, _, err := writeClaudeHooks(destDir); err != nil {
+			t.Fatalf("first writeClaudeHooks error = %v", err)
+		}
+		// Second write — must skip.
+		added, skipped, refreshed, err := writeClaudeHooks(destDir)
+		if err != nil {
+			t.Fatalf("second writeClaudeHooks error = %v", err)
+		}
+		if added != 0 || skipped != 1 || refreshed != 0 {
+			t.Fatalf("second run counters = added=%d skipped=%d refreshed=%d; want added=0 skipped=1 refreshed=0", added, skipped, refreshed)
+		}
+	})
+
+	t.Run("refresh_on_mismatched_hash", func(t *testing.T) {
+		destDir := t.TempDir()
+		hookPath := filepath.Join(destDir, hookRelPath)
+		if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		// Seed with a stale hash header.
+		staleContent := "#!/usr/bin/env bash\n# tillsyn-hook-hash: deadbeef0000\necho hi\n"
+		if err := os.WriteFile(hookPath, []byte(staleContent), 0o755); err != nil {
+			t.Fatalf("WriteFile seed: %v", err)
+		}
+		added, skipped, refreshed, err := writeClaudeHooks(destDir)
+		if err != nil {
+			t.Fatalf("writeClaudeHooks error = %v; want nil", err)
+		}
+		if added != 0 || skipped != 0 || refreshed != 1 {
+			t.Fatalf("counters = added=%d skipped=%d refreshed=%d; want added=0 skipped=0 refreshed=1", added, skipped, refreshed)
+		}
+		// File must now contain the real hash.
+		data, readErr := os.ReadFile(hookPath)
+		if readErr != nil {
+			t.Fatalf("ReadFile after refresh: %v", readErr)
+		}
+		if !strings.Contains(string(data), realHash) {
+			t.Fatalf("refreshed hook does not contain real hash %q", realHash)
+		}
+	})
+
+	t.Run("refresh_on_missing_header", func(t *testing.T) {
+		destDir := t.TempDir()
+		hookPath := filepath.Join(destDir, hookRelPath)
+		if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		// Seed with no hash header at all.
+		if err := os.WriteFile(hookPath, []byte("#!/usr/bin/env bash\necho no-header\n"), 0o755); err != nil {
+			t.Fatalf("WriteFile seed: %v", err)
+		}
+		added, skipped, refreshed, err := writeClaudeHooks(destDir)
+		if err != nil {
+			t.Fatalf("writeClaudeHooks error = %v; want nil", err)
+		}
+		if added != 0 || skipped != 0 || refreshed != 1 {
+			t.Fatalf("counters = added=%d skipped=%d refreshed=%d; want added=0 skipped=0 refreshed=1", added, skipped, refreshed)
+		}
+	})
+
+	t.Run("claude_hooks_dir_auto_created", func(t *testing.T) {
+		destDir := t.TempDir()
+		// The .claude/hooks/ subtree must not exist yet.
+		hooksDir := filepath.Join(destDir, ".claude", "hooks")
+		if _, statErr := os.Stat(hooksDir); statErr == nil {
+			t.Fatalf(".claude/hooks/ exists before writeClaudeHooks; test invariant broken")
+		}
+		added, _, _, err := writeClaudeHooks(destDir)
+		if err != nil {
+			t.Fatalf("writeClaudeHooks error = %v; want nil", err)
+		}
+		if added != 1 {
+			t.Fatalf("added = %d; want 1 (fresh write)", added)
+		}
+		if _, statErr := os.Stat(hooksDir); statErr != nil {
+			t.Fatalf(".claude/hooks/ not created: %v", statErr)
+		}
+	})
+}
+
+// TestWriteClaudeSettings_TableDriven exercises writeClaudeSettings across the
+// six cases mandated by the D-B acceptance criteria.
+func TestWriteClaudeSettings_TableDriven(t *testing.T) {
+	realHash, hashErr := templates.ComputeHookHash()
+	if hashErr != nil {
+		t.Fatalf("templates.ComputeHookHash: %v", hashErr)
+	}
+	settingsRelPath := filepath.Join(".claude", "settings.json")
+
+	// verifySettingsJSON parses the file at path and asserts the minimal
+	// Tillsyn content is present.
+	verifySettingsJSON := func(t *testing.T, path string) {
+		t.Helper()
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("ReadFile(%q): %v", path, readErr)
+		}
+		var top map[string]any
+		if unmarshalErr := json.Unmarshal(data, &top); unmarshalErr != nil {
+			t.Fatalf("Unmarshal settings.json: %v\nbody=%q", unmarshalErr, string(data))
+		}
+		if got, ok := top["tillsyn_hook_hash"].(string); !ok || got != realHash {
+			t.Fatalf("tillsyn_hook_hash = %v; want %q", top["tillsyn_hook_hash"], realHash)
+		}
+		hooksRaw, ok := top["hooks"].(map[string]any)
+		if !ok {
+			t.Fatalf("hooks field missing or wrong type: %T", top["hooks"])
+		}
+		ptu, ok := hooksRaw["PreToolUse"].([]any)
+		if !ok || len(ptu) == 0 {
+			t.Fatalf("hooks.PreToolUse missing or empty")
+		}
+		// At least one entry must reference validate-action-item-paths.sh.
+		found := false
+		for _, entry := range ptu {
+			m, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			hooks, _ := m["hooks"].([]any)
+			for _, h := range hooks {
+				hm, ok := h.(map[string]any)
+				if !ok {
+					continue
+				}
+				if cmd, _ := hm["command"].(string); strings.Contains(cmd, "validate-action-item-paths.sh") {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("settings.json PreToolUse has no Tillsyn hook entry; body=%q", string(data))
+		}
+	}
+
+	t.Run("green_path_write_to_empty_dir", func(t *testing.T) {
+		destDir := t.TempDir()
+		added, skipped, refreshed, err := writeClaudeSettings(destDir)
+		if err != nil {
+			t.Fatalf("writeClaudeSettings error = %v; want nil", err)
+		}
+		if added != 1 || skipped != 0 || refreshed != 0 {
+			t.Fatalf("counters = added=%d skipped=%d refreshed=%d; want added=1 skipped=0 refreshed=0", added, skipped, refreshed)
+		}
+		verifySettingsJSON(t, filepath.Join(destDir, settingsRelPath))
+	})
+
+	t.Run("skip_on_identical_hash", func(t *testing.T) {
+		destDir := t.TempDir()
+		// First write.
+		if _, _, _, err := writeClaudeSettings(destDir); err != nil {
+			t.Fatalf("first writeClaudeSettings error = %v", err)
+		}
+		// Second write — must skip.
+		added, skipped, refreshed, err := writeClaudeSettings(destDir)
+		if err != nil {
+			t.Fatalf("second writeClaudeSettings error = %v", err)
+		}
+		if added != 0 || skipped != 1 || refreshed != 0 {
+			t.Fatalf("second run counters = added=%d skipped=%d refreshed=%d; want added=0 skipped=1 refreshed=0", added, skipped, refreshed)
+		}
+	})
+
+	t.Run("preserve_and_merge_user_added_keys", func(t *testing.T) {
+		destDir := t.TempDir()
+		settingsPath := filepath.Join(destDir, settingsRelPath)
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		// Seed with a stale hash + a user-added key that must be preserved.
+		seed := map[string]any{
+			"tillsyn_hook_hash": "oldstale",
+			"user_custom_key":   "preserved-value",
+		}
+		seedBytes, _ := json.MarshalIndent(seed, "", "  ")
+		if err := os.WriteFile(settingsPath, append(seedBytes, '\n'), 0o644); err != nil {
+			t.Fatalf("WriteFile seed: %v", err)
+		}
+		added, skipped, refreshed, err := writeClaudeSettings(destDir)
+		if err != nil {
+			t.Fatalf("writeClaudeSettings error = %v; want nil", err)
+		}
+		if added != 0 || skipped != 0 || refreshed != 1 {
+			t.Fatalf("counters = added=%d skipped=%d refreshed=%d; want added=0 skipped=0 refreshed=1", added, skipped, refreshed)
+		}
+		data, _ := os.ReadFile(settingsPath)
+		var top map[string]any
+		if err := json.Unmarshal(data, &top); err != nil {
+			t.Fatalf("Unmarshal result: %v", err)
+		}
+		// User key must survive.
+		if got, ok := top["user_custom_key"].(string); !ok || got != "preserved-value" {
+			t.Fatalf("user_custom_key = %v; want %q (must be preserved across merge)", top["user_custom_key"], "preserved-value")
+		}
+		// Tillsyn hash must be updated.
+		if got, ok := top["tillsyn_hook_hash"].(string); !ok || got != realHash {
+			t.Fatalf("tillsyn_hook_hash = %v; want %q", top["tillsyn_hook_hash"], realHash)
+		}
+	})
+
+	t.Run("preserve_and_merge_non_tillsyn_matcher", func(t *testing.T) {
+		destDir := t.TempDir()
+		settingsPath := filepath.Join(destDir, settingsRelPath)
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		// Seed with a stale hash + a non-Tillsyn PreToolUse matcher that must survive.
+		seed := map[string]any{
+			"tillsyn_hook_hash": "oldstale",
+			"hooks": map[string]any{
+				"PreToolUse": []any{
+					map[string]any{
+						"matcher": "Read",
+						"hooks": []any{
+							map[string]any{"type": "command", "command": "/usr/local/bin/other-hook.sh"},
+						},
+					},
+				},
+			},
+		}
+		seedBytes, _ := json.MarshalIndent(seed, "", "  ")
+		if err := os.WriteFile(settingsPath, append(seedBytes, '\n'), 0o644); err != nil {
+			t.Fatalf("WriteFile seed: %v", err)
+		}
+		if _, _, _, err := writeClaudeSettings(destDir); err != nil {
+			t.Fatalf("writeClaudeSettings error = %v; want nil", err)
+		}
+		data, _ := os.ReadFile(settingsPath)
+		var top map[string]any
+		if err := json.Unmarshal(data, &top); err != nil {
+			t.Fatalf("Unmarshal result: %v", err)
+		}
+		hooksMap, _ := top["hooks"].(map[string]any)
+		ptu, _ := hooksMap["PreToolUse"].([]any)
+		if len(ptu) < 2 {
+			t.Fatalf("PreToolUse has %d entries; want >= 2 (user matcher + Tillsyn matcher)", len(ptu))
+		}
+		// User matcher must be present.
+		foundUser := false
+		foundTillsyn := false
+		for _, entry := range ptu {
+			m, _ := entry.(map[string]any)
+			matcher, _ := m["matcher"].(string)
+			if matcher == "Read" {
+				foundUser = true
+			}
+			hooks, _ := m["hooks"].([]any)
+			for _, h := range hooks {
+				hm, _ := h.(map[string]any)
+				cmd, _ := hm["command"].(string)
+				if strings.Contains(cmd, "validate-action-item-paths.sh") {
+					foundTillsyn = true
+				}
+			}
+		}
+		if !foundUser {
+			t.Fatalf("non-Tillsyn matcher (Read) was removed from PreToolUse; must be preserved")
+		}
+		if !foundTillsyn {
+			t.Fatalf("Tillsyn matcher not found in merged PreToolUse")
+		}
+	})
+
+	t.Run("hash_drift_triggers_refresh", func(t *testing.T) {
+		destDir := t.TempDir()
+		settingsPath := filepath.Join(destDir, settingsRelPath)
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		// Seed with a stale hash.
+		seed := map[string]any{"tillsyn_hook_hash": "cafebabe0000"}
+		seedBytes, _ := json.MarshalIndent(seed, "", "  ")
+		if err := os.WriteFile(settingsPath, append(seedBytes, '\n'), 0o644); err != nil {
+			t.Fatalf("WriteFile seed: %v", err)
+		}
+		added, skipped, refreshed, err := writeClaudeSettings(destDir)
+		if err != nil {
+			t.Fatalf("writeClaudeSettings error = %v; want nil", err)
+		}
+		if added != 0 || skipped != 0 || refreshed != 1 {
+			t.Fatalf("counters = added=%d skipped=%d refreshed=%d; want added=0 skipped=0 refreshed=1", added, skipped, refreshed)
+		}
+		verifySettingsJSON(t, settingsPath)
+	})
+
+	t.Run("malformed_json_clobber_with_warning", func(t *testing.T) {
+		destDir := t.TempDir()
+		settingsPath := filepath.Join(destDir, settingsRelPath)
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		// Seed with malformed JSON.
+		if err := os.WriteFile(settingsPath, []byte("{not valid json}"), 0o644); err != nil {
+			t.Fatalf("WriteFile seed: %v", err)
+		}
+		added, skipped, refreshed, err := writeClaudeSettings(destDir)
+		if err != nil {
+			t.Fatalf("writeClaudeSettings error = %v; want nil (malformed JSON -> clobber, not error)", err)
+		}
+		if added != 0 || skipped != 0 || refreshed != 1 {
+			t.Fatalf("counters = added=%d skipped=%d refreshed=%d; want added=0 skipped=0 refreshed=1", added, skipped, refreshed)
+		}
+		// File must now be valid JSON with Tillsyn content.
+		verifySettingsJSON(t, settingsPath)
+	})
+}
+
+// TestWriteClaudeHooksAndSettings_EndToEnd verifies that `till init --json`
+// end-to-end creates both .claude/hooks/validate-action-item-paths.sh and
+// .claude/settings.json with the correct content, and that the Laslig summary
+// contains rows for both. CONSUMER-TIE TEST CONTRACT.
+func TestWriteClaudeHooksAndSettings_EndToEnd(t *testing.T) {
+	dir, err := runInitJSONInTempDir(t, `{"name":"hooktest","groups":["go"],"mcp":false}`)
+	if err != nil {
+		t.Fatalf("run(init --json) error = %v; want nil", err)
+	}
+
+	// validate-action-item-paths.sh must exist with mode 0755.
+	hookPath := filepath.Join(dir, ".claude", "hooks", "validate-action-item-paths.sh")
+	info, statErr := os.Stat(hookPath)
+	if statErr != nil {
+		t.Fatalf("os.Stat(%q): %v — hook not created", hookPath, statErr)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("hook file mode = %04o; want 0755", got)
+	}
+	// Must contain the real hash (not __HASH__).
+	hookData, _ := os.ReadFile(hookPath)
+	if strings.Contains(string(hookData), "__HASH__") {
+		t.Fatalf("hook file still contains __HASH__ placeholder after till init")
+	}
+	realHash, _ := templates.ComputeHookHash()
+	if !strings.Contains(string(hookData), realHash) {
+		t.Fatalf("hook file missing real hash %q", realHash)
+	}
+
+	// settings.json must exist and be valid JSON with Tillsyn content.
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	settingsData, readErr := os.ReadFile(settingsPath)
+	if readErr != nil {
+		t.Fatalf("os.ReadFile(%q): %v — settings.json not created", settingsPath, readErr)
+	}
+	var settingsTop map[string]any
+	if unmarshalErr := json.Unmarshal(settingsData, &settingsTop); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal settings.json: %v\nbody=%q", unmarshalErr, string(settingsData))
+	}
+	if got, ok := settingsTop["tillsyn_hook_hash"].(string); !ok || got != realHash {
+		t.Fatalf("settings.json tillsyn_hook_hash = %v; want %q", settingsTop["tillsyn_hook_hash"], realHash)
+	}
+}
+
+// TestWriteClaudeHooksAndSettings_RerunSafety verifies that a second `till init`
+// run when files are current (matching hash) SKIPS both hook and settings writes.
+// CONSUMER-TIE TEST CONTRACT.
+func TestWriteClaudeHooksAndSettings_RerunSafety(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Chdir(dir)
+
+	// First run.
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"rerun","groups":["go"],"mcp":false}`}, nil, io.Discard); err != nil {
+		t.Fatalf("first run error = %v", err)
+	}
+
+	// Capture file contents after first run.
+	hookPath := filepath.Join(dir, ".claude", "hooks", "validate-action-item-paths.sh")
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	hookBefore, _ := os.ReadFile(hookPath)
+	settingsBefore, _ := os.ReadFile(settingsPath)
+
+	// Second run — must not modify the files.
+	var out strings.Builder
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init", "--json", `{"name":"rerun","groups":["go"],"mcp":false}`}, &out, io.Discard); err != nil {
+		t.Fatalf("second run error = %v", err)
+	}
+	hookAfter, _ := os.ReadFile(hookPath)
+	settingsAfter, _ := os.ReadFile(settingsPath)
+	if !bytes.Equal(hookBefore, hookAfter) {
+		t.Fatalf("hook file changed on second run; re-run must skip identical hash")
+	}
+	if !bytes.Equal(settingsBefore, settingsAfter) {
+		t.Fatalf("settings.json changed on second run; re-run must skip identical hash")
+	}
+	// Laslig rows must mention "skipped=1" for both.
+	stdout := out.String()
+	if !strings.Contains(stdout, ".claude/hooks/validate-action-item-paths.sh") {
+		t.Fatalf("Laslig missing hook row; stdout=%q", stdout)
+	}
+	if !strings.Contains(stdout, ".claude/settings.json") {
+		t.Fatalf("Laslig missing settings row; stdout=%q", stdout)
+	}
+}
+
+// truncate returns the first n bytes of s, or s itself if len(s) <= n.
+// Used in test failure messages to avoid printing enormous file bodies.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}

@@ -528,6 +528,18 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		return fmt.Errorf("till init: copy agent files: %w", err)
 	}
 
+	// D-B: write .claude/hooks/validate-action-item-paths.sh (hash-versioned).
+	hookAdded, hookSkipped, hookRefreshed, err := writeClaudeHooks(destDir)
+	if err != nil {
+		return fmt.Errorf("till init: write claude hooks: %w", err)
+	}
+
+	// D-B: write .claude/settings.json with Tillsyn PreToolUse matcher (hash-versioned, preserve-and-merge).
+	settingsAdded, settingsSkipped, settingsRefreshed, err := writeClaudeSettings(destDir)
+	if err != nil {
+		return fmt.Errorf("till init: write claude settings: %w", err)
+	}
+
 	// D6: aggregate template.toml from HOME tier or embedded defaults.
 	templateAdded, templateSkipped, templateTOMLStatusFromWrite, err := writeTemplateTOML(stdout, destDir, payload.Groups, homeDir)
 	if err != nil {
@@ -577,6 +589,9 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 	templateTOMLStatus := templateTOMLStatusFromWrite
 	_, _ = templateAdded, templateSkipped // counters available for future use
 
+	hookStatus := fmt.Sprintf("added=%d skipped=%d refreshed=%d", hookAdded, hookSkipped, hookRefreshed)
+	settingsStatus := fmt.Sprintf("added=%d skipped=%d refreshed=%d", settingsAdded, settingsSkipped, settingsRefreshed)
+
 	rows := [][2]string{
 		{"project name", payload.Name},
 		{"groups", strings.Join(payload.Groups, ",")},
@@ -586,6 +601,8 @@ func runInitPipeline(stdout io.Writer, opts rootCommandOptions, payload initJSON
 		{"template.toml", templateTOMLStatus},
 		{".gitignore", gitignoreStatus},
 		{".mcp.json", mcpStatus},
+		{".claude/hooks/validate-action-item-paths.sh", hookStatus},
+		{".claude/settings.json", settingsStatus},
 		{"project DB", dbStatus},
 	}
 	if len(flatRemoved) > 0 {
@@ -722,6 +739,11 @@ func createProjectDBRecord(ctx context.Context, opts rootCommandOptions, payload
 // conventional 0o644 (user rw, group r, other r) the embedded fixtures
 // themselves ship with under git.
 const agentFileInitPerm os.FileMode = 0o644
+
+// hookFileInitPerm is the permission applied to the rendered
+// validate-action-item-paths.sh hook file. The script must be executable
+// so Claude Code can invoke it via the PreToolUse hook mechanism.
+const hookFileInitPerm os.FileMode = 0o755
 
 // templateGroupMarkerPrefix is the comment prefix written at the top of a
 // newly created .tillsyn/template.toml file so the partial-state check on
@@ -893,6 +915,290 @@ func readTemplateForGroup(homeDir, group string) ([]byte, error) {
 		return nil, fmt.Errorf("read embedded template %q: %w", embeddedPath, readErr)
 	}
 	return embedded, nil
+}
+
+// hookHashHeaderPrefix is the comment prefix written on line 2 of the rendered
+// validate-action-item-paths.sh script. writeClaudeHooks writes this header
+// with the computed hash substituted for the __HASH__ placeholder, and reads
+// it back on re-run to detect drift vs the current embedded template.
+const hookHashHeaderPrefix = "# tillsyn-hook-hash: "
+
+// settingsHookHashKey is the JSON field in .claude/settings.json that tracks
+// the embedded hook hash. writeClaudeSettings reads and writes this field to
+// detect when a refresh is needed.
+const settingsHookHashKey = "tillsyn_hook_hash"
+
+// claudeHookCommand is the relative path to the hook script as invoked by
+// Claude Code via the PreToolUse hook mechanism. Claude Code resolves this
+// relative to the project root at hook-fire time.
+const claudeHookCommand = "./.claude/hooks/validate-action-item-paths.sh"
+
+// writeClaudeHooks renders the embedded validate-action-item-paths.sh.tmpl
+// template into <destDir>/.claude/hooks/validate-action-item-paths.sh with
+// the __HASH__ placeholder substituted for the real ComputeHookHash() value.
+//
+// Skip/refresh semantics (hash-versioned, idempotent):
+//   - File absent: write with hookFileInitPerm (0755). added++.
+//   - File exists, first 20 lines contain a matching "# tillsyn-hook-hash: <hex>"
+//     header whose hex equals ComputeHookHash(): SKIP. skipped++.
+//   - File exists, header missing, malformed, or hash mismatches: REFRESH
+//     (overwrite). refreshed++.
+//
+// The .claude/hooks/ directory tree is created via os.MkdirAll before any
+// write. Every write is atomic via fsatomic.WriteFile.
+func writeClaudeHooks(destDir string) (added, skipped, refreshed int, err error) {
+	hash, err := templates.ComputeHookHash()
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("till init: compute hook hash: %w", err)
+	}
+
+	tmplData, err := templates.DefaultTemplateFS.ReadFile("builtin/hooks/validate-action-item-paths.sh.tmpl")
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("till init: read hook template: %w", err)
+	}
+	rendered := strings.ReplaceAll(string(tmplData), "__HASH__", hash)
+
+	hooksDir := filepath.Join(destDir, ".claude", "hooks")
+	target := filepath.Join(hooksDir, "validate-action-item-paths.sh")
+
+	existingData, readErr := os.ReadFile(target)
+	switch {
+	case readErr == nil:
+		// File exists — check hash header in first 20 lines.
+		if claudeHookHashMatches(existingData, hash) {
+			return 0, 1, 0, nil
+		}
+		// Hash mismatch or header absent/malformed — refresh.
+		if mkErr := os.MkdirAll(hooksDir, 0o755); mkErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: mkdir %q: %w", hooksDir, mkErr)
+		}
+		if writeErr := fsatomic.WriteFile(target, []byte(rendered), hookFileInitPerm); writeErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: write %q: %w", target, writeErr)
+		}
+		return 0, 0, 1, nil
+
+	case errors.Is(readErr, fs.ErrNotExist):
+		// File absent — create.
+		if mkErr := os.MkdirAll(hooksDir, 0o755); mkErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: mkdir %q: %w", hooksDir, mkErr)
+		}
+		if writeErr := fsatomic.WriteFile(target, []byte(rendered), hookFileInitPerm); writeErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: write %q: %w", target, writeErr)
+		}
+		return 1, 0, 0, nil
+
+	default:
+		return 0, 0, 0, fmt.Errorf("till init: read %q: %w", target, readErr)
+	}
+}
+
+// claudeHookHashMatches reports whether the first 20 lines of data contain
+// a "# tillsyn-hook-hash: <hex>" header whose hex value equals wantHash.
+func claudeHookHashMatches(data []byte, wantHash string) bool {
+	sc := bufio.NewScanner(strings.NewReader(string(data)))
+	lineNum := 0
+	for sc.Scan() && lineNum < 20 {
+		lineNum++
+		line := sc.Text()
+		if !strings.HasPrefix(line, hookHashHeaderPrefix) {
+			continue
+		}
+		got := strings.TrimPrefix(line, hookHashHeaderPrefix)
+		return strings.TrimSpace(got) == wantHash
+	}
+	return false
+}
+
+// writeClaudeSettings writes <destDir>/.claude/settings.json with the
+// canonical Tillsyn hook registration (PreToolUse matcher for Edit/Write/Bash
+// invoking ./.claude/hooks/validate-action-item-paths.sh) and the
+// tillsyn_hook_hash sentinel.
+//
+// Skip/refresh semantics (hash-versioned, idempotent):
+//   - File absent: write canonical content. added++.
+//   - File exists, tillsyn_hook_hash field matches ComputeHookHash(): SKIP. skipped++.
+//   - File exists, hash field missing or mismatches: REFRESH. refreshed++.
+//
+// PRESERVE-AND-MERGE for existing user content: if settings.json exists and
+// has additional top-level keys or additional hooks.PreToolUse matchers whose
+// command does NOT reference validate-action-item-paths.sh, they are
+// preserved. Refresh updates only the tillsyn_hook_hash field and the
+// Tillsyn matchers. If JSON parsing fails (malformed file), a warning is
+// printed to stderr and the file is clobbered with canonical content.
+//
+// Every write is atomic via fsatomic.WriteFile.
+func writeClaudeSettings(destDir string) (added, skipped, refreshed int, err error) {
+	hash, err := templates.ComputeHookHash()
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("till init: compute hook hash: %w", err)
+	}
+
+	target := filepath.Join(destDir, ".claude", "settings.json")
+	claudeDir := filepath.Join(destDir, ".claude")
+
+	canonical := buildCanonicalClaudeSettings(hash)
+
+	existingData, readErr := os.ReadFile(target)
+	switch {
+	case readErr == nil:
+		// File exists — attempt merge.
+		var top map[string]any
+		if unmarshalErr := json.Unmarshal(existingData, &top); unmarshalErr != nil {
+			// Malformed JSON — log warning and clobber.
+			fmt.Fprintf(os.Stderr, "till init: WARNING: %q is not valid JSON (%v); overwriting with Tillsyn defaults\n", target, unmarshalErr)
+			if mkErr := os.MkdirAll(claudeDir, 0o755); mkErr != nil {
+				return 0, 0, 0, fmt.Errorf("till init: mkdir %q: %w", claudeDir, mkErr)
+			}
+			out, marshalErr := json.MarshalIndent(canonical, "", "  ")
+			if marshalErr != nil {
+				return 0, 0, 0, fmt.Errorf("till init: marshal settings: %w", marshalErr)
+			}
+			if writeErr := fsatomic.WriteFile(target, append(out, '\n'), agentFileInitPerm); writeErr != nil {
+				return 0, 0, 0, fmt.Errorf("till init: write %q: %w", target, writeErr)
+			}
+			return 0, 0, 1, nil
+		}
+
+		// Check whether existing hash matches.
+		if existingHash, ok := top[settingsHookHashKey].(string); ok && existingHash == hash {
+			return 0, 1, 0, nil
+		}
+
+		// Hash mismatch or missing — merge and refresh.
+		merged := mergeClaudeSettings(top, canonical, hash)
+		if mkErr := os.MkdirAll(claudeDir, 0o755); mkErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: mkdir %q: %w", claudeDir, mkErr)
+		}
+		out, marshalErr := json.MarshalIndent(merged, "", "  ")
+		if marshalErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: marshal settings: %w", marshalErr)
+		}
+		if writeErr := fsatomic.WriteFile(target, append(out, '\n'), agentFileInitPerm); writeErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: write %q: %w", target, writeErr)
+		}
+		return 0, 0, 1, nil
+
+	case errors.Is(readErr, fs.ErrNotExist):
+		// File absent — write canonical content.
+		if mkErr := os.MkdirAll(claudeDir, 0o755); mkErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: mkdir %q: %w", claudeDir, mkErr)
+		}
+		out, marshalErr := json.MarshalIndent(canonical, "", "  ")
+		if marshalErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: marshal settings: %w", marshalErr)
+		}
+		if writeErr := fsatomic.WriteFile(target, append(out, '\n'), agentFileInitPerm); writeErr != nil {
+			return 0, 0, 0, fmt.Errorf("till init: write %q: %w", target, writeErr)
+		}
+		return 1, 0, 0, nil
+
+	default:
+		return 0, 0, 0, fmt.Errorf("till init: read %q: %w", target, readErr)
+	}
+}
+
+// buildCanonicalClaudeSettings returns the canonical settings.json content as
+// a map[string]any so it can be marshaled to JSON or merged into an existing
+// map. The Tillsyn PreToolUse hook matcher invokes the validate-action-item-paths.sh
+// hook for Edit, Write, and Bash tool calls.
+func buildCanonicalClaudeSettings(hash string) map[string]any {
+	return map[string]any{
+		settingsHookHashKey: hash,
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": "Edit|Write|Bash",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": claudeHookCommand,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// mergeClaudeSettings merges the Tillsyn canonical settings into an existing
+// decoded settings map. The merge strategy:
+//   - Set tillsyn_hook_hash to the current hash.
+//   - Under hooks.PreToolUse: remove any existing matchers whose command
+//     references validate-action-item-paths.sh (stale Tillsyn matchers),
+//     then append the canonical Tillsyn matcher.
+//   - All other top-level keys and hooks.PreToolUse matchers are preserved.
+//
+// If hooks or hooks.PreToolUse are absent or have an unexpected shape, the
+// canonical Tillsyn content is set without disturbing other keys.
+func mergeClaudeSettings(existing map[string]any, canonical map[string]any, hash string) map[string]any {
+	if existing == nil {
+		existing = make(map[string]any)
+	}
+
+	// Update the hash sentinel.
+	existing[settingsHookHashKey] = hash
+
+	// Extract or initialize the hooks map.
+	var hooksMap map[string]any
+	if h, ok := existing["hooks"]; ok {
+		hooksMap, _ = h.(map[string]any)
+	}
+	if hooksMap == nil {
+		hooksMap = make(map[string]any)
+	}
+
+	// Extract existing PreToolUse slice; filter out stale Tillsyn matchers.
+	var filteredPTU []any
+	if ptu, ok := hooksMap["PreToolUse"]; ok {
+		if ptuSlice, ok := ptu.([]any); ok {
+			for _, entry := range ptuSlice {
+				if isTillsynMatcher(entry) {
+					continue // remove stale Tillsyn matcher
+				}
+				filteredPTU = append(filteredPTU, entry)
+			}
+		}
+	}
+
+	// Append the canonical Tillsyn matcher.
+	canonicalHooks, _ := canonical["hooks"].(map[string]any)
+	canonicalPTU, _ := canonicalHooks["PreToolUse"].([]any)
+	if len(canonicalPTU) > 0 {
+		filteredPTU = append(filteredPTU, canonicalPTU[0])
+	}
+
+	hooksMap["PreToolUse"] = filteredPTU
+	existing["hooks"] = hooksMap
+	return existing
+}
+
+// isTillsynMatcher reports whether a PreToolUse entry is a Tillsyn-owned
+// matcher. An entry is Tillsyn-owned when any of its nested hook commands
+// reference validate-action-item-paths.sh.
+func isTillsynMatcher(entry any) bool {
+	m, ok := entry.(map[string]any)
+	if !ok {
+		return false
+	}
+	hooksVal, ok := m["hooks"]
+	if !ok {
+		return false
+	}
+	hooksSlice, ok := hooksVal.([]any)
+	if !ok {
+		return false
+	}
+	for _, h := range hooksSlice {
+		hm, ok := h.(map[string]any)
+		if !ok {
+			continue
+		}
+		cmd, _ := hm["command"].(string)
+		if strings.Contains(cmd, "validate-action-item-paths.sh") {
+			return true
+		}
+	}
+	return false
 }
 
 // copyAgentFiles reads the embedded `internal/templates/builtin/agents/<group>/*.md`
