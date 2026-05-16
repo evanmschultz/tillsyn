@@ -97,9 +97,10 @@ func newStewardIntegrationFixture(t *testing.T) stewardIntegrationFixture {
 		AuthRequestPrincipalType: "user",
 	}
 	project, err := adapter.CreateProject(ctx, mcpcommon.CreateProjectRequest{
-		Name:        "Drop 3 STEWARD integration",
-		Description: "fixture project for droplet 3.22",
-		Actor:       bootstrap,
+		Name:                "Drop 3 STEWARD integration",
+		Description:         "fixture project for droplet 3.22",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               bootstrap,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
