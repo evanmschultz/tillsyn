@@ -798,6 +798,58 @@ func TestRunOnceStage5LockConflictReturnsBlocked(t *testing.T) {
 	}
 }
 
+// stubTemplateResolver is a deterministic test stub for TemplateResolver.
+type stubTemplateResolver struct {
+	tpl templates.Template
+	err error
+}
+
+func (s *stubTemplateResolver) GetProjectTemplate(_ context.Context, _ string) (templates.Template, error) {
+	return s.tpl, s.err
+}
+
+// TestNewDispatcherAcceptsTemplateResolver asserts that a non-nil
+// TemplateResolver passed via Options is stored in the dispatcher struct.
+// The test verifies the round-trip by reading opts back from the struct (opts
+// is an exported-by-value field on the unexported dispatcher; the test lives
+// in the same package and can read it directly).
+func TestNewDispatcherAcceptsTemplateResolver(t *testing.T) {
+	t.Parallel()
+
+	resolver := &stubTemplateResolver{}
+	opts := Options{TemplateResolver: resolver}
+	d, err := NewDispatcher(newServiceForConstructorTest(), newBrokerForTest(), opts)
+	if err != nil {
+		t.Fatalf("NewDispatcher() error = %v, want nil", err)
+	}
+	if d.opts.TemplateResolver == nil {
+		t.Fatalf("dispatcher.opts.TemplateResolver = nil, want the stub resolver")
+	}
+	if d.opts.TemplateResolver != resolver {
+		t.Fatalf("dispatcher.opts.TemplateResolver = %v, want %v", d.opts.TemplateResolver, resolver)
+	}
+}
+
+// TestNewDispatcherNilTemplateResolverDoesNotPanic asserts that a nil
+// TemplateResolver in Options does not cause NewDispatcher to panic or return
+// an error. A nil resolver is allowed; the gate runner will skip template
+// lookup when it is absent.
+func TestNewDispatcherNilTemplateResolverDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	opts := Options{TemplateResolver: nil}
+	d, err := NewDispatcher(newServiceForConstructorTest(), newBrokerForTest(), opts)
+	if err != nil {
+		t.Fatalf("NewDispatcher(nil TemplateResolver) error = %v, want nil", err)
+	}
+	if d == nil {
+		t.Fatalf("NewDispatcher(nil TemplateResolver) dispatcher = nil, want non-nil")
+	}
+	if d.opts.TemplateResolver != nil {
+		t.Fatalf("dispatcher.opts.TemplateResolver = %v, want nil", d.opts.TemplateResolver)
+	}
+}
+
 // silenceUnused keeps the imports for exec/json/templates referenced in the
 // rich-fixture helpers from triggering unused-import errors when the file
 // is read in isolation. The functions above use all three.

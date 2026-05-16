@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/log"
+
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 	"github.com/evanmschultz/tillsyn/internal/templates"
@@ -73,15 +75,31 @@ type DispatchOutcome struct {
 	Handle *Handle
 }
 
+// TemplateResolver returns the active template for a project, used by the
+// monitor clean-exit path to resolve gates declared in the project template.
+// The interface is intentionally narrow: callers supply only the project ID
+// and receive the resolved templates.Template value. An adapter in cmd/till
+// bridges *app.Service (which takes GetProjectTemplateInput) to this shape.
+//
+// A nil TemplateResolver in Options is allowed. NewDispatcher logs a warning
+// at startup and the gate-runner skips template lookup when this seam is
+// absent.
+type TemplateResolver interface {
+	GetProjectTemplate(ctx context.Context, projectID string) (templates.Template, error)
+}
+
 // Options carries dispatcher configuration. The struct is intentionally open
 // for extension: Wave 2.6, 2.8, and 2.10 each add fields, and Drop 4b adds
 // gate-runner / commit-agent fields. Add new fields rather than introduce a
 // new constructor variant. Zero-value Options is valid in Wave 2.1.
 type Options struct {
-	// _ is a placeholder so gofumpt-formatted struct literals using positional
-	// composition produce a clear compile error if a caller relies on the
-	// field shape. Later droplets replace this with concrete fields.
-	_ struct{}
+	// TemplateResolver returns the active template for a project. The gate
+	// runner (Drop 4b and later) uses this seam to read gate declarations from
+	// the project template without importing app directly. A nil value is
+	// permitted; the gate runner skips template lookup when the resolver is
+	// absent, and NewDispatcher logs a warning so the omission is visible at
+	// startup rather than silently degraded at first dispatch.
+	TemplateResolver TemplateResolver
 }
 
 // Dispatcher is the cascade dispatcher contract consumed by the manual-trigger
@@ -248,6 +266,10 @@ type dispatcher struct {
 	// opts carries forward-compatible configuration. Wave 2 leaves it at
 	// zero value; later droplets read concrete fields.
 	opts Options
+	// templateResolver is the seam the gate runner uses to fetch the active
+	// project template. Populated from opts.TemplateResolver by NewDispatcher.
+	// Nil is allowed — callers must nil-check before invoking.
+	templateResolver TemplateResolver
 	// clock returns the current time for outcome timestamps. Tests inject a
 	// fake clock through a non-exported helper (see dispatcher_test.go);
 	// production callers get time.Now via the constructor default.
@@ -285,6 +307,9 @@ func NewDispatcher(svc *app.Service, broker app.LiveWaitBroker, opts Options) (*
 	if broker == nil {
 		return nil, fmt.Errorf("%w: broker is nil", ErrInvalidDispatcherConfig)
 	}
+	if opts.TemplateResolver == nil {
+		log.Warn("dispatcher: TemplateResolver not configured; gate-runner template lookup will be skipped")
+	}
 
 	walker := newTreeWalker(svc)
 	conflict := newConflictDetector(svc)
@@ -302,20 +327,21 @@ func NewDispatcher(svc *app.Service, broker app.LiveWaitBroker, opts Options) (*
 	}
 
 	return &dispatcher{
-		svc:            svc,
-		projects:       svc,
-		listing:        svc,
-		mutator:        adapter,
-		broker:         broker,
-		walker:         walker,
-		conflict:       conflict,
-		fileLocks:      fileLocks,
-		pkgLocks:       pkgLocks,
-		monitor:        monitor,
-		cleanup:        cleanup,
-		projectsLister: svc,
-		opts:           opts,
-		clock:          time.Now,
+		svc:              svc,
+		projects:         svc,
+		listing:          svc,
+		mutator:          adapter,
+		broker:           broker,
+		walker:           walker,
+		conflict:         conflict,
+		fileLocks:        fileLocks,
+		pkgLocks:         pkgLocks,
+		monitor:          monitor,
+		cleanup:          cleanup,
+		projectsLister:   svc,
+		opts:             opts,
+		templateResolver: opts.TemplateResolver,
+		clock:            time.Now,
 	}, nil
 }
 

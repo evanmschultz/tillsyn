@@ -25,6 +25,7 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 	// Side-effect import: cli_claude.init() registers the claude adapter
 	// with the dispatcher's CLIKind→adapter registry at process start. Drop
 	// 4c F.7.17.5 adapter wiring; Drop 4d adds a parallel cli_codex import.
@@ -2695,6 +2696,23 @@ func shouldMuteRuntimeConsole(command string) bool {
 	}
 }
 
+// dispatcherTemplateResolver adapts *app.Service to the
+// dispatcher.TemplateResolver interface. app.Service.GetProjectTemplate takes
+// an app.GetProjectTemplateInput struct while the dispatcher interface expects
+// (ctx, projectID string) directly; this thin adapter bridges the two shapes
+// without changing the service signature.
+type dispatcherTemplateResolver struct {
+	svc *app.Service
+}
+
+func (a dispatcherTemplateResolver) GetProjectTemplate(ctx context.Context, projectID string) (templates.Template, error) {
+	out, err := a.svc.GetProjectTemplate(ctx, app.GetProjectTemplateInput{ProjectID: projectID})
+	if err != nil {
+		return templates.Template{}, err
+	}
+	return out.Template, nil
+}
+
 // runMCP runs the stdio MCP subcommand flow.
 func runMCP(ctx context.Context, svc *app.Service, broker app.LiveWaitBroker, auth *autentauth.Service, appName string, opts mcpCommandOptions) error {
 	// Run the cascade dispatcher's continuous-mode subscriber loop alongside
@@ -2707,7 +2725,9 @@ func runMCP(ctx context.Context, svc *app.Service, broker app.LiveWaitBroker, au
 	// MCP surface is the primary client interface and must remain responsive
 	// even if the dispatcher's project enumeration fails (e.g. on a fresh
 	// install with zero projects).
-	disp, err := dispatcher.NewDispatcher(svc, broker, dispatcher.Options{})
+	disp, err := dispatcher.NewDispatcher(svc, broker, dispatcher.Options{
+		TemplateResolver: dispatcherTemplateResolver{svc: svc},
+	})
 	if err == nil {
 		if startErr := disp.Start(ctx); startErr == nil {
 			defer func() {
