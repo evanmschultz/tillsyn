@@ -18201,7 +18201,7 @@ func (m Model) activeBottomHelpKeyMap() staticHelpKeyMap {
 			helpBinding("enter", "save"),
 			helpBinding("tab", "next field"),
 			helpBinding("i", "edit desc"),
-			helpBinding("r", "pick path"),
+			helpBinding("ctrl+r", "pick path"),
 			helpBinding("esc", "cancel"),
 			helpBinding("?", "help"),
 		}
