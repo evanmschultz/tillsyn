@@ -167,6 +167,70 @@ func TestHookIntegration_EnforcementCases(t *testing.T) {
 			payload:  bashPayload("rm another/dir/bar.go"),
 			wantExit: 2,
 		},
+
+		// dotdot traversal — block cases (wantExit: 2).
+		// Case 7: Edit with bare "..".
+		{
+			name:     "dotdot: Edit bare ..",
+			payload:  toolPayload("Edit", ".."),
+			wantExit: 2,
+		},
+		// Case 8: Edit with leading "../" traversal.
+		{
+			name:     "dotdot: Edit leading ../",
+			payload:  toolPayload("Edit", "../outside/secrets.go"),
+			wantExit: 2,
+		},
+		// Case 9: Edit with middle "/../" traversal.
+		{
+			name:     "dotdot: Edit middle /../",
+			payload:  toolPayload("Edit", "only/this/dir/../../outside/secrets.go"),
+			wantExit: 2,
+		},
+		// Case 10: Edit with trailing "/.." traversal.
+		{
+			name:     "dotdot: Edit trailing /..",
+			payload:  toolPayload("Edit", "only/this/dir/foo/.."),
+			wantExit: 2,
+		},
+		// Case 11: Edit with double-slash + dotdot.
+		{
+			name:     "dotdot: Edit double-slash /../",
+			payload:  toolPayload("Edit", "only/this/dir//../outside/secrets.go"),
+			wantExit: 2,
+		},
+		// Case 12: Write with leading "../" traversal.
+		{
+			name:     "dotdot: Write leading ../",
+			payload:  toolPayload("Write", "../outside/secrets.go"),
+			wantExit: 2,
+		},
+		// Case 13: Bash rm with middle "/../" traversal.
+		{
+			name:     "dotdot: Bash rm middle /../",
+			payload:  bashPayload("rm only/this/dir/../../outside/secrets.go"),
+			wantExit: 2,
+		},
+
+		// dotdot traversal — allow cases (wantExit: 0), false-positive defense.
+		// Case 14: Filename starting with ".." but not a directory component.
+		{
+			name:     "dotdot: Edit filename ..foo (allow)",
+			payload:  toolPayload("Edit", "only/this/dir/..foo"),
+			wantExit: 0,
+		},
+		// Case 15: Filename "..config" within declared scope.
+		{
+			name:     "dotdot: Edit filename ..config (allow)",
+			payload:  toolPayload("Edit", "only/this/dir/..config"),
+			wantExit: 0,
+		},
+		// Case 16: Hidden file ".foo/bar" within declared scope.
+		{
+			name:     "dotdot: Edit hidden file .foo/bar (allow)",
+			payload:  toolPayload("Edit", "only/this/dir/.foo/bar"),
+			wantExit: 0,
+		},
 	}
 
 	for _, tc := range cases {

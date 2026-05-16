@@ -127,6 +127,22 @@ format_paths_list() {
     printf '%s' "${result}"
 }
 
+# ── dotdot traversal guard ────────────────────────────────────────────────────
+
+# reject_if_dotdot exits 2 if the path contains a ".." directory component.
+# Uses POSIX case pattern matching — cross-platform, no process substitution.
+# Call this AFTER normalize_path so that worktree-root-stripping cannot hide a
+# ".." that was embedded in an absolute path argument.
+reject_if_dotdot() {
+    local p="${1:-}"
+    case "${p}" in
+    ..|../*|*/..|*/../*)
+        printf 'tillsyn: tool target "%s" contains forbidden '"'"'..'"'"' component\n' "${p}" >&2
+        exit 2
+        ;;
+    esac
+}
+
 # ── Edit / Write: single file_path check ─────────────────────────────────────
 
 if [ "${tool_name}" = "Edit" ] || [ "${tool_name}" = "Write" ]; then
@@ -135,6 +151,7 @@ if [ "${tool_name}" = "Edit" ] || [ "${tool_name}" = "Write" ]; then
         exit 0
     fi
     target="$(normalize_path "${raw_path}")"
+    reject_if_dotdot "${target}"
     if ! is_within_scope "${target}"; then
         echo "tillsyn: tool target \"${target}\" outside declared action_item paths $(format_paths_list)" >&2
         exit 2
@@ -151,7 +168,8 @@ if [ "${tool_name}" = "Bash" ]; then
     fi
 
     # check_bash_path extracts a candidate file path token from a matched
-    # dangerous command and exits 2 if the path is outside scope.
+    # dangerous command and exits 2 if the path is outside scope or contains a
+    # ".." directory component.
     # $1 = the path token to check.
     check_bash_path() {
         local raw="${1:-}"
@@ -160,6 +178,7 @@ if [ "${tool_name}" = "Bash" ]; then
         fi
         local target
         target="$(normalize_path "${raw}")"
+        reject_if_dotdot "${target}"
         if ! is_within_scope "${target}"; then
             echo "tillsyn: tool target \"${target}\" outside declared action_item paths $(format_paths_list)" >&2
             exit 2
