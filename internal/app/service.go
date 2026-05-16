@@ -101,6 +101,13 @@ type ServiceConfig struct {
 	// tests inject a stub directly via the struct field for deterministic,
 	// process-isolated pre-check semantics.
 	GitStatusChecker GitStatusChecker
+	// BootstrapProjectHooks, when non-nil, is invoked after CreateProjectWithMetadata
+	// successfully creates a project whose RepoPrimaryWorktree is non-empty + non-whitespace.
+	// The function receives the worktree path; the production implementation (wired in
+	// cmd/till and MCP boundaries) writes .claude/hooks/ + .claude/settings.json per the
+	// Tillsyn bootstrap pipeline. Non-nil errors are LOGGED at warn level but do NOT
+	// fail project creation -- Option C green-path semantics per agent-isolation cascade.
+	BootstrapProjectHooks func(worktreePath string) error
 }
 
 // StateTemplate represents state template data used by this package.
@@ -147,6 +154,9 @@ type Service struct {
 	// tests overwrite this field directly (same package) to inject deterministic
 	// fakes that never spawn `git`.
 	gitStatusChecker GitStatusChecker
+	// bootstrapProjectHooks mirrors ServiceConfig.BootstrapProjectHooks.
+	// Nil means the bootstrap step is disabled (Option C: no-op when not wired).
+	bootstrapProjectHooks func(worktreePath string) error
 }
 
 // NewService constructs a new value for this package.
@@ -199,28 +209,29 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 	}
 
 	return &Service{
-		repo:               repo,
-		idGen:              idGen,
-		clock:              clock,
-		defaultDeleteMode:  cfg.DefaultDeleteMode,
-		stateTemplates:     templates,
-		autoProjectCols:    cfg.AutoCreateProjectColumns,
-		autoSeedSteward:    cfg.AutoSeedStewardAnchors,
-		defaultLeaseTTL:    cfg.CapabilityLeaseTTL,
-		requireAgentLease:  requireAgentLease,
-		authRequests:       cfg.AuthRequests,
-		handoffRepo:        handoffRepo,
-		schemaCache:        map[string]schemaCacheEntry{},
-		embeddingGenerator: cfg.EmbeddingGenerator,
-		searchIndex:        searchIndex,
-		embeddingLifecycle: embeddingLifecycle,
-		embeddingRuntime:   cfg.EmbeddingRuntime.Normalize(),
-		searchLexicalW:     lexicalWeight,
-		searchSemanticW:    semanticWeight,
-		searchSemanticK:    semanticCandidates,
-		authBackend:        cfg.AuthBackend,
-		liveWait:           liveWait,
-		gitStatusChecker:   gitChecker,
+		repo:                  repo,
+		idGen:                 idGen,
+		clock:                 clock,
+		defaultDeleteMode:     cfg.DefaultDeleteMode,
+		stateTemplates:        templates,
+		autoProjectCols:       cfg.AutoCreateProjectColumns,
+		autoSeedSteward:       cfg.AutoSeedStewardAnchors,
+		defaultLeaseTTL:       cfg.CapabilityLeaseTTL,
+		requireAgentLease:     requireAgentLease,
+		authRequests:          cfg.AuthRequests,
+		handoffRepo:           handoffRepo,
+		schemaCache:           map[string]schemaCacheEntry{},
+		embeddingGenerator:    cfg.EmbeddingGenerator,
+		searchIndex:           searchIndex,
+		embeddingLifecycle:    embeddingLifecycle,
+		embeddingRuntime:      cfg.EmbeddingRuntime.Normalize(),
+		searchLexicalW:        lexicalWeight,
+		searchSemanticW:       semanticWeight,
+		searchSemanticK:       semanticCandidates,
+		authBackend:           cfg.AuthBackend,
+		liveWait:              liveWait,
+		gitStatusChecker:      gitChecker,
+		bootstrapProjectHooks: cfg.BootstrapProjectHooks,
 	}
 }
 
@@ -360,6 +371,15 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 			if err := s.seedStewardAnchors(ctx, project); err != nil {
 				return domain.Project{}, err
 			}
+		}
+	}
+	if s.bootstrapProjectHooks != nil && strings.TrimSpace(project.RepoPrimaryWorktree) != "" {
+		if bootstrapErr := s.bootstrapProjectHooks(project.RepoPrimaryWorktree); bootstrapErr != nil {
+			// Option C green-path: log + continue. Bootstrap failures must not fail project creation.
+			log.Warn("project bootstrap hooks failed",
+				"project_id", project.ID,
+				"worktree", project.RepoPrimaryWorktree,
+				"err", bootstrapErr)
 		}
 	}
 	if _, err := s.enqueueProjectDocumentEmbedding(ctx, project, false, "project_created"); err != nil {

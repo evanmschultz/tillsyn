@@ -1099,6 +1099,100 @@ func TestEnsureDefaultProject(t *testing.T) {
 	}
 }
 
+// TestCreateProjectWithMetadata_BootstrapHooks verifies the BootstrapProjectHooks
+// seam fires (or does not fire) according to the Option-C green-path semantics:
+// called when RepoPrimaryWorktree is non-empty and non-whitespace, skipped
+// otherwise; errors logged but not propagated.
+func TestCreateProjectWithMetadata_BootstrapHooks(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+
+	type spyState struct {
+		called bool
+		path   string
+	}
+
+	tests := []struct {
+		name          string
+		worktree      string
+		hookErr       error
+		nilHook       bool
+		wantCalled    bool
+		wantPath      string
+		wantCreateErr bool
+	}{
+		{
+			name:       "populated_worktree_calls_hook",
+			worktree:   "/some/path",
+			wantCalled: true,
+			wantPath:   "/some/path",
+		},
+		{
+			name:       "empty_worktree_skips_hook",
+			worktree:   "",
+			wantCalled: false,
+		},
+		{
+			name:       "whitespace_worktree_skips_hook",
+			worktree:   "   ",
+			wantCalled: false,
+		},
+		{
+			name:          "hook_error_does_not_fail_project_creation",
+			worktree:      "/some/path",
+			hookErr:       errors.New("bootstrap failed"),
+			wantCalled:    true,
+			wantPath:      "/some/path",
+			wantCreateErr: false,
+		},
+		{
+			name:       "nil_hook_no_panic",
+			worktree:   "/some/path",
+			nilHook:    true,
+			wantCalled: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			spy := &spyState{}
+			var hookFn func(worktreePath string) error
+			if !tc.nilHook {
+				hookFn = func(worktreePath string) error {
+					spy.called = true
+					spy.path = worktreePath
+					return tc.hookErr
+				}
+			}
+
+			svc := NewService(repo, func() string { return "proj-bootstrap-1" }, func() time.Time { return now }, ServiceConfig{
+				BootstrapProjectHooks: hookFn,
+			})
+
+			project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+				Name:                "Bootstrap Test",
+				RepoPrimaryWorktree: tc.worktree,
+			})
+
+			if tc.wantCreateErr && err == nil {
+				t.Fatal("CreateProjectWithMetadata() error = nil; want non-nil")
+			}
+			if !tc.wantCreateErr && err != nil {
+				t.Fatalf("CreateProjectWithMetadata() error = %v; want nil", err)
+			}
+			if err == nil && project.Name != "Bootstrap Test" {
+				t.Errorf("project.Name = %q; want %q", project.Name, "Bootstrap Test")
+			}
+			if spy.called != tc.wantCalled {
+				t.Errorf("hook called = %v; want %v", spy.called, tc.wantCalled)
+			}
+			if tc.wantCalled && spy.path != tc.wantPath {
+				t.Errorf("hook path = %q; want %q", spy.path, tc.wantPath)
+			}
+		})
+	}
+}
+
 // TestCreateActionItemMoveSearchAndDeleteModes verifies behavior for the covered scenario.
 func TestCreateActionItemMoveSearchAndDeleteModes(t *testing.T) {
 	repo := newFakeRepo()
