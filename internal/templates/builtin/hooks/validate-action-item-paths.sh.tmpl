@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+# tillsyn-hook-hash: __HASH__
+#
+# validate-action-item-paths.sh — PreToolUse hook that guards a builder agent
+# against writing files outside the declared action-item path scope.
+#
+# Invocation: Claude Code calls this script via PreToolUse with the tool-call
+# JSON payload on stdin. The script exits 0 (allow) or 2 (block).
+#
+# Required environment variables:
+#   TILLSYN_BIN            — absolute path to the till binary.
+#   TILLSYN_ACTION_ITEM_ID — UUID of the action item the agent is working on.
+#
+# Soft-skip (exit 0 + stderr warning) when:
+#   - jq is not on PATH
+#   - TILLSYN_BIN is empty or the binary does not exist
+#   - TILLSYN_ACTION_ITEM_ID is empty
+#
+# Exit codes:
+#   0 — allow (path is within scope, or soft-skip applies)
+#   2 — block (path is outside declared action-item scope)
+
+set -euo pipefail
+
+# ── soft-skip guards ──────────────────────────────────────────────────────────
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "tillsyn hook: jq not found; skipping path validation" >&2
+    exit 0
+fi
+
+if [ -z "${TILLSYN_BIN:-}" ]; then
+    echo "tillsyn hook: TILLSYN_BIN not set; skipping path validation" >&2
+    exit 0
+fi
+
+if [ ! -x "${TILLSYN_BIN}" ]; then
+    echo "tillsyn hook: TILLSYN_BIN '${TILLSYN_BIN}' not executable; skipping path validation" >&2
+    exit 0
+fi
+
+if [ -z "${TILLSYN_ACTION_ITEM_ID:-}" ]; then
+    echo "tillsyn hook: TILLSYN_ACTION_ITEM_ID not set; skipping path validation" >&2
+    exit 0
+fi
+
+# ── read stdin payload ────────────────────────────────────────────────────────
+
+payload="$(cat)"
+
+tool_name="$(printf '%s' "${payload}" | jq -r '.tool_name // empty' 2>/dev/null || true)"
+
+# Allow all tool calls that are not file-mutation tools or bash.
+if [ "${tool_name}" != "Edit" ] && [ "${tool_name}" != "Write" ] && [ "${tool_name}" != "Bash" ]; then
+    exit 0
+fi
+
+# ── fetch declared paths from the action item ─────────────────────────────────
+
+action_item_json="$("${TILLSYN_BIN}" action_item get "${TILLSYN_ACTION_ITEM_ID}" 2>/dev/null || true)"
+
+if [ -z "${action_item_json}" ]; then
+    echo "tillsyn hook: could not fetch action item '${TILLSYN_ACTION_ITEM_ID}'; skipping path validation" >&2
+    exit 0
+fi
+
+# .Paths is the Go field name (no JSON tags on ActionItem; json.Marshal uses
+# the field name verbatim). Returns a newline-separated list or empty string.
+declared_paths="$(printf '%s' "${action_item_json}" | jq -r '.Paths[]? // empty' 2>/dev/null || true)"
+
+if [ -z "${declared_paths}" ]; then
+    # No declared paths — nothing to enforce.
+    exit 0
+fi
+
+# Build an array of declared path prefixes for matching.
+IFS=$'\n' read -r -d '' -a path_prefixes <<< "${declared_paths}" || true
+
+# ── path normalization helper ─────────────────────────────────────────────────
+
+# normalize_path strips a leading './' and resolves an absolute path to a
+# repo-relative form by stripping the TILLSYN_WORKTREE_ROOT prefix when set.
+normalize_path() {
+    local p="${1:-}"
+    # Strip leading ./
+    p="${p#./}"
+    # If TILLSYN_WORKTREE_ROOT is set and the path starts with it, make relative.
+    if [ -n "${TILLSYN_WORKTREE_ROOT:-}" ]; then
+        local root="${TILLSYN_WORKTREE_ROOT%/}/"
+        if [ "${p#"${root}"}" != "${p}" ]; then
+            p="${p#"${root}"}"
+        fi
+    fi
+    printf '%s' "${p}"
+}
+
+# is_within_scope returns 0 (true) if the normalized path starts with at least
+# one of the declared path prefixes, 1 (false) otherwise.
+is_within_scope() {
+    local target="${1:-}"
+    local prefix
+    for prefix in "${path_prefixes[@]}"; do
+        prefix="${prefix%/}"
+        if [ "${target}" = "${prefix}" ] || \
+           [ "${target#"${prefix}/"}" != "${target}" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# format_paths_list builds a human-readable bracket-quoted list of declared
+# paths for error messages, e.g. ["internal/foo", "internal/bar"].
+format_paths_list() {
+    local result="["
+    local first=true
+    local prefix
+    for prefix in "${path_prefixes[@]}"; do
+        if [ "${first}" = true ]; then
+            first=false
+        else
+            result="${result}, "
+        fi
+        result="${result}\"${prefix}\""
+    done
+    result="${result}]"
+    printf '%s' "${result}"
+}
+
+# ── Edit / Write: single file_path check ─────────────────────────────────────
+
+if [ "${tool_name}" = "Edit" ] || [ "${tool_name}" = "Write" ]; then
+    raw_path="$(printf '%s' "${payload}" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)"
+    if [ -z "${raw_path}" ]; then
+        exit 0
+    fi
+    target="$(normalize_path "${raw_path}")"
+    if ! is_within_scope "${target}"; then
+        echo "tillsyn: tool target \"${target}\" outside declared action_item paths $(format_paths_list)" >&2
+        exit 2
+    fi
+    exit 0
+fi
+
+# ── Bash: command pattern matching ───────────────────────────────────────────
+
+if [ "${tool_name}" = "Bash" ]; then
+    command_str="$(printf '%s' "${payload}" | jq -r '.tool_input.command // empty' 2>/dev/null || true)"
+    if [ -z "${command_str}" ]; then
+        exit 0
+    fi
+
+    # check_bash_path extracts a candidate file path token from a matched
+    # dangerous command and exits 2 if the path is outside scope.
+    # $1 = the path token to check.
+    check_bash_path() {
+        local raw="${1:-}"
+        if [ -z "${raw}" ]; then
+            return 0
+        fi
+        local target
+        target="$(normalize_path "${raw}")"
+        if ! is_within_scope "${target}"; then
+            echo "tillsyn: tool target \"${target}\" outside declared action_item paths $(format_paths_list)" >&2
+            exit 2
+        fi
+    }
+
+    # Patterns to detect (substring-match defense-in-depth):
+    #   git checkout -- <path>
+    #   git restore [--source=...] <path>
+    #   git reset [--hard] <path>
+    #   rm [-rf] <path>
+    #   mv <src> <dst>
+    #
+    # Strategy: split on whitespace, iterate tokens, apply pattern logic.
+    # Known bypass cases (eval, $((...)), backtick substitution) are accepted
+    # as out-of-scope for this droplet per plan-QA acceptance.
+
+    # Tokenize the command into an array for sequential scanning.
+    IFS=' ' read -r -a tokens <<< "${command_str}" || true
+
+    local_i=0
+    while [ "${local_i}" -lt "${#tokens[@]}" ]; do
+        tok="${tokens[${local_i}]}"
+
+        case "${tok}" in
+        git)
+            next_i=$(( local_i + 1 ))
+            if [ "${next_i}" -lt "${#tokens[@]}" ]; then
+                sub="${tokens[${next_i}]}"
+                case "${sub}" in
+                checkout)
+                    # git checkout -- <path>  or  git checkout <path>
+                    scan_i=$(( next_i + 1 ))
+                    while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                        arg="${tokens[${scan_i}]}"
+                        case "${arg}" in
+                        --) scan_i=$(( scan_i + 1 )); break ;;
+                        -*) scan_i=$(( scan_i + 1 )); continue ;;
+                        *)  break ;;
+                        esac
+                    done
+                    # Remaining tokens after separator are paths.
+                    while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                        check_bash_path "${tokens[${scan_i}]}"
+                        scan_i=$(( scan_i + 1 ))
+                    done
+                    local_i=$(( ${#tokens[@]} ))
+                    ;;
+                restore)
+                    # git restore [--source=<tree>] [--staged] <path>
+                    scan_i=$(( next_i + 1 ))
+                    while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                        arg="${tokens[${scan_i}]}"
+                        case "${arg}" in
+                        --source=*) scan_i=$(( scan_i + 1 )); continue ;;
+                        --)         scan_i=$(( scan_i + 1 )); break ;;
+                        -*)         scan_i=$(( scan_i + 1 )); continue ;;
+                        *)          break ;;
+                        esac
+                    done
+                    while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                        check_bash_path "${tokens[${scan_i}]}"
+                        scan_i=$(( scan_i + 1 ))
+                    done
+                    local_i=$(( ${#tokens[@]} ))
+                    ;;
+                reset)
+                    # git reset [--hard|--soft|--mixed] [<tree>] [--] [<path>]
+                    # File-form: tokens after flags that are not a commit ref.
+                    # Heuristic: skip first non-flag token if it looks like a
+                    # commit-ish (sha, HEAD, branch-like); check the rest.
+                    scan_i=$(( next_i + 1 ))
+                    skipped_commitish=false
+                    while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                        arg="${tokens[${scan_i}]}"
+                        case "${arg}" in
+                        --hard|--soft|--mixed|--merge|--keep)
+                            scan_i=$(( scan_i + 1 )); continue ;;
+                        --)
+                            scan_i=$(( scan_i + 1 )); break ;;
+                        -*)
+                            scan_i=$(( scan_i + 1 )); continue ;;
+                        *)
+                            if [ "${skipped_commitish}" = false ]; then
+                                # Treat first bare token as commit-ish, skip it.
+                                skipped_commitish=true
+                                scan_i=$(( scan_i + 1 )); continue
+                            fi
+                            break
+                            ;;
+                        esac
+                    done
+                    while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                        check_bash_path "${tokens[${scan_i}]}"
+                        scan_i=$(( scan_i + 1 ))
+                    done
+                    local_i=$(( ${#tokens[@]} ))
+                    ;;
+                esac
+            fi
+            local_i=$(( local_i + 1 ))
+            ;;
+        rm)
+            # rm [-rf|-r|-f|--force|--recursive] <path>...
+            scan_i=$(( local_i + 1 ))
+            while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                arg="${tokens[${scan_i}]}"
+                case "${arg}" in
+                -*)  scan_i=$(( scan_i + 1 )); continue ;;
+                --)  scan_i=$(( scan_i + 1 )); break ;;
+                *)   break ;;
+                esac
+            done
+            while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                check_bash_path "${tokens[${scan_i}]}"
+                scan_i=$(( scan_i + 1 ))
+            done
+            local_i=$(( ${#tokens[@]} ))
+            ;;
+        mv)
+            # mv <src> <dst> — check both.
+            scan_i=$(( local_i + 1 ))
+            while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                arg="${tokens[${scan_i}]}"
+                case "${arg}" in
+                -*)  scan_i=$(( scan_i + 1 )); continue ;;
+                --)  scan_i=$(( scan_i + 1 )); break ;;
+                *)   break ;;
+                esac
+            done
+            while [ "${scan_i}" -lt "${#tokens[@]}" ]; do
+                check_bash_path "${tokens[${scan_i}]}"
+                scan_i=$(( scan_i + 1 ))
+            done
+            local_i=$(( ${#tokens[@]} ))
+            ;;
+        esac
+
+        local_i=$(( local_i + 1 ))
+    done
+
+    exit 0
+fi
+
+# Catch-all: allow.
+exit 0

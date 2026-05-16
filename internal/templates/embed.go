@@ -117,6 +117,7 @@ import (
 //go:embed builtin/agents/till-gdd/research-agent.md
 //go:embed builtin/agents/till-gdd/closeout-agent.md
 //go:embed builtin/agents/till-gdd/commit-message-agent.md
+//go:embed builtin/hooks/validate-action-item-paths.sh.tmpl
 var DefaultTemplateFS embed.FS
 
 // ErrBuiltinNotFound is the closed sentinel returned by LoadBuiltinTemplate
