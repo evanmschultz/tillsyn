@@ -371,6 +371,19 @@ func BuildSpawnCommand(
 		}
 	}
 
+	// Drop D-E hook-artifact pre-flight. When the bound agent's project-tier
+	// .md file declares a hooks.PreToolUse entry for validate-action-item-paths.sh
+	// (the agent-isolation hook), this check verifies the rendered on-disk script
+	// exists at <worktree>/.claude/hooks/ and its embedded-template hash matches.
+	// Missing or stale hooks surface as ErrHookArtifactStale so the dev sees a
+	// clear "run 'till init'" remediation rather than a silently un-enforced
+	// isolation boundary. Agents that do not declare the hook are skipped without
+	// error (graceful opt-in).
+	agentName := rawBinding.AgentName
+	if err := CheckHookArtifacts(project.RepoPrimaryWorktree, agentName); err != nil {
+		return nil, SpawnDescriptor{}, fmt.Errorf("agent %s preflight: %w", agentName, err)
+	}
+
 	// Resolve the binding through the priority cascade. F.7.17.5 does NOT
 	// plumb CLI/MCP/TUI overrides — those layers grow knobs in later
 	// droplets. Today only the rawBinding fields contribute, with the
