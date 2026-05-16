@@ -2826,6 +2826,184 @@ func TestMapToolErrorOrchSelfApprovalDisabled(t *testing.T) {
 	})
 }
 
+// TestAuthRequestClaimPendingReturnsWellFormedResult verifies that a
+// pending (not-yet-approved) claim returns a well-formed JSON result with
+// waiting=true and no hard MCP internal error, even when EnableAuthContexts
+// is true and the session secret is empty.
+//
+// Regression guard for the bug where bindMCPAuthContext was called
+// unconditionally; on a pending claim the SessionSecret is empty, causing
+// Bind to error with "session_id and session_secret are required to bind
+// one auth context", which the handler wrapped as a hard MCP internal error
+// instead of a well-formed tool result.
+func TestAuthRequestClaimPendingReturnsWellFormedResult(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
+		},
+		// Pending claim: SessionSecret is empty, Waiting is true.
+		claimResult: mcpcommon.AuthRequestClaimResult{
+			Request: mcpcommon.AuthRequestRecord{
+				ID:                  "req-pending-1",
+				State:               "pending",
+				Path:                "project/p1",
+				ProjectID:           "p1",
+				ScopeType:           mcpcommon.ScopeTypeProject,
+				ScopeID:             "p1",
+				PrincipalID:         "agent-1",
+				PrincipalType:       "agent",
+				ClientID:            "till-mcp-stdio",
+				ClientType:          "mcp-stdio",
+				RequestedSessionTTL: "2h0m0s",
+				RequestedByActor:    "agent-1",
+				RequestedByType:     "agent",
+				CreatedAt:           now,
+				ExpiresAt:           now.Add(30 * time.Minute),
+			},
+			SessionSecret: "", // pending: no secret yet
+			Waiting:       true,
+		},
+	}
+
+	// EnableAuthContexts: true exercises the auth-context bind path, which
+	// triggered the bug. NewServer must be called directly because NewHandler
+	// unconditionally sets EnableAuthContexts: false.
+	mcpSrv, cfg, err := NewServer(Config{EnableAuthContexts: true}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	streamable := mcpserver.NewStreamableHTTPServer(
+		mcpSrv,
+		mcpserver.WithEndpointPath(cfg.EndpointPath),
+		mcpserver.WithStateLess(true),
+	)
+	server := httptest.NewServer(streamable)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", map[string]any{
+		"operation":    "claim",
+		"request_id":   "req-pending-1",
+		"resume_token": "resume-abc",
+		"principal_id": "agent-1",
+		"client_id":    "till-mcp-stdio",
+	}))
+
+	// Must be a well-formed result with no hard JSON-RPC error.
+	if claimResp.Error != nil {
+		t.Fatalf("claim pending returned JSON-RPC error = %#v, want nil (should be a well-formed tool result)", claimResp.Error)
+	}
+
+	// The tool result must not carry isError=true.
+	if isError, _ := claimResp.Result["isError"].(bool); isError {
+		text := toolResultText(t, claimResp.Result)
+		t.Fatalf("claim pending isError = true, want false; error text = %q", text)
+	}
+
+	// The structured result must carry waiting=true.
+	claimStructured := toolResultStructured(t, claimResp.Result)
+	if waiting, _ := claimStructured["waiting"].(bool); !waiting {
+		t.Fatalf("claim pending waiting = false, want true; result = %#v", claimStructured)
+	}
+
+	// The request sub-record must carry the pending state.
+	requestRecord, ok := claimStructured["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("claim pending result missing nested request record: %#v", claimStructured)
+	}
+	if got := requestRecord["state"].(string); got != "pending" {
+		t.Fatalf("claim pending request.state = %q, want pending", got)
+	}
+	if got := requestRecord["id"].(string); got != "req-pending-1" {
+		t.Fatalf("claim pending request.id = %q, want req-pending-1", got)
+	}
+
+	// No session_secret must be exposed on a pending claim.
+	if secret, _ := claimStructured["session_secret"].(string); secret != "" {
+		t.Fatalf("claim pending session_secret = %q, want empty on pending claim", secret)
+	}
+}
+
+// TestAuthRequestClaimApprovedWithAuthContextsBound verifies that an
+// approved claim with EnableAuthContexts=true still binds the auth context
+// and returns auth_context_id in the result (regression guard for the fix).
+func TestAuthRequestClaimApprovedWithAuthContextsBound(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	capture := &stubAuthRequestService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
+		},
+		claimResult: mcpcommon.AuthRequestClaimResult{
+			Request: mcpcommon.AuthRequestRecord{
+				ID:                     "req-approved-1",
+				State:                  "approved",
+				Path:                   "project/p1",
+				ApprovedPath:           "project/p1/branch/review",
+				ProjectID:              "p1",
+				ScopeType:              mcpcommon.ScopeTypeProject,
+				ScopeID:                "p1",
+				PrincipalID:            "agent-1",
+				PrincipalType:          "agent",
+				ClientID:               "till-mcp-stdio",
+				ClientType:             "mcp-stdio",
+				RequestedSessionTTL:    "2h0m0s",
+				ApprovedSessionTTL:     "2h0m0s",
+				RequestedByActor:       "agent-1",
+				RequestedByType:        "agent",
+				CreatedAt:              now,
+				ExpiresAt:              now.Add(30 * time.Minute),
+				IssuedSessionID:        "sess-approved-1",
+				IssuedSessionExpiresAt: ptrTime(now.Add(2 * time.Hour)),
+			},
+			SessionSecret: "secret-approved-1",
+			Waiting:       false,
+		},
+	}
+
+	mcpSrv, cfg, err := NewServer(Config{EnableAuthContexts: true}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	streamable := mcpserver.NewStreamableHTTPServer(
+		mcpSrv,
+		mcpserver.WithEndpointPath(cfg.EndpointPath),
+		mcpserver.WithStateLess(true),
+	)
+	server := httptest.NewServer(streamable)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, claimResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.auth_request", map[string]any{
+		"operation":    "claim",
+		"request_id":   "req-approved-1",
+		"resume_token": "resume-xyz",
+		"principal_id": "agent-1",
+		"client_id":    "till-mcp-stdio",
+	}))
+
+	if claimResp.Error != nil {
+		t.Fatalf("claim approved returned JSON-RPC error = %#v, want nil", claimResp.Error)
+	}
+	if isError, _ := claimResp.Result["isError"].(bool); isError {
+		text := toolResultText(t, claimResp.Result)
+		t.Fatalf("claim approved isError = true, want false; error text = %q", text)
+	}
+
+	claimStructured := toolResultStructured(t, claimResp.Result)
+	if got, _ := claimStructured["session_secret"].(string); got != "secret-approved-1" {
+		t.Fatalf("claim approved session_secret = %q, want secret-approved-1", got)
+	}
+	// auth_context_id must be bound for approved sessions with EnableAuthContexts=true.
+	if authCtxID, _ := claimStructured["auth_context_id"].(string); authCtxID == "" {
+		t.Fatalf("claim approved auth_context_id = empty, want non-empty (auth context must be bound on approved claim)")
+	}
+}
+
 // TestAuthRequestToolSchemaApproveAcceptsOnlyDocumentedArgs is the W3.4
 // brief's tool-schema assertion (falsification attack 11 placeholder). The
 // existing TestAuthRequestApproveToolSchemaHasNoConfigurabilityKnobs covers

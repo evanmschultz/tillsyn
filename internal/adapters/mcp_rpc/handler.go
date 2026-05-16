@@ -292,10 +292,12 @@ func registerAuthRequestTools(srv *mcpserver.MCPServer, authRequests mcpcommon.A
 				if err != nil {
 					return toolResultFromError(err), nil
 				}
-				if authContextID, bindErr := bindMCPAuthContext(ctx, record.Request.IssuedSessionID, record.SessionSecret); bindErr != nil {
-					return nil, fmt.Errorf("bind auth context for claimed session: %w", bindErr)
-				} else {
-					record.AuthContextID = authContextID
+				if record.SessionSecret != "" {
+					if authContextID, bindErr := bindMCPAuthContext(ctx, record.Request.IssuedSessionID, record.SessionSecret); bindErr != nil {
+						return nil, fmt.Errorf("bind auth context for claimed session: %w", bindErr)
+					} else {
+						record.AuthContextID = authContextID
+					}
 				}
 				result, err := mcp.NewToolResultJSON(record)
 				if err != nil {
