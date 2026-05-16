@@ -4,8 +4,8 @@ Issues surfaced during joint smoke-testing on the TILLSYN project itself. Dev ex
 
 Status legend: `open` / `in-progress` / `fixed`.
 
-**Status summary (2026-05-15):**
-- E2E-1 — open (narrowed to TUI-only after E2E-4 fix verified CLI path works)
+**Status summary (2026-05-16):**
+- E2E-1 — fixed 2026-05-16 (root cause was help-text drift: `model.go:18204` showed `"r"` for "pick path" but actual binding is `ctrl+r` — plain `r` was consumed by the path field's textinput. Help-text fix at commit `2d34290`. Save-path symptom was a separate bug fixed by E2E-6 D2 `1a932e8`. Defensive regression test landed at commit `b1a3700`.)
 - E2E-2 — fixed (MCP/DB reconnect after session restart)
 - E2E-3 — fixed-by-workaround (backfill via wired `till project update`; the original miss was due to pre-W2.D7 binary at first `till init`)
 - E2E-4 — fixed (orch-direct cobra wiring for `till project update`; other W3 commands still need wiring)
@@ -158,7 +158,7 @@ Status legend: `open` / `in-progress` / `fixed`.
 
 ## E2E-1 — Project `--root-path` / TUI path editing broken
 
-- **Status:** open
+- **Status:** fixed 2026-05-16 (commits `b1a3700` + `2d34290`; root cause was help-text drift, not save-path bug)
 - **Surfaced:** 2026-05-14 during initial smoke setup.
 - **Symptom (dev report):**
   - `till init` does not accept a `--root-path` option (CLI ignores it).
