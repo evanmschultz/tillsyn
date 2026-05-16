@@ -39,6 +39,88 @@ Transitions are recorded by appending a dated status note to the entry, not by r
 
 ---
 
+## 2026-05-16 — agent-isolation-followup — `wait_timeout` default-on for live-wait MCP ops
+
+### Context
+Tonight's post-compaction recovery flow called `till.auth_request operation=create` without `wait_timeout`. The call returned immediately with `state: pending`. Dev approved in TUI + ran `mage install`, then asked "why didn't you get the notification?" Root cause: the orch never subscribed to the live-wait stream because the parameter was omitted.
+
+### Observation
+`wait_timeout` is optional on `till.auth_request operation=create`. When omitted, the call short-circuits — no live-wait subscription — and dev approvals don't propagate back to the caller. This is brittle: even the rule's author missed it the first time, because the rule didn't exist when the gap fired.
+
+Other live-wait surfaces likely share the same gap: `till.comment operation=list` (`wait_timeout` for thread updates), `till.attention_item operation=list` (if it has a wait surface). The pattern is "live-wait optional → callers forget → notifications silently lost."
+
+### Proposed fix
+Default-on at the MCP server layer: when `wait_timeout` is omitted on a live-wait-capable op, the server fills it with `timeout` (so live-wait matches the approval window). Callers wanting fire-and-forget pass `wait_timeout: "0s"` explicitly.
+
+Document the new default + opt-out path in `README.md` + `CLAUDE.md`. Sweep all live-wait-capable ops (`till.auth_request create`, `till.comment list`, attention-item waits) uniformly.
+
+Dev disposition 2026-05-16: option (c) approved — server-side default + docs as belt-and-suspenders.
+
+### Target drop
+Next ergonomics drop — short single-droplet fix in the MCP server layer. High priority — direct dev-visible friction.
+
+### Tags
+`mcp`, `auth`, `live-wait`, `ergonomics`, `dev-approved`
+
+---
+
+## 2026-05-16 — agent-isolation-followup — Hook `..`-traversal hardening: out-of-scope attack surfaces raised by W2 plan-QA-falsification
+
+### Context
+W2 (hook `..`-traversal hardening) plan-QA-falsification raised 3 out-of-scope attack surfaces while reviewing the `..`-traversal fix. These are NOT addressed in W2's atomic build droplet `00adb52e` — they require their own hardening passes.
+
+### Observation
+
+**(a) `%2e%2e` URL-encoded bypass.** `jq -r` decodes JSON `\u` escapes but does NOT URL-decode `%2e%2e`. If any upstream layer (Claude Code's tool argument parsing) URL-decodes paths before passing to the hook, `%2e%2e/etc/passwd` could land as literal `../etc/passwd` and be caught — but if NO upstream layer decodes, then `%2e%2e/etc/passwd` reaches the hook as the literal 19-char string with no `/` before `%2e%2e` → pattern doesn't match → allowed. Real-world risk depends on call-site behavior — likely low but worth verifying.
+
+**(b) Symlink traversal.** A legitimate in-scope path `only/this/dir/link` could be a symlink to `/etc/passwd`. Hook only sees the path string, not the resolved target. Needs either pre-validate symlink resolution (race-y with TOCTOU) or filesystem-level chroot/sandbox.
+
+**(c) `bash -c` / `sh -c` wrapping** — already documented in `TestHookIntegration_KnownBypassCases` as accepted bypass. Wrapping `bash -c 'rm ../etc/passwd'` hides the dangerous primitive from the tokenizer. Same out-of-scope class.
+
+### Proposed fix
+
+(a) URL-encoded `..`: add a single test case to confirm whether `%2e%2e` reaches the hook as literal. If yes, extend `reject_if_dotdot` to decode common URL-encoding patterns OR document as accepted-bypass.
+
+(b) Symlink traversal: add a `realpath`-based resolution step AFTER `normalize_path` to canonicalize symlinks before scope check. Cross-platform consideration: macOS BSD `realpath` differs from GNU coreutils.
+
+(c) `bash -c` wrapping: separate hardening pass; integrate with Claude Code's tool argument inspection layer rather than the hook script.
+
+### Target drop
+
+Post-W2. (a) and (b) are small enough to absorb into a single follow-up. (c) requires upstream coordination with Claude Code SDK.
+
+### Tags
+`hook`, `traversal`, `bypass`, `security`, `parking-lot`
+
+---
+
+## 2026-05-16 — agent-isolation-followup — `move_state` rejects metadata in same call for `failed` transitions
+
+### Context
+Tonight's stale-orphan cleanup called `till.action_item operation=move_state state=failed` with `metadata: {"outcome": "blocked", "blocked_reason": "..."}` in the same call. Returned `internal_error: invalid metadata outcome for failed transition: metadata.outcome must be one of {failure, blocked, superseded} on transition to failed (got "")`. The metadata sent in the call payload was not seen by the validation check.
+
+Workaround: split into two calls — `operation=update` with `metadata` first, then `operation=move_state` with no metadata. Worked correctly. But the two-call pattern is non-obvious and the error message implies metadata SHOULD be reachable from `move_state`.
+
+### Observation
+Either:
+- (a) `move_state` should accept `metadata` and merge it pre-validation (transparent fix), OR
+- (b) the schema should explicitly state "metadata must be set via prior `operation=update`; `move_state` does not accept metadata."
+
+Today the schema is ambiguous: `metadata` is documented as "Optional action-item metadata object" without specifying which operations honor it. The error message references `metadata.outcome` but the move_state validation reads from stored row state, not the call payload.
+
+### Proposed fix
+Option (a) preferred — merge metadata in `move_state` pre-validation. Saves a round trip.
+
+Option (b) acceptable if (a) is hard — update schema docs to clarify the pattern + add a hint to the error message ("call operation=update with metadata first; move_state does not accept metadata").
+
+### Target drop
+Next ergonomics drop — `internal/app/action_item.go` move_state logic. Small fix.
+
+### Tags
+`mcp`, `action-item`, `state-transition`, `ergonomics`
+
+---
+
 ## 2026-05-15 — E2E-8 — `createAuthRequestLive` baseline-ordering latency-only race (NIT, deferred)
 
 ### Context
