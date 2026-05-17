@@ -276,6 +276,12 @@ type dispatcher struct {
 	// project template. Populated from opts.TemplateResolver by NewDispatcher.
 	// Nil is allowed — callers must nil-check before invoking.
 	templateResolver TemplateResolver
+	// gates executes the post-build gate sequence declared by a project
+	// template (Drop 4b.2). Constructed and populated by NewDispatcher with
+	// the canonical gate set (mage_ci). The runner is always non-nil after
+	// construction; templates that declare no gates for a given kind simply
+	// produce an empty result slice from gateRunner.Run.
+	gates *gateRunner
 	// clock returns the current time for outcome timestamps. Tests inject a
 	// fake clock through a non-exported helper (see dispatcher_test.go);
 	// production callers get time.Now via the constructor default.
@@ -317,6 +323,14 @@ func NewDispatcher(svc *app.Service, broker app.LiveWaitBroker, opts Options) (*
 		log.Warn("dispatcher: TemplateResolver not configured; gate-runner template lookup will be skipped")
 	}
 
+	gates := newGateRunner()
+	if err := gates.Register(templates.GateKindMageCI, gateMageCI); err != nil {
+		// ErrGateAlreadyRegistered would require a double-Register call inside a
+		// single NewDispatcher invocation — impossible with the current code path.
+		// Wrap and surface so a future wiring regression is immediately visible.
+		return nil, fmt.Errorf("dispatcher: register mage_ci gate: %w", err)
+	}
+
 	walker := newTreeWalker(svc)
 	conflict := newConflictDetector(svc)
 	fileLocks := newFileLockManager()
@@ -347,6 +361,7 @@ func NewDispatcher(svc *app.Service, broker app.LiveWaitBroker, opts Options) (*
 		projectsLister:   svc,
 		opts:             opts,
 		templateResolver: opts.TemplateResolver,
+		gates:            gates,
 		clock:            time.Now,
 	}, nil
 }

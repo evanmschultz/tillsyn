@@ -1,14 +1,19 @@
 package dispatcher
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/log"
 
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/domain"
@@ -828,6 +833,10 @@ func TestNewDispatcherAcceptsTemplateResolver(t *testing.T) {
 	if d.opts.TemplateResolver != resolver {
 		t.Fatalf("dispatcher.opts.TemplateResolver = %v, want %v", d.opts.TemplateResolver, resolver)
 	}
+	// D3 NIT: also verify the promoted templateResolver field matches.
+	if d.templateResolver != resolver {
+		t.Fatalf("dispatcher.templateResolver = %v, want %v", d.templateResolver, resolver)
+	}
 }
 
 // TestNewDispatcherNilTemplateResolverDoesNotPanic asserts that a nil
@@ -847,6 +856,82 @@ func TestNewDispatcherNilTemplateResolverDoesNotPanic(t *testing.T) {
 	}
 	if d.opts.TemplateResolver != nil {
 		t.Fatalf("dispatcher.opts.TemplateResolver = %v, want nil", d.opts.TemplateResolver)
+	}
+}
+
+// testSvc returns a shape-valid *app.Service for constructor tests. Alias for
+// newServiceForConstructorTest kept short for inline readability.
+func testSvc(t *testing.T) *app.Service {
+	t.Helper()
+	return newServiceForConstructorTest()
+}
+
+// testBroker returns a shape-valid broker for constructor tests.
+func testBroker(t *testing.T) app.LiveWaitBroker {
+	t.Helper()
+	return newBrokerForTest()
+}
+
+// TestNewDispatcherRegistersMageCIGate asserts that NewDispatcher constructs a
+// non-nil gateRunner and registers the mage_ci gate. Same-package access lets
+// us inspect d.gates.gates["mage_ci"] directly. This is a structural assertion
+// — the gate impl itself is exercised in gate_mage_ci_test.go.
+func TestNewDispatcherRegistersMageCIGate(t *testing.T) {
+	t.Parallel()
+
+	d, err := NewDispatcher(testSvc(t), testBroker(t), Options{})
+	if err != nil {
+		t.Fatalf("NewDispatcher() error = %v", err)
+	}
+	if d.gates == nil {
+		t.Fatal("dispatcher.gates is nil; want non-nil gateRunner")
+	}
+	d.gates.mu.RLock()
+	fn := d.gates.gates[templates.GateKindMageCI]
+	d.gates.mu.RUnlock()
+	if fn == nil {
+		t.Fatalf("gates.gates[%q] = nil; want registered gateMageCI func", templates.GateKindMageCI)
+	}
+}
+
+// TestNewDispatcherNilTemplateResolverLogsWarning asserts that NewDispatcher
+// emits a Warn-level log message when TemplateResolver is nil. The test
+// captures the default charmbracelet/log output by temporarily redirecting it
+// to a buffer. Not parallel: redirecting a global writer is not safe under
+// concurrent test execution.
+func TestNewDispatcherNilTemplateResolverLogsWarning(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	_, _ = NewDispatcher(testSvc(t), testBroker(t), Options{})
+
+	if !strings.Contains(buf.String(), "TemplateResolver not configured") {
+		t.Fatalf("expected warn log containing %q, got: %q",
+			"TemplateResolver not configured", buf.String())
+	}
+}
+
+// TestStubTemplateResolverReturnsError exercises the err path on
+// stubTemplateResolver — the path was previously untested (D3 NIT 1.3).
+// Verifies that a non-nil err field propagates through GetProjectTemplate and
+// the returned Template is its zero value.
+func TestStubTemplateResolverReturnsError(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("test sentinel error")
+	stub := &stubTemplateResolver{err: sentinel}
+
+	got, err := stub.GetProjectTemplate(context.Background(), "any-proj-id")
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want errors.Is(sentinel)", err)
+	}
+	// Returned Template must be the zero value when err is non-nil.
+	if got.SchemaVersion != "" {
+		t.Errorf("Template.SchemaVersion = %q, want empty", got.SchemaVersion)
+	}
+	if len(got.Kinds) != 0 {
+		t.Errorf("Template.Kinds len = %d, want 0", len(got.Kinds))
 	}
 }
 
