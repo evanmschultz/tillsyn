@@ -1060,6 +1060,88 @@ var w4d1TillGDDAgentNames = []string{
 	"commit-message-agent.md",
 }
 
+// TestAllBuiltinTemplatesUseRegisteredGates asserts every gate kind referenced
+// in every builtin template's [gates.*] sequence is a member of the closed set
+// registered by the Drop 4b gate runner. The registered set today is exactly
+// {mage_ci}; commit and push gate implementations land in Drop 4c F.7.
+//
+// When Drop 4c F.7 ships, expand the registered set to include GateKindCommit
+// and GateKindPush alongside their gate runner registrations. Until then, any
+// template TOML that references "commit" or "push" in a [gates.*] sequence
+// trips ErrGateNotRegistered on every build dispatch — the D1 N1 defect that
+// this test guards against recurring.
+//
+// Sweeps all three builtin templates (till-fe, till-gen, till-go) so a future
+// builtin addition must either stay within the registered set or land its gate
+// implementation in the same drop.
+func TestAllBuiltinTemplatesUseRegisteredGates(t *testing.T) {
+	t.Parallel()
+
+	// Closed set of gate kinds registered by the Drop 4b gate runner.
+	// Expand when Drop 4c F.7 ships commit + push gate implementations.
+	registered := map[GateKind]bool{
+		GateKindMageCI: true,
+	}
+
+	for _, name := range BuiltinTemplateNames() {
+		name := name // capture loop var for parallel subtest
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tpl, err := LoadBuiltinTemplate(name)
+			if err != nil {
+				t.Fatalf("LoadBuiltinTemplate(%q): unexpected error: %v", name, err)
+			}
+			for kind, seq := range tpl.Gates {
+				for _, gk := range seq {
+					if !registered[gk] {
+						t.Fatalf("template %q references unregistered gate %q in [gates.%s]", name, gk, kind)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestBuilderAgentContractMarkerPresent asserts every canonical group's
+// builder-agent.md contains the Contract section marker "DOES NOT call".
+// The Contract section documents the invariant that builder agents never
+// call till_action_item with operation=move_state state=complete; the
+// monitor owns that transition after post-build gates pass.
+//
+// Guards against the accidental loss of the Contract section during
+// Drop 4c.8 W4 substantive-content authoring. A builder-agent.md that
+// silently drops the section still passes the PLACEHOLDER marker test
+// (TestDefaultTemplateFSEmbedsPlaceholderAgentFiles) — this test provides
+// the orthogonal coverage.
+//
+// Closes D2 NIT 1.D: the three canonical groups (go, fe, gen) must each
+// carry the Contract section. till-gdd is intentionally excluded — it is
+// a template-family identifier, not a canonical group, and its placeholder
+// shape is governed by W1.D1 acceptance bullet, not the W4.D1 contract.
+func TestBuilderAgentContractMarkerPresent(t *testing.T) {
+	t.Parallel()
+
+	for _, group := range []string{"go", "fe", "gen"} {
+		group := group // capture loop var for parallel subtest
+		t.Run(group, func(t *testing.T) {
+			t.Parallel()
+			path := "builtin/agents/" + group + "/builder-agent.md"
+			f, err := DefaultTemplateFS.Open(path)
+			if err != nil {
+				t.Fatalf("DefaultTemplateFS.Open(%q): unexpected error: %v", path, err)
+			}
+			defer f.Close()
+			body, err := io.ReadAll(f)
+			if err != nil {
+				t.Fatalf("io.ReadAll(%q): unexpected error: %v", path, err)
+			}
+			if !strings.Contains(string(body), "DOES NOT call") {
+				t.Fatalf("builder-agent.md at %s missing Contract section ('DOES NOT call' marker not found)", path)
+			}
+		})
+	}
+}
+
 // TestDefaultTemplateFSEmbedsPlaceholderAgentFiles asserts every Drop 4c.6.1
 // W4.D1 canonical agent file path resolves via `DefaultTemplateFS.Open` AND
 // every agent .md body contains the literal string "PLACEHOLDER" so a builder

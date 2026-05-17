@@ -248,7 +248,11 @@ description = "Perpetual Hylla-tooling refinement rollup — entries that came o
 # -----------------------------------------------------------------------------
 
 [gates]
-build = ["mage_ci", "commit", "push"]
+# Drop 4c F.7 (commit gate) and the push gate are NOT wired in Drop 4b — only
+# mage_ci is registered by the gate runner today. Including commit + push here
+# would trip ErrGateNotRegistered on every build dispatch. They are re-added
+# when Drop 4c F.7 ships their gate implementations and the commit-agent.
+build = ["mage_ci"]
 
 # -----------------------------------------------------------------------------
 # [agent_bindings] — closed 12-value Kind -> agent spawn parameters.
