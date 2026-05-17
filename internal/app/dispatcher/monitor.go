@@ -481,14 +481,44 @@ func (m *processMonitor) applyCleanExitTransition(ctx context.Context, actionIte
 	}
 
 	results := m.gates.Run(ctx, item, project, &tpl)
+
+	// Detect external ctx-cancellation BEFORE any gate ran. Per gates.go
+	// contract, pre-loop ctx.Err() short-circuits Run and returns nil — the
+	// caller cannot attribute the skip to a specific gate. The only way to
+	// observe "empty results when the kind declared gates" is this
+	// short-circuit. Per the same contract, cancellation is caller-driven
+	// teardown rather than a gate verdict — leave the item in_progress so
+	// the next dispatcher cycle retries. Do not transition.
+	if len(tpl.Gates[item.Kind]) > 0 && len(results) == 0 {
+		return nil
+	}
+
 	for _, r := range results {
-		if r.Status != GateStatusPassed {
-			reason := fmt.Sprintf("gate %q %s: %v", r.GateName, r.Status, r.Err)
-			if r.Output != "" {
-				reason += "\n" + r.Output
-			}
-			return m.transitionToFailed(ctx, item, reason)
+		if r.Status == GateStatusPassed {
+			continue
 		}
+		if r.Status == GateStatusSkipped {
+			// Per gates.go contract, Skipped is external cancellation
+			// (caller decision: timeout, shutdown, parent ctx teardown),
+			// NOT a gate verdict. Leave the item in_progress for the next
+			// dispatcher cycle to retry rather than conflate cancellation
+			// with rejection.
+			return nil
+		}
+		// GateStatusFailed: gate rejected the build. Transition to failed.
+		// Guard against a buggy custom gate returning Status=Failed with a
+		// nil Err — formatting %v of nil produces a confusing "<nil>" in
+		// BlockedReason.
+		var reason string
+		if r.Err != nil {
+			reason = fmt.Sprintf("gate %q %s: %v", r.GateName, r.Status, r.Err)
+		} else {
+			reason = fmt.Sprintf("gate %q %s", r.GateName, r.Status)
+		}
+		if r.Output != "" {
+			reason += "\n" + r.Output
+		}
+		return m.transitionToFailed(ctx, item, reason)
 	}
 	return m.transitionToComplete(ctx, item)
 }

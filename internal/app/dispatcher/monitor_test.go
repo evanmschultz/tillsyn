@@ -848,6 +848,272 @@ func TestMonitorCleanExitNilGateRunnerNoOps(t *testing.T) {
 	}
 }
 
+// TestMonitorCleanExitEmptyTemplateTransitionsToComplete exercises the
+// empty-template branch of applyCleanExitTransition: when the resolver returns
+// a zero-valued template (no SchemaVersion, no Kinds), the monitor skips gate
+// execution entirely and transitions the item directly to complete.
+//
+// Closes D4b QA C3 (test gap on the zero-template fast-path).
+func TestMonitorCleanExitEmptyTemplateTransitionsToComplete(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-empty-tpl")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	// Zero-valued template: no SchemaVersion, no Kinds, no Gates. The monitor
+	// must skip gate execution and call transitionToComplete directly.
+	mon.WireGates(stubbedGateRunner(gatePassFunc), &stubMonitorTemplateResolver{tpl: templates.Template{}})
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	if _, err = h.Wait(); err != nil {
+		t.Fatalf("Wait() error = %v, want nil", err)
+	}
+
+	if got := svc.moveCalls.Load(); got != 1 {
+		t.Fatalf("svc.moveCalls = %d on empty-template path, want 1", got)
+	}
+	if got := svc.lastMoveCol.Load(); got == nil || *got != "col-complete" {
+		gotStr := "<nil>"
+		if got != nil {
+			gotStr = *got
+		}
+		t.Fatalf("MoveActionItem column = %q, want col-complete", gotStr)
+	}
+}
+
+// gateSkippedFunc is a gateFunc that returns a Skipped result. Used by tests
+// that exercise the inter-gate ctx-cancellation path — per gates.go contract
+// the runner emits a Skipped row (with Err set) when ctx is cancelled between
+// gates. The monitor's clean-exit branch must treat Skipped as "leave
+// in_progress" (caller-driven teardown is not a verdict), NOT as failed.
+func gateSkippedFunc(_ context.Context, _ domain.ActionItem, _ domain.Project) GateResult {
+	return GateResult{
+		GateName: gateTestKind,
+		Status:   GateStatusSkipped,
+		Err:      context.Canceled,
+	}
+}
+
+// TestMonitorCleanExitSkippedGateLeavesInProgress exercises C1 (Skipped vs
+// Failed disambiguation). When the gate runner emits a Skipped result (per
+// gates.go semantic, external cancellation rather than a verdict), the
+// monitor must NOT transition the item to failed. The item stays in_progress
+// so the next dispatcher cycle can retry.
+//
+// Closes D4b QA C1 (Skipped → Failed conflation).
+func TestMonitorCleanExitSkippedGateLeavesInProgress(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-gate-skipped")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	resolver := &stubMonitorTemplateResolver{tpl: buildGateTemplate()}
+	mon.WireGates(stubbedGateRunner(gateSkippedFunc), resolver)
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	if _, err = h.Wait(); err != nil {
+		t.Fatalf("Wait() error = %v, want nil", err)
+	}
+
+	if got := svc.moveCalls.Load(); got != 0 {
+		t.Fatalf("svc.moveCalls = %d on Skipped-gate path, want 0 (item must stay in_progress)", got)
+	}
+	if got := svc.updateCalls.Load(); got != 0 {
+		t.Fatalf("svc.updateCalls = %d on Skipped-gate path, want 0 (no metadata mutation)", got)
+	}
+}
+
+// emptyResultsGateRunner returns a gateRunner that registers NO gates. When
+// the monitor calls Run with a non-empty sequence in the template, the runner
+// emits one Failed row per gate (ErrGateNotRegistered). To exercise the
+// "empty results + non-empty sequence" branch we need a different shape:
+// gates.Run's pre-loop ctx.Err() short-circuit returns nil. Simulate by
+// passing a pre-cancelled ctx via Track — but Track owns the ctx lifecycle.
+//
+// Simpler simulation: register a gate that calls ctx.Done() to cancel during
+// execution, then verify the next gate is Skipped. Already covered by
+// TestMonitorCleanExitSkippedGateLeavesInProgress. The pre-loop ctx-cancel
+// path is hard to test deterministically without exposing internals; covered
+// here by reading the branch behaviour from the gates.Run pre-loop check.
+
+// TestMonitorCleanExitGetActionItemErrorPropagates exercises C4 error path:
+// when applyCleanExitTransition's refetch GetActionItem returns an error,
+// the error must propagate through h.waitErr.
+//
+// Closes D4b QA C4 partial (GetActionItem refetch error path).
+func TestMonitorCleanExitGetActionItemErrorPropagates(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-getitem-err")
+	svc.seed(item)
+	svc.getErr = errors.New("simulated GetActionItem failure")
+
+	mon := newProcessMonitor(svc, nil)
+	resolver := &stubMonitorTemplateResolver{tpl: buildGateTemplate()}
+	mon.WireGates(stubbedGateRunner(gatePassFunc), resolver)
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	_, waitErr := h.Wait()
+	if waitErr == nil {
+		t.Fatalf("Wait() error = nil, want propagated GetActionItem failure")
+	}
+	if !contains(waitErr.Error(), "simulated GetActionItem failure") {
+		t.Fatalf("Wait() error = %q, want substring %q", waitErr.Error(), "simulated GetActionItem failure")
+	}
+
+	if got := svc.moveCalls.Load(); got != 0 {
+		t.Fatalf("svc.moveCalls = %d on GetActionItem error path, want 0", got)
+	}
+}
+
+// TestMonitorCleanExitTemplateResolverErrorPropagates exercises C4 error
+// path: when applyCleanExitTransition's template resolution returns an
+// error, the error must propagate through h.waitErr (no transition).
+//
+// Closes D4b QA C4 partial (template resolver error path).
+func TestMonitorCleanExitTemplateResolverErrorPropagates(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-resolver-err")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	resolverErr := errors.New("simulated GetProjectTemplate failure")
+	resolver := &stubMonitorTemplateResolver{err: resolverErr}
+	mon.WireGates(stubbedGateRunner(gatePassFunc), resolver)
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	_, waitErr := h.Wait()
+	if waitErr == nil {
+		t.Fatalf("Wait() error = nil, want propagated template-resolver failure")
+	}
+	if !contains(waitErr.Error(), "simulated GetProjectTemplate failure") {
+		t.Fatalf("Wait() error = %q, want substring %q", waitErr.Error(), "simulated GetProjectTemplate failure")
+	}
+
+	if got := svc.moveCalls.Load(); got != 0 {
+		t.Fatalf("svc.moveCalls = %d on template-resolver error path, want 0", got)
+	}
+}
+
+// TestMonitorCleanExitMoveErrorPropagates exercises C4 error path: when
+// transitionToComplete's MoveActionItem call returns an error, the error
+// must propagate through h.waitErr.
+//
+// Closes D4b QA C4 partial (MoveActionItem error path on transitionToComplete).
+func TestMonitorCleanExitMoveErrorPropagates(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-move-err")
+	svc.seed(item)
+	svc.moveErr = errors.New("simulated MoveActionItem failure")
+
+	mon := newProcessMonitor(svc, nil)
+	resolver := &stubMonitorTemplateResolver{tpl: buildGateTemplate()}
+	mon.WireGates(stubbedGateRunner(gatePassFunc), resolver)
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	_, waitErr := h.Wait()
+	if waitErr == nil {
+		t.Fatalf("Wait() error = nil, want propagated MoveActionItem failure")
+	}
+	if !contains(waitErr.Error(), "simulated MoveActionItem failure") {
+		t.Fatalf("Wait() error = %q, want substring %q", waitErr.Error(), "simulated MoveActionItem failure")
+	}
+}
+
+// gateFailNilErrFunc is a gateFunc that returns Status=Failed but with Err
+// unset. Per the N2 fix, BlockedReason should NOT contain "<nil>" — the
+// monitor must guard the nil-Err case in its Sprintf.
+func gateFailNilErrFunc(_ context.Context, _ domain.ActionItem, _ domain.Project) GateResult {
+	return GateResult{
+		GateName: gateTestKind,
+		Status:   GateStatusFailed,
+		Output:   "stderr output only",
+		// Err deliberately nil.
+	}
+}
+
+// TestMonitorCleanExitGateFailNilErrAvoidsNilFormat exercises N2: when a
+// custom gate returns Status=Failed with Err=nil, the monitor must format
+// BlockedReason without the "<nil>" suffix. Closes D4b QA NIT N2.
+func TestMonitorCleanExitGateFailNilErrAvoidsNilFormat(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-gate-fail-nil-err")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	resolver := &stubMonitorTemplateResolver{tpl: buildGateTemplate()}
+	mon.WireGates(stubbedGateRunner(gateFailNilErrFunc), resolver)
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	if _, err = h.Wait(); err != nil {
+		t.Fatalf("Wait() error = %v, want nil", err)
+	}
+
+	last := svc.lastUpdate.Load()
+	if last == nil {
+		t.Fatalf("UpdateActionItem metadata not recorded; last update = nil")
+	}
+	if contains(last.BlockedReason, "<nil>") {
+		t.Fatalf("metadata.BlockedReason = %q, want no '<nil>' substring (N2 nil-Err guard)", last.BlockedReason)
+	}
+	if !contains(last.BlockedReason, "stderr output only") {
+		t.Fatalf("metadata.BlockedReason = %q, want substring %q", last.BlockedReason, "stderr output only")
+	}
+}
+
 // contains is a tiny strings.Contains stand-in to keep the test imports
 // minimal. Behavior identical to strings.Contains for the substrings the
 // test uses.
