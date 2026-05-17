@@ -631,6 +631,10 @@ func (a richMonitorAdapter) GetActionItem(ctx context.Context, actionItemID stri
 	return a.inner.GetActionItem(ctx, actionItemID)
 }
 
+func (a richMonitorAdapter) GetProject(ctx context.Context, projectID string) (domain.Project, error) {
+	return a.inner.GetProject(ctx, projectID)
+}
+
 func (a richMonitorAdapter) ListColumns(ctx context.Context, projectID string, includeArchived bool) ([]domain.Column, error) {
 	return a.inner.ListColumns(ctx, projectID, includeArchived)
 }

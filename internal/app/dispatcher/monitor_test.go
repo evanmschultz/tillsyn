@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/evanmschultz/tillsyn/internal/domain"
+	"github.com/evanmschultz/tillsyn/internal/templates"
 )
 
 // stubMonitorService is the deterministic test fixture for the process
@@ -49,6 +50,11 @@ type stubMonitorService struct {
 	// columns is returned by ListColumns. Tests using crash paths must
 	// include a "Failed" column so the monitor can resolve the column ID.
 	columns []domain.Column
+
+	// project is returned by GetProject when projectID matches project.ID.
+	// Unset tests that do not exercise the clean-exit gate path leave this
+	// at the zero value; GetProject returns the zero domain.Project + nil.
+	project domain.Project
 
 	// Recorded mutations.
 	moveCalls   atomic.Int32
@@ -87,6 +93,12 @@ func (s *stubMonitorService) GetActionItem(_ context.Context, actionItemID strin
 		return domain.ActionItem{}, errors.New("stubMonitorService: action item not found")
 	}
 	return item, nil
+}
+
+func (s *stubMonitorService) GetProject(_ context.Context, _ string) (domain.Project, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.project, nil
 }
 
 func (s *stubMonitorService) ListColumns(_ context.Context, _ string, _ bool) ([]domain.Column, error) {
@@ -566,6 +578,274 @@ func TestHandleCloseIsIdempotent(t *testing.T) {
 // test. Pre-seeded so the stub's GetActionItem can resolve it.
 func idForIndex(i int) string {
 	return "ai-concurrent-" + string(rune('0'+i))
+}
+
+// =============================================================================
+// Clean-exit gate pipeline tests (Drop 4b)
+// =============================================================================
+
+// stubMonitorTemplateResolver satisfies TemplateResolver for monitor
+// clean-exit tests. Returns the configured template unconditionally
+// (projectID is ignored). Tests that want a zero-valued template leave tpl
+// at its zero value; tests that want a real template populate tpl with
+// SchemaVersion + Kinds + Gates.
+//
+// Named with the "Monitor" prefix to distinguish from stubTemplateResolver
+// in dispatcher_test.go (same package, different purpose).
+type stubMonitorTemplateResolver struct {
+	tpl templates.Template
+	err error
+}
+
+func (r *stubMonitorTemplateResolver) GetProjectTemplate(_ context.Context, _ string) (templates.Template, error) {
+	return r.tpl, r.err
+}
+
+// stubBuildItem returns a domain.ActionItem with Kind=build in StateInProgress,
+// used by the clean-exit gate tests so gateRunner.Run reads the correct
+// Gates[KindBuild] entry from the template fixture.
+func stubBuildItem(id string) domain.ActionItem {
+	return domain.ActionItem{
+		ID:             id,
+		ProjectID:      "proj-monitor",
+		Kind:           domain.KindBuild,
+		LifecycleState: domain.StateInProgress,
+		ColumnID:       "col-inprogress",
+		Position:       1,
+	}
+}
+
+// gateTestKind is an arbitrary GateKind the clean-exit tests register on a
+// stub gateRunner. The value is intentionally not mage_ci so the test does
+// not accidentally invoke real mage binaries.
+const gateTestKind templates.GateKind = "test-gate-monitor"
+
+// stubbedGateRunner builds a gateRunner with gateTestKind registered and
+// bound to fn. Tests pass a gateFunc that returns a canned GateResult without
+// touching the real filesystem.
+func stubbedGateRunner(fn gateFunc) *gateRunner {
+	gr := newGateRunner()
+	// Register cannot fail here because the runner is freshly allocated and
+	// gateTestKind is not yet present. Panic on unexpected error so test
+	// failures surface immediately.
+	if err := gr.Register(gateTestKind, fn); err != nil {
+		panic("stubbedGateRunner: Register failed unexpectedly: " + err.Error())
+	}
+	return gr
+}
+
+// gatePassFunc is a gateFunc that always returns a passing result.
+func gatePassFunc(_ context.Context, _ domain.ActionItem, _ domain.Project) GateResult {
+	return GateResult{GateName: gateTestKind, Status: GateStatusPassed}
+}
+
+// gateFailFunc is a gateFunc that always returns a failed result with a
+// canned output string the test can assert on.
+func gateFailFunc(_ context.Context, _ domain.ActionItem, _ domain.Project) GateResult {
+	return GateResult{
+		GateName: gateTestKind,
+		Status:   GateStatusFailed,
+		Output:   "mage ci output: something went wrong",
+		Err:      errors.New("gate failed: mage ci exit code 1"),
+	}
+}
+
+// buildGateTemplate returns a templates.Template with SchemaVersion=v1,
+// Kinds populated (so the zero-check passes), and Gates[KindBuild]=[gateTestKind]
+// so the gate runner exercises the registered stub gate.
+func buildGateTemplate() templates.Template {
+	return templates.Template{
+		SchemaVersion: templates.SchemaVersionV1,
+		Kinds: map[domain.Kind]templates.KindRule{
+			domain.KindBuild: {},
+		},
+		Gates: map[domain.Kind][]templates.GateKind{
+			domain.KindBuild: {gateTestKind},
+		},
+	}
+}
+
+// TestMonitorCleanExitRunsGatesAndCompletes exercises the gate-pass path:
+// a clean-exiting agent with a wired gateRunner that returns a passing
+// result → the action item moves in_progress -> complete with
+// metadata.Outcome="success".
+func TestMonitorCleanExitRunsGatesAndCompletes(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-gate-pass")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	resolver := &stubMonitorTemplateResolver{tpl: buildGateTemplate()}
+	mon.WireGates(stubbedGateRunner(gatePassFunc), resolver)
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	_, err = h.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v, want nil", err)
+	}
+
+	if got := svc.moveCalls.Load(); got != 1 {
+		t.Fatalf("svc.moveCalls = %d on gate-pass clean exit, want 1", got)
+	}
+	if got := svc.lastMoveCol.Load(); got == nil || *got != "col-complete" {
+		gotStr := "<nil>"
+		if got != nil {
+			gotStr = *got
+		}
+		t.Fatalf("MoveActionItem column = %q, want col-complete", gotStr)
+	}
+	if got := svc.updateCalls.Load(); got != 1 {
+		t.Fatalf("svc.updateCalls = %d on gate-pass clean exit, want 1", got)
+	}
+	last := svc.lastUpdate.Load()
+	if last == nil {
+		t.Fatalf("UpdateActionItem metadata not recorded; last update = nil")
+	}
+	if last.Outcome != "success" {
+		t.Fatalf("metadata.Outcome = %q, want success", last.Outcome)
+	}
+}
+
+// TestMonitorCleanExitGateFailureMovesToFailed exercises the gate-fail path:
+// a clean-exiting agent with a wired gateRunner that returns a failed result
+// → the action item moves in_progress -> failed with metadata.Outcome="failure"
+// and BlockedReason populated.
+func TestMonitorCleanExitGateFailureMovesToFailed(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-gate-fail")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	resolver := &stubMonitorTemplateResolver{tpl: buildGateTemplate()}
+	mon.WireGates(stubbedGateRunner(gateFailFunc), resolver)
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	_, err = h.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v, want nil", err)
+	}
+
+	if got := svc.moveCalls.Load(); got != 1 {
+		t.Fatalf("svc.moveCalls = %d on gate-fail clean exit, want 1", got)
+	}
+	if got := svc.lastMoveCol.Load(); got == nil || *got != "col-failed" {
+		gotStr := "<nil>"
+		if got != nil {
+			gotStr = *got
+		}
+		t.Fatalf("MoveActionItem column = %q, want col-failed", gotStr)
+	}
+	if got := svc.updateCalls.Load(); got != 1 {
+		t.Fatalf("svc.updateCalls = %d on gate-fail clean exit, want 1", got)
+	}
+	last := svc.lastUpdate.Load()
+	if last == nil {
+		t.Fatalf("UpdateActionItem metadata not recorded; last update = nil")
+	}
+	if last.Outcome != "failure" {
+		t.Fatalf("metadata.Outcome = %q, want failure", last.Outcome)
+	}
+	if last.BlockedReason == "" {
+		t.Fatalf("metadata.BlockedReason is empty, want gate failure context")
+	}
+}
+
+// TestMonitorCleanExitNoTemplateResolverNoOps exercises the nil-resolver
+// degraded path: a clean-exiting agent with a wired gateRunner but a nil
+// templateResolver → gate execution is skipped and the action item moves
+// directly to complete.
+func TestMonitorCleanExitNoTemplateResolverNoOps(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-no-resolver")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	// templateResolver=nil: the monitor must degrade to transitionToComplete.
+	mon.WireGates(stubbedGateRunner(gatePassFunc), nil)
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	_, err = h.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v, want nil", err)
+	}
+
+	if got := svc.moveCalls.Load(); got != 1 {
+		t.Fatalf("svc.moveCalls = %d on nil-resolver degraded path, want 1", got)
+	}
+	if got := svc.lastMoveCol.Load(); got == nil || *got != "col-complete" {
+		gotStr := "<nil>"
+		if got != nil {
+			gotStr = *got
+		}
+		t.Fatalf("MoveActionItem column = %q, want col-complete", gotStr)
+	}
+}
+
+// TestMonitorCleanExitNilGateRunnerNoOps exercises the nil-gates degraded
+// path: a clean-exiting agent with a wired templateResolver but a nil
+// gateRunner → gate execution is skipped and the action item moves directly
+// to complete.
+func TestMonitorCleanExitNilGateRunnerNoOps(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-no-gates")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	// gates=nil: the monitor must degrade to transitionToComplete.
+	mon.WireGates(nil, &stubMonitorTemplateResolver{tpl: buildGateTemplate()})
+
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	_, err = h.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v, want nil", err)
+	}
+
+	if got := svc.moveCalls.Load(); got != 1 {
+		t.Fatalf("svc.moveCalls = %d on nil-gates degraded path, want 1", got)
+	}
+	if got := svc.lastMoveCol.Load(); got == nil || *got != "col-complete" {
+		gotStr := "<nil>"
+		if got != nil {
+			gotStr = *got
+		}
+		t.Fatalf("MoveActionItem column = %q, want col-complete", gotStr)
+	}
 }
 
 // contains is a tiny strings.Contains stand-in to keep the test imports

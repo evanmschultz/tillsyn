@@ -28,6 +28,10 @@ func (a monitorServiceAdapter) GetActionItem(ctx context.Context, actionItemID s
 	return a.svc.GetActionItem(ctx, actionItemID)
 }
 
+func (a monitorServiceAdapter) GetProject(ctx context.Context, projectID string) (domain.Project, error) {
+	return a.svc.GetProject(ctx, projectID)
+}
+
 func (a monitorServiceAdapter) ListColumns(ctx context.Context, projectID string, includeArchived bool) ([]domain.Column, error) {
 	return a.svc.ListColumns(ctx, projectID, includeArchived)
 }

@@ -26,9 +26,16 @@ import (
 //     transitioning the action item to StateFailed via Service.MoveActionItem,
 //     while populating outcome metadata via Service.UpdateActionItem.
 //
-// Clean-exit semantics: if the agent exits 0 the monitor takes NO action on
-// the action item — the agent is responsible for moving its own state to
-// StateComplete from inside its run. The monitor only intervenes on crash.
+// Clean-exit semantics: if the agent exits 0 the monitor drives the
+// post-build gate pipeline when gates are wired via WireGates. If all gates
+// pass the monitor transitions the action item in_progress -> complete with
+// metadata.Outcome="success". If any gate fails the monitor transitions
+// in_progress -> failed with metadata.Outcome="failure" and the gate output
+// in BlockedReason. When neither gates nor templateResolver are wired (legacy
+// / pre-Drop-4b construction path) the monitor takes NO action on clean exit
+// — the agent remains responsible for its own terminal-state transition.
+// The monitor only intervenes on crash (always) and on gate outcomes (when
+// wired).
 //
 // State-conflict guard (acceptance §5): before applying the failed
 // transition the monitor refetches the action item via Service.GetActionItem
@@ -60,14 +67,16 @@ import (
 // in this file does NOT shell out to `go`.
 
 // monitorService is the narrow consumer-side view the process monitor uses
-// to refetch action-item state and apply crash transitions. *app.Service
-// satisfies this interface; the test suite injects a deterministic stub so
-// monitor scenarios run without standing up a full *app.Service graph.
+// to refetch action-item state and apply crash/clean-exit transitions.
+// *app.Service satisfies this interface; the test suite injects a
+// deterministic stub so monitor scenarios run without standing up a full
+// *app.Service graph.
 //
 // Method names mirror Service exactly so the production binding is a trivial
 // assignment in the dispatcher constructor wired in 4a.23.
 type monitorService interface {
 	GetActionItem(ctx context.Context, actionItemID string) (domain.ActionItem, error)
+	GetProject(ctx context.Context, projectID string) (domain.Project, error)
 	ListColumns(ctx context.Context, projectID string, includeArchived bool) ([]domain.Column, error)
 	MoveActionItem(ctx context.Context, actionItemID, toColumnID string, position int) (domain.ActionItem, error)
 	UpdateActionItem(ctx context.Context, in updateActionItemInput) (domain.ActionItem, error)
@@ -199,8 +208,10 @@ func (h *Handle) Close() {
 // continuous-mode dashboard can introspect live agents; today the map is
 // produce-only (Track inserts, the goroutine deletes on termination).
 type processMonitor struct {
-	svc   monitorService
-	clock func() time.Time
+	svc              monitorService
+	clock            func() time.Time
+	gates            *gateRunner
+	templateResolver TemplateResolver
 
 	mu      sync.Mutex
 	tracked map[string]*Handle
@@ -222,6 +233,22 @@ func newProcessMonitor(svc monitorService, clock func() time.Time) *processMonit
 		clock:   clock,
 		tracked: make(map[string]*Handle),
 	}
+}
+
+// WireGates injects the gate runner and template resolver into the monitor so
+// the clean-exit pipeline can resolve template gates and execute them before
+// transitioning the action item to complete. Both fields are optional: a nil
+// gates runner or nil resolver disables gate execution and transitions the
+// item directly to complete (the safe degraded path).
+//
+// WireGates is called once during dispatcher construction after
+// newProcessMonitor returns — it avoids changing the newProcessMonitor
+// signature so the dispatcher.go wiring stays as a single two-line call
+// rather than a constructor overload. Production wiring lives in
+// dispatcher.go (see NewDispatcher).
+func (m *processMonitor) WireGates(gates *gateRunner, tr TemplateResolver) {
+	m.gates = gates
+	m.templateResolver = tr
 }
 
 // Track starts cmd and returns a Handle that callers Wait on. The monitor
@@ -307,9 +334,14 @@ func (m *processMonitor) Unsubscribe(actionItemID string) {
 }
 
 // runHandle is the per-Handle goroutine that waits on cmd, builds the
-// TerminationOutcome, and (on crash) drives the action-item state
-// transition. Exactly one goroutine ever runs per Handle; it removes the
-// Handle from the tracked map on exit and closes h.done.
+// TerminationOutcome, and drives the action-item state transition on both
+// crash and clean-exit paths. On crash, applyCrashTransition moves the item
+// to failed. On clean exit with gates wired, applyCleanExitTransition runs
+// the post-build gate pipeline and moves the item to complete (pass) or
+// failed (gate failure). When neither gates nor templateResolver are wired,
+// clean exit is a no-op (legacy / agent-owns-state contract). Exactly one
+// goroutine ever runs per Handle; it removes the Handle from the tracked map
+// on exit and closes h.done.
 func (m *processMonitor) runHandle(ctx context.Context, h *Handle) {
 	defer func() {
 		m.mu.Lock()
@@ -328,9 +360,18 @@ func (m *processMonitor) runHandle(ctx context.Context, h *Handle) {
 	h.resultMu.Unlock()
 
 	if !outcome.Crashed {
-		// Clean exit: the agent owns its own terminal-state transition.
-		// The monitor takes no action — its job is crash detection, not
-		// success recording.
+		// Clean exit: drive the post-build gate pipeline when gates are
+		// wired. If neither gates nor templateResolver are set, the legacy
+		// contract applies — the agent owns its own terminal-state
+		// transition and the monitor takes no action.
+		if m.gates == nil && m.templateResolver == nil {
+			return
+		}
+		if err := m.applyCleanExitTransition(ctx, h.actionItemID); err != nil {
+			h.resultMu.Lock()
+			h.waitErr = err
+			h.resultMu.Unlock()
+		}
 		return
 	}
 
@@ -388,6 +429,124 @@ func (m *processMonitor) applyCrashTransition(ctx context.Context, actionItemID 
 		Metadata:     &updated,
 	}); err != nil {
 		return fmt.Errorf("monitor: update action item %q metadata: %w", current.ID, err)
+	}
+	return nil
+}
+
+// applyCleanExitTransition is the clean-exit post-build pipeline. It:
+//  1. Refetches the action item so the column/state check is fresh.
+//  2. Returns early when templateResolver is nil (skip gate run; transition
+//     to complete via transitionToComplete).
+//  3. Resolves the project template. A zero-valued template (no template
+//     bound) skips gate run and transitions to complete.
+//  4. Returns early when gates is nil (skip gate run; transition to
+//     complete).
+//  5. Fetches the project for the gate runner (needs RepoPrimaryWorktree).
+//  6. Runs the gate sequence. Any non-passed result transitions the item to
+//     failed with the gate output in BlockedReason.
+//  7. On all-passed, transitions the item to complete.
+func (m *processMonitor) applyCleanExitTransition(ctx context.Context, actionItemID string) error {
+	item, err := m.svc.GetActionItem(ctx, actionItemID)
+	if err != nil {
+		return fmt.Errorf("monitor: clean-exit refetch action item %q: %w", actionItemID, err)
+	}
+
+	// When templateResolver is absent, skip gate execution entirely and
+	// transition directly to complete — the caller wired gates but forgot
+	// the resolver (mis-wiring). Degrade safely.
+	if m.templateResolver == nil {
+		return m.transitionToComplete(ctx, item)
+	}
+
+	tpl, err := m.templateResolver.GetProjectTemplate(ctx, item.ProjectID)
+	if err != nil {
+		return fmt.Errorf("monitor: clean-exit get project template for %q: %w", item.ProjectID, err)
+	}
+	// A zero-valued template means the project has no template bound.
+	// Gate sequence is empty; transition directly to complete.
+	if tpl.SchemaVersion == "" || len(tpl.Kinds) == 0 {
+		return m.transitionToComplete(ctx, item)
+	}
+
+	// When gates runner is absent, skip gate execution and transition
+	// directly to complete — the caller wired the resolver but forgot
+	// the runner (mis-wiring). Degrade safely.
+	if m.gates == nil {
+		return m.transitionToComplete(ctx, item)
+	}
+
+	project, err := m.svc.GetProject(ctx, item.ProjectID)
+	if err != nil {
+		return fmt.Errorf("monitor: clean-exit get project %q: %w", item.ProjectID, err)
+	}
+
+	results := m.gates.Run(ctx, item, project, &tpl)
+	for _, r := range results {
+		if r.Status != GateStatusPassed {
+			reason := fmt.Sprintf("gate %q %s: %v", r.GateName, r.Status, r.Err)
+			if r.Output != "" {
+				reason += "\n" + r.Output
+			}
+			return m.transitionToFailed(ctx, item, reason)
+		}
+	}
+	return m.transitionToComplete(ctx, item)
+}
+
+// transitionToComplete moves a clean-exiting action item to StateComplete
+// and sets metadata.Outcome="success". Mirrors applyCrashTransition's column-
+// resolution pattern but targets the complete column.
+func (m *processMonitor) transitionToComplete(ctx context.Context, item domain.ActionItem) error {
+	columns, err := m.svc.ListColumns(ctx, item.ProjectID, true)
+	if err != nil {
+		return fmt.Errorf("monitor: list columns for project %q: %w", item.ProjectID, err)
+	}
+	completeColumnID := columnIDForLifecycleState(columns, domain.StateComplete)
+	if completeColumnID == "" {
+		return fmt.Errorf("monitor: project %q has no complete column", item.ProjectID)
+	}
+
+	if _, err := m.svc.MoveActionItem(ctx, item.ID, completeColumnID, item.Position); err != nil {
+		return fmt.Errorf("monitor: move action item %q to complete: %w", item.ID, err)
+	}
+
+	updated := item.Metadata
+	updated.Outcome = "success"
+	if _, err := m.svc.UpdateActionItem(ctx, updateActionItemInput{
+		ActionItemID: item.ID,
+		Metadata:     &updated,
+	}); err != nil {
+		return fmt.Errorf("monitor: update action item %q metadata on complete: %w", item.ID, err)
+	}
+	return nil
+}
+
+// transitionToFailed moves a clean-exiting action item to StateFailed (gate
+// failure) and sets metadata.Outcome="failure" + BlockedReason. Mirrors
+// applyCrashTransition but is driven by gate output rather than process
+// crash context.
+func (m *processMonitor) transitionToFailed(ctx context.Context, item domain.ActionItem, reason string) error {
+	columns, err := m.svc.ListColumns(ctx, item.ProjectID, true)
+	if err != nil {
+		return fmt.Errorf("monitor: list columns for project %q: %w", item.ProjectID, err)
+	}
+	failedColumnID := columnIDForLifecycleState(columns, domain.StateFailed)
+	if failedColumnID == "" {
+		return fmt.Errorf("monitor: project %q has no failed column", item.ProjectID)
+	}
+
+	if _, err := m.svc.MoveActionItem(ctx, item.ID, failedColumnID, item.Position); err != nil {
+		return fmt.Errorf("monitor: move action item %q to failed (gate): %w", item.ID, err)
+	}
+
+	updated := item.Metadata
+	updated.Outcome = "failure"
+	updated.BlockedReason = reason
+	if _, err := m.svc.UpdateActionItem(ctx, updateActionItemInput{
+		ActionItemID: item.ID,
+		Metadata:     &updated,
+	}); err != nil {
+		return fmt.Errorf("monitor: update action item %q metadata on gate failure: %w", item.ID, err)
 	}
 	return nil
 }
