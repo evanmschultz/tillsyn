@@ -3359,3 +3359,70 @@ func TestRuntimeLoggerInstallAsDefaultRoutesPackageLogsToFile(t *testing.T) {
 		t.Fatalf("expected dev log file to include muted-console package log output, got %q", got)
 	}
 }
+
+// TestDispatcherTemplateResolverAdapter exercises dispatcherTemplateResolver
+// directly -- both the success branch (project exists, template resolves) and
+// the error branch (project not found, error propagates).
+//
+// The adapter is a thin bridge between *app.Service.GetProjectTemplate and the
+// dispatcher.TemplateResolver interface. These two cases confirm both sides of
+// the adapter without going through the full dispatcher machinery.
+//
+// Construction mirrors newDispatcherCLITestEnv: open an in-memory repo,
+// seed a project row via the repo directly (the service has no public
+// CreateProject method -- production creation goes through the MCP/CLI
+// handler which bakes the kind catalog before persisting), then build an
+// *app.Service on the same repo handle.
+func TestDispatcherTemplateResolverAdapter(t *testing.T) {
+	t.Parallel()
+
+	// newAdapterEnv builds a minimal in-memory fixture: one repo + one seeded
+	// project + one *app.Service on top of the same repo.
+	newAdapterEnv := func(t *testing.T) (*app.Service, string) {
+		t.Helper()
+		repo, err := sqlite.OpenInMemory()
+		if err != nil {
+			t.Fatalf("OpenInMemory() error = %v", err)
+		}
+		t.Cleanup(func() { _ = repo.Close() })
+		now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+		project, err := domain.NewProjectFromInput(domain.ProjectInput{
+			ID:   "adapter-test-proj",
+			Name: "Adapter Test Project",
+		}, now)
+		if err != nil {
+			t.Fatalf("NewProjectFromInput() error = %v", err)
+		}
+		if err := repo.CreateProject(context.Background(), project); err != nil {
+			t.Fatalf("repo.CreateProject() error = %v", err)
+		}
+		counter := 0
+		idGen := func() string {
+			counter++
+			return fmt.Sprintf("adapter-test-id-%010d", counter)
+		}
+		clk := func() time.Time { return now }
+		svc := app.NewService(repo, idGen, clk, app.ServiceConfig{AutoCreateProjectColumns: false})
+		return svc, project.ID
+	}
+
+	t.Run("success path", func(t *testing.T) {
+		t.Parallel()
+		svc, projectID := newAdapterEnv(t)
+		adapter := dispatcherTemplateResolver{svc: svc}
+		_, gotErr := adapter.GetProjectTemplate(context.Background(), projectID)
+		if gotErr != nil {
+			t.Errorf("GetProjectTemplate(existing project) error = %v, want nil", gotErr)
+		}
+	})
+
+	t.Run("error path", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newAdapterEnv(t)
+		adapter := dispatcherTemplateResolver{svc: svc}
+		_, gotErr := adapter.GetProjectTemplate(context.Background(), "nonexistent-project-id")
+		if gotErr == nil {
+			t.Error("GetProjectTemplate(nonexistent project) error = nil, want non-nil")
+		}
+	})
+}

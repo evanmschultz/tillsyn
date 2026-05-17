@@ -71,7 +71,7 @@ func runDispatcherRun(ctx context.Context, svc *app.Service, broker app.LiveWait
 		return fmt.Errorf("dispatcher run: --action-item is required")
 	}
 
-	disp, err := dispatcher.NewDispatcher(svc, broker, dispatcher.Options{})
+	disp, err := dispatcher.NewDispatcher(svc, broker, dispatcher.Options{TemplateResolver: dispatcherTemplateResolver{svc: svc}})
 	if err != nil {
 		return fmt.Errorf("dispatcher run: construct dispatcher: %w", err)
 	}
