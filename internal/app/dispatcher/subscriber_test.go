@@ -68,6 +68,38 @@ func (c *countingProjectReader) GetProject(_ context.Context, _ string) (domain.
 	return domain.Project{}, app.ErrNotFound
 }
 
+// waitForSubscriberDelivery publishes the supplied events on a tight retry
+// loop until check returns true or deadline elapses. Replaces the brittle
+// "time.Sleep then Publish once" pattern that races the subscriber goroutine
+// reaching Wait — the in-process broker advances Sequence on every Publish
+// (see live_wait.go nextSequence), so every iteration is a fresh wakeup from
+// the subscriber's cursor perspective, guaranteeing at least one publish
+// lands AFTER the subscriber's Wait registers within the deadline. Stops as
+// soon as check fires to keep over-publishing bounded. Fails the test if the
+// deadline expires before check returns true.
+func waitForSubscriberDelivery(t *testing.T, broker app.LiveWaitBroker, events []app.LiveWaitEvent, check func() bool, deadline time.Duration) {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	for {
+		if check() {
+			return
+		}
+		for _, ev := range events {
+			broker.Publish(ev)
+		}
+		if check() {
+			return
+		}
+		if time.Now().After(end) {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !check() {
+		t.Fatalf("waitForSubscriberDelivery: check never returned true within %s", deadline)
+	}
+}
+
 // newSubscriberDispatcherForTest builds a dispatcher with stubs sufficient
 // to exercise Start/Stop + the subscriber goroutine. Walker is wired against
 // subscriberWalkerStub so EligibleForPromotion returns a deterministic item;
@@ -126,30 +158,18 @@ func TestDispatcherStartSpawnsPerProjectSubscribers(t *testing.T) {
 		t.Fatalf("ListProjects calls = %d, want 1 (Start enumerates once)", got)
 	}
 
-	// Settle: each subscriber needs to register a Wait before we publish.
-	time.Sleep(15 * time.Millisecond)
-	for _, projectID := range []string{"proj-a", "proj-b", "proj-c"} {
-		broker.Publish(app.LiveWaitEvent{
-			Type:  app.LiveWaitEventActionItemChanged,
-			Key:   projectID,
-			Value: projectID,
-		})
-	}
-
+	// Publish-retry guarantees at least one publish per key lands after
+	// each subscriber's Wait registers, regardless of goroutine scheduling.
 	// Each subscriber's RunOnce hits the counting project reader once on
-	// its event. Expect 3 total calls within the deadline.
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		if counter.count.Load() >= 3 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("counter calls = %d after 500ms, want >= 3 (one per project)", counter.count.Load())
-		default:
-			time.Sleep(5 * time.Millisecond)
-		}
+	// its event; we wait until counter >= 3 (one per project).
+	events := []app.LiveWaitEvent{
+		{Type: app.LiveWaitEventActionItemChanged, Key: "proj-a", Value: "proj-a"},
+		{Type: app.LiveWaitEventActionItemChanged, Key: "proj-b", Value: "proj-b"},
+		{Type: app.LiveWaitEventActionItemChanged, Key: "proj-c", Value: "proj-c"},
 	}
+	waitForSubscriberDelivery(t, broker, events, func() bool {
+		return counter.count.Load() >= 3
+	}, 500*time.Millisecond)
 }
 
 // TestDispatcherStartTriggersRunOnceOnEvent asserts that publishing a
@@ -178,23 +198,14 @@ func TestDispatcherStartTriggersRunOnceOnEvent(t *testing.T) {
 		_ = d.Stop(stopCtx)
 	})
 
-	// Settle so the subscriber registers a Wait before the publish.
-	time.Sleep(10 * time.Millisecond)
-	broker.Publish(app.LiveWaitEvent{
-		Type:  app.LiveWaitEventActionItemChanged,
-		Key:   "proj-1",
-		Value: "proj-1",
-	})
-
-	deadline := time.After(150 * time.Millisecond)
-	for counter.count.Load() == 0 {
-		select {
-		case <-deadline:
-			t.Fatalf("RunOnce never fired within 150ms after event publish")
-		default:
-			time.Sleep(2 * time.Millisecond)
-		}
+	// Publish-retry guarantees at least one publish lands after the
+	// subscriber's Wait registers, regardless of goroutine scheduling.
+	events := []app.LiveWaitEvent{
+		{Type: app.LiveWaitEventActionItemChanged, Key: "proj-1", Value: "proj-1"},
 	}
+	waitForSubscriberDelivery(t, broker, events, func() bool {
+		return counter.count.Load() >= 1
+	}, 200*time.Millisecond)
 	if got := counter.count.Load(); got < 1 {
 		t.Fatalf("RunOnce calls = %d, want >= 1", got)
 	}
@@ -218,8 +229,10 @@ func TestDispatcherStopCancelsAllSubscribers(t *testing.T) {
 	if err := d.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v, want nil", err)
 	}
-	// Settle so subscriber goroutines reach Wait.
-	time.Sleep(10 * time.Millisecond)
+	// subWG.Add(N) runs synchronously inside Start before Start returns, so
+	// Stop's cancel + subWG.Wait drains regardless of whether the spawned
+	// goroutines have reached their Wait call yet — ctx.Err and ctx.Done in
+	// runBrokerSubscriber both respond to cancellation.
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -288,7 +301,6 @@ func TestDispatcherStopIdempotent(t *testing.T) {
 	if err := d.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v, want nil", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -509,16 +521,21 @@ func (s *stubE2ETemplateResolver) GetProjectTemplate(_ context.Context, _ string
 	return s.tpl, nil
 }
 
-// TestAutoDispatchE2EGatePassViaNewDispatcher is the D5 end-to-end integration
-// test for the gate-pass branch. It exercises the full wired graph:
+// TestAutoDispatchE2EGatePassViaNewDispatcher pins two D5 invariants on the
+// gate-pass branch:
 //
-//  1. Constructs the dispatcher via the production NewDispatcher path.
-//  2. Injects stubs for projectsLister, listing, and walker so the
-//     broker→subscriber→handleSubscriberEvent chain completes without touching
-//     nil storage (observable via the Start/Stop lifecycle).
-//  3. Runs the gate runner directly against a mage_ci template to confirm the
-//     gate is wired and returns GateStatusPassed when the underlying command
-//     exits 0.
+//  1. The production NewDispatcher constructor wires gates such that
+//     `d.gates.Run` with a mage_ci template returns GateStatusPassed when
+//     the underlying command exits 0.
+//  2. Start launches the per-project subscriber goroutine without panic and
+//     ListProjects is invoked exactly once.
+//
+// What this test does NOT verify (intentionally, to keep the assertion set
+// honest after Drop 4b R6/R7 falsification): the publish -> subscriber ->
+// handleSubscriberEvent chain firing as a side-effect. The walker stub
+// returns no eligible items, so even if a publish landed it would observe
+// nothing. The broker chain is exercised in
+// TestDispatcherStartTriggersRunOnceOnEvent + TestHandleSubscriberEvent... .
 //
 // The test does NOT call t.Parallel() because withFakeCommandRunner swaps a
 // package-level var (defaultCommandRunner); parallel execution would race on
@@ -575,23 +592,9 @@ func TestAutoDispatchE2EGatePassViaNewDispatcher(t *testing.T) {
 		t.Fatalf("ListProjects calls = %d, want 1 (Start enumerates once)", got)
 	}
 
-	// Settle so the subscriber registers its Wait before we publish.
-	time.Sleep(15 * time.Millisecond)
-	broker.Publish(app.LiveWaitEvent{
-		Type:  app.LiveWaitEventActionItemChanged,
-		Key:   "proj-e2e-pass",
-		Value: "proj-e2e-pass",
-	})
-
-	// Allow the subscriber goroutine to process the event. The empty walker
-	// returns no eligible items so handleSubscriberEvent exits without calling
-	// RunOnce — the observable signal here is simply that the goroutine did
-	// not panic or deadlock, confirming the publisher→subscriber chain is live.
-	time.Sleep(30 * time.Millisecond)
-
 	// Gate-pass branch: run the gate runner directly against a build item +
 	// populated project. NewDispatcher wired mage_ci into d.gates; the fake
-	// command runner returns exit 0 → GateStatusPassed.
+	// command runner returns exit 0 -> GateStatusPassed.
 	item := domain.ActionItem{ID: "ai-e2e-pass", Kind: domain.KindBuild}
 	project := domain.Project{
 		ID:                  "proj-e2e-pass",
