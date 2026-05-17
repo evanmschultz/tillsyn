@@ -161,6 +161,49 @@ Future ergonomics drop — ephemeral-worktree-per-builder is a substantial dispa
 
 ---
 
+## 2026-05-16 — 2.C Wave 1 — build-QA rollup of deferred refinements
+
+### Context
+The 2.C Drop 4b Wave 1 cascade (D1 till-go template + D2 builder-agent contract + D3 template resolver + A2 sentinel fix) shipped 4 builds (`66ffb28` bundled D1+D2, `99a5030` A2, `0360dc6` D3). All 8 build-QA verdicts PASS. Twelve NITs raised across the QA pairs were either absorbed orch-direct, routed to a new sibling droplet (D1b), routed to D4's scope, or deferred here as future-work pins. This entry captures the deferred ones so they survive context compaction and surface to future drops.
+
+### Observation — 8 deferred refinements
+
+**(R1) D2 — Other agent file types need analogous Contract sections (1.A).** When `closeout-agent.md`, `commit-message-agent.md`, `planning-agent.md`, `research-agent.md`, `plan-qa-proof-agent.md`, `plan-qa-falsification-agent.md`, `build-qa-proof-agent.md`, `build-qa-falsification-agent.md`, `orchestrator-managed.md` get substantive content in Drop 4c.8 W4, each needs its own "DOES NOT self-complete" contract section analogous to the builder Contract D2 landed. Currently undocumented anywhere. **Target: Drop 4c.8 W4 embedded-prompt content.**
+
+**(R2) D2 — `till-gdd` group agents not updated (1.F).** `internal/templates/builtin/agents/till-gdd/builder-agent.md` was NOT updated by D2. Today `till-gdd` is dispatch-orphaned (no `till-gdd.toml` ships in `internal/templates/builtin/`), so the omission is latent. When `till-gdd.toml` ships (post-MVP Hylla-graph-driven work per `SKETCH.md`), the till-gdd builder-agent needs the same Contract section. **Target: future-work pin alongside till-gdd.toml landing.**
+
+**(R3) A2 — Wire-message divergence between two `invalid_request:` paths (1.1.a).** 7 `fmt.Errorf("invalid_request: ...")` callsites in `internal/adapters/mcp_rpc/instructions_explainer.go` (lines 50, 154, 229, 310) and `internal/adapters/mcp_rpc/instructions_tool.go` (lines 269, 287, 291) bypass `mapToolError` via `mcp.NewToolResultError(err.Error())` — they emit `"invalid_request: <substance>"` on the wire. The 6 wrapped sites emit `"invalid_request: <substance>: invalid request"` (trailing `: invalid request` from the sentinel message). Two stylistic shapes for the same nominal class. **Target: either migrate `instructions_*` to sentinel-wrap OR trim the trailing `: invalid request` in `mapToolError` for cleaner client UX.**
+
+**(R4) A2 — `errors.Is(err, ErrInvalidRequest)` test coverage only at one callsite (1.6.a).** Lifecycle test verifies the sentinel identity for `CreateProject` empty-worktree case only. The 5 other wrapped callsites (`buildAuthenticatedMutationActor`, `resolveActionItemIDForRead`) have no equivalent assertion. A regression on those wraps would not be caught by tests. **Target: small table-driven test exercising all 6 wrapped callsites against `errors.Is(err, ErrInvalidRequest)`.**
+
+**(R5) A2 — Dead-code branch in `resolveActionItemIDForRead` (1.9.a).** `internal/adapters/mcp_rpc/extended_tools.go` line 2403-2405: trims `idOrDotted` and rejects empty, but the only caller (line ~813-815) already trims and rejects empty before invoking the function. Branch is defensively dead. **Target: optional tightening — either delete the redundant guard or document its defensive intent.**
+
+**(R6) A2 — Aesthetic sentinel-suffix noise on wire (1.1.b).** Wire-level `Text` for the new sentinel emits e.g. `"invalid_request: repo_primary_worktree is required (...): invalid request"` — the trailing `: invalid request` from the sentinel message is informational only. Same shape applies to existing `ErrInvalidCaptureStateRequest` (`": invalid capture_state request"`) and `ErrUnsupportedScope` (`": unsupported scope"`) per the established pattern. Pre-existing aesthetic; A2 matches the existing style. **Target: future client-UX cleanup — redact the sentinel-message suffix in `mapToolError` Text composition.**
+
+**(R7) A2 — 123 legacy direct-emission `invalid_request:` callsites bypass the sentinel (R1 from proof).** Across `internal/adapters/mcp_rpc/{extended_tools,handler,handoff_tools,instructions_*,strict_decode,...}`, ~123 callsites use `mcp.NewToolResultError("invalid_request: ...")` directly (bypassing `mapToolError`). These don't carry `ErrInvalidRequest` in the error chain, so programmatic `errors.Is(err, mcpcommon.ErrInvalidRequest)` consumers cannot match them. The class/code routing is uniform on the wire (the prefix is identical), but programmatic discrimination is partial. **Target: follow-on refinement drop to migrate the direct-emission sites to the sentinel-wrap pattern for full `errors.Is` uniformity.**
+
+**(R8) D3 — Test-tightness items routed to D4 absorption.** D3 QA pair raised 5 test-tightness items: (a) `TestNewDispatcherNilTemplateResolverLogsWarning` — capture `log.SetOutput` to verify the warn fires; (b) `TestNewDispatcherAcceptsTemplateResolver` should assert `d.templateResolver` field equality, not just `d.opts.TemplateResolver`; (c) `dispatcherTemplateResolver` adapter in `cmd/till/main.go:2704-2714` lacks a direct unit test for its err-branch + success-value; (d) `cmd/till/dispatcher_cli.go:74` triggers nil-warn on every `till dispatcher run` invocation — should pass `dispatcherTemplateResolver{svc: svc}` for parity with `runMCP`; (e) `stubTemplateResolver.err` field exists but is unexercised. All five route to D4's scope since D4 already touches `dispatcher.go` + `monitor.go` + `dispatcher_test.go` for the gate-runner wiring. **Target: D4 scope (already in-flight; description updated to absorb).**
+
+### Proposed fix
+
+- **R1 + R2** — Drop 4c.8 W4 + future till-gdd-ships drop. No immediate action.
+- **R3 + R6 + R7** — Single follow-on refinement drop covering wire-message normalization across all `invalid_request:` emission paths (direct + sentinel-wrap). Spec: define a class-routing helper that all callsites use; deprecate manual prefix-stamping at adapter callsites.
+- **R4** — Small table-driven test addition (~20 LOC). Can fold into any future `mcp_rpc` package edit or stand alone.
+- **R5** — Trivial inline tightening when next touching `resolveActionItemIDForRead`.
+- **R8** — Absorbed into D4's expanded scope (in-flight; D4 description updated 2026-05-16 to include these test additions).
+
+### Target drop
+
+R1/R2: future drops as scheduled.
+R3/R6/R7: dedicated MCP error-routing normalization drop (post-MVP).
+R4/R5: parking-lot or absorb opportunistically.
+R8: in-flight via D4.
+
+### Tags
+`mcp`, `error-class`, `agent-contracts`, `dispatcher-tests`, `cascade-followup`, `rollup`
+
+---
+
 ## 2026-05-16 — agent-isolation-followup — Hook `..`-traversal hardening: out-of-scope attack surfaces raised by W2 plan-QA-falsification
 
 ### Context
