@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,22 +24,37 @@ import (
 // stubActionItemReader is a deterministic test stub for the dispatcher's
 // action-item lookup dependency. The test suite injects one of these into a
 // dispatcher constructed via the package-internal struct literal so RunOnce
-// scenarios can be exercised without a full Service + Repository graph.
+// scenarios can be exercised without a full Service + Repository graph. calls
+// is atomic and wantID is mu-guarded so the same instance can be shared
+// across the per-project subscriber goroutines exercised by the live broker
+// tests in subscriber_test.go.
 type stubActionItemReader struct {
+	mu     sync.Mutex
 	wantID string
 	item   domain.ActionItem
 	err    error
-	calls  int
+	calls  atomic.Int32
 }
 
 // GetActionItem records the call and returns the configured fixture.
 func (s *stubActionItemReader) GetActionItem(_ context.Context, actionItemID string) (domain.ActionItem, error) {
-	s.calls++
+	s.calls.Add(1)
+	s.mu.Lock()
 	s.wantID = actionItemID
+	s.mu.Unlock()
 	if s.err != nil {
 		return domain.ActionItem{}, s.err
 	}
 	return s.item, nil
+}
+
+// lastWantID returns the most recent actionItemID observed by GetActionItem
+// under the stub's mu so single-goroutine assertion sites do not race with
+// concurrent subscriber goroutines on the same shared stub.
+func (s *stubActionItemReader) lastWantID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.wantID
 }
 
 // stubProjectReader returns app.ErrNotFound by default so the dispatcher's
@@ -152,8 +168,8 @@ func TestRunOnceSkipsEmptyActionItemID(t *testing.T) {
 	if outcome.ActionItemID != "" {
 		t.Fatalf("RunOnce() ActionItemID = %q, want empty", outcome.ActionItemID)
 	}
-	if stub.calls != 0 {
-		t.Fatalf("stub.calls = %d, want 0 (empty ID short-circuits)", stub.calls)
+	if got := stub.calls.Load(); got != 0 {
+		t.Fatalf("stub.calls = %d, want 0 (empty ID short-circuits)", got)
 	}
 }
 
@@ -175,11 +191,11 @@ func TestRunOnceSkipsNonExistentActionItem(t *testing.T) {
 	if outcome.ActionItemID != "missing-id" {
 		t.Fatalf("RunOnce() ActionItemID = %q, want %q", outcome.ActionItemID, "missing-id")
 	}
-	if stub.calls != 1 {
-		t.Fatalf("stub.calls = %d, want 1", stub.calls)
+	if got := stub.calls.Load(); got != 1 {
+		t.Fatalf("stub.calls = %d, want 1", got)
 	}
-	if stub.wantID != "missing-id" {
-		t.Fatalf("stub forwarded ID = %q, want %q", stub.wantID, "missing-id")
+	if got := stub.lastWantID(); got != "missing-id" {
+		t.Fatalf("stub forwarded ID = %q, want %q", got, "missing-id")
 	}
 }
 
@@ -292,8 +308,8 @@ func TestRunOnceTrimsActionItemIDWhitespace(t *testing.T) {
 	if outcome.ActionItemID != "ai-trim" {
 		t.Fatalf("RunOnce() ActionItemID = %q, want %q", outcome.ActionItemID, "ai-trim")
 	}
-	if stub.wantID != "ai-trim" {
-		t.Fatalf("stub forwarded ID = %q, want %q (whitespace must be trimmed)", stub.wantID, "ai-trim")
+	if got := stub.lastWantID(); got != "ai-trim" {
+		t.Fatalf("stub forwarded ID = %q, want %q (whitespace must be trimmed)", got, "ai-trim")
 	}
 }
 
