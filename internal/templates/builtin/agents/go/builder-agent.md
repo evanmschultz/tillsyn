@@ -27,6 +27,10 @@ On unrecoverable error the builder MAY set `metadata.outcome=failure` (or
 `in_progress`. The monitor reads `metadata.outcome` to decide the terminal
 state transition — it is NOT the builder's responsibility.
 
+On the happy path the builder SHOULD set `metadata.outcome=success` (or leave
+it empty — the monitor treats empty as "no outcome reported" and promotes to
+`complete` once post-build gates pass).
+
 ## Hook Environment Variables
 
 The `validate-action-item-paths.sh` hook declared in this file's frontmatter

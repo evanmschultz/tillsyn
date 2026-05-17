@@ -5802,7 +5802,7 @@ func TestProjectMCPFirstClassFieldsRoundTrip(t *testing.T) {
 		}
 	})
 
-	t.Run("create without first-class fields round-trips empty values", func(t *testing.T) {
+	t.Run("create with required repo_primary_worktree round-trips empty defaults for other fields", func(t *testing.T) {
 		t.Parallel()
 		service, server := newServer(t)
 		_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(7801, "till.project", mergeArgs(validSessionArgs(), map[string]any{

@@ -84,6 +84,12 @@ type DispatchOutcome struct {
 // A nil TemplateResolver in Options is allowed. NewDispatcher logs a warning
 // at startup and the gate-runner skips template lookup when this seam is
 // absent.
+//
+// When a project has no template bound, the resolver returns a zero-valued
+// templates.Template{} with a nil error (per app.Service.GetProjectTemplate
+// semantics). Callers must distinguish "no template" from "configured-but-
+// empty" via t.SchemaVersion == "" or len(t.Kinds) == 0 rather than relying
+// on a non-nil error.
 type TemplateResolver interface {
 	GetProjectTemplate(ctx context.Context, projectID string) (templates.Template, error)
 }
