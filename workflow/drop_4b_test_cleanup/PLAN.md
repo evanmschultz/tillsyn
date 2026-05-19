@@ -128,14 +128,15 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 
 ---
 
-### Droplet 1.5 — R8: `SupersedeActionItem` interface addition
+### Droplet 1.5 — R8: `SupersedeActionItem` interface addition + mock-implementer compile gate
 
 **State:** todo
 **Paths:**
 - `internal/adapters/mcp_common/mcp_surface.go`
 - `internal/adapters/mcp_common/app_service_adapter_lifecycle_test.go`
-**Packages:** `internal/adapters/mcp_common`
-**Blocked by:** —
+- `internal/adapters/mcp_rpc/extended_tools_test.go` (add `SupersedeActionItem` stub method to `stubExpandedService` — see acceptance below; required atomic with interface widening to keep `internal/adapters/mcp_rpc` package compile-green)
+**Packages:** `internal/adapters/mcp_common`, `internal/adapters/mcp_rpc`
+**Blocked by:** 1.2 (D1.2 also touches `internal/adapters/mcp_rpc/extended_tools.go` — same package, serialize per package-level locking rule from Drop 4a)
 
 **Scope:** Add `SupersedeActionItem` to the `ActionItemService` interface. The adapter method `AppServiceAdapter.SupersedeActionItem` ALREADY EXISTS at `internal/adapters/mcp_common/app_service_adapter_mcp.go:1051-1075` (Drop 4c.5 droplet B.1). The `app_service_adapter_mcp.go` body is NOT modified by this droplet — any attempt to re-implement the method will introduce a compile error (duplicate function definition).
 
