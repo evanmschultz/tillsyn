@@ -83,6 +83,11 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 
 **R6.2:** Wire `go.uber.org/goleak` goroutine-leak detection. `TestAutoDispatchE2EGatePassViaNewDispatcher` (renamed to `TestAutoDispatch_NewDispatcherGateWiring`) does NOT call `t.Parallel()` (per its inline comment at line 541 — swaps the package-level `defaultCommandRunner` var). `TestAutoDispatchE2EGateFailViaNewDispatcher` DOES call `t.Parallel()` (line 626 in the current file; will be moved to `dispatcher_e2e_test.go` via R7.4 below). Since the two e2e tests have mixed parallel/non-parallel execution, use `goleak.VerifyTestMain(m)` in a `TestMain` function in `dispatcher_e2e_test.go` (the new file created by R7.4). Place `goleak.VerifyTestMain(m)` at the end of the `TestMain` body BEFORE calling `os.Exit`. Builder first checks whether any existing `TestMain` exists in the `dispatcher` package (no `TestMain` was found in the current file survey); if one is found, ADD `goleak.VerifyTestMain(m)` to the existing one rather than creating a new one. If `goleak.VerifyTestMain(m)` causes sibling-test goroutine-inflation false-positives during `mage test-pkg internal/app/dispatcher`, builder documents in worklog and falls back to `goleak.VerifyNone(t)` at the END of each e2e test body (not in `t.Cleanup` — goleak docs flag that as fragile).
 
+**R6.2 scope-creep guard (round-2 falsification finding 1.4):** `goleak.VerifyTestMain(m)` runs package-wide and may surface goroutine leaks in tests UNRELATED to this droplet's scope (the dispatcher package has ~25 test files with subscriber loops, `dispatcher.Start` in tests, etc.). **If any such leak surfaces:**
+1. Document the leak source (test name + likely goroutine source) in `BUILDER_WORKLOG.md` under a `## Out-of-Scope Leak Findings` subsection — these become refinement candidates for a future drop.
+2. Do NOT fix the unrelated leak in this drop. Scope-creep would silently expand R6.2 into "audit and fix all goroutine leaks in `internal/app/dispatcher`" which is a separate drop's work.
+3. Fall back to per-test `goleak.VerifyNone(t)` at the end of THIS droplet's two e2e test bodies — that scopes the leak detection to only the R6.2-target tests without disturbing unrelated tests.
+
 **R6.3:** Add a clarifying comment to the `lister.calls == 1` assertion in `TestDispatcherStartTriggersRunOnceOnEvent` (or whichever test pins subscriber lifecycle state): `// "state transitions" in D5 spec means dispatcher lifecycle (Start/Stop), not action-item state. This lister-calls pin is the lifecycle-transition signal.`
 
 **R7.4:** Create `internal/app/dispatcher/dispatcher_e2e_test.go` (new file, package `dispatcher`). Move `stubE2ETemplateResolver` (subscriber_test.go lines 509-522), the renamed `TestAutoDispatch_NewDispatcherGateWiring` (previously `TestAutoDispatchE2EGatePassViaNewDispatcher`), and `TestAutoDispatchE2EGateFailViaNewDispatcher` (subscriber_test.go lines 616-666) into the new file. Remove those symbols from `subscriber_test.go`. The new file gets the package declaration, required imports, goleak `TestMain`, and the moved symbols.
@@ -152,6 +157,7 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 - `app_service_adapter_mcp.go` is NOT modified (no re-implementation of existing method).
 - `TestStewardIntegrationDropOrchSupersedeRejected` at `handler_steward_integration_test.go:466` still passes (regression guard).
 - Adapter-layer test cases in `app_service_adapter_lifecycle_test.go` pass: happy path + STEWARD-owner-gate rejection + missing-ID validation.
+- **Mock-implementer compile gate (round-2 falsification finding 1.5):** `mage test-pkg internal/adapters/mcp_rpc` still compiles after the interface widening. The `stubExpandedService` test fake at `internal/adapters/mcp_rpc/extended_tools_test.go` implements `ActionItemService` — when this droplet adds `SupersedeActionItem` to the interface, the stub must gain a matching method. D1.5 (this droplet) adds a minimal stub: `func (s *stubExpandedService) SupersedeActionItem(ctx context.Context, req mcpcommon.SupersedeActionItemRequest) (domain.ActionItem, error) { return s.supersedeResult, s.supersedeErr }` (plus the two fields on the stub struct). D1.6's table-driven tests configure these fields per-case. Without this stub addition, D1.6 cannot start (cross-package compile failure).
 
 ---
 
@@ -172,6 +178,10 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 3. Add `Reason *string `json:"reason"`` field to the `args` struct inside `handleActionItemOperation` (pointer-sentinel consistent with the `Owner`, `Title`, `Description` etc. pointer pattern established in Drop 4c.5-A.1 and visible at line 750 of the current struct). The `bindArgumentsStrict` decoder rejects unknown JSON keys — adding `Reason` to the struct is REQUIRED before the `supersede` case can receive the argument.
 4. Add `case "supersede":` in `handleActionItemOperation` switch: validate `action_item_id` non-empty (also call `rejectMutationDottedActionItemID` as other mutation cases do), validate `args.Reason` is non-nil and `strings.TrimSpace(*args.Reason)` non-empty (return `invalid_request` if missing or blank), call `authorizeMCPMutation` with action string `"supersede_task"` (matching the `_task` suffix convention used by `"restore_task"` (line 1357), `"reparent_task"` (line 1401), `"delete_task"` (line 1309), `"create_task"` (line 931)), build actor tuple via `buildAuthenticatedMutationActor`, call `tasks.SupersedeActionItem(ctx, mcpcommon.SupersedeActionItemRequest{ActionItemID: actionItemID, Reason: *args.Reason, Actor: actor})`, return JSON result.
 5. Update `till.action_item` description string (line 1439) to include `operation=supersede` in the operation list.
+6. **Stale doc-comment cleanup (round-2 falsification finding 1.3):** update the two stale doc-comments that currently claim "no MCP exposes supersede":
+   - `cmd/till/main.go:850` — the comment around the human-only supersede CLI must be updated to reflect that an MCP path now exists. Replace the existing "no MCP exposes supersede" phrasing with something like "Human-only CLI path; an MCP path also exists at `till.action_item operation=supersede` (gated by `authorizeMCPMutation`)."
+   - `internal/adapters/mcp_common/mcp_surface.go:351` — same correction; comment must no longer claim MCP does not expose supersede.
+   Builder reads each line for the exact stale wording before rewriting.
 
 **`extended_tools_test.go`:** Add table-driven tests for supersede:
 - Valid orchestrator session + `"failed"` item + non-empty reason → success, item returned with `LifecycleState=complete`.
@@ -187,6 +197,7 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 - The `till.action_item` schema includes `mcp.WithString("reason", ...)`.
 - `authorizeMCPMutation` action string is `"supersede_task"` (not `"supersede_action_item"`).
 - Tests cover: orchestrator role-gating (non-orch → `auth_denied`), non-subtree scope (`auth_denied`), happy path (failed item → complete), failed-only invariant (`todo`/`in_progress`/`complete` → `ErrTransitionBlocked`), and missing-reason (`invalid_request`).
+- Stale doc-comments at `cmd/till/main.go:850` and `internal/adapters/mcp_common/mcp_surface.go:351` no longer contain phrasing claiming "no MCP exposes supersede" (or equivalent). Verified via `grep -L 'no MCP exposes supersede' cmd/till/main.go internal/adapters/mcp_common/mcp_surface.go` returning both paths (no match).
 - `mage ci` passes (drop-end verification).
 
 ## Notes
