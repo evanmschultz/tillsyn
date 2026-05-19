@@ -1,0 +1,29 @@
+# _BLOCKERS.toml — workflow/drop_fe_1_bootstrap/
+# Immediate-children sibling blocker ledger for Drop FE 1.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+# Schema: workflow/example/drops/WORKFLOW.md § "_BLOCKERS.toml — Sibling Blocker Ledger".
+
+[[blockers]]
+node = "1.2"
+blocked_by = ["1.1"]
+reason = "magefile.go CiFe target points at frontend/; D1.1 must relocate to ui/frontend/ first before the rename+repath in D1.2 is meaningful."
+
+[[blockers]]
+node = "1.3"
+blocked_by = ["1.1"]
+reason = "ui/main.go is created by D1.1's git mv; D1.3 is the next writer of that same file (replaces NewApp(nil) with real *app.Service construction)."
+
+[[blockers]]
+node = "1.4"
+blocked_by = ["1.3"]
+reason = "D1.4 extends ui/main.go with the App.ListProjects() IPC method + ProjectDTO; same file as D1.3, must serialize."
+
+[[blockers]]
+node = "1.5"
+blocked_by = ["1.2", "1.4"]
+reason = "D1.5 writes ui/frontend/src/{components,pages,types}/* and depends on (a) D1.2's mage target running inside the relocated ui/frontend/ for the test:unit gate and (b) D1.4's window.go.main.App.ListProjects binding existing so the Solid component can createResource against it (runtime + compile-time pin via wails.d.ts)."
+
+[[blockers]]
+node = "1.6"
+blocked_by = ["1.2", "1.5"]
+reason = "D1.6 edits magefile.go (same file as D1.2, must serialize) AND its README wiring claims must be evidence-backed by the working proof view from D1.5."
