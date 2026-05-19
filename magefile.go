@@ -25,6 +25,7 @@ var Default = CI
 // Aliases preserves the familiar hyphenated task names while keeping the visible target list small.
 var Aliases = map[string]interface{}{
 	"check":              CI,
+	"ci-ui":              CiUI,
 	"dev":                Dev,
 	"test-golden":        TestGolden,
 	"test-golden-update": TestGoldenUpdate,
@@ -228,30 +229,30 @@ func CI() error {
 	return nil
 }
 
-// CiFe runs the frontend continuous-integration gate: Vitest unit tests followed
-// by an Astro static build, both executed inside the `frontend/` directory.
+// CiUI runs the UI continuous-integration gate: Vitest unit tests followed
+// by an Astro static build, both executed inside the `ui/frontend/` directory.
 // Playwright e2e tests are excluded — those run via MCP during QA agent passes.
-func CiFe() error {
+func CiUI() error {
 	printer := newMagePrinter()
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("working directory: %w", err)
 	}
-	feDir := filepath.Join(wd, "frontend")
+	uiDir := filepath.Join(wd, "ui/frontend")
 	for _, stage := range []struct {
 		title string
 		run   func() error
 	}{
 		{
-			title: "FE Unit Tests",
+			title: "UI Unit Tests",
 			run: func() error {
-				return runCommandInDir(feDir, "pnpm", "run", "test:unit")
+				return runCommandInDir(uiDir, "pnpm", "run", "test:unit")
 			},
 		},
 		{
-			title: "FE Build",
+			title: "UI Build",
 			run: func() error {
-				return runCommandInDir(feDir, "pnpm", "run", "build")
+				return runCommandInDir(uiDir, "pnpm", "run", "build")
 			},
 		},
 	} {

@@ -66,11 +66,11 @@ Droplets:
 
 ### Droplet 1.2 — Rename `magefile.go` `CiFe` target → `CiUI` repathed at `ui/frontend/`
 
-- **State:** todo
+- **State:** done
 - **Paths:** `magefile.go` (edit only the `CiFe` func, its alias map entry if any, and any doc comment that mentions `frontend/`).
 - **Packages:** root `magefile.go` (build-tag `mage`).
 - **Acceptance:**
-  - `mage -l` lists `ciUI` **AND** lists `ci-ui` (the hyphenated alias added to the `Aliases` map to match existing convention at `magefile.go:26-36` — e.g. `test-pkg`, `format-path`). `mage -l` **does NOT** list `ci-fe` (renamed, not added alongside — avoids alias drift).
+  - `mage -l` lists `ciUI` (canonical name) and **does NOT** list `ci-fe` or `ciFe` (renamed, not added alongside — avoids alias drift). The `ci-ui` alias is registered in the `Aliases` map at `magefile.go:26-36` (matching existing convention — e.g. `test-pkg`, `format-path`) and surfaces via `mage -h ciUI` reporting `Aliases: ci-ui`. Mage's `-l` output lists only canonical names; aliases dispatch at execution time (verified via `mage ci-ui` running the same body as `mage ciUI`).
   - `mage ciUI` runs `pnpm run test:unit` and `pnpm run build` inside `ui/frontend/` (not `frontend/`). On a freshly-relocated tree (post-D1.1), both stages exit 0.
   - `mage ci` continues green (CI target itself unchanged in scope).
   - `magefile.go` source no longer contains the substring `"frontend"` outside an explicit comment that points to `ui/frontend`.
@@ -81,7 +81,7 @@ Droplets:
 
 ### Droplet 1.3 — Wire `ui/main.go` to construct a real `*app.Service` against `.tillsyn/tillsyn.db`
 
-- **State:** todo
+- **State:** done
 - **Paths:** `ui/main.go` (replace the `NewApp(nil)` placeholder with real service construction — see `cmd/till/main.go:2314` and `:2414` for the existing pattern: `sqlite.Open(cfg.Database.Path)` then `app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{...})`). May add one local helper inside `ui/main.go` (single file in droplet to keep scope tight); do NOT introduce a new `ui/bridge/` package this drop (see `## Notes` §N2 — Q2 resolution). If a local helper is added (e.g. `loadConfig()`), it lives as a `func` inside `ui/main.go`, NOT as a new file under `ui/`.
 - **Packages:** `./ui` (Wails main, build-tag `wails`); read-only deps on `github.com/evanmschultz/tillsyn/internal/app`, `github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite`, `github.com/evanmschultz/tillsyn/internal/config`, `github.com/google/uuid`.
 - **Acceptance:**

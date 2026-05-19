@@ -164,3 +164,305 @@ U3. **Symlink-as-`git update-index` blob tracking.** The builder used `git updat
 ### Hylla Feedback
 
 N/A — FE droplet, Hylla is Go-only per the current `feedback_hylla_go_only_today.md` rule (also: Hylla is OFF entirely per `feedback_hylla_disabled_for_now.md` 2026-05-18). No Hylla queries attempted, no fallback recorded. `Read`, `Bash` (rtk-proxied grep + readlink + pnpm + git ls-files + wc), and `Edit`/`Write` were the right primitives.
+
+## Droplet 1.2 — Round 1
+
+- **Reviewer:** `fe-qa-proof-agent`
+- **Verdict:** **PASS**
+- **Date:** 2026-05-18
+- **Scope:** D1.2 acceptance bullets 1, 2, 4 (rename + alias map + literal-substring policy); bullet 3 (`mage ci` continues green) **deferred** per spawn-prompt directive (parallel-builder WIP in `internal/adapters/mcp_rpc/`, `internal/app/dispatcher/`, `ui/main.go` would falsely contaminate); confirmed deferred-not-failed.
+- **Files reviewed:** `magefile.go` (full read, lines 1-707), `BUILDER_WORKLOG.md` § "Droplet 1.2 — Round 1", `git status --porcelain magefile.go workflow/drop_fe_1_bootstrap/`.
+
+### Premises
+
+P1. `func CiUI() error` exists in `magefile.go` with body running `pnpm run test:unit` then `pnpm run build` inside `ui/frontend/`.
+P2. `func CiFe` does NOT exist anywhere in `magefile.go`.
+P3. `Aliases` map contains `"ci-ui": CiUI,` entry, positioned alphabetically.
+P4. `CiUI` doc comment + stage titles reference `ui/` (or `ui/frontend/`), not bare `frontend/`.
+P5. `mage -l` output lists `ciUI` and does NOT list `ciFe`.
+P6. `mage -h ciUI` shows `Aliases: ci-ui`.
+P7. `mage -h ciFe` and `mage -h ci-fe` return exit 2 with "Unknown target".
+P8. `mage ciUI` exits 0; vitest runs in `ui/frontend/`, astro build completes.
+P9. Bare `"frontend"` substring (outside `ui/frontend` token) does NOT appear in `magefile.go`. Remaining `frontend` occurrences are confined to the doc comment + the consolidated `"ui/frontend"` path token.
+P10. `git status --porcelain magefile.go workflow/drop_fe_1_bootstrap/` shows only D1.2-scoped modifications.
+
+### Evidence
+
+E1. `Read magefile.go` lines 232-264 verify the `CiUI` function:
+- L232-234 doc comment: `// CiUI runs the UI continuous-integration gate: Vitest unit tests followed / // by an Astro static build, both executed inside the `ui/frontend/` directory. / // Playwright e2e tests are excluded — those run via MCP during QA agent passes.`
+- L235: `func CiUI() error {`
+- L237-240: `wd, err := os.Getwd(); ...` cwd resolution preserved.
+- L241: `uiDir := filepath.Join(wd, "ui/frontend")` — single consolidated path token.
+- L246-250: stage `{title: "UI Unit Tests", run: func() error { return runCommandInDir(uiDir, "pnpm", "run", "test:unit") }}`.
+- L252-256: stage `{title: "UI Build", run: func() error { return runCommandInDir(uiDir, "pnpm", "run", "build") }}`.
+→ P1, P4 verified.
+
+E2. Full `Read magefile.go` (707 lines) shows no `func CiFe` declaration anywhere — only `CiUI` exists. → P2 verified.
+
+E3. `Read magefile.go` lines 26-37 (Aliases map):
+```
+var Aliases = map[string]interface{}{
+    "check":              CI,
+    "ci-ui":              CiUI,
+    "dev":                Dev,
+    "test-golden":        TestGolden,
+    ...
+}
+```
+→ P3 verified. `"ci-ui": CiUI,` sits between `"check"` and `"dev"` — alphabetical placement.
+
+E4. `mage -l` output (captured):
+```
+ci*                 runs the canonical full gate.
+ciUI                runs the UI continuous-integration gate: Vitest unit tests
+                    followed by an Astro static build, both executed inside the
+                    'ui/frontend/' directory.
+```
+No `ciFe` row appears. → P5 verified.
+
+E5. `mage -h ciUI` output (captured):
+```
+CiUI runs the UI continuous-integration gate: Vitest unit tests followed by an
+Astro static build, both executed inside the 'ui/frontend/' directory.
+Playwright e2e tests are excluded — those run via MCP during QA agent passes.
+
+Usage:
+
+    mage ciui
+
+Aliases: ci-ui
+```
+→ P6 verified — `Aliases: ci-ui` line present.
+
+E6. `mage -h ci-fe` returned exit 2 with stderr `Unknown target: "ci-fe"`. `mage -h ciFe` returned exit 2 with stderr `Unknown target: "cife"` (mage lowercases for resolution). → P7 verified.
+
+E7. `mage ciUI` execution (captured tail):
+```
+UI Unit Tests
+> tillsyn-fe@0.0.1 test:unit /Users/evanschultz/Documents/Code/hylla/tillsyn/main/ui/frontend
+> vitest run --passWithNoTests
+
+ RUN  v3.2.4 /Users/evanschultz/Documents/Code/hylla/tillsyn/main/ui/frontend
+ ↓ tests/migration-markers.test.ts (2 tests | 2 skipped)
+ Test Files  1 skipped (1)
+
+UI Build
+> tillsyn-fe@0.0.1 build /Users/evanschultz/Documents/Code/hylla/tillsyn/main/ui/frontend
+> astro build
+...
+21:40:41 [build] Complete!
+```
+Working directory `.../main/ui/frontend` (NOT bare `frontend/`); both stages completed cleanly; mage process exited 0 (tail captured success-line, no error annotation). → P8 verified.
+
+E8. Static substring read of `magefile.go` via full-file Read shows two `frontend` occurrences total:
+- Line 233 (doc comment): `... inside the `ui/frontend/` directory.` — `frontend` appears only inside `ui/frontend/` token. Explicitly permitted by the acceptance bullet ("doc comment that points to `ui/frontend`").
+- Line 241 (path construction): `uiDir := filepath.Join(wd, "ui/frontend")` — `frontend` appears only inside `"ui/frontend"` string literal token.
+No bare `"frontend"` (with surrounding double quotes and no `ui/` prefix) appears anywhere in the file. The builder consolidated `filepath.Join(wd, "ui", "frontend")` → `filepath.Join(wd, "ui/frontend")` precisely to eliminate the standalone `"frontend"` string. → P9 verified.
+
+E9. `git status --porcelain magefile.go workflow/drop_fe_1_bootstrap/`:
+```
+ M magefile.go
+ M workflow/drop_fe_1_bootstrap/BUILDER_WORKLOG.md
+ M workflow/drop_fe_1_bootstrap/PLAN.md
+```
+Only the three D1.2-scoped files are modified. Sibling-builder WIP (`ui/main.go`, `internal/adapters/mcp_rpc/`, `internal/app/dispatcher/`) lives outside this scoped filter — confirms D1.2 has not strayed. → P10 verified.
+
+### Trace or cases
+
+T1. **Function rename completeness.** `CiUI` is the only `Ci*` function with FE/UI semantics. The doc comment (L232-234), function signature (L235), body's path variable name (`uiDir`, L241), stage titles (`"UI Unit Tests"` L247, `"UI Build"` L253) all use the new `ui` / `UI` naming. No `Fe`/`fe` token survives in this function's source span. The legacy `CiFe` symbol is fully absent (E2).
+
+T2. **Alias registration.** Aliases map is keyed by hyphenated alias → canonical function reference. `"ci-ui": CiUI,` is the sole `ci-*` entry; the old `"ci-fe"` is gone. Alphabetical placement between `"check"` and `"dev"` matches the existing alias-map convention (`"format-path"`, `"test-pkg"`, etc. are similarly clustered by prefix). Functional verification: `mage -h ciUI` reports `Aliases: ci-ui` (E5) — mage's reflective alias-discovery successfully sees the new map entry.
+
+T3. **Legacy-target negative path.** Two distinct legacy names checked: `ciFe` (the old canonical) and `ci-fe` (the old alias). Both return exit 2 + "Unknown target" (E6). This proves no shim/back-compat layer survived — old call sites would fail loudly rather than silently no-op. The builder worklog corroborates: "Renaming therefore needed only the single function definition + alias-map entry. No cascading edits required" (no callers of `CiFe` existed inside the `CI` aggregate, so removing the symbol leaves no compile-time hole).
+
+T4. **Runtime execution path.** `mage ciUI` enters `runStage(printer, "UI Unit Tests", run)` → `runCommandInDir(uiDir, "pnpm", "run", "test:unit")` (L249). `uiDir = filepath.Join(wd, "ui/frontend")` resolves to absolute `.../main/ui/frontend`. vitest output confirms the working directory at the top of its banner (E7) — `RUN  v3.2.4 /Users/evanschultz/Documents/Code/hylla/tillsyn/main/ui/frontend`. Both stages succeed; mage exits 0 implicitly via tail-line `[build] Complete!` and no error wrap.
+
+T5. **Literal-substring sweep.** The acceptance bullet 4 enforces a strict no-bare-`"frontend"` policy. Full-file Read confirmed exactly two `frontend` occurrences, both qualified within the `ui/frontend` token (doc comment at L233 and string literal at L241). The builder's deliberate consolidation `filepath.Join(wd, "ui", "frontend")` → `filepath.Join(wd, "ui/frontend")` (recorded in BUILDER_WORKLOG.md "Notes" entry on bullet 4) eliminates the only remaining standalone `"frontend"` quote-delimited token. Cross-platform safety: `filepath.Join` normalizes embedded forward-slash on Windows, so this is portable.
+
+T6. **Scope-clean signal.** `git status --porcelain magefile.go workflow/drop_fe_1_bootstrap/` (E9) returns exactly the three expected modifications (the magefile + worklog + plan). Sibling-builder WIP outside this filter is not D1.2's responsibility per spawn-prompt parallel-builder rule.
+
+### Conclusion
+
+**PASS.** All proof premises verified by direct evidence. D1.2 cleanly renamed `CiFe` → `CiUI`, registered the `ci-ui` alias, eliminated the bare `"frontend"` substring, and proved runtime correctness via `mage ciUI` execution (exit 0, vitest cwd = `ui/frontend`, astro build complete). Bullet 3 (`mage ci`) is explicitly deferred per spawn-prompt directive — that deferral is correct (parallel-builder WIP would otherwise falsely fail the gate); the deferral itself is not a failure mode.
+
+### Unknowns
+
+U1. **`mage ci` not run.** Per spawn-prompt rule, `mage ci` is deferred to drop-end CI after all parallel builders complete and commits land. The D1.2-only proof of "Go side unaffected" is structural: `CiUI` is invoked only when called explicitly (it is NOT part of the `CI` aggregate at L213-229, which runs `verifySources` / `formatCheck` / `coverage` / `Build` / `TestIntegration`). Renaming a non-aggregate target cannot break the aggregate gate. Route: drop-end CI verifies.
+
+U2. **Alphabetical placement is a builder stylistic choice.** The acceptance bullet doesn't specify ordering. The builder placed `"ci-ui"` between `"check"` and `"dev"` for grouping with future `ci-*` aliases. No QA action required; documentary note only.
+
+U3. **`mage -h <alias>` does not resolve aliases.** Empirically observed: `mage -h ci-ui` returns exit 2 "Unknown target" even though `mage ci-ui` execution would succeed. This is mage's documented behavior — `-h` takes canonical target names. The alias is properly registered (E5 shows `Aliases: ci-ui` line under `mage -h ciUI`) and would dispatch correctly at execution time. Not a D1.2 defect; surfaced for QA-falsification awareness in case the sibling attempts to use `mage -h <alias>` as a falsification probe.
+
+### Hylla Feedback
+
+N/A — FE droplet, Hylla is Go-only per `feedback_hylla_go_only_today.md` rule (and Hylla is OFF entirely per `feedback_hylla_disabled_for_now.md` 2026-05-18). `Read`, `Bash` (mage targets + git status), and full-file source inspection were the right primitives. The literal-substring check could not use `grep` directly (the rtk-proxied `grep -n` Bash form was sandboxed-denied this round), but full-file `Read` of all 707 lines provided equivalent ground truth.
+
+## Droplet 1.3 — Round 1
+
+- **Reviewer:** `fe-qa-proof-agent`
+- **Verdict:** **PASS**
+- **Date:** 2026-05-18
+- **Scope:** D1.3 acceptance bullets — `NewApp(nil)` removal + real-service wiring + embed-directive preservation + path-resolution mirror of `cmd/till/main.go` (PLAN.md D1.3 rows 84-90). `wails build` exit-0 acceptance gate **routed to Phase 6** (sandbox-denied for both builder + QA — see Unknowns). `mage ci` **deferred** per parallel-builder spawn-prompt rule (sibling builders dirty in `internal/adapters/mcp_rpc/`, `internal/app/dispatcher/`, `magefile.go`).
+- **Files reviewed:** `ui/main.go` (full read, 98 lines), `git diff ui/main.go`, `git show HEAD:ui/main.go` (baseline embed-directive comparison), `internal/platform/paths.go`, `internal/config/config.go` (signature spans), `internal/adapters/storage/sqlite/repo.go` (`Open` + `Close` spans), `internal/app/service.go` (`NewService` + `IDGenerator` + `Clock` + `DeleteMode` definitions), `cmd/till/main.go:2415` + `:3500` (cross-reference call sites), `BUILDER_WORKLOG.md` § "Droplet 1.3 — Round 1", `git status --porcelain`.
+
+### Premises
+
+P1. `ui/main.go` contains zero occurrences of `NewApp(nil)`.
+P2. `ui/main.go` contains exactly one `NewApp(svc)` call site at the wails-startup junction.
+P3. The `//go:embed all:frontend/dist` directive is byte-identical to its pre-D1.3 baseline content (line position may shift; content must not).
+P4. `newServiceFromConfig() (*app.Service, func(), error)` exists in `ui/main.go` and orchestrates the documented chain: `platform.DefaultPaths` → `config.Default(paths.DBPath)` → `config.Load(paths.ConfigPath, defaultCfg)` → `sqlite.Open(cfg.Database.Path)` → `app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{...})`.
+P5. Each call-site signature in P4 matches the production signature in `internal/{platform,config,adapters/storage/sqlite,app}/`.
+P6. `main()` defers the cleanup callback BEFORE invoking `wails.Run` (so the SQLite handle closes on normal exit).
+P7. The single `app.ServiceConfig` field set (`DefaultDeleteMode`) is the minimal viable choice for an FE bootstrap that does not exercise auth, embeddings, or live-wait — and `app.NewService` defaults every unset field per `service.go:163-211`.
+P8. `app.DeleteMode(cfg.Delete.DefaultMode)` is a valid Go cross-package named-string conversion (both types share underlying `string`) and mirrors `cmd/till/main.go:2415` exactly.
+P9. `git status --porcelain` for D1.3 scope is `ui/main.go` + `workflow/drop_fe_1_bootstrap/{BUILDER_WORKLOG.md,PLAN.md}` only.
+P10. `wails build` is sandbox-denied for the QA agent (matching the builder's sandbox), so the build-gate acceptance bullet is route-to-Phase-6, not buildable-locally.
+
+### Evidence
+
+E1. `rg -c 'NewApp\(nil\)' ui/main.go` → `0`. → P1 verified.
+
+E2. `rg -n "NewApp" ui/main.go` shows three lines: L32 doc comment, L33 function signature, L79 call site `application := NewApp(svc)`. The only invocation is at L79 with the real service. → P2 verified.
+
+E3. Embed-directive baseline comparison via `git show HEAD:ui/main.go > /tmp/ui_main_baseline.go; rg -n "go:embed" /tmp/ui_main_baseline.go ui/main.go`:
+```
+/tmp/ui_main_baseline.go:16://go:embed all:frontend/dist
+ui/main.go:21://go:embed all:frontend/dist
+```
+Line moved 16→21 because the import block grew (5 new imports: `fmt`, `sqlite`, `config`, `platform`, `uuid`). Directive content **byte-identical** to baseline. The §N10 trap variant 1 (a "helpful" rewrite to `all:ui/frontend/dist`) is dodged. → P3 verified.
+
+E4. `Read ui/main.go` L47-70 (the helper):
+```go
+func newServiceFromConfig() (*app.Service, func(), error) {
+    paths, err := platform.DefaultPaths()
+    if err != nil { return nil, nil, fmt.Errorf("resolve runtime paths: %w", err) }
+    defaultCfg := config.Default(paths.DBPath)
+    cfg, err := config.Load(paths.ConfigPath, defaultCfg)
+    if err != nil { return nil, nil, fmt.Errorf("load config %q: %w", paths.ConfigPath, err) }
+    repo, err := sqlite.Open(cfg.Database.Path)
+    if err != nil { return nil, nil, fmt.Errorf("open sqlite repository %q: %w", cfg.Database.Path, err) }
+    svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
+        DefaultDeleteMode: app.DeleteMode(cfg.Delete.DefaultMode),
+    })
+    cleanup := func() {
+        if closeErr := repo.Close(); closeErr != nil {
+            log.Printf("warning: close sqlite repository: %v", closeErr)
+        }
+    }
+    return svc, cleanup, nil
+}
+```
+Helper returns `(*app.Service, func(), error)`; chain matches the claim verbatim. → P4 verified.
+
+E5. Signature alignment (Read each production span):
+
+- `internal/platform/paths.go:28` — `func DefaultPaths() (Paths, error)` with `Paths{ConfigPath, DataDir, DBPath, LogsDir}` defined at L11-17. Helper uses `paths.DBPath` (L52) + `paths.ConfigPath` (L53) — both valid fields. **Match.**
+- `internal/config/config.go:191` — `func Default(dbPath string) Config`. Helper passes `paths.DBPath` (a `string` per `Paths.DBPath`). **Match.**
+- `internal/config/config.go:295` — `func Load(path string, defaults Config) (Config, error)`. Helper passes `paths.ConfigPath` + `defaultCfg`. Missing-file is non-fatal per L302-306 (`os.ErrNotExist` → returns defaults cleanly), so first-run users with no `~/.tillsyn/config.toml` get the bootstrap path. **Match.**
+- `internal/adapters/storage/sqlite/repo.go:75` — `func Open(path string) (*Repository, error)`. Helper passes `cfg.Database.Path` (a `string` per `DatabaseConfig.Path` at config.go:48-50). **Match.**
+- `internal/app/service.go:163` — `func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConfig) *Service`. Helper passes 4 args: `repo` (a `*sqlite.Repository` which satisfies `app.Repository` — same interface satisfaction the CLI relies on at `cmd/till/main.go:2314`), `uuid.NewString` (matches `type IDGenerator func() string` at L123), `nil` clock (defaulted to `time.Now` at L167-169), and `app.ServiceConfig{DefaultDeleteMode: ...}`. **Match.**
+- `internal/adapters/storage/sqlite/repo.go:121` — `func (r *Repository) Close() error`. Cleanup callback at L65 calls `repo.Close()`, logs the error. **Match.**
+
+→ P5 verified.
+
+E6. `Read ui/main.go` L72-93 (the `main` body):
+```go
+func main() {
+    svc, cleanup, err := newServiceFromConfig()
+    if err != nil { log.Fatal(err) }
+    defer cleanup()
+
+    application := NewApp(svc)
+
+    err = wails.Run(&options.App{ ... })
+    if err != nil { log.Fatal(err) }
+}
+```
+`defer cleanup()` sits at L77, **before** `NewApp(svc)` at L79 and **before** `wails.Run` at L81. On normal `wails.Run` return, the deferred cleanup closes the SQLite handle. → P6 verified.
+
+E7. `Read internal/app/service.go:163-211` (NewService body):
+- L167-169: `if clock == nil { clock = time.Now }` → `nil` clock is safe.
+- L170-172: `if cfg.DefaultDeleteMode == "" { cfg.DefaultDeleteMode = DeleteModeArchive }` → empty default-delete-mode is safe.
+- L173-175: `CapabilityLeaseTTL` defaults if `<=0` → safe with zero-value.
+- L176-179: `RequireAgentLease` defaults to `true` when nil.
+- L180-183: `StateTemplates` defaults to `defaultStateTemplates()` if empty.
+- L184-189: `SearchIndex` defaults from repo's `EmbeddingSearchIndex` interface satisfaction (sqlite.Repository may or may not satisfy; either way, no crash).
+- L196: `HandoffRepository` defaults from repo's interface satisfaction (type-assert with `_, ok :=` — safe even if not satisfied).
+- L202-204: `LiveWaitBroker` defaults to `NewInProcessLiveWaitBroker()`.
+- L206-208: `GitStatusChecker` defaults to `defaultGitStatusChecker`.
+
+All unset ServiceConfig fields are defaulted to non-nil sentinels by the constructor. The FE bootstrap's `ListProjects` call path will not nil-deref. → P7 verified.
+
+E8. Cross-package `DeleteMode` conversion:
+- `internal/config/config.go:17` — `type DeleteMode string`.
+- `internal/app/service.go:22` — `type DeleteMode string`.
+- Both share underlying `string`. Go permits the cross-package named-string conversion `app.DeleteMode(cfg.Delete.DefaultMode)` (cfg.Delete.DefaultMode is `config.DeleteMode`; both fundamentally `string`).
+- `rg -n "DeleteMode\(cfg\.Delete\.DefaultMode\)" cmd/ internal/ ui/` → 3 matches: `cmd/till/main.go:2415`, `cmd/till/main.go:3500`, `ui/main.go:62`. Builder's call site is **structurally identical** to the two pre-existing production sites.
+
+→ P8 verified.
+
+E9. `git status --porcelain` (full repo) shows:
+```
+ M magefile.go                                                   ← D1.2 (sibling, complete)
+ M ui/main.go                                                    ← D1.3 (this droplet)
+ M workflow/drop_fe_1_bootstrap/BUILDER_WORKLOG.md               ← D1.3 (this droplet)
+ M workflow/drop_fe_1_bootstrap/PLAN.md                          ← D1.3 (this droplet)
+```
+D1.3's code-side scope is exactly `ui/main.go`. Sibling Go-side builders' working-tree state lives in their own dispatched contexts (not visible in this filter); the spawn-prompt warned of `internal/adapters/mcp_rpc/`, `internal/app/dispatcher/` activity outside D1.3's surface. **No cross-contamination from D1.3.** → P9 verified.
+
+E10. `wails build` attempt: invoking `cd ui && wails build` was sandbox-denied for the QA agent ("Permission to use Bash has been denied"). Same denial pattern as builder's attempt. `wails --version` likewise denied. Build-gate is not locally executable from this QA agent; routed to Phase 6 dev-launch. → P10 verified (sandbox denial is honest, not invented).
+
+### Trace or cases
+
+T1. **`NewApp(nil)` removal.** `rg -c 'NewApp\(nil\)' ui/main.go` returns 0. `rg -n NewApp ui/main.go` shows L32 (doc comment), L33 (declaration), L79 (call site `NewApp(svc)`). Three references; one is the call site; the call site uses the real service. Acceptance bullet "no longer contains `NewApp(nil)`" → **MET**.
+
+T2. **Embed-directive preservation (§N10 trap dodged).** Baseline `git show HEAD:ui/main.go` at L16 reads `//go:embed all:frontend/dist`. Post-D1.3 `ui/main.go` at L21 reads `//go:embed all:frontend/dist`. Byte-identical. The new helper sits at L42-70, BETWEEN the embed directive (L21) and `main()` (L72) — directly in the "edit blast radius" where a `Write`-tool full-file rewrite could have drifted the directive. Builder explicitly defended against this in BUILDER_WORKLOG.md ("Embed-trap §N10 awareness" note); the defense held.
+
+T3. **Path-resolution mirror of `cmd/till/main.go`.** Helper chain (E4):
+   - `platform.DefaultPaths()` — same call shape `cmd/till/main.go` uses for non-dev-mode invocations; `appName="tillsyn"` default; resolves to `~/.tillsyn/{config.toml,tillsyn.db,logs/}` on macOS/Linux.
+   - `config.Default(paths.DBPath)` → seeds `Database.Path` with the platform-resolved DB location.
+   - `config.Load(paths.ConfigPath, defaultCfg)` → reads user config TOML; missing-file is non-fatal (E5).
+   - `sqlite.Open(cfg.Database.Path)` → opens the SAME DB file the CLI opens (no hardcoded path; goes through `cfg.Database.Path` which is the platform-resolved value unless the user overrode it in `config.toml`).
+   - `app.NewService(repo, uuid.NewString, nil, ServiceConfig{DefaultDeleteMode: ...})` → builds the service against that DB. Minimal `ServiceConfig` is appropriate because FE bootstrap only exercises `ListProjects`-like read paths (no auth, no embeddings, no live-wait).
+   Acceptance bullet "DB path resolution mirrors `cmd/till/main.go` (`config.Load` → `cfg.Database.Path`); no hardcoded path" → **MET**.
+
+T4. **Cleanup discipline + error path.** `main` defers `cleanup()` immediately after the helper returns success (L77). Normal `wails.Run` return → defer fires → `repo.Close()` runs. `wails.Run` error → `log.Fatal(err)` calls `os.Exit(1)` which skips deferred funcs — but the SQLite WAL pragma (`PRAGMA journal_mode = WAL` at `repo.go:132`) means the DB is durable across process-killed exits; no data loss. This mirrors `cmd/till/main.go:2319-2323`'s identical pattern. The `log.Fatal`-skips-defer behavior is well-documented Go semantics + the cost is bounded (one open `*sql.DB` handle, no in-flight transactions on the FE startup path). **Acceptable.**
+
+T5. **Minimal `ServiceConfig` field set.** Only `DefaultDeleteMode` is set. All other fields (`AuthRequests`, `EmbeddingGenerator`, `LiveWaitBroker`, `CapabilityLeaseTTL`, `RequireAgentLease`, `StateTemplates`, search weights, `BootstrapProjectHooks`, etc.) are defaulted by `NewService`'s constructor body (E7). The bootstrap droplet's IPC surface — limited to `ListProjects` per D1.4 — does not touch any of these subsystems. The minimal set is appropriate; future FE drops (D2.x onwards) will populate matching fields when they wire auth/embeddings/IPC-mediated waits.
+
+T6. **Build-tag fence isolates `ui/main.go` from `mage ci`.** The file's first line is `//go:build wails`. Without `-tags wails`, the Go toolchain excludes `ui/main.go` from compilation. `mage ci` does not pass `-tags wails`, so it compiles the non-wails view of the project — which D1.3 does not touch. This structural property means D1.3's code-side diff cannot break `mage ci` regardless of correctness inside the wails-tagged file. The drop-end `mage ci` gate (after sibling commits land) is preserved as a safety net but is not the load-bearing acceptance for D1.3 specifically.
+
+T7. **Sandbox-denied build gate routed honestly.** `wails build` denial recorded clearly (E10); no fabricated PASS, no glossed-over "deferred" without explanation. Phase 6 dev-launch will execute the build + open-window verification on the dev's local machine where `wails` is installed.
+
+### Conclusion
+
+**PASS.** All proof premises verified by direct evidence. The builder's claims in `BUILDER_WORKLOG.md` § "Droplet 1.3 — Round 1" hold:
+
+- `NewApp(nil)` is absent; `NewApp(svc)` appears once at the canonical wails-startup junction (T1, E2).
+- The `newServiceFromConfig` helper exists, mirrors `cmd/till/main.go:2244-2314 + :2414`, and every call site matches the corresponding production signature (E4, E5, T3).
+- The `//go:embed all:frontend/dist` directive is byte-identical to baseline despite the surrounding edit (E3, T2). §N10 variant-1 trap correctly dodged.
+- Cleanup callback closes the SQLite handle on normal exit (E6, T4); error path is acceptable per CLI parity.
+- `app.ServiceConfig` minimal-field choice is correct given the bootstrap's IPC scope (T5, E7).
+- D1.3's diff is structurally compatible with `mage ci` via the `//go:build wails` fence (T6); drop-end CI provides the deterministic safety net.
+
+The single unverified acceptance bullet (`cd ui && wails build` exits 0 + Mach-O binary at `ui/build/bin/Tillsyn.app/Contents/MacOS/Tillsyn`) is **route-to-Phase-6**, not a defect: the QA agent's sandbox denied the same invocation it denied for the builder. This is a known cascade-shape gap that the drop's Phase 6 dev-launch verification is designed to close.
+
+**Findings count: 0 PASS-blocking.** 1 routed Unknown (sandbox-denied build gate).
+
+### Unknowns
+
+U1. **`wails build` gate sandbox-denied — routed to Phase 6.** Both the builder agent and this QA agent received "Permission to use Bash has been denied" on every attempted invocation of `wails build`, `wails --version`, and `go build -tags wails ./ui/...`. The acceptance bullet "`cd ui && wails build` exits 0 and produces `ui/build/bin/Tillsyn.app/Contents/MacOS/Tillsyn` as a Mach-O binary" cannot be checked from inside the cascade today. Mitigations layered on top of the denial:
+   1. **Static code review** confirms the file compiles in principle — every call site matches a real signature (E5), no unreachable types, no undeclared identifiers (verified via Read of all production spans).
+   2. **Symbol-level cross-reference** confirms the call pattern is identical to `cmd/till/main.go:2415` (E8) which compiles in `mage ci` today.
+   3. **Build-tag fence** keeps `ui/main.go` out of `mage ci`'s default compile (T6), so the structural integrity of the Go module is preserved even if D1.3 had a wails-only compile defect.
+   The actual exit-0 + Mach-O production check is **Phase 6 dev-launch responsibility**. Route: orchestrator surfaces this in CLOSEOUT.md as "FE drop's wails-build acceptance requires dev-machine verification because the agent sandbox denies the `wails` toolchain."
+
+U2. **`mage ci` deferred to drop-end per spawn-prompt rule.** Sibling parallel builders are dirty in `magefile.go` (D1.2 done but uncommitted), `internal/adapters/mcp_rpc/`, `internal/app/dispatcher/`. Running `mage ci` from inside this QA agent would either (a) include sibling WIP and produce a false-positive fail, or (b) silently see sibling WIP via shared filesystem state (per `feedback_parallel_builders_share_worktree.md`) and produce a non-deterministic result. The build-tag fence (T6) is the structural reason D1.3's correctness is independent of the drop-end `mage ci` verdict. Route: drop-end CI gate, post-sibling-commit.
+
+U3. **`log.Fatal` skips deferred cleanup.** If `wails.Run` returns an error, `log.Fatal` calls `os.Exit(1)` which bypasses `defer cleanup()`. The SQLite handle is not closed cleanly in that path. Mitigated by WAL mode (`repo.go:132`'s `PRAGMA journal_mode = WAL`) — the DB stays durable. The CLI has the identical property at `cmd/till/main.go:2319-2323`, so this is project-policy precedent, not a D1.3-introduced regression. **Accepted.** Not a refinement candidate — matches established pattern.
+
+U4. **`cfg.Delete.DefaultMode` may be empty on first run.** If `config.Load` finds no `~/.tillsyn/config.toml` and `config.Default("")` does not populate `Delete.DefaultMode`, the conversion `app.DeleteMode(cfg.Delete.DefaultMode)` yields an empty string. `app.NewService` then defaults it to `DeleteModeArchive` at `service.go:170-172`. **Self-healing.** No counterexample.
+
+### Hylla Feedback
+
+N/A — FE droplet, Hylla is OFF entirely per `feedback_hylla_disabled_for_now.md` (2026-05-18). Used `Read`, `rg` (rtk-proxied — exact `grep` invocations were sandbox-denied), `git diff`, `git show HEAD:`, and direct production-file inspection. The narrow signature-lookup pattern was well-served by `Read` + `rg`. `LSP` not consulted because the symbols in `internal/{platform,config,adapters/storage/sqlite,app}/` are clearly named and `Read`+`rg` resolution was sufficient.
