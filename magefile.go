@@ -34,6 +34,8 @@ var Aliases = map[string]interface{}{
 	"test-func":          TestFunc,
 	"fmt":                Format,
 	"format-path":        FormatPath,
+	"ui-build":           UIBuild,
+	"ui-dev":             UIDev,
 }
 
 // coverageThreshold is the minimum allowed statement coverage for each and all packages.
@@ -261,6 +263,33 @@ func CiUI() error {
 		}
 	}
 	return nil
+}
+
+// UIDev launches the Wails live-development loop from the `ui/` subtree.
+// The command is long-running: it starts the Astro dev server on
+// `http://localhost:4321`, compiles the Go host with the `wails` build tag,
+// opens a native WebView window, and watches both sides for changes until
+// the dev sends SIGINT. The `ui-dev` alias surfaces it on the hyphenated
+// command surface.
+func UIDev() error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("working directory: %w", err)
+	}
+	return runCommandInDir(filepath.Join(wd, "ui"), "wails", "dev")
+}
+
+// UIBuild produces the production desktop binary by running `wails build`
+// inside the `ui/` subtree. On macOS the output lands at
+// `ui/build/bin/Tillsyn.app/Contents/MacOS/Tillsyn`; Linux and Windows emit
+// platform-equivalent paths under `ui/build/bin/`. The `ui-build` alias
+// surfaces it on the hyphenated command surface.
+func UIBuild() error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("working directory: %w", err)
+	}
+	return runCommandInDir(filepath.Join(wd, "ui"), "wails", "build")
 }
 
 // newMagePrinter returns the default laslig printer for Mage output.

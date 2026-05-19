@@ -507,3 +507,100 @@ N/A — Hylla is OFF per the 2026-05-18 rule. Used `Read`, `git diff`, `/usr/bin
   - Wails IPC binding-injection ordering for newer Wails versions (A7 NIT). Not blocking; defensive guard suggested for future hardening.
 
 Ready for orchestrator review.
+
+## Droplet 1.6 — Round 1
+
+- **QA agent:** `fe-qa-falsification-agent`
+- **Round:** 1
+- **Verdict:** PASS with 1 POSSIBLE + 3 NIT (counterexample count: 0 CONFIRMED, 1 POSSIBLE, 3 NIT, 6 REFUTED).
+- **Builder claim under attack:** D1.6 added `ui/README.md` (3-paragraph dev-onboarding doc) plus two mage targets `UIDev` / `UIBuild` (with `ui-dev` / `ui-build` aliases) that shell out to `wails dev` / `wails build` inside the `ui/` subtree. `mage -l` lists both; `mage -h` shows correct alias registration. `mage uiBuild` and `mage uiDev` fail with a clean `exec: "wails": executable file not found in $PATH` envelope (sandbox lacks `wails` CLI); routed to QA / dev-launch for the executable acceptance signal.
+
+### Attacks
+
+**A1. Working directory for wails (correct CWD pointing at `ui/` not `ui/frontend/`). — REFUTED.**
+- `magefile.go:279` (`UIDev`) and `magefile.go:292` (`UIBuild`) both pass `filepath.Join(wd, "ui")` to `runCommandInDir`.
+- `wails.json` exists at `ui/wails.json` (top of file confirms `"name": "Tillsyn"`, `"frontend:dir": "frontend"`).
+- `pnpm` / Astro CWD (`ui/frontend/`) is used only by `CiUI` (line 243) — correctly different from `UIDev`/`UIBuild`'s CWD.
+- No counterexample.
+
+**A2. `wails dev` blocking semantics + accidental CI hang. — NIT.**
+- `runCommandInDir` (`magefile.go:528-538`) calls `cmd.Run()` which blocks until the child exits. `wails dev` is a watch-loop that runs until SIGINT, so `mage uiDev` correctly blocks the caller — desired shape for an interactive dev invocation.
+- No guard against `mage uiDev` being called from CI. Mitigations in place: (a) `CI()` body at `magefile.go:215-232` is an **explicit stage list** that does NOT include `UIDev` (cross-reference with attack A8 — confirmed REFUTED there), (b) the doc comment at `magefile.go:268-273` explicitly calls out the long-running semantics ("until the dev sends SIGINT"). A future CI workflow that naively iterates `mage <target>` over `mage -l`'s rows could pick up `uiDev` — defensive guard suggestion: check `os.Getenv("CI") == "true"` and refuse to launch. Not blocking; doc-comment + explicit `CI()` listing makes accidental misuse low-probability.
+
+**A3. `UIBuild` exit-code propagation through `runCommandInDir`. — REFUTED.**
+- `runCommandInDir` (`magefile.go:534-536`) on `cmd.Run()` failure returns `fmt.Errorf("%s %s (in %s): %w", ...)` — a non-nil error wrapping the underlying `*exec.ExitError`. Mage's runtime converts a non-nil function return to a non-zero process exit (verified empirically: `mage uiBuild` in this sandbox returned exit 1 with the wrapped `exec: "wails": executable file not found in $PATH` message, propagating cleanly).
+- On `cmd.Run()` success, returns nil → mage exit 0.
+- No swallowing.
+
+**A4. `Aliases` map duplicate keys. — REFUTED.**
+- `grep -n '"ui-' magefile.go` returns exactly two lines: line 37 `"ui-build": UIBuild,`, line 38 `"ui-dev": UIDev,`.
+- `grep -c '"ui-build"' magefile.go` → 1; `grep -c '"ui-dev"' magefile.go` → 1.
+- Full `Aliases` map (lines 26-39) has 13 distinct keys with no duplication. Pre-existing keys (`check`, `ci-ui`, `dev`, `test-golden`, `test-golden-update`, `test-integration`, `test-pkg`, `test-func`, `fmt`, `format-path`) do NOT include `ui-build` or `ui-dev` — the builder didn't shadow anything.
+- `mage -h uiBuild` confirms `Aliases: ui-build` (single value); `mage -h uiDev` confirms `Aliases: ui-dev` (single value).
+- No counterexample.
+
+**A5. `ui/README.md` link to `REVISION_BRIEF.md` — plain text vs markdown link. — NIT.**
+- `ui/README.md:45` reads: `see REVISION_BRIEF.md (alongside this file at the drop root: ` + backtick-wrapped path + `).`
+- This is **plain text**, not a markdown link `[REVISION_BRIEF.md](REVISION_BRIEF.md)` or relative `[REVISION_BRIEF.md](../workflow/drop_fe_1_bootstrap/REVISION_BRIEF.md)`.
+- On GitHub web rendering, the string `REVISION_BRIEF.md` will be plain text — NOT auto-linkified (GitHub auto-links bare URLs like `https://...`, not bare filenames). Dev clicking on it gets no navigation.
+- The grep-acceptance bullet (row 148 per worklog: `ui/README.md` must contain "see REVISION_BRIEF.md") is satisfied as a substring, but the FE/markdown best practice would prefer a proper relative-path markdown link.
+- NIT: convert to `[REVISION_BRIEF.md](../workflow/drop_fe_1_bootstrap/REVISION_BRIEF.md)` for clickability. Not blocking; readable in plain-text view.
+
+**A6. `ui/README.md` paragraph structure (3 paragraphs claim). — POSSIBLE.**
+- Builder worklog line 180 states the README is "3 paragraphs: what `ui/` is, how to run it with both mage target names, the in-process Go bindings wiring + read-only-this-drop guarantee, link to `REVISION_BRIEF.md`." (That itemization actually enumerates **4** thematic blocks, not 3.)
+- Actual `ui/README.md` structure:
+  - Lines 1-8: title heading + intro paragraph (paragraph 1).
+  - Lines 10-27: `## How to run` heading + intro paragraph + two-bullet list + closing paragraph (mixed paragraph/bullets block, not a single paragraph).
+  - Lines 29-41: `## Wiring (in-process Go bindings)` heading + paragraph (paragraph block).
+  - Lines 43-45: closing paragraph with REVISION_BRIEF.md pointer (paragraph block).
+- So the file is **2 H2 sections + intro paragraph + closing pointer**, with bullets embedded in the "How to run" section. NOT a "3-paragraph" structure as the builder self-reported.
+- Is this a problem? PLAN.md acceptance bullet 148 (per worklog line 195) only requires content tokens ("in-process Go bindings", "read-only this drop", "see REVISION_BRIEF.md", target names) — it does **NOT** mandate paragraph count or structure. The current structure (headings + paragraphs + bullets) is more useful as a README than a wall-of-text 3-paragraph block.
+- POSSIBLE drift between builder self-report and actual file content, but **not a counterexample to the acceptance bullets** — the acceptance bullets specify content tokens, not structural shape. Recommend builder correct the worklog self-description from "3 paragraphs" to "2 H2 sections + intro/outro paragraphs" so the worklog matches reality. Not a code-fix.
+
+**A7. `wails --version` sandbox availability. — REFUTED (as builder claim).**
+- Attempted `wails --version` and `which wails` in QA sandbox — both **denied by sandbox permissions** (`Permission to use Bash has been denied`).
+- Builder's worklog claim (line 188) was that `mage uiBuild` returns `exec: "wails": executable file not found in $PATH` — this is an exec.LookPath failure inside the builder's sandbox, not a "wails uninstalled" claim about the dev's host machine. Builder's framing is correct: within the builder's sandbox, `wails` is not reachable, and the magefile wiring is what's being verified (CWD + arg list + error propagation).
+- The QA sandbox shares this constraint — `wails` is not invocable from this builder's environment. The dev's host-machine `$PATH` may or may not have `wails`; that's irrelevant to the builder-side acceptance.
+- No counterexample.
+
+**A8. `mage ci` aggregate accidentally invoking `UIDev`/`UIBuild`. — REFUTED.**
+- `CI()` body (`magefile.go:215-232`) iterates an **explicit struct slice** with five named stages: `Sources` (verifySources), `Formatting` (formatCheck), `Coverage` (coverage), `Build` (Build), `Integration` (TestIntegration). NOT a reflection-based auto-discovery.
+- New top-level functions (`UIDev`, `UIBuild`) are **not** auto-picked-up by `CI()`. The only way they enter the CI pipeline is via explicit edit to the stage slice — which D1.6 did not do.
+- `mage -l` confirms `ci` row unchanged (still flagged with `*` as default); `mage -h ci` would still show the same five-stage docstring.
+- No regression risk.
+
+**A9. README literal substrings `ui-dev` / `ui-build` for grep-acceptance. — REFUTED.**
+- `ui/README.md:14` contains `` `mage ui-dev` `` (backtick-wrapped). The literal substring `ui-dev` appears.
+- `ui/README.md:18` contains `` `mage ui-build` `` (backtick-wrapped). The literal substring `ui-build` appears.
+- `grep -q 'ui-dev' ui/README.md` would exit 0; `grep -q 'ui-build' ui/README.md` would exit 0. The backtick wrapping is markdown rendering hint, not a substring barrier.
+- They appear as bare-stem tokens, not combined into a single "ui-build/ui-dev" form. Each is independently grep-able.
+- No counterexample.
+
+**A10. Cross-platform binary path documentation. — NIT.**
+- `ui/README.md:19` says: "emits `ui/build/bin/Tillsyn.app/Contents/MacOS/Tillsyn` on macOS (and platform-equivalent paths on Linux/Windows)".
+- Acknowledges Linux/Windows exist but does NOT give concrete paths (e.g., Linux: `ui/build/bin/Tillsyn`, Windows: `ui/build/bin/Tillsyn.exe`). The PLAN.md acceptance bullet 146 (per worklog line 193) only specifies the macOS path (`Tillsyn.app/Contents/MacOS/Tillsyn`), so the README matches the spec.
+- The "(and platform-equivalent paths on Linux/Windows)" parenthetical is honest but uninformative — a Linux dev reading this needs to either run `find ui/build -type f` after `mage ui-build` or check Wails docs.
+- NIT: future improvement would list concrete Linux/Windows paths, OR explicitly mark the drop as macOS-only documentation (which would match the current observed state since acceptance only covers macOS).
+
+### Summary
+
+| # | Attack | Verdict |
+|---|---|---|
+| A1 | CWD for wails (`ui/` not `ui/frontend/`) | REFUTED |
+| A2 | `wails dev` blocking + accidental CI hang | NIT |
+| A3 | `UIBuild` exit-code propagation | REFUTED |
+| A4 | `Aliases` map duplicate keys | REFUTED |
+| A5 | README link to `REVISION_BRIEF.md` plain-text vs markdown link | NIT |
+| A6 | README "3 paragraphs" self-report vs actual structure | POSSIBLE |
+| A7 | `wails --version` sandbox claim | REFUTED |
+| A8 | `mage ci` auto-pickup of new targets | REFUTED |
+| A9 | README literal substrings `ui-dev` / `ui-build` | REFUTED |
+| A10 | Cross-platform binary path documentation | NIT |
+
+**Overall verdict:** PASS with NITs. No CONFIRMED counterexamples. 1 POSSIBLE (worklog self-report drift, NOT a code or content fault — fix is editing the worklog to match reality). 3 NITs (A2 doc-comment-only CI-hang guard suggestion, A5 plain-text README link, A10 missing concrete cross-platform paths). 6 REFUTED.
+
+Routed Unknowns:
+- `wails build` / `wails dev` end-to-end execution in a sandbox with `wails` CLI installed (acceptance bullets 146-147) — routed to QA proof agent's sandbox (if it has `wails`) or dev-launch at Phase 6.
+- `mage ci` drop-end re-verification (acceptance bullet 149) — deferred to drop-end CI per spawn-prompt directive.
+
+Ready for orchestrator review.

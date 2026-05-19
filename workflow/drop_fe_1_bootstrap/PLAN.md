@@ -136,7 +136,7 @@ Droplets:
 
 ### Droplet 1.6 — `ui/README.md` orientation doc + `mage ui-dev` and `mage ui-build` targets
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - writes: `ui/README.md` (~30-60 lines: one paragraph on what `ui/` is, one paragraph on how to run it (`mage ui-dev` for hot-reload Wails+Astro dev loop; `mage ui-build` for the production binary), one paragraph on the in-process binding wiring and the read-only-this-drop guarantee, link to `REVISION_BRIEF.md`).
   - writes: `magefile.go` (adds two new exported functions `UIDev() error` and `UIBuild() error` running `wails dev` and `wails build` respectively from the `ui/` directory; adds `ui-dev` / `ui-build` aliases to the `Aliases` map; existing `CiUI` from D1.2 stays as-is).
