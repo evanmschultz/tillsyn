@@ -3511,8 +3511,13 @@ func TestHandlerExpandedToolRejectsMissingSessionAndGuardedUserTuples(t *testing
 	}
 }
 
-// TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes verifies hierarchy node target types pass through comment tools.
-func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
+// TestHandlerCommentToolForwardsArbitraryTargetTypesToService verifies that the MCP
+// handler layer does NOT validate target_type values; any string passes through
+// to the service. Domain validation is downstream. This test intentionally sends
+// pre-Drop-1.75 legacy tokens ("branch", "phase") to confirm they transit the
+// transport layer untouched — the schema enum excludes them from the JSON-Schema
+// contract but the handler itself does not reject unknown values.
+func TestHandlerCommentToolForwardsArbitraryTargetTypesToService(t *testing.T) {
 	service := &stubExpandedService{
 		stubCaptureStateReader: stubCaptureStateReader{
 			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
@@ -5948,4 +5953,69 @@ func issueProjectScopedSetSession(t *testing.T, auth *autentauth.Service, projec
 		t.Fatalf("IssueSession() error = %v", err)
 	}
 	return issued.Session.ID, issued.Secret
+}
+
+// TestHandlerCommentToolTargetTypeEnumSchemaGuard is the regression guard for the
+// MCP schema enum update in registerCommentTools (D1.2) that replaced stale
+// pre-Drop-1.75 tokens with the post-1.75 vocabulary. This test introspects the
+// registered till.comment tool's JSON-Schema at runtime so it actually catches a
+// revert of the D1.2 enum change — unlike a pure domain-validation test which
+// would pass even if the MCP schema still listed the old tokens.
+func TestHandlerCommentToolTargetTypeEnumSchemaGuard(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: mcpcommon.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+	_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+	toolsRaw, ok := toolsResp.Result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+	}
+
+	commentSchema := findToolSchemaByName(t, toolsRaw, "till.comment")
+
+	// Assert the target_type enum equals exactly the post-Drop-1.75 vocabulary.
+	wantEnum := []string{"project", "action_item", "actionItem"}
+	gotEnum := schemaPropertyEnumStrings(t, commentSchema, "target_type")
+	if len(gotEnum) != len(wantEnum) {
+		t.Fatalf("till.comment target_type enum = %#v, want exactly %#v", gotEnum, wantEnum)
+	}
+	for _, want := range wantEnum {
+		if !slices.Contains(gotEnum, want) {
+			t.Fatalf("till.comment target_type enum missing %q: %#v", want, gotEnum)
+		}
+	}
+
+	// Assert no stale pre-Drop-1.75 tokens survive in the enum.
+	for _, stale := range []string{"branch", "phase", "subtask", "decision", "note"} {
+		if slices.Contains(gotEnum, stale) {
+			t.Fatalf("till.comment target_type enum contains stale pre-1.75 token %q: %#v", stale, gotEnum)
+		}
+	}
+
+	// Assert the description string matches the post-1.75 vocabulary.
+	targetTypeDesc := schemaStringPropertyDescription(t, commentSchema, "target_type")
+	if !strings.Contains(targetTypeDesc, "project|action_item|actionItem") {
+		t.Fatalf("till.comment target_type description = %q, want to contain \"project|action_item|actionItem\"", targetTypeDesc)
+	}
+	for _, staleToken := range []string{"branch", "phase", "subtask", "decision", "note"} {
+		if strings.Contains(targetTypeDesc, staleToken) {
+			t.Fatalf("till.comment target_type description = %q, must not contain stale token %q", targetTypeDesc, staleToken)
+		}
+	}
 }

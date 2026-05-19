@@ -136,14 +136,30 @@ func NormalizeCommentTarget(target CommentTarget) (CommentTarget, error) {
 	return target, nil
 }
 
+// commentTargetTypeAliases maps lowercased camelCase alias forms that do not
+// match any canonical token directly (after strings.ToLower) to their
+// canonical snake_case equivalents. "actionitem" is the lowercase of
+// "actionItem" — the camelCase form used in the pre-Drop-1.75 schema that MCP
+// callers may still send.
+var commentTargetTypeAliases = map[string]CommentTargetType{
+	"actionitem": CommentTargetTypeActionItem,
+}
+
 // NormalizeCommentTargetType canonicalizes target types to their stored form.
 // Inputs are matched case-insensitively against the supported set and
 // returned in their canonical form; unknown values are returned lowercased so
-// callers can still detect invalid inputs.
+// callers can still detect invalid inputs. A pre-normalization alias step maps
+// known camelCase forms (e.g. "actionItem") to their canonical equivalents
+// before the standard lookup.
 func NormalizeCommentTargetType(targetType CommentTargetType) CommentTargetType {
 	lowered := strings.TrimSpace(strings.ToLower(string(targetType)))
 	if lowered == "" {
 		return ""
+	}
+	// Resolve camelCase aliases (e.g. "actionitem" → "action_item") before
+	// the canonical-form range scan, which only matches exact lowercase tokens.
+	if canonical, ok := commentTargetTypeAliases[lowered]; ok {
+		return canonical
 	}
 	for _, candidate := range validCommentTargetTypes {
 		if strings.ToLower(string(candidate)) == lowered {

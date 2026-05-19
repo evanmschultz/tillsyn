@@ -20,7 +20,7 @@ See `REVISION_BRIEF.md` for the four refinement breakdowns with file/line pointe
 
 ### Droplet 1.1 — R5: domain `CommentTargetType` alias normalization
 
-**State:** todo
+**State:** done
 **Paths:**
 - `internal/domain/comment.go`
 - `internal/domain/comment_test.go`
@@ -45,7 +45,7 @@ See `REVISION_BRIEF.md` for the four refinement breakdowns with file/line pointe
 
 ### Droplet 1.2 — R5: MCP schema enum update for `till.comment`
 
-**State:** todo
+**State:** done
 **Paths:**
 - `internal/adapters/mcp_rpc/extended_tools.go`
 **Packages:** `internal/adapters/mcp_rpc`
@@ -68,7 +68,7 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 
 ### Droplet 1.3 — R6 fixups + R7.4 file split + goleak
 
-**State:** todo
+**State:** done
 **Paths:**
 - `internal/app/dispatcher/subscriber_test.go`
 - `internal/app/dispatcher/dispatcher_e2e_test.go` (new — not yet in tree)

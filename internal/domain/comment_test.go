@@ -204,6 +204,36 @@ func TestNormalizeCommentTarget(t *testing.T) {
 	}
 }
 
+// TestNormalizeCommentTargetTypeAlias verifies that camelCase "actionItem" and
+// its mixed-case variants all normalize to the canonical "action_item" form and
+// are accepted by IsValidCommentTargetType. This covers the R5 bug where
+// strings.ToLower("actionItem") == "actionitem" did not match "action_item" in
+// the validCommentTargetTypes range loop without an explicit alias step.
+func TestNormalizeCommentTargetTypeAlias(t *testing.T) {
+	tests := []struct {
+		name  string
+		input CommentTargetType
+		want  CommentTargetType
+	}{
+		{"camelCase actionItem", "actionItem", CommentTargetTypeActionItem},
+		{"mixed case ActionItem", "ActionItem", CommentTargetTypeActionItem},
+		{"all caps ACTIONITEM", "ACTIONITEM", CommentTargetTypeActionItem},
+		{"canonical action_item unchanged", "action_item", CommentTargetTypeActionItem},
+		{"whitespace-padded actionItem", " actionItem ", CommentTargetTypeActionItem},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NormalizeCommentTargetType(tc.input)
+			if got != tc.want {
+				t.Fatalf("NormalizeCommentTargetType(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+			if !IsValidCommentTargetType(tc.input) {
+				t.Fatalf("IsValidCommentTargetType(%q) = false, want true", tc.input)
+			}
+		})
+	}
+}
+
 // TestNormalizeCommentTargetRejectsLegacyScopeTypes verifies the collapsed
 // target-type vocabulary rejects the pre-12-kind branch / phase / subtask
 // target types.

@@ -2240,7 +2240,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments mcpcommon.CommentSe
 			mcp.WithDescription("Create or list append-only shared thread comments. Use comments for discussion/status updates; @mentions route comment inbox rows and are not the same as Action Required handoffs. During active runs, operation=list can wait for the next thread update, and after client shutdown/restart you should rerun capture_state plus comment/attention reads to recover thread state."+mcpGuardedMutationToolSuffix),
 			mcp.WithString("operation", mcp.Required(), mcp.Description("Comment operation"), mcp.Enum("create", "list")),
 			mcp.WithString("project_id", mcp.Description("Project identifier")),
-			mcp.WithString("target_type", mcp.Description("project|branch|phase|actionItem|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "actionItem", "subtask", "decision", "note")),
+			mcp.WithString("target_type", mcp.Description("project|action_item|actionItem"), mcp.Enum("project", "action_item", "actionItem")),
 			mcp.WithString("target_id", mcp.Description("Target identifier")),
 			mcp.WithString("wait_timeout", mcp.Description("Optional how long operation=list should wait for the next thread change after capturing the current thread state, for example 30s. Use this while actively watching a thread; without a new change before timeout it returns the current comments, and after restart you should rerun operation=list to recover current thread state.")),
 			mcp.WithString("summary", mcp.Description("Required for operation=create. Markdown-rich thread summary; use @human, @dev, @builder, @qa, @orchestrator, or @research when routing comment inbox mentions")),
