@@ -466,3 +466,169 @@ U4. **`cfg.Delete.DefaultMode` may be empty on first run.** If `config.Load` fin
 ### Hylla Feedback
 
 N/A — FE droplet, Hylla is OFF entirely per `feedback_hylla_disabled_for_now.md` (2026-05-18). Used `Read`, `rg` (rtk-proxied — exact `grep` invocations were sandbox-denied), `git diff`, `git show HEAD:`, and direct production-file inspection. The narrow signature-lookup pattern was well-served by `Read` + `rg`. `LSP` not consulted because the symbols in `internal/{platform,config,adapters/storage/sqlite,app}/` are clearly named and `Read`+`rg` resolution was sufficient.
+
+## Droplet 1.4 — Round 1
+
+- **Reviewer:** `fe-qa-proof-agent`
+- **Verdict:** **PASS** (with one Unknown routed to dev: `go test -tags wails ./ui/...` execution)
+- **Date:** 2026-05-18
+- **Scope:** D1.4 acceptance bullets — new `App.ListProjects()` IPC method + `ProjectDTO` in a separate `ui/types.go` + `ui/app_test.go` smoke test; embed-directive preservation; DTO not leaked into `ui/main.go`. `go test -tags wails ./ui/...` execution **routed to dev** (sandbox-denied for builder and QA, matching D1.3 pattern). `mage ci` **deferred** per parallel-builder spawn-prompt rule.
+- **Files reviewed:** `ui/main.go` (full read, 116 lines), `ui/types.go` (full read, 18 lines, NEW), `ui/app_test.go` (full read, 113 lines, NEW), `git diff HEAD -- ui/main.go`, `git status --porcelain ui/ workflow/drop_fe_1_bootstrap/`, `internal/adapters/storage/sqlite/repo.go` (`OpenInMemory` signature), `internal/app/service.go` (`ListProjects`, `CreateProject`, `NewService` signatures), `BUILDER_WORKLOG.md` § "Droplet 1.4 — Round 1".
+
+### Premises
+
+P1. `ui/main.go` contains `func (a *App) ListProjects() ([]ProjectDTO, error)` between `(*App).startup` and `newServiceFromConfig`. Body calls `a.svc.ListProjects(a.ctx, false)` and maps each `domain.Project` to `ProjectDTO{ID: p.ID, Name: p.Name}` via a pre-allocated slice.
+P2. The `//go:embed all:frontend/dist` directive at `ui/main.go:21` is byte-identical to its pre-D1.4 state; the only diff entries are the new `ListProjects` method body.
+P3. `ui/types.go` exists as a NEW file with `//go:build wails` on line 1, `package main` on line 3, and `type ProjectDTO struct { ID string; Name string }` as its only declaration. No `json:` tags (per PLAN.md §N2 design call).
+P4. `ui/app_test.go` exists as a NEW file with `//go:build wails` on line 1, `package main` on line 3, and contains `TestApp_ListProjects_ReturnsDTOForExistingProject` plus a test-local `itoa` helper.
+P5. The test constructs the service via `sqlite.OpenInMemory()` (NOT raw `sqlite.Open(":memory:")`), seeds via `svc.CreateProject(ctx, ...)`, asserts (a) `err == nil`, (b) `len(result) >= 1`, (c) every DTO has non-empty `ID` + `Name`, (d) the seeded `(ID, Name)` appears in the result set.
+P6. `type ProjectDTO struct` appears **zero** times in `ui/main.go` and **exactly once** in `ui/types.go` (no inline DTO leak).
+P7. Call-site signature `a.svc.ListProjects(a.ctx, false)` matches `internal/app/service.go:2252` (`func (s *Service) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error)`).
+P8. `sqlite.OpenInMemory()` exists in the production source tree at `internal/adapters/storage/sqlite/repo.go:101`.
+P9. `git status --porcelain ui/ workflow/drop_fe_1_bootstrap/` shows exactly the D1.4 scope: `ui/main.go` modified, `ui/types.go` + `ui/app_test.go` new, `BUILDER_WORKLOG.md` + `PLAN.md` modified. No stray files.
+P10. `go test -tags wails ./ui/...` is sandbox-denied for the QA agent (matching the builder's denial); the execution gate is route-to-dev, not buildable from the cascade.
+
+### Evidence
+
+E1. `Read ui/main.go` L42-58 (the new method):
+```go
+// ListProjects is the Wails IPC method exposed to the frontend as
+// window.go.main.App.ListProjects(). Returns every non-archived project on
+// the underlying SQLite store projected into the JS-friendly ProjectDTO
+// shape. Read-only — never mutates the store. Errors from the service layer
+// surface verbatim (Wails serializes (T, error) returns as a JS promise that
+// rejects on non-nil error).
+func (a *App) ListProjects() ([]ProjectDTO, error) {
+    projects, err := a.svc.ListProjects(a.ctx, false)
+    if err != nil {
+        return nil, err
+    }
+    dtos := make([]ProjectDTO, 0, len(projects))
+    for _, p := range projects {
+        dtos = append(dtos, ProjectDTO{ID: p.ID, Name: p.Name})
+    }
+    return dtos, nil
+}
+```
+Method body matches the claim verbatim: `a.svc.ListProjects(a.ctx, false)` call, pre-allocated `make([]ProjectDTO, 0, len(projects))`, field-for-field projection. → P1 verified.
+
+E2. `git diff HEAD -- ui/main.go` shows **only** an 18-line insertion at L42-58 (the new method + surrounding doc comment). The diff hunk header is `@@ -39,6 +39,24 @@` — the change sits between L39 (existing `(*App).startup` close) and the pre-existing `newServiceFromConfig`. The `//go:embed all:frontend/dist` directive at L21 is **outside** the diff hunk → byte-identical to pre-D1.4 state. → P2 verified. §N10 variant-1 trap correctly dodged (matching D1.3's same dodge).
+
+E3. `Read ui/types.go` (full file, 18 lines):
+- L1: `//go:build wails`
+- L2: blank
+- L3: `package main`
+- L4: blank
+- L5-13: doc comment explaining Wails wire-format defaults and pointing at the future D1.5 `wails.d.ts` ambient declaration.
+- L14-17: `type ProjectDTO struct { ID   string; Name string }` (literal field layout: capitalized `ID` and `Name`, bare `string` types, no `json:` tags).
+- L18: file ends after struct close brace.
+Only declaration in the file is `ProjectDTO`. → P3 verified. PLAN.md §N2 "no `json:` tags" design call honored.
+
+E4. `Read ui/app_test.go` (full file, 113 lines):
+- L1: `//go:build wails`
+- L3: `package main`
+- L5-13: imports (`context`, `strings`, `testing`, `time`, `internal/adapters/storage/sqlite`, `internal/app`).
+- L26: `func TestApp_ListProjects_ReturnsDTOForExistingProject(t *testing.T) {`
+- L27-33: `repo, err := sqlite.OpenInMemory()` + `t.Cleanup(func() { _ = repo.Close() })`.
+- L38-47: deterministic counter-based `idGen` + monotonic `clk`.
+- L48: `svc := app.NewService(repo, idGen, clk, app.ServiceConfig{})`.
+- L52-59: `svc.CreateProject(ctx, "Tillsyn FE Smoke", "in-memory seed for App.ListProjects bridge test")` + non-empty `seeded.ID` assertion.
+- L65-66: `application := NewApp(svc); application.startup(ctx)` — sets `a.ctx` before the IPC call.
+- L68-71: `result, err := application.ListProjects()` + `err == nil` assertion (assert (a)).
+- L72-74: `if len(result) < 1` → fatal (assert (b)).
+- L77-84: per-DTO loop asserting non-empty `ID` + `Name` (assert (c)).
+- L87-97: linear scan for seeded `(ID, Name)` pair (assert (d)).
+- L100-113: test-local `itoa` helper (avoids `strconv` import for ID padding).
+→ P4, P5 verified. Assertions (a)-(d) all present and match PLAN.md acceptance bullets.
+
+E5. DTO leak check via `Read` of both files:
+- `ui/main.go` (full read) contains **zero** lines matching `type ProjectDTO struct`. The string `ProjectDTO` appears only as a return type at L48 (`func (a *App) ListProjects() ([]ProjectDTO, error)`), a slice element type at L53 (`make([]ProjectDTO, 0, len(projects))`), and a struct literal at L55 (`ProjectDTO{ID: p.ID, Name: p.Name}`).
+- `ui/types.go` contains **exactly one** line matching `type ProjectDTO struct` at L14.
+→ P6 verified. (Raw `grep` Bash invocation was sandboxed-denied for this round, but full-file Read of both files provides equivalent ground truth.)
+
+E6. `rg -n 'func.*Service.*ListProjects' internal/app/service.go` → `service.go:2252: func (s *Service) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error)`. Signature matches the call `a.svc.ListProjects(a.ctx, false)` precisely (`a.ctx` is `context.Context`, `false` is `includeArchived`). → P7 verified.
+
+E7. `rg -n 'func OpenInMemory' internal/adapters/storage/sqlite/` → `repo.go:101: func OpenInMemory() (*Repository, error)`. The test's `repo, err := sqlite.OpenInMemory()` call site matches. → P8 verified.
+
+E8. `git status --porcelain ui/ workflow/drop_fe_1_bootstrap/`:
+```
+ M ui/main.go
+ M workflow/drop_fe_1_bootstrap/BUILDER_WORKLOG.md
+ M workflow/drop_fe_1_bootstrap/PLAN.md
+?? ui/app_test.go
+?? ui/types.go
+```
+Exactly D1.4's declared scope: one modified Go source (`ui/main.go`), two new Go sources (`ui/types.go`, `ui/app_test.go`), and the two workflow MDs. No stray files. Sibling Go-D1.4 / Go-D1.5 working-tree state in `internal/` is invisible to this filter — properly out-of-scope per parallel-builders spawn-prompt rule. → P9 verified.
+
+E9. `go test -tags wails ./ui/...` invocation attempted: `Permission to use Bash with command go test ... has been denied`. Same denial pattern as builder's attempt (BUILDER_WORKLOG.md L123 records this verbatim). → P10 verified (denial is honest, not invented).
+
+### Trace or cases
+
+T1. **`App.ListProjects` IPC contract.** The method has zero parameters and returns `([]ProjectDTO, error)` — the exact shape Wails serializes as `Promise<ProjectDTO[]>` on the JS side. `a.ctx` is read from the App struct (set by `startup` at L37-40 of `ui/main.go`); JS callers cannot pass a Go `context.Context`, so reading from `a.ctx` is the only correct pattern. Body delegates to `a.svc.ListProjects(a.ctx, false)` — `false` means "exclude archived" per the production signature, which is the correct default for the FE bootstrap's "show me real projects" semantics.
+
+T2. **Slice pre-allocation.** `make([]ProjectDTO, 0, len(projects))` — capacity sized to source length; `append` cannot trigger reslice during the loop. For an empty source slice (`projects == nil` or `len == 0`), the result is `[]ProjectDTO{}` (zero-length but non-nil). Wails serializes both `[]` and `null` cleanly for JS consumption, but a deterministic empty-slice return matches the test's `len(result) >= 1` assertion semantics when ≥1 project is seeded.
+
+T3. **Embed-directive preservation.** Same proof shape as D1.3 T2: `git diff HEAD -- ui/main.go` shows the diff hunk is bounded to L42-58 (the new method); the embed directive at L21 is outside the hunk and therefore byte-identical to baseline. The builder's edit tool used a small-context match around `(*App).startup`; the directive sits five lines above, in untouched territory.
+
+T4. **`ProjectDTO` placement and content.**
+- File: `ui/types.go` (NEW, dedicated DTO file per the §N2 round-2 F4-fals discussion in BUILDER_WORKLOG.md L121).
+- Build tag: `//go:build wails` → DTO is excluded from non-wails builds (same fence as the rest of `ui/`).
+- Package: `package main` → shares the same compile unit as `ui/main.go`, so `ProjectDTO` is reachable without import.
+- Fields: `ID string` and `Name string` only. No `json:` tags (PLAN.md §N2 design call: Wails uses Go field names as-is for its IPC bindings, so JSON-tag round-trip semantics don't apply; the JS side gets `{ID, Name}` literally).
+- Doc comment explicitly notes the JS-side capitalization and points at the D1.5 TypeScript ambient declaration.
+
+T5. **Test setup pattern matches established repo conventions.** The counter-based `idGen` + monotonic `clk` shape exactly mirrors `cmd/till/action_item_cli_test.go:194-204` and `internal/app/attention_capture_test.go:18-28` per BUILDER_WORKLOG.md L116. The `app.NewService(repo, idGen, clk, app.ServiceConfig{})` constructor call uses the zero-value `ServiceConfig`, which `NewService` defaults out per D1.3's E7 (auth, embeddings, live-wait, etc. all defaulted to safe sentinels). This is sound because `ListProjects` and `CreateProject` do not exercise auth, embeddings, or live-wait paths.
+
+T6. **`sqlite.OpenInMemory()` vs raw `sqlite.Open(":memory:")` — round-2 F2-fals resolution.** The test uses `sqlite.OpenInMemory()` (production helper at `repo.go:101`), NOT raw `sqlite.Open(":memory:")`. Per PLAN.md round-2 F2-fals (referenced in BUILDER_WORKLOG.md L25), `OpenInMemory()` is the canonical multi-connection-safe DSN `"file::memory:?cache=shared"` factory — future-proof if a refactor ever lifts the `MaxOpenConns(1)` cap. The test's `t.Cleanup(func() { _ = repo.Close() })` properly disposes the handle.
+
+T7. **Assertion coverage matches PLAN.md acceptance bullets.** Per PLAN.md row 109 (referenced in BUILDER_WORKLOG.md L120), the four assertions are:
+- (a) `err == nil` after `application.ListProjects()` → L68-71.
+- (b) `len(result) >= 1` → L72-74.
+- (c) every DTO has non-empty `ID` + `Name` → L77-84.
+- (d) seeded `(ID, Name)` appears in the result set → L87-97.
+All four assertions present, each with a distinct fatal/error trigger.
+
+T8. **`itoa` helper isolation.** The test-local `itoa` (L100-113) is package-private + build-tag-gated (`//go:build wails`). It does not collide with `strconv.Itoa` because it's unexported and lives in the same package as the test that uses it. Non-wails builds (i.e., everything outside `ui/`) never compile this helper; production code (the CLI binary) does not include `ui/app_test.go` at all because Go's test toolchain excludes `_test.go` files from production builds. No production-binary contamination.
+
+T9. **DTO non-leak into `ui/main.go`.** The acceptance bullet "`grep 'type ProjectDTO struct' ui/main.go` returns nothing" is verified via E5: full Read of `ui/main.go` (116 lines) shows zero matches for `type ProjectDTO struct`. The struct is referenced (return type at L48, slice element at L53, literal at L55) but not **declared**. The matching positive check (`grep 'type ProjectDTO struct' ui/types.go` returns one match) is also verified via E5: L14 is the sole declaration.
+
+T10. **Scope-clean signal.** `git status --porcelain ui/ workflow/drop_fe_1_bootstrap/` (E8) returns exactly the five expected entries. Sibling-builder WIP outside `ui/` is properly invisible to this filter. Builder-claimed scope and on-disk reality agree.
+
+T11. **Build-tag fence still isolates `ui/` from `mage ci`.** Same structural argument as D1.3 T6: `//go:build wails` on all three files (`ui/main.go`, `ui/types.go`, `ui/app_test.go`) keeps them out of the default Go compile that `mage ci` triggers. D1.4's diff cannot break `mage ci` for the non-wails build path. The drop-end CI gate remains the safety net for any hypothetical interaction with sibling Go work.
+
+T12. **Sandbox-denied test execution routed honestly.** `go test -tags wails ./ui/...` denial recorded clearly (E9). No fabricated PASS, no glossed-over deferral. Builder did the same; QA mirrors the denial; dev runs the test locally.
+
+### Conclusion
+
+**PASS.** All proof premises verified by direct evidence. The builder's claims in `BUILDER_WORKLOG.md` § "Droplet 1.4 — Round 1" hold:
+
+- `App.ListProjects()` exists with the claimed signature (`() ([]ProjectDTO, error)`) and body (delegates to `a.svc.ListProjects(a.ctx, false)`, maps domain projects to DTOs via a pre-allocated slice) — E1, T1, T2.
+- `//go:embed all:frontend/dist` at `ui/main.go:21` is byte-identical to pre-D1.4 baseline — E2, T3. §N10 variant-1 trap dodged.
+- `ui/types.go` is a clean NEW file: `//go:build wails`, `package main`, single `type ProjectDTO struct { ID string; Name string }` declaration, no `json:` tags — E3, T4.
+- `ui/app_test.go` is a clean NEW file: `//go:build wails`, `package main`, `TestApp_ListProjects_ReturnsDTOForExistingProject` with all four required assertions, uses `sqlite.OpenInMemory()` (NOT raw `sqlite.Open(":memory:")`), seeds via `svc.CreateProject`, calls `application.startup(ctx)` before the IPC call — E4, T5, T6, T7.
+- `type ProjectDTO struct` appears zero times in `ui/main.go` and exactly once in `ui/types.go` — E5, T9.
+- Call-site signatures align with production (`ListProjects`, `OpenInMemory`, `CreateProject`, `NewService` all match) — E6, E7.
+- Git scope is clean — E8, T10.
+- Build-tag fence preserves `mage ci` insulation — T11.
+
+The single unverified acceptance bullet (`go test -tags wails ./ui/...` exits 0) is **route-to-dev**, not a defect — the QA agent's sandbox denies the same invocation the builder's sandbox denied. Static cross-references prove every signature compiles in principle; the dynamic green-bar verification belongs to dev or to a future cascade-shape upgrade (rooting agents in a sandbox that permits `go test`).
+
+**Findings count: 0 PASS-blocking.** 1 routed Unknown (sandbox-denied test execution).
+
+### Unknowns
+
+U1. **`go test -tags wails ./ui/...` sandbox-denied — routed to dev.** Both the D1.4 builder and this QA agent received "Permission to use Bash has been denied" on `go test -tags wails ./ui/...`. The acceptance bullet "wails-tagged tests exit 0 with `TestApp_ListProjects_ReturnsDTOForExistingProject` PASS" cannot be checked from inside the cascade today. Mitigations layered on top of the denial:
+   1. **Static signature cross-references** confirm every external symbol the test invokes is real: `sqlite.OpenInMemory()` at `repo.go:101`, `app.NewService(repo, idGen, clk, ServiceConfig{})` at `service.go:163`, `svc.CreateProject(ctx, name, desc)` at `service.go:313`, `application.ListProjects()` per E1.
+   2. **Type-system consistency** confirmed via Read: `ProjectDTO.ID` is `string`, `domain.Project.ID` is `string` (per D1.3 E5), `ProjectDTO.Name` is `string`, `domain.Project.Name` is `string` — no type mismatch in the projection.
+   3. **Test logic flow** is internally consistent: seed succeeds → result must contain seed → linear-scan loop finds match → assertion (d) passes.
+   The actual exit-0 + PASS check is **dev-machine responsibility**. Recommended command: `cd /Users/evanschultz/Documents/Code/hylla/tillsyn/main && go test -tags wails ./ui/...`. Route: orchestrator surfaces this in CLOSEOUT.md alongside D1.3's `wails build` denial as a class of "wails-tagged gates require dev-machine verification."
+
+U2. **`mage ci` deferred per spawn-prompt rule.** Identical structural argument to D1.3 U2: sibling parallel builders are dirty in `internal/`; running `mage ci` here would either include sibling WIP (false-positive fail) or produce non-deterministic results. Build-tag fence (T11) preserves D1.4's structural independence from `mage ci`'s non-wails view. Route: drop-end CI gate.
+
+U3. **`a.ctx == nil` when called outside the Wails runtime lifecycle.** If a future test or caller invokes `application.ListProjects()` without first calling `application.startup(ctx)`, `a.ctx` is the zero value (`nil`). `a.svc.ListProjects(nil, false)` would propagate the nil context to the repository layer; SQLite's driver typically tolerates nil context (treats as `context.Background()`) but the production contract is "non-nil context required." The D1.4 test correctly calls `application.startup(ctx)` first (E4 L66), and the Wails runtime always calls `startup(ctx)` at window-open. **Accepted — not a D1.4 defect, just a property of the IPC contract.** Future test rounds that add more `App.*` methods should mirror the `startup(ctx)` precondition.
+
+U4. **No archived-project test case.** The test seeds one non-archived project and asserts it appears. There is no negative-path coverage proving the `false` argument actually filters archived projects (would require seeding an archived project and asserting it's absent). Acceptable for D1.4 because the filter semantics are tested at the service layer in `internal/app/*_test.go` (BUILDER_WORKLOG.md L138 — "service-layer filter semantics are tested in `internal/app/*_test.go`"); D1.4's bridge test exercises the read-bridge plumbing, not the filter. Future drops that expose `ListProjects(includeArchived=true)` would add the matching test. **Accepted — out-of-scope per PLAN.md.**
+
+### Hylla Feedback
+
+N/A — FE droplet, Hylla is OFF entirely per `feedback_hylla_disabled_for_now.md` (2026-05-18). Used `Read`, `Bash` (rtk-proxied `rg` — raw `grep` was sandbox-denied this round), `git diff`, and `git status`. Narrow signature lookups (`OpenInMemory`, `ListProjects`, `CreateProject`) were handled cleanly by `rg` against `internal/`. `LSP` not consulted because all referenced symbols are clearly named and `Read`+`rg` resolution was sufficient.

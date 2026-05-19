@@ -97,7 +97,7 @@ Droplets:
 
 ### Droplet 1.4 — Expose `ListProjects` IPC method on the Wails App struct + Go-side smoke test
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - writes: `ui/main.go` — add one exported method `func (a *App) ListProjects() ([]ProjectDTO, error)`. Same file as D1.3; serialize via `blocked_by`.
   - writes: `ui/types.go` (new file, `package main`, build-tag `//go:build wails` for symmetry with `ui/main.go`) — defines the DTO type: `type ProjectDTO struct { ID string; Name string }`. Splitting the DTO out of `ui/main.go` pre-empts entrypoint-file bloat as more IPC methods land in future drops (see §N2 — F4-fals resolution; zero import-boundary cost since both files are `package main`).

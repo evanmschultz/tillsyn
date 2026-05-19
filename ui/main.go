@@ -39,6 +39,24 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
+// ListProjects is the Wails IPC method exposed to the frontend as
+// window.go.main.App.ListProjects(). Returns every non-archived project on
+// the underlying SQLite store projected into the JS-friendly ProjectDTO
+// shape. Read-only — never mutates the store. Errors from the service layer
+// surface verbatim (Wails serializes (T, error) returns as a JS promise that
+// rejects on non-nil error).
+func (a *App) ListProjects() ([]ProjectDTO, error) {
+	projects, err := a.svc.ListProjects(a.ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	dtos := make([]ProjectDTO, 0, len(projects))
+	for _, p := range projects {
+		dtos = append(dtos, ProjectDTO{ID: p.ID, Name: p.Name})
+	}
+	return dtos, nil
+}
+
 // newServiceFromConfig constructs a live *app.Service against the same SQLite
 // database the CLI opens, resolved through the canonical platform/config chain
 // (mirrors cmd/till/main.go:2244-2314). Returns the service plus a cleanup
