@@ -2447,6 +2447,7 @@ func TestHandlerActionItemMutationsRejectDottedAddress(t *testing.T) {
 		{operation: "delete", extraArgs: map[string]any{}},
 		{operation: "restore", extraArgs: map[string]any{}},
 		{operation: "reparent", extraArgs: map[string]any{"parent_id": "parent-1"}},
+		{operation: "supersede", extraArgs: map[string]any{"reason": "stuck"}},
 	}
 
 	for _, tc := range mutationCases {
@@ -2481,6 +2482,183 @@ func TestHandlerActionItemMutationsRejectDottedAddress(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestActionItemSupersedeOperation covers the five D1.6 acceptance cases for
+// till.action_item operation=supersede:
+//   - happy path: valid orch session + failed item + non-empty reason → success
+//   - missing reason (nil pointer) → invalid_request
+//   - non-orchestrator session (authErr=ErrAuthorizationDenied) → auth_denied
+//   - non-subtree action_item_id (authErr=ErrAuthorizationDenied) → auth_denied
+//   - service returns ErrTransitionBlocked (non-failed item) → error response
+//
+// The stub's supersedeResult / supersedeErr fields are configured per
+// sub-case. Auth-denied behaviour is exercised by pre-injecting authErr into
+// stubMutationAuthorizer; the stub's AuthorizeMutation returns that error when
+// non-nil, regardless of the supplied session credentials.
+func TestActionItemSupersedeOperation(t *testing.T) {
+	t.Parallel()
+
+	newServer := func(t *testing.T, svc *stubExpandedService) (*httptest.Server, *stubExpandedService) {
+		t.Helper()
+		handler, err := NewHandler(Config{}, svc, nil)
+		if err != nil {
+			t.Fatalf("NewHandler() error = %v", err)
+		}
+		server := httptest.NewServer(handler)
+		t.Cleanup(server.Close)
+		_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+		return server, svc
+	}
+
+	t.Run("happy_path_failed_item_with_reason_returns_complete", func(t *testing.T) {
+		t.Parallel()
+		now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+		svc := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
+			},
+			supersedeResult: domain.ActionItem{
+				ID:             testActionItemUUID,
+				ProjectID:      "p1",
+				ColumnID:       "c1",
+				Title:          "Superseded Item",
+				Kind:           domain.KindBuild,
+				Scope:          domain.KindAppliesToBuild,
+				LifecycleState: domain.StateComplete,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+			},
+		}
+		server, _ := newServer(t, svc)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "supersede",
+			"action_item_id":    testActionItemUUID,
+			"reason":            "stuck in failed; clearing so parent can advance",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(9001, "till.action_item", args))
+		if isError, _ := resp.Result["isError"].(bool); isError {
+			t.Fatalf("supersede happy path returned isError=true: %#v", resp.Result)
+		}
+	})
+
+	t.Run("missing_reason_returns_invalid_request", func(t *testing.T) {
+		t.Parallel()
+		svc := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
+			},
+		}
+		server, _ := newServer(t, svc)
+		// Omit reason entirely — Reason field will be nil after bindArgumentsStrict.
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "supersede",
+			"action_item_id":    testActionItemUUID,
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(9002, "till.action_item", args))
+		if isError, _ := resp.Result["isError"].(bool); !isError {
+			t.Fatalf("supersede missing reason isError = %v, want true", resp.Result["isError"])
+		}
+		text := toolResultText(t, resp.Result)
+		if !strings.Contains(text, "invalid_request") {
+			t.Fatalf("supersede missing reason error text = %q, want invalid_request prefix", text)
+		}
+		if !strings.Contains(text, `"reason"`) {
+			t.Fatalf("supersede missing reason error text = %q, want it to name the reason argument", text)
+		}
+	})
+
+	t.Run("non_orchestrator_session_returns_auth_denied", func(t *testing.T) {
+		t.Parallel()
+		svc := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
+			},
+			stubMutationAuthorizer: stubMutationAuthorizer{
+				authErr: errors.Join(mcpcommon.ErrAuthorizationDenied, errors.New("non-orchestrator session cannot supersede")),
+			},
+		}
+		server, _ := newServer(t, svc)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "supersede",
+			"action_item_id":    testActionItemUUID,
+			"reason":            "clearing stuck item",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(9003, "till.action_item", args))
+		if isError, _ := resp.Result["isError"].(bool); !isError {
+			t.Fatalf("supersede non-orch isError = %v, want true", resp.Result["isError"])
+		}
+		text := toolResultText(t, resp.Result)
+		if !strings.Contains(text, "auth_denied") {
+			t.Fatalf("supersede non-orch error text = %q, want auth_denied prefix", text)
+		}
+	})
+
+	t.Run("non_subtree_action_item_id_returns_auth_denied", func(t *testing.T) {
+		t.Parallel()
+		// authorizeMCPMutation returns ErrAuthorizationDenied for scope mismatches.
+		svc := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
+			},
+			stubMutationAuthorizer: stubMutationAuthorizer{
+				authErr: errors.Join(mcpcommon.ErrAuthorizationDenied, errors.New("action_item_id is outside authorized subtree")),
+			},
+		}
+		server, _ := newServer(t, svc)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "supersede",
+			"action_item_id":    testActionItemUUID,
+			"reason":            "clearing stuck item",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(9004, "till.action_item", args))
+		if isError, _ := resp.Result["isError"].(bool); !isError {
+			t.Fatalf("supersede non-subtree isError = %v, want true", resp.Result["isError"])
+		}
+		text := toolResultText(t, resp.Result)
+		if !strings.Contains(text, "auth_denied") {
+			t.Fatalf("supersede non-subtree error text = %q, want auth_denied prefix", text)
+		}
+	})
+
+	t.Run("service_returns_transition_blocked_for_non_failed_item", func(t *testing.T) {
+		t.Parallel()
+		// The stub is configured to return ErrTransitionBlocked, mirroring
+		// service.go:1843-1845 where supersede on a non-failed item wraps that
+		// sentinel. This pins the failed-only invariant at the MCP boundary.
+		svc := &stubExpandedService{
+			stubCaptureStateReader: stubCaptureStateReader{
+				captureState: mcpcommon.CaptureState{StateHash: "abc123"},
+			},
+			supersedeErr: fmt.Errorf("supersede: %w: supersede only applies to failed items (got state %q)", domain.ErrTransitionBlocked, "todo"),
+		}
+		server, _ := newServer(t, svc)
+		args := mergeArgs(validSessionArgs(), map[string]any{
+			"operation":         "supersede",
+			"action_item_id":    testActionItemUUID,
+			"reason":            "clearing stuck item",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		})
+		_, resp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(9005, "till.action_item", args))
+		if isError, _ := resp.Result["isError"].(bool); !isError {
+			t.Fatalf("supersede on todo item isError = %v, want true (transition blocked)", resp.Result["isError"])
+		}
+		text := toolResultText(t, resp.Result)
+		// ErrTransitionBlocked maps to internal_error in mapToolError (no dedicated case).
+		// The test verifies the error surfaces with the sentinel message substring.
+		if !strings.Contains(text, "transition blocked") {
+			t.Fatalf("supersede transition-blocked error text = %q, want substring \"transition blocked\"", text)
+		}
+	})
 }
 
 // mustNewHandler builds one handler under expanded-service stubs or fails the test.

@@ -799,6 +799,12 @@ func registerActionItemTools(
 				AgentInstanceID string `json:"agent_instance_id"`
 				LeaseToken      string `json:"lease_token"`
 				OverrideToken   string `json:"override_token"`
+				// Reason is required for operation=supersede. Pointer-sentinel
+				// shape (consistent with Drop 4c.5-A.1 pattern): nil means the
+				// key was absent from the JSON payload, non-nil means the key
+				// was present (even if the string is empty). The supersede case
+				// validates non-nil + non-blank after binding.
+				Reason *string `json:"reason"`
 			}
 			if err := bindArgumentsStrict(req, &args); err != nil {
 				return invalidRequestToolResult(err), nil
@@ -1428,6 +1434,54 @@ func registerActionItemTools(
 					return nil, fmt.Errorf("encode %s reparent result: %w", toolLabel, err)
 				}
 				return result, nil
+			case "supersede":
+				actionItemID := strings.TrimSpace(args.ActionItemID)
+				if actionItemID == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "action_item_id" not found`), nil
+				}
+				if err := rejectMutationDottedActionItemID(actionItemID); err != nil {
+					return toolResultFromError(err), nil
+				}
+				if args.Reason == nil || strings.TrimSpace(*args.Reason) == "" {
+					return mcp.NewToolResultError(`invalid_request: required argument "reason" not found`), nil
+				}
+				caller, err := authorizeMCPMutation(
+					ctx,
+					pickMutationAuthorizer(tasks),
+					mcpSessionAuthArgs{
+						SessionID:     args.SessionID,
+						SessionSecret: args.SessionSecret,
+					},
+					"supersede_task",
+					"tillsyn",
+					"actionItem",
+					actionItemID,
+					map[string]string{"action_item_id": actionItemID, "reason": strings.TrimSpace(*args.Reason)},
+				)
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				actor, err := buildAuthenticatedMutationActor(caller, mcpMutationGuardArgs{
+					AgentInstanceID: args.AgentInstanceID,
+					LeaseToken:      args.LeaseToken,
+					OverrideToken:   args.OverrideToken,
+				}, false)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				actionItem, err := tasks.SupersedeActionItem(ctx, mcpcommon.SupersedeActionItemRequest{
+					ActionItemID: actionItemID,
+					Reason:       strings.TrimSpace(*args.Reason),
+					Actor:        actor,
+				})
+				if err != nil {
+					return toolResultFromError(err), nil
+				}
+				result, err := mcp.NewToolResultJSON(actionItem)
+				if err != nil {
+					return nil, fmt.Errorf("encode %s supersede result: %w", toolLabel, err)
+				}
+				return result, nil
 			default:
 				return mcp.NewToolResultError(`invalid_request: required argument "operation" not found`), nil
 			}
@@ -1436,8 +1490,8 @@ func registerActionItemTools(
 		srv.AddTool(
 			mcp.NewTool(
 				"till.action_item",
-				mcp.WithDescription("Read or mutate one action-item operation for branch|phase|actionItem|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent. operation=get accepts action_item_id as either a UUID or a dotted address (e.g. \"1.5.2\" or \"<project_slug>:1.5.2\"); dotted form requires project_id (or the slug-prefix form, which carries the slug). Mutation operations (update|move|move_state|delete|restore|reparent) require a UUID action_item_id and reject dotted addresses with an invalid_request error — dotted addresses are positional and shift under sibling reordering, so allowing them on mutations would let a caller silently mutate the wrong item."+mcpGuardedMutationToolSuffix),
-				mcp.WithString("operation", mcp.Required(), mcp.Description("Action-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent")),
+				mcp.WithDescription("Read or mutate one action-item operation for branch|phase|actionItem|subtask hierarchy nodes under a project. Use operation=get|list|search|create|update|move|move_state|delete|restore|reparent|supersede. operation=get accepts action_item_id as either a UUID or a dotted address (e.g. \"1.5.2\" or \"<project_slug>:1.5.2\"); dotted form requires project_id (or the slug-prefix form, which carries the slug). Mutation operations (update|move|move_state|delete|restore|reparent|supersede) require a UUID action_item_id and reject dotted addresses with an invalid_request error — dotted addresses are positional and shift under sibling reordering, so allowing them on mutations would let a caller silently mutate the wrong item. operation=supersede is the dev escape hatch that transitions one failed item to complete with metadata.outcome=\"superseded\"; requires the reason argument (non-empty); only failed items are eligible."+mcpGuardedMutationToolSuffix),
+				mcp.WithString("operation", mcp.Required(), mcp.Description("Action-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent", "supersede")),
 				mcp.WithString("project_id", mcp.Description("Project identifier. Required for operation=list|create, optional for operation=search, and required for operation=get when action_item_id is a bare dotted address (omit when action_item_id is a UUID or carries a slug-prefix shorthand)")),
 				mcp.WithString("action_item_id", mcp.Description("Action-item identifier. Required for operation=get|update|move|move_state|delete|restore|reparent. operation=get accepts a UUID OR a dotted address (\"1.5.2\" or \"<slug>:1.5.2\"); mutations reject dotted form and require the UUID")),
 				mcp.WithString("column_id", mcp.Description("Column identifier for operation=create. Optional when state is supplied — supply exactly one of column_id or state, not both. Legacy; prefer state for new agent code (column_id stays in the DB row until Drop 4.5's columns-table retirement).")),
@@ -1477,6 +1531,7 @@ func registerActionItemTools(
 				mcp.WithNumber("limit", mcp.Description("Optional maximum rows for operation=search (default 50, max 200)"), mcp.DefaultNumber(50), mcp.Min(0), mcp.Max(200)),
 				mcp.WithNumber("offset", mcp.Description("Optional row offset for operation=search (default 0, must be >= 0)"), mcp.DefaultNumber(0), mcp.Min(0)),
 				mcp.WithString("mode", mcp.Description("archive|hard for operation=delete"), mcp.Enum("archive", "hard")),
+				mcp.WithString("reason", mcp.Description("Required for operation=supersede. Human-readable reason why this failed item is being superseded; persisted on metadata.transition_notes as the audit-trail substance.")),
 				mcp.WithString("session_id", mcp.Description(mcpMutationSessionDescription)),
 				mcp.WithString("session_secret", mcp.Description(mcpMutationSessionSecretDescription)),
 				mcp.WithString("auth_context_id", mcp.Description(mcpMutationAuthContextDescription)),

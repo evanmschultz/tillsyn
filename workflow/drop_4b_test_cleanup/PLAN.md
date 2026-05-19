@@ -164,7 +164,7 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 
 ### Droplet 1.6 — R8: `till.action_item operation=supersede` MCP tool registration
 
-**State:** todo
+**State:** done
 **Paths:**
 - `internal/adapters/mcp_rpc/extended_tools.go`
 - `internal/adapters/mcp_rpc/extended_tools_test.go`

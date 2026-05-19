@@ -846,9 +846,9 @@ bare body, or use the slug-prefix shorthand <slug>:<dotted>. Slug-prefix and
 	// `metadata.outcome = "superseded"` and the supplied reason persisted on
 	// `metadata.transition_notes`. Bypasses the always-on terminal-state
 	// guard in service.MoveActionItem (which rejects every `failed →
-	// complete` move pre-D3 override-auth). The CLI is the only surface
-	// invoking this path today — no MCP tool registration exposes supersede
-	// so agent-driven flows cannot reach it.
+	// complete` move pre-D3 override-auth). Human-only CLI path; an MCP
+	// path also exists at `till.action_item operation=supersede` (gated by
+	// `authorizeMCPMutation`) for orchestrator-driven flows.
 	actionItemSupersedeCmd := &cobra.Command{
 		Use:   "supersede [action_item_id]",
 		Short: "Supersede one failed action item (requires UUID — dotted addresses rejected)",

@@ -125,6 +125,31 @@ None. `goleak.VerifyTestMain` ran against all 389 tests in the dispatcher packag
 
 N/A — Hylla MCP tools (`mcp__hylla__*`) were not available in this agent session. All code understanding used `Read`, `Bash` (filtered), and LSP. Same absence as prior builder rounds in this drop.
 
+## Droplet 1.6 — Round 1
+
+- **Builder:** go-builder-agent
+- **Started:** 2026-05-18
+- **Files touched:**
+  - `internal/adapters/mcp_rpc/extended_tools.go` (args struct `Reason *string`; `case "supersede":` handler; enum + description string; `mcp.WithString("reason", ...)` schema param)
+  - `internal/adapters/mcp_rpc/extended_tools_test.go` (added `TestActionItemSupersedeOperation` 5-subtest table; added `"supersede"` to `TestHandlerActionItemMutationsRejectDottedAddress` mutation cases)
+  - `cmd/till/main.go` (line 850 doc-comment: replaced "no MCP tool registration exposes supersede" claim)
+  - `internal/adapters/mcp_common/mcp_surface.go` (line 351 doc-comment: same replacement)
+- **Build-tool targets run:**
+  - `mage test-func ./internal/adapters/mcp_rpc TestActionItemSupersedeOperation` (GREEN — 6/6 pass; 5 subtests + parent)
+  - `mage test-pkg ./internal/adapters/mcp_rpc` (pass — 239 tests, 0 failures; +7 net from D1.6: 5 new supersede subtests + 1 new `supersede` case in `TestHandlerActionItemMutationsRejectDottedAddress`)
+- **Notes:**
+  - **TDD cycle:** RED baseline was 0 matching tests (function didn't exist). After adding the production code + tests in one pass, `TestActionItemSupersedeOperation` went GREEN at 6/6 on first run. The `TestHandlerActionItemMutationsRejectDottedAddress` extension also went GREEN immediately (same test body — new `supersede` case in the existing loop).
+  - **`Reason *string` pointer-sentinel:** Follows the Drop 4c.5-A.1 pattern established for `Owner`, `Title`, `Description`, etc. `bindArgumentsStrict` (using `DisallowUnknownFields`) rejects unknown keys but leaves absent known keys as nil. Nil `Reason` → `invalid_request` before `authorizeMCPMutation` is called.
+  - **`authorizeMCPMutation` action string `"supersede_task"`:** Consistent with `"restore_task"` / `"reparent_task"` / `"delete_task"` / `"create_task"` `_task` suffix convention.
+  - **`ErrTransitionBlocked` error class:** Falls to `internal_error` in `mapToolError` (no dedicated case). The test asserts `isError=true` and text contains `"transition blocked"`. No new `mapToolError` case needed — the error message itself is descriptive enough for the caller.
+  - **Doc-comment fix (two files):** Replaced the stale "no MCP tool registration exposes supersede so agent-driven flows cannot reach it" claim in both `cmd/till/main.go` and `internal/adapters/mcp_common/mcp_surface.go` with updated text acknowledging the MCP path. The `cmd/till/main.go` update used tabs for indentation to match the surrounding comment block.
+  - **Dotted-address regression guard extended:** Added `{operation: "supersede", extraArgs: map[string]any{"reason": "stuck"}}` to the `mutationCases` slice in `TestHandlerActionItemMutationsRejectDottedAddress`. This is the falsification finding from Section 0 Attack 4 — supersede is a mutation and must be rejected for dotted addresses like all other mutations.
+  - **Scope:** Stayed strictly within declared paths (`internal/adapters/mcp_rpc/extended_tools.go`, `internal/adapters/mcp_rpc/extended_tools_test.go`, `cmd/till/main.go` doc-comment only, `internal/adapters/mcp_common/mcp_surface.go` doc-comment only).
+
+### Hylla Feedback
+
+N/A — Hylla MCP tools (`mcp__hylla__*`) were not available in this agent session. All code understanding used `Read` on targeted line ranges. Same absence as prior builder rounds in this drop.
+
 ## Droplet 1.2 — Round 2
 
 - **Builder:** go-builder-agent

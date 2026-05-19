@@ -407,3 +407,59 @@ N/A — Hylla MCP is OFF (`feedback_hylla_disabled_for_now.md`, 2026-05-18). Evi
 ### Hylla Feedback
 
 N/A — Hylla MCP is OFF (`feedback_hylla_disabled_for_now.md`, 2026-05-18). Evidence gathering used `Read` for direct file inspection, `git diff` + `git status --porcelain` for diff-scope verification, and three live `mage` invocations (`test-pkg ./internal/adapters/mcp_common`, `test-pkg ./internal/adapters/mcp_rpc`, `test-func ./internal/adapters/mcp_rpc TestStewardIntegrationDropOrchSupersedeRejected`).
+
+## Droplet 1.6 — Round 1
+
+- **Reviewer:** go-build-qa-proof-agent
+- **Date:** 2026-05-18
+- **Scope:** R8 — `till.action_item operation=supersede` MCP tool registration in `internal/adapters/mcp_rpc/extended_tools.go` + tests in `internal/adapters/mcp_rpc/extended_tools_test.go` + stale doc-comment cleanup in `cmd/till/main.go:850` and `internal/adapters/mcp_common/mcp_surface.go:351`.
+- **Verdict:** `pass`
+- **Findings:** 0 blocking, 0 NITs.
+
+### Evidence
+
+**Premises (what must hold for D1.6 to be correct):**
+
+- P1. Operation enum at the `till.action_item` `mcp.NewTool` registration includes `"supersede"` and the description string lists it in the `operation=…|supersede` chain.
+- P2. The `args` struct inside `handleActionItemOperation` contains `Reason *string` with `json:"reason"` tag.
+- P3. The tool schema registers `mcp.WithString("reason", ...)` parameter so `bindArgumentsStrict` accepts the key.
+- P4. The `case "supersede":` arm in `handleActionItemOperation` precedes `default:` and performs (in order): non-empty `action_item_id` check, dotted-ID rejection via `rejectMutationDottedActionItemID`, nil/blank `Reason` rejection with `invalid_request`, `authorizeMCPMutation` call with action string `"supersede_task"`, `buildAuthenticatedMutationActor` call, `tasks.SupersedeActionItem(...)` call, JSON result.
+- P5. `TestActionItemSupersedeOperation` exercises 5 sub-cases: happy path, missing reason, non-orch session, non-subtree action_item_id, and `ErrTransitionBlocked` for non-failed items.
+- P6. `TestHandlerActionItemMutationsRejectDottedAddress` carries a `supersede` row in `mutationCases` so the dotted-address regression covers the new operation.
+- P7. Doc-comments at `cmd/till/main.go:850` and `internal/adapters/mcp_common/mcp_surface.go:351` no longer claim "no MCP exposes supersede".
+- P8. `mage test-pkg ./internal/adapters/mcp_rpc` is green at 239/239 and `mage test-func ./internal/adapters/mcp_rpc TestActionItemSupersedeOperation` is green at 6/6.
+- P9. Diff scope is bounded to D1.6's four declared paths; sibling-builder modifications (`internal/app/dispatcher/dispatcher_e2e_test.go`, `magefile.go`, `ui/README.md`) live in disjoint trees.
+
+**Evidence (claim → citation):**
+
+- E1 (→ P1). Direct read of `extended_tools.go` line 1494: `mcp.WithString("operation", mcp.Required(), mcp.Description("Action-item operation"), mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent", "supersede"))`. Description at line 1493 includes `|supersede` in the `operation=...` chain and the dev-escape-hatch summary sentence: `operation=supersede is the dev escape hatch that transitions one failed item to complete with metadata.outcome="superseded"; requires the reason argument (non-empty); only failed items are eligible.`
+- E2 (→ P2). Direct read of `extended_tools.go` lines 802-807: `Reason *string \`json:"reason"\`` with doc-comment explaining the pointer-sentinel shape consistent with the Drop 4c.5-A.1 pattern (nil = key absent; non-nil = key present, validate non-blank in the case body).
+- E3 (→ P3). Direct read of `extended_tools.go` line 1534: `mcp.WithString("reason", mcp.Description("Required for operation=supersede. Human-readable reason why this failed item is being superseded; persisted on metadata.transition_notes as the audit-trail substance."))`.
+- E4 (→ P4). Direct read of `extended_tools.go` lines 1437-1484 (handler body); `default:` arm follows at line 1485. The arm performs every required step in the prescribed order: action_item_id empty-check (1438-41) → `rejectMutationDottedActionItemID` (1442-44) → reason nil/blank check (1445-47) → `authorizeMCPMutation` with action string `"supersede_task"` (1448-60) → `buildAuthenticatedMutationActor` (1464-68) → `tasks.SupersedeActionItem` (1472-76) → `mcp.NewToolResultJSON` (1480-84). Action-string `"supersede_task"` follows the existing `_task` suffix convention (`restore_task`, `reparent_task`, `delete_task`, `create_task`).
+- E5 (→ P5). Direct read of `extended_tools_test.go` lines 2487-2666 (the new test function). Five sub-tests present and each one asserts the right error class:
+  - `happy_path_failed_item_with_reason_returns_complete` (line 2511): asserts `isError=false` for orch session + failed item + non-empty reason; stub's `supersedeResult` returns an item with `LifecycleState: domain.StateComplete`.
+  - `missing_reason_returns_invalid_request` (line 2543): omits `reason` from the args map; asserts `isError=true`, text contains `invalid_request` AND `"reason"`.
+  - `non_orchestrator_session_returns_auth_denied` (line 2571): injects `authErr: errors.Join(mcpcommon.ErrAuthorizationDenied, ...)` into `stubMutationAuthorizer`; asserts `isError=true` and text contains `auth_denied`.
+  - `non_subtree_action_item_id_returns_auth_denied` (line 2599): same `ErrAuthorizationDenied` injection but with a different message ("action_item_id is outside authorized subtree"); asserts `auth_denied`.
+  - `service_returns_transition_blocked_for_non_failed_item` (line 2628): configures `supersedeErr: fmt.Errorf("supersede: %w: supersede only applies to failed items (got state %q)", domain.ErrTransitionBlocked, "todo")`; asserts `isError=true` and text contains `"transition blocked"`. Comment at line 2660 documents that `ErrTransitionBlocked` falls to `internal_error` in `mapToolError` and the assertion targets the sentinel message substring.
+- E6 (→ P6). Direct read of `extended_tools_test.go` line 2450: `{operation: "supersede", extraArgs: map[string]any{"reason": "stuck"}}` is the seventh element in `mutationCases`. The `extraArgs` carry the required `reason` so the loop body reaches `rejectMutationDottedActionItemID` after passing the reason-non-blank gate, exercising the dotted-address rejection path. Body asserts `invalid_request` + `mutations require UUID` strings (lines 2477-2482).
+- E7 (→ P7). Direct read of `cmd/till/main.go:849-851` (reads "Human-only CLI path; an MCP path also exists at `till.action_item operation=supersede` (gated by `authorizeMCPMutation`) for orchestrator-driven flows.") and `mcp_surface.go:346-353` (reads "Two surfaces invoke this path: the human-only CLI (`till action_item supersede`) and the MCP tool (`till.action_item operation=supersede`, gated by `authorizeMCPMutation`)."). Acceptance-criterion grep confirmed via `git grep -n 'no MCP exposes supersede' -- cmd/till/main.go internal/adapters/mcp_common/mcp_surface.go` returning empty (exit-1, no match).
+- E8 (→ P8). Live `mage test-pkg ./internal/adapters/mcp_rpc` returns `239 tests passed across 1 package` (0 failed, 0 skipped). Live `mage test-func ./internal/adapters/mcp_rpc TestActionItemSupersedeOperation` returns `6 tests passed across 1 package` (1 parent + 5 subtests = 6, matching builder claim).
+- E9 (→ P9). `git diff --stat` shows D1.6 modifications limited to `cmd/till/main.go` (+3/-3), `internal/adapters/mcp_common/mcp_surface.go` (+8/-8), `internal/adapters/mcp_rpc/extended_tools.go` (+57/-2), `internal/adapters/mcp_rpc/extended_tools_test.go` (+178/-0). Sibling modifications live in `internal/app/dispatcher/dispatcher_e2e_test.go` (D1.4), `magefile.go` (FE drop), `ui/README.md` (FE drop), and the corresponding `BUILDER_WORKLOG.md` / `PLAN.md` files — all disjoint from D1.6's declared paths.
+
+**Trace or cases:**
+
+- T1. End-to-end happy path (sub-case 1): JSON-RPC `tools/call` of `till.action_item` with `operation=supersede`, valid session/lease, `action_item_id=<UUID>`, `reason="stuck in failed; clearing so parent can advance"` → strict-decoder binds `Reason` non-nil → action_item_id non-empty → dotted-ID guard passes (UUID, not dotted) → reason non-blank → `authorizeMCPMutation("supersede_task", ...)` returns valid caller (stub default) → actor built → `tasks.SupersedeActionItem` returns the stub's `supersedeResult` (`LifecycleState=StateComplete`) → `mcp.NewToolResultJSON(actionItem)` succeeds → `isError=false` asserted.
+- T2. Missing-reason path (sub-case 2): args omit `reason` → `Reason` field nil after strict-decode → first nil check fails at line 1445 → `mcp.NewToolResultError("invalid_request: required argument \"reason\" not found")` returned BEFORE `authorizeMCPMutation` is called. Test asserts `invalid_request` substring + `"reason"` substring.
+- T3. Non-orch session path (sub-case 3): args carry valid `reason` → reaches `authorizeMCPMutation` → stub's `authErr` is `errors.Join(ErrAuthorizationDenied, ...)` → `authorizeMCPMutation` returns that error → `toolResultFromError(err)` maps via `mapToolError` to an `auth_denied` text. Test asserts `auth_denied` substring.
+- T4. Non-subtree path (sub-case 4): same shape as T3 with a different join message. Both paths route through `ErrAuthorizationDenied`, so the same `auth_denied` mapping fires — correctly reflecting the spawn-prompt clarification that `authorizeMCPMutation` returns `auth_denied` for scope mismatches (not `not_found`).
+- T5. ErrTransitionBlocked path (sub-case 5): args valid + auth passes → reaches `tasks.SupersedeActionItem` → stub's `supersedeErr` wraps `domain.ErrTransitionBlocked` with the "supersede only applies to failed items" message → `toolResultFromError(err)` → text contains `"transition blocked"` (sentinel passes through `mapToolError`'s default arm). Test asserts the substring. This pins the failed-only invariant at the MCP boundary per PLAN.md.
+- T6. Dotted-ID regression (D1.6 row in `TestHandlerActionItemMutationsRejectDottedAddress`): args carry `action_item_id="2.1"` + `reason="stuck"` → `Reason` non-nil/non-blank → `rejectMutationDottedActionItemID("2.1")` returns the dotted-rejection error → text contains `invalid_request` + `mutations require UUID`. Loop body re-uses the same assertions for the existing 6 mutation operations.
+
+**Conclusion:** D1.6 implementation matches every PLAN.md acceptance bullet (lines 194-202). Schema enum + description, args struct field, schema parameter, handler body ordering, action string, and stale doc-comment cleanup are all correct. 5 acceptance subtests plus 1 dotted-ID regression case all green in live `mage` invocations. Scope is bounded to the four declared paths. PASS.
+
+**Unknowns:** None. Every claim has direct code citation or live `mage` test output backing it.
+
+### Hylla Feedback
+
+N/A — Hylla MCP is OFF (`feedback_hylla_disabled_for_now.md`, 2026-05-18). Evidence gathering used direct `Read` on `extended_tools.go`, `extended_tools_test.go`, `cmd/till/main.go`, and `mcp_surface.go` at known line ranges, plus `git diff` / `git diff --stat` / `git grep` / `git status --porcelain` for scope and stale-claim verification, plus two live `mage` invocations (`test-pkg ./internal/adapters/mcp_rpc`, `test-func ./internal/adapters/mcp_rpc TestActionItemSupersedeOperation`).
