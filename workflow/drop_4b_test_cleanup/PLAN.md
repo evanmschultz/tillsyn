@@ -103,7 +103,7 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 
 ### Droplet 1.4 — R7.1 + R7.2 + R7.3: e2e test enrichment
 
-**State:** todo
+**State:** in_progress
 **Paths:**
 - `internal/app/dispatcher/dispatcher_e2e_test.go`
 **Packages:** `internal/app/dispatcher`
@@ -130,7 +130,7 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 
 ### Droplet 1.5 — R8: `SupersedeActionItem` interface addition + mock-implementer compile gate
 
-**State:** todo
+**State:** done
 **Paths:**
 - `internal/adapters/mcp_common/mcp_surface.go`
 - `internal/adapters/mcp_common/app_service_adapter_lifecycle_test.go`

@@ -1294,3 +1294,154 @@ func TestCreateProjectRepoPrimaryWorktreeRequired(t *testing.T) {
 		})
 	}
 }
+
+// TestSupersedeActionItemHappyPath verifies the adapter SupersedeActionItem
+// happy path: a non-STEWARD-owned failed item transitions to complete with
+// metadata.outcome="superseded" and the supplied reason persisted on
+// metadata.transition_notes. Non-STEWARD-owned items bypass assertOwnerStateGate
+// entirely so any authenticated actor can execute the transition.
+func TestSupersedeActionItemHappyPath(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	actor := ActorLeaseTuple{
+		ActorID:   "user-1",
+		ActorName: "User One",
+		ActorType: string(domain.ActorTypeUser),
+	}
+
+	project, err := fixture.adapter.CreateProject(ctx, CreateProjectRequest{
+		Name:                "SupersedeHappyPath",
+		Description:         "Project for supersede happy-path test",
+		RepoPrimaryWorktree: "/test/worktree",
+		Actor:               actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	todo, err := fixture.svc.CreateColumn(ctx, project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn(To Do) error = %v", err)
+	}
+	if _, err := fixture.svc.CreateColumn(ctx, project.ID, "Complete", 2, 0); err != nil {
+		t.Fatalf("CreateColumn(Complete) error = %v", err)
+	}
+	if _, err := fixture.svc.CreateColumn(ctx, project.ID, "Failed", 3, 0); err != nil {
+		t.Fatalf("CreateColumn(Failed) error = %v", err)
+	}
+
+	actionItem, err := fixture.adapter.CreateActionItem(ctx, CreateActionItemRequest{
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		Title:          "ActionItem to supersede",
+		Priority:       "medium",
+		Actor:          actor,
+		StructuralType: string(domain.StructuralTypeDroplet),
+	})
+	if err != nil {
+		t.Fatalf("CreateActionItem() error = %v", err)
+	}
+
+	// Drop 4c.5 droplet A.4: transitions into StateFailed require a non-empty
+	// metadata.outcome from {"failure", "blocked", "superseded"}.
+	if _, err := fixture.adapter.UpdateActionItem(ctx, UpdateActionItemRequest{
+		ActionItemID: actionItem.ID,
+		Metadata:     &domain.ActionItemMetadata{Outcome: "failure"},
+		Actor:        actor,
+	}); err != nil {
+		t.Fatalf("UpdateActionItem(set outcome=failure) error = %v", err)
+	}
+
+	if _, err := fixture.adapter.MoveActionItemState(ctx, MoveActionItemStateRequest{
+		ActionItemID: actionItem.ID,
+		State:        "failed",
+		Actor:        actor,
+	}); err != nil {
+		t.Fatalf("MoveActionItemState(failed) error = %v", err)
+	}
+
+	superseded, err := fixture.adapter.SupersedeActionItem(ctx, SupersedeActionItemRequest{
+		ActionItemID: actionItem.ID,
+		Reason:       "supersede reason: QA cleared, proceeding to next drop",
+		Actor:        actor,
+	})
+	if err != nil {
+		t.Fatalf("SupersedeActionItem() error = %v", err)
+	}
+	if superseded.LifecycleState != domain.StateComplete {
+		t.Fatalf("SupersedeActionItem() lifecycle_state = %q, want %q", superseded.LifecycleState, domain.StateComplete)
+	}
+	if superseded.Metadata.Outcome != "superseded" {
+		t.Fatalf("SupersedeActionItem() metadata.outcome = %q, want superseded", superseded.Metadata.Outcome)
+	}
+	if superseded.Metadata.TransitionNotes != "supersede reason: QA cleared, proceeding to next drop" {
+		t.Fatalf("SupersedeActionItem() metadata.transition_notes = %q, want reason", superseded.Metadata.TransitionNotes)
+	}
+}
+
+// TestSupersedeActionItemStewardOwnerGateRejected verifies that a non-steward
+// actor cannot supersede a STEWARD-owned item. The assertOwnerStateGate fires
+// at the adapter layer before the service-layer state check, so the item does
+// not need to be in failed state for the rejection to trigger — the gate keys
+// only on item.Owner and the caller's AuthRequestPrincipalType.
+//
+// This test mirrors TestStewardIntegrationDropOrchSupersedeRejected at
+// handler_steward_integration_test.go:466, which uses the full MCP-RPC
+// integration fixture. The adapter-layer test here verifies the same gate
+// contract at a lower level using the common lifecycle fixture.
+func TestSupersedeActionItemStewardOwnerGateRejected(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	// stewardGated is a STEWARD-owned item with DropNumber=3 and Persistent=true
+	// created via the repo-level direct write. Its Owner=="STEWARD" is what
+	// triggers the gate when the calling actor's AuthRequestPrincipalType is
+	// non-steward.
+	stewardGated := newStewardGatedActionItem(t, fixture, "")
+
+	// Drop-orch actor: AuthRequestPrincipalType="agent" (non-steward) — gate must fire.
+	dropOrch := stewardGatedActor("agent")
+
+	ctx := context.Background()
+	_, err := fixture.adapter.SupersedeActionItem(ctx, SupersedeActionItemRequest{
+		ActionItemID: stewardGated.ID,
+		Reason:       "drop-orch supersede attempt on STEWARD-owned item",
+		Actor:        dropOrch,
+	})
+	if !errors.Is(err, ErrAuthorizationDenied) {
+		t.Fatalf("SupersedeActionItem(drop-orch on STEWARD-owned) error = %v, want ErrAuthorizationDenied", err)
+	}
+}
+
+// TestSupersedeActionItemMissingIDRejected verifies the adapter rejects a
+// SupersedeActionItem call with an empty action_item_id with ErrInvalidCaptureStateRequest
+// and an "action_item_id is required" message — the same sentinel used by
+// MoveActionItemState and ReparentActionItem for missing ID inputs.
+func TestSupersedeActionItemMissingIDRejected(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCommonLifecycleFixture(t)
+	ctx := context.Background()
+	actor := ActorLeaseTuple{
+		ActorID:   "user-1",
+		ActorName: "User One",
+		ActorType: string(domain.ActorTypeUser),
+	}
+
+	_, err := fixture.adapter.SupersedeActionItem(ctx, SupersedeActionItemRequest{
+		ActionItemID: "",
+		Reason:       "reason is present but id is missing",
+		Actor:        actor,
+	})
+	if err == nil {
+		t.Fatal("SupersedeActionItem(empty id) expected error, got nil")
+	}
+	if !errors.Is(err, ErrInvalidCaptureStateRequest) {
+		t.Fatalf("SupersedeActionItem(empty id) error = %v, want wrapped ErrInvalidCaptureStateRequest", err)
+	}
+	if !strings.Contains(err.Error(), "action_item_id is required") {
+		t.Fatalf("SupersedeActionItem(empty id) error = %q, want substring %q", err.Error(), "action_item_id is required")
+	}
+}

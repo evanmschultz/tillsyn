@@ -89,6 +89,8 @@ type stubExpandedService struct {
 	lastSetProjectTemplateReq    mcpcommon.SetProjectTemplateRequest
 	setProjectTemplateCalls      int
 	setProjectTemplateResultFn   func(mcpcommon.SetProjectTemplateRequest) (mcpcommon.SetProjectTemplateResult, error)
+	supersedeResult              domain.ActionItem
+	supersedeErr                 error
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -638,6 +640,12 @@ func (s *stubExpandedService) ReparentActionItem(_ context.Context, _ mcpcommon.
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}, nil
+}
+
+// SupersedeActionItem returns s.supersedeResult / s.supersedeErr so table-driven tests
+// in D1.6 can configure the stub per case. Minimal stub per D1.5 mock-implementer gate.
+func (s *stubExpandedService) SupersedeActionItem(ctx context.Context, req mcpcommon.SupersedeActionItemRequest) (domain.ActionItem, error) {
+	return s.supersedeResult, s.supersedeErr
 }
 
 // ListChildActionItems returns one deterministic child row.

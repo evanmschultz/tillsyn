@@ -96,6 +96,35 @@ None. `goleak.VerifyTestMain` ran against all 389 tests in the dispatcher packag
 - **Worked via:** `Read` on `subscriber_test.go` (line ranges 509-667), `dispatcher_e2e_test.go` (new file), plus goleak source at `~/go/pkg/mod/go.uber.org/goleak@v1.3.0/testmain.go` via `Bash cat` to verify the `VerifyTestMain` return type.
 - **Suggestion:** Same as D1.1/D1.2: ensure `mcp__hylla__*` tools are in the agent's MCP allowlist.
 
+## Droplet 1.5 — Round 1
+
+- **Builder:** go-builder-agent
+- **Started:** 2026-05-18
+- **Files touched:**
+  - `internal/adapters/mcp_common/mcp_surface.go` (line 858 — interface addition)
+  - `internal/adapters/mcp_common/app_service_adapter_lifecycle_test.go` (appended 3 tests)
+  - `internal/adapters/mcp_rpc/extended_tools_test.go` (stub struct fields + method)
+- **Build-tool targets run:**
+  - `mage test-func ./internal/adapters/mcp_common TestSupersedeActionItemHappyPath` (GREEN — 1/1 pass)
+  - `mage test-func ./internal/adapters/mcp_common TestSupersedeActionItemStewardOwnerGateRejected` (GREEN — 1/1 pass)
+  - `mage test-func ./internal/adapters/mcp_common TestSupersedeActionItemMissingIDRejected` (GREEN — 1/1 pass)
+  - `mage test-pkg ./internal/adapters/mcp_common` (pass — 172 tests, 0 failures; +3 from D1.5)
+  - `mage test-pkg ./internal/adapters/mcp_rpc` (pass — 232 tests, 0 failures; compile-gate clean)
+  - `mage test-func ./internal/adapters/mcp_rpc TestStewardIntegrationDropOrchSupersedeRejected` (GREEN — regression guard passes)
+- **Notes:**
+  - **Interface addition:** `SupersedeActionItem(context.Context, SupersedeActionItemRequest) (domain.ActionItem, error)` inserted after `ReparentActionItem` at `mcp_surface.go:858`. Single-line change. `AppServiceAdapter` already implemented this method (Drop 4c.5 droplet B.1), so no adapter body change needed — the type-system check is automatic.
+  - **Mock-implementer compile gate:** Added `supersedeResult domain.ActionItem` and `supersedeErr error` fields to `stubExpandedService` in `extended_tools_test.go`. Added `SupersedeActionItem` stub method returning `s.supersedeResult, s.supersedeErr` — minimal stub per PLAN.md spec, configured per-case by D1.6 table-driven tests.
+  - **Adapter-layer tests — happy path:** Pattern mirrors `TestMoveActionItemStateToFailed`. Created project with manual todo + complete + failed columns (complete column required by `service.SupersedeActionItem` to find destination). Created item, set `outcome=failure` via `UpdateActionItem` (Drop 4c.5 A.4 guard), moved to `failed`, then called `SupersedeActionItem`. Asserted `LifecycleState==StateComplete`, `Metadata.Outcome=="superseded"`, `Metadata.TransitionNotes` preserves reason.
+  - **Adapter-layer tests — STEWARD gate rejection:** Used `newStewardGatedActionItem` + `stewardGatedActor("agent")` from `app_service_adapter_steward_gate_test.go` (same package, shared across test files). Gate fires at adapter layer before service-layer state check — item does not need to be in `failed` state for the rejection to trigger. Mirrors pattern in `TestAssertOwnerStateGateReparentActionItemAgentRejected`.
+  - **Adapter-layer tests — missing ID:** Straight-line test: empty `ActionItemID` → `ErrInvalidCaptureStateRequest` + substring `"action_item_id is required"`. Mirrors `MoveActionItemState` missing-ID sentinel.
+  - **`mage test-pkg` path format:** Same pre-existing issue as D1.1/D1.2/D1.3. `mage test-pkg internal/adapters/mcp_common` (no `./`) fails with 0 tests + exit 1. Must use `./internal/adapters/mcp_common`. Used `./` form for all test runs.
+  - **Scope:** Stayed strictly within declared paths. `app_service_adapter_mcp.go` not touched.
+  - **TDD note:** The RED phase is the "interface missing" pre-state. Since both the interface addition and the stub method are in the same atomic change as the tests, the compiler-error RED was implicit before any changes were made. After all three changes applied together, all three tests went GREEN on first run.
+
+### Hylla Feedback
+
+N/A — Hylla MCP tools (`mcp__hylla__*`) were not available in this agent session. All code understanding used `Read`, `Bash` (filtered), and LSP. Same absence as prior builder rounds in this drop.
+
 ## Droplet 1.2 — Round 2
 
 - **Builder:** go-builder-agent

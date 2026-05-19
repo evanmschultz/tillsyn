@@ -655,3 +655,252 @@ The round-2 absorptions cleanly resolve Attack 5 (wrong-layer test → genuine s
 ### Hylla Feedback
 
 Per `feedback_hylla_disabled_for_now.md` (2026-05-18 directive): Hylla MCP is OFF; no Hylla queries attempted. Fallback evidence sources: `Read`, `Bash` (`rg`, `mage test-pkg`, `mage test-func`, `git diff`, `go doc`). No `## Hylla Feedback` section content required per the 2026-05-18 rule.
+
+## Droplet 1.5 — Round 1
+
+- **Reviewer:** go-qa-falsification-agent
+- **Reviewed at:** 2026-05-18
+- **Files reviewed:**
+  - `internal/adapters/mcp_common/mcp_surface.go` (D1.5 interface addition at L858)
+  - `internal/adapters/mcp_common/app_service_adapter_lifecycle_test.go` (3 new tests at L1294-1447)
+  - `internal/adapters/mcp_common/app_service_adapter_mcp.go` (L1051-1075 — pre-existing `AppServiceAdapter.SupersedeActionItem` body)
+  - `internal/adapters/mcp_common/app_service_adapter_steward_gate_test.go` (L1-90 — `newStewardGatedActionItem` + `stewardGatedActor` helpers)
+  - `internal/adapters/mcp_rpc/extended_tools_test.go` (L33-94 + L640-655 — `stubExpandedService` fields + new method)
+  - `internal/app/dispatcher/dispatcher.go` (L1-80 — verified no `mcp_common` import)
+  - `internal/app/dispatcher/dispatcher_e2e_test.go` (L1-600 — confirmed out-of-scope parallel-droplet WIP)
+- **Build-tool targets:**
+  - `mage build` GREEN (full repo production compile)
+  - `mage testPkg ./internal/adapters/mcp_common` GREEN (172 tests)
+  - `mage testPkg ./internal/adapters/mcp_rpc` GREEN (232 tests)
+  - `mage testPkg ./cmd/till` GREEN (422 tests)
+  - `mage testFunc ./internal/adapters/mcp_common TestSupersedeActionItemHappyPath` GREEN (1/1 with -race)
+  - `mage testFunc ./internal/adapters/mcp_common TestSupersedeActionItemStewardOwnerGateRejected` GREEN (1/1 with -race)
+  - `mage testFunc ./internal/adapters/mcp_common TestSupersedeActionItemMissingIDRejected` GREEN (1/1 with -race)
+  - `mage testFunc ./internal/adapters/mcp_rpc TestStewardIntegrationDropOrchSupersedeRejected` GREEN (existing integration guard)
+- **Verdict:** **PASS-WITH-NITS**. Zero CONFIRMED counterexamples against D1.5's claim. Two NITs surfaced and one out-of-scope observation about a sibling-droplet's dispatcher build failure. The interface widening is sound, the three new adapter-layer tests exercise real adapter→service paths (not stubbed), and the mock implementer (`stubExpandedService`) is updated correctly.
+
+### Attack-by-Attack Verdicts
+
+#### Attack 1 — Other ActionItemService implementers compile-fail
+
+**Verdict: REFUTED.**
+
+Evidence: `mage build` succeeds for the full production codebase, AND `mage testPkg` succeeds for every package that consumes `ActionItemService`:
+
+- `internal/adapters/mcp_common` (172 tests, `AppServiceAdapter` is the production implementer — already had `SupersedeActionItem` from Drop 4c.5 droplet B.1, see `app_service_adapter_mcp.go:1051`)
+- `internal/adapters/mcp_rpc` (232 tests, `stubExpandedService` is the only test mock implementer in this package — builder added the new method at `extended_tools_test.go:642-647`)
+- `cmd/till` (422 tests, consumes the adapter via dependency injection)
+
+Go's compile gate is the canonical "any missing method" detector. If a non-conforming implementer existed elsewhere, `mage build` or one of these test-pkg runs would have failed with `does not implement mcpcommon.ActionItemService (missing method SupersedeActionItem)`. None did. The `cmd/till` dispatcher subcommand does NOT import `mcp_common.ActionItemService` (verified by reading `internal/app/dispatcher/dispatcher.go:1-17` — imports `app`, `domain`, `templates` only) so the dispatcher's separate compile failure cannot be attributed to D1.5's interface change.
+
+Bash `grep -rl ActionItemService` was sandbox-blocked in this environment, but the compile-gate evidence above is equivalent and stronger — any false negative in a manual grep walk is caught by `go build` automatically.
+
+#### Attack 2 — Interface-satisfaction compile gate (explicit `var _` assertion)
+
+**Verdict: NIT (pre-existing pattern, not a D1.5 regression).**
+
+Evidence: read `internal/adapters/mcp_common/app_service_adapter.go:1-100` and `app_service_adapter_test.go` in full — there is NO `var _ ActionItemService = (*AppServiceAdapter)(nil)` compile-time assertion anywhere in the package. The interface satisfaction is inferred empirically from `AppServiceAdapter`'s use sites (`extended_tools.go` and similar adapters consume `mcpcommon.ActionItemService` and pass `*AppServiceAdapter` — at THOSE call sites, the compiler verifies satisfaction).
+
+This is a pre-existing pattern across the package, not introduced by D1.5. The reason it's a NIT and not a CONFIRMED counterexample:
+
+1. Go's structural-typing compile gate is already authoritative. Any future implementer fails-fast at first use site.
+2. Adding an explicit `var _` assertion is a doc/style improvement, not a correctness fix.
+3. D1.5's scope is "add SupersedeActionItem to the interface + add tests"; refactoring the package-wide assertion pattern is out of scope.
+
+**Mitigation (dev disposition):** consider adding `var _ ActionItemService = (*AppServiceAdapter)(nil)` to `app_service_adapter.go` after the type declaration as a doc-level guard. Defer to Drop 4b refinement; not a D1.5 round-2 requirement.
+
+#### Attack 3 — `SupersedeActionItemRequest` import / type-location
+
+**Verdict: REFUTED.**
+
+Evidence: `SupersedeActionItemRequest` is defined in the SAME FILE as the interface declaration — `internal/adapters/mcp_common/mcp_surface.go:354`:
+
+```go
+type SupersedeActionItemRequest struct {
+    ActionItemID string
+    Reason       string
+    Actor        ActorLeaseTuple
+}
+```
+
+No external import required. No risk of import cycle. The interface method at L858 references `SupersedeActionItemRequest` (same package, same file) and `domain.ActionItem` (imported at L8 — `github.com/evanmschultz/tillsyn/internal/domain`). Both resolve cleanly. `mage build` confirms.
+
+#### Attack 4 — Happy-path test soundness (real vs stubbed)
+
+**Verdict: REFUTED. Test exercises real adapter→service path with in-memory repo.**
+
+Evidence: read `app_service_adapter_lifecycle_test.go:1294-1387` end-to-end. The test:
+
+1. Calls `newCommonLifecycleFixture(t)` (per-test isolated fixture with in-memory SQLite repo + real `app.Service` + real `AppServiceAdapter`)
+2. Creates a real project via `fixture.adapter.CreateProject(...)` — actual adapter call
+3. Creates real columns via `fixture.svc.CreateColumn(...)` — Todo, Complete, Failed
+4. Creates a real action item via `fixture.adapter.CreateActionItem(...)`
+5. Sets `outcome=failure` via `fixture.adapter.UpdateActionItem(...)` (Drop 4c.5 A.4 guard — required before move-to-failed)
+6. Moves to `failed` state via `fixture.adapter.MoveActionItemState(...)` — real state transition
+7. Calls `fixture.adapter.SupersedeActionItem(...)` — **real adapter method**, not stubbed
+8. Asserts:
+   - `LifecycleState == StateComplete` (L1373)
+   - `Metadata.Outcome == "superseded"` (L1376)
+   - `Metadata.TransitionNotes == "supersede reason: QA cleared, proceeding to next drop"` (L1382 — **exact string match**, not substring)
+
+The real flow exercises `AppServiceAdapter.SupersedeActionItem` → `withMutationGuardContext` → `GetActionItem` → `assertOwnerStateGate` (non-STEWARD owner bypasses gate) → `service.SupersedeActionItem` → in-memory repo update. The assertion at L1382 uses `!=` (exact equality) NOT `strings.Contains` — strictest possible check on the reason-preserved-on-`transition_notes` invariant.
+
+`mage testFunc ./internal/adapters/mcp_common TestSupersedeActionItemHappyPath` re-run independently in this review GREEN with `-race` in 8.18s.
+
+#### Attack 5 — STEWARD-gate test soundness (concrete principal_role/owner)
+
+**Verdict: REFUTED.**
+
+Evidence: read `app_service_adapter_lifecycle_test.go:1394-1416` plus the helper definitions in `app_service_adapter_steward_gate_test.go:1-90`.
+
+- `newStewardGatedActionItem(t, fixture, "")` creates an item with `Owner == "STEWARD"` (default when ownerOverride is `""`) and `DropNumber=3 + Persistent=true` (the STEWARD-owned shape per Drop 3 droplet 3.19).
+- `stewardGatedActor("agent")` constructs an `ActorLeaseTuple` with `AuthRequestPrincipalType == "agent"` — the drop-orch principal class.
+- The gate at `app_service_adapter_mcp.go:1067` (`assertOwnerStateGate(ctx, existing)`) fires BEFORE the service-layer state check (`a.service.SupersedeActionItem` at L1070). So the item does NOT need to be in `failed` state for the rejection to land — the gate keys on `(item.Owner=="STEWARD") && (caller.AuthRequestPrincipalType != "steward")`.
+- The test asserts `errors.Is(err, ErrAuthorizationDenied)` at L1413 — the sentinel from the STEWARD owner-state-lock per Drop 3 droplet 3.19.
+
+The assertion is non-trivial: it ensures non-steward actors are blocked from superseding STEWARD-owned items, mirroring the existing `TestAssertOwnerStateGateMoveActionItemStateAgentRejected` pattern at `app_service_adapter_steward_gate_test.go:16`. Same helper, same principal class, same sentinel — consistent with the established gate-test pattern.
+
+Independent re-run: `mage testFunc ./internal/adapters/mcp_common TestSupersedeActionItemStewardOwnerGateRejected` GREEN in 8.14s with `-race`.
+
+#### Attack 6 — Missing-ID test return path
+
+**Verdict: REFUTED.**
+
+Evidence: read `app_service_adapter_mcp.go:1051-1075` and `app_service_adapter_lifecycle_test.go:1422-1447`.
+
+Adapter source (lines 1059-1062):
+```go
+actionItemID := strings.TrimSpace(in.ActionItemID)
+if actionItemID == "" {
+    return domain.ActionItem{}, fmt.Errorf("action_item_id is required: %w", ErrInvalidCaptureStateRequest)
+}
+```
+
+This is the exact code path the test asserts against. The test (L1422-1447):
+- Calls `fixture.adapter.SupersedeActionItem(ctx, SupersedeActionItemRequest{ActionItemID: "", Reason: "..."})`
+- Asserts `err != nil` (L1438)
+- Asserts `errors.Is(err, ErrInvalidCaptureStateRequest)` (L1441)
+- Asserts `strings.Contains(err.Error(), "action_item_id is required")` (L1444)
+
+The empty-ID check exists exactly where the planner said it would (around line 1054 — confirmed at 1059-1062, two lines off the planner's estimate). The empty-ID rejection happens AFTER `withMutationGuardContext` (which may also error on missing actor fields, but a `user-1` actor is present in the test) — so the test isolates the missing-ID branch specifically.
+
+Independent re-run: `mage testFunc ./internal/adapters/mcp_common TestSupersedeActionItemMissingIDRejected` GREEN in 8.19s with `-race`.
+
+#### Attack 7 — Test fixture pollution / shared-state leakage
+
+**Verdict: REFUTED.**
+
+Evidence: all three new tests call `t.Parallel()` and use `newCommonLifecycleFixture(t)` — a per-test fixture that builds a fresh in-memory SQLite repo + fresh `app.Service` + fresh `AppServiceAdapter` per test. No shared maps/slices, no `init()` helpers, no global counters.
+
+Pattern check: existing sibling tests in the same file (e.g. `TestMoveActionItemStateToFailed`, `TestReparentActionItemHappyPath`) follow the identical `newCommonLifecycleFixture(t)` + `t.Parallel()` pattern. The 172-test mcp_common package run passes with the default Go parallelism (GOMAXPROCS) — empirical confirmation that no fixture cross-talk exists.
+
+Each STEWARD-gate test uses `newStewardGatedActionItem(t, fixture, "")` which creates a NEW item per call (not a shared singleton). Confirmed by reading the helper signature in `app_service_adapter_steward_gate_test.go`.
+
+#### Attack 8 — `stubExpandedService` zero-value behavior on existing tests
+
+**Verdict: REFUTED.**
+
+Evidence: read `extended_tools_test.go:33-94` (`stubExpandedService` struct decl) and `:640-655` (new `SupersedeActionItem` method).
+
+The new fields `supersedeResult domain.ActionItem` (L92) and `supersedeErr error` (L93) are added to the struct. Their zero values are `domain.ActionItem{}` and `nil` respectively. The new method body (L642-647):
+
+```go
+func (s *stubExpandedService) SupersedeActionItem(ctx context.Context, req mcpcommon.SupersedeActionItemRequest) (domain.ActionItem, error) {
+    return s.supersedeResult, s.supersedeErr
+}
+```
+
+The method returns `(domain.ActionItem{}, nil)` by default for any test that does not explicitly set the fields. **But:** no existing test in `extended_tools_test.go` calls `SupersedeActionItem` through this stub — the method is brand-new on the stub, added in D1.5 to satisfy the widened interface. D1.6 will add table-driven tests that configure the fields per-case.
+
+Empirical: `mage testPkg ./internal/adapters/mcp_rpc` passes all 232 tests after the addition. Zero existing tests break from the new zero-value field defaults because none invoke the new method.
+
+No counterexample. The stub is correctly minimal for its current consumer set.
+
+#### Attack 9 — Cross-package interface impact
+
+**Verdict: REFUTED.**
+
+Evidence: tested every package that has access to `mcpcommon.ActionItemService`:
+
+- `internal/adapters/mcp_common` — interface lives here; `AppServiceAdapter` implements it. **172 tests GREEN.**
+- `internal/adapters/mcp_rpc` — consumes via `stubExpandedService` (test) + production handlers consuming the interface. **232 tests GREEN.**
+- `cmd/till` — consumes the production `*mcpcommon.AppServiceAdapter` (real implementer). **422 tests GREEN.**
+- `internal/app/dispatcher` — does NOT import `mcp_common.ActionItemService` (verified by reading `internal/app/dispatcher/dispatcher.go:1-17`). Imports only `app`, `domain`, `templates`. The dispatcher's separate build failure is unrelated to D1.5.
+
+`go build` (via `mage build`) succeeds for the production binary — the canonical "all interface satisfactions hold" check. Bash `grep -r 'ActionItemService'` was sandbox-blocked, but the compile-gate evidence is stronger and exhaustive.
+
+#### Attack 10 — Compile-time error message clarity / explicit `var _` assertion
+
+**Verdict: NIT (overlaps with Attack 2).**
+
+Evidence: same as Attack 2. There is no `var _ ActionItemService = (*AppServiceAdapter)(nil)` and no `var _ mcpcommon.ActionItemService = (*stubExpandedService)(nil)` assertion in this codebase. The interface satisfaction is verified empirically at first call site, which produces messages like:
+
+```
+cannot use srv (variable of type *stubExpandedService) as mcpcommon.ActionItemService value in argument to NewHandler: *stubExpandedService does not implement mcpcommon.ActionItemService (missing method SupersedeActionItem)
+```
+
+This is sufficiently clear — Go's compiler names both the type AND the missing method. Adding an explicit `var _` would give the same message at the assertion site instead of the call site (which is what new contributors would benefit from — fail-loud-at-declaration vs fail-loud-at-use).
+
+**Mitigation (dev disposition):** consider a separate refinement to add explicit `var _ ActionItemService = (*AppServiceAdapter)(nil)` assertions in both `app_service_adapter.go` (production) AND a comparable assertion in `extended_tools_test.go` for `stubExpandedService`. This is a doc/discipline improvement, not a correctness fix. Not a blocker for D1.5 PASS.
+
+### Out-of-Scope Observation — Dispatcher build failure
+
+**NOT attributable to D1.5.**
+
+`mage ci` reports a build error in `internal/app/dispatcher` (1 of 28 packages — the only failure). Verification:
+
+1. `internal/app/dispatcher/dispatcher.go:1-17` imports `internal/app`, `internal/domain`, `internal/templates` ONLY. No `mcp_common` import.
+2. `mage build` (production binary) succeeds — so dispatcher's PRODUCTION code compiles cleanly.
+3. The failure is in a test file: `internal/app/dispatcher/dispatcher_e2e_test.go` shows ~660 lines of new R7.x work (per-project template routing tests, broker-chain integration tests) that is OUT-OF-SCOPE for D1.5. The BUILDER_WORKLOG D1.3 round 1 documents this dispatcher work as a parallel droplet's R7.x contribution.
+4. D1.5's `paths` declaration does NOT include `internal/app/dispatcher/*` — D1.5 stayed strictly within `internal/adapters/mcp_common/*` and `internal/adapters/mcp_rpc/*`.
+
+The dispatcher build failure was either (a) inherited from a prior parallel droplet, or (b) introduced by a sibling builder still in progress. Either way, it is OUTSIDE D1.5's edit envelope. **Recommendation:** the orchestrator should route the dispatcher failure to its owning droplet (likely R7.3/R7.1/R7.2 work mentioned in the diff) — not to D1.5 round 2.
+
+### Counterexamples Summary
+
+- **CONFIRMED (0):** no counterexamples against D1.5's claim.
+- **NIT (2):**
+  - **Attack 2 / Attack 10** — no explicit `var _ ActionItemService = (*AppServiceAdapter)(nil)` compile-time assertion. Pre-existing pattern, not a D1.5 regression. Optional improvement; consider for Drop 4b refinement.
+- **REFUTED (8):**
+  - **Attack 1** — no other ActionItemService implementer breaks; `mage build` + 3 package test runs GREEN.
+  - **Attack 3** — `SupersedeActionItemRequest` is same-file (mcp_surface.go:354); no import needed.
+  - **Attack 4** — happy-path test uses real adapter→service→repo path; not stubbed. Asserts `LifecycleState`, `Outcome`, and `TransitionNotes` (exact equality, not substring).
+  - **Attack 5** — STEWARD-gate test uses canonical helpers; asserts `errors.Is(err, ErrAuthorizationDenied)`. Gate fires before service-layer state check.
+  - **Attack 6** — empty-ID check exists at `app_service_adapter_mcp.go:1059-1062`; test asserts `errors.Is(ErrInvalidCaptureStateRequest)` + substring `"action_item_id is required"`.
+  - **Attack 7** — all 3 tests `t.Parallel()` + per-test `newCommonLifecycleFixture(t)`; no shared state.
+  - **Attack 8** — `supersedeResult/Err` zero values are inert; no existing test calls the new stub method.
+  - **Attack 9** — all 3 dependent packages compile + tests pass (mcp_common 172, mcp_rpc 232, cmd/till 422); dispatcher does not import `ActionItemService`.
+
+### Severity + Mitigation Summary
+
+| Attack | Verdict | Severity | Mitigation | Owner |
+|--------|---------|----------|------------|-------|
+| 1 other implementers | REFUTED | n/a | — (compile gate verifies) | — |
+| 2 var _ assertion | NIT | low | Add `var _ ActionItemService = (*AppServiceAdapter)(nil)` in production + test | Drop 4b refinement (NOT D1.5 round 2) |
+| 3 request-type import | REFUTED | n/a | — (same-file) | — |
+| 4 happy-path soundness | REFUTED | n/a | — (real adapter call, exact-equality assertions) | — |
+| 5 STEWARD gate | REFUTED | n/a | — (canonical helper pattern) | — |
+| 6 missing-ID path | REFUTED | n/a | — (sentinel + substring both verified) | — |
+| 7 fixture pollution | REFUTED | n/a | — (`t.Parallel()` + per-test fixture) | — |
+| 8 stub zero-value | REFUTED | n/a | — (no existing tests invoke new method) | — |
+| 9 cross-package impact | REFUTED | n/a | — (3 packages + production GREEN) | — |
+| 10 compile-error clarity | NIT | low | Same as Attack 2 (combine into single refinement) | Drop 4b refinement |
+| Dispatcher build error | OUT-OF-SCOPE | — | Route to owning droplet (R7.x parallel work) | Orchestrator routing |
+
+### Recommendation
+
+**PASS on the D1.5 build claim.** The interface widening is correct, the request type is co-located, the production adapter method (`AppServiceAdapter.SupersedeActionItem`) pre-existed and already implements the new interface method automatically (no body change needed), and the test mock (`stubExpandedService`) is updated with a minimal stub. The three new adapter-layer tests exercise REAL adapter→service paths (not stubbed) and assert the precise invariants the planner specified:
+
+- `LifecycleState == StateComplete` after supersede
+- `Metadata.Outcome == "superseded"` (exact match)
+- `Metadata.TransitionNotes == reason` (exact equality, not substring)
+- STEWARD gate rejection with `ErrAuthorizationDenied`
+- Missing-ID rejection with `ErrInvalidCaptureStateRequest` + `"action_item_id is required"` substring
+
+Zero CONFIRMED counterexamples. Two NITs (collapsed: explicit `var _` assertion) are dev-disposition for a separate Drop 4b refinement, NOT blockers for D1.5 PASS.
+
+The dispatcher build failure observed during `mage ci` is OUT-OF-SCOPE for D1.5 — the dispatcher does not import `mcp_common.ActionItemService` and D1.5 did not touch `internal/app/dispatcher/*`. That failure is owned by the parallel R7.x droplet visible in the dispatcher_e2e_test.go diff.
+
+### Hylla Feedback
+
+Per `feedback_hylla_disabled_for_now.md` (2026-05-18 directive): Hylla MCP is OFF; no Hylla queries attempted. Fallback evidence sources: `Read`, `mage build`, `mage testPkg`, `mage testFunc`, `git diff`, `git status`. Bash `grep`/`awk`/`sed`/`find -exec` were sandbox-blocked in this environment; compile-gate evidence (`mage build` + per-package `mage testPkg`) provided equivalent or stronger evidence for the cross-package interface-satisfaction attacks. No `## Hylla Feedback` section content required per the 2026-05-18 rule.

@@ -358,3 +358,52 @@ None. All claims have explicit evidence in code, grep results, or mage output.
 ### Hylla Feedback
 
 N/A — Hylla MCP is OFF (`feedback_hylla_disabled_for_now.md`, 2026-05-18). Evidence gathering used `Read` on the test file + production file, `rg` for stale-name absence sweep, `git status --porcelain` + `git diff --stat` for scope, and `mage test-pkg ./internal/adapters/mcp_rpc` for the live acceptance run.
+
+## Droplet 1.5 — Round 1
+
+- **Reviewer:** go-build-qa-proof-agent
+- **Date:** 2026-05-18
+- **Scope:** D1.5 mock-implementer compile gate — `ActionItemService` interface extension + adapter-layer tests + `stubExpandedService` extension.
+- **Verdict:** `pass`
+- **Findings:** 0 blocking, 0 NITs
+
+### Evidence
+
+**Premises (what must hold for D1.5 to be correct):**
+
+1. `ActionItemService` interface at `internal/adapters/mcp_common/mcp_surface.go` carries `SupersedeActionItem(context.Context, SupersedeActionItemRequest) (domain.ActionItem, error)` immediately after `ReparentActionItem`, with signature matching the existing concrete adapter method.
+2. `internal/adapters/mcp_common/app_service_adapter_mcp.go` is unmodified — the existing method at lines 1051–1075 must satisfy the new interface entry without any source change.
+3. Three new adapter-layer tests (`TestSupersedeActionItemHappyPath`, `TestSupersedeActionItemStewardOwnerGateRejected`, `TestSupersedeActionItemMissingIDRejected`) exist in `app_service_adapter_lifecycle_test.go` with assertions that cover (a) happy-path lifecycle/outcome/transition_notes, (b) STEWARD owner-state gate via `assertOwnerStateGate`, (c) empty-id sentinel.
+4. `stubExpandedService` in `internal/adapters/mcp_rpc/extended_tools_test.go` carries `supersedeResult domain.ActionItem` + `supersedeErr error` fields plus a `SupersedeActionItem` method returning those fields — required so `stubExpandedService` continues to satisfy `mcpcommon.ActionItemService` after the interface widens.
+5. `TestStewardIntegrationDropOrchSupersedeRejected` at `handler_steward_integration_test.go:466` still passes — the integration-level regression guard for the same gate semantics.
+6. `mage test-pkg ./internal/adapters/mcp_common` returns 172/0 (+3 from baseline 169); `mage test-pkg ./internal/adapters/mcp_rpc` returns 232/0 (compile gate clean, confirming the stub change holds the package compiling).
+7. Working-tree scope on `internal/adapters/` shows only the three D1.5 paths dirty — disjoint from sibling Go D1.4 (`internal/app/dispatcher/dispatcher_e2e_test.go`) and FE D1.4 (`ui/`).
+
+**Evidence per premise:**
+
+1. `mcp_surface.go:847-862` (Read): the `ActionItemService` interface lists `ReparentActionItem(...)` at line 857 and the new `SupersedeActionItem(context.Context, SupersedeActionItemRequest) (domain.ActionItem, error)` at line 858 — exact position claimed. Signature character-for-character matches the existing concrete method declaration at `app_service_adapter_mcp.go:1051` (`func (a *AppServiceAdapter) SupersedeActionItem(ctx context.Context, in SupersedeActionItemRequest) (domain.ActionItem, error)`). Method-set check: identical receiver-less view.
+2. `git diff HEAD -- internal/adapters/mcp_common/app_service_adapter_mcp.go` returns empty output — no changes whatsoever to the adapter file. The existing method body at lines 1051–1075 is unchanged.
+3. `app_service_adapter_lifecycle_test.go:1294-1447` (Read + `git diff` of +151 lines):
+   - `TestSupersedeActionItemHappyPath` (lines ~1300–1382): creates project + To Do / Complete / Failed columns, creates droplet item, sets `Metadata.Outcome="failure"` via `UpdateActionItem` (A.4 outcome guard satisfied), moves to `failed`, then calls `SupersedeActionItem` with a non-STEWARD user actor. Asserts `superseded.LifecycleState == domain.StateComplete`, `superseded.Metadata.Outcome == "superseded"`, and `superseded.Metadata.TransitionNotes` preserves the reason string. All three asserts present and concrete.
+   - `TestSupersedeActionItemStewardOwnerGateRejected` (lines 1394–1416): uses `newStewardGatedActionItem(t, fixture, "")` and `stewardGatedActor("agent")` (helpers shared from `app_service_adapter_steward_gate_test.go`), then asserts `errors.Is(err, ErrAuthorizationDenied)`. Correctly demonstrates that `assertOwnerStateGate` fires at the adapter layer before the service-layer state check (no need to put item into `failed` first).
+   - `TestSupersedeActionItemMissingIDRejected` (lines 1422–1447): empty `ActionItemID` with a non-empty reason. Asserts `errors.Is(err, ErrInvalidCaptureStateRequest)` AND `strings.Contains(err.Error(), "action_item_id is required")` — both the sentinel-wrap and the user-facing message verified.
+4. `extended_tools_test.go:85-94` (Read): struct shows the existing fields followed by the two new lines `supersedeResult              domain.ActionItem` (line 92) + `supersedeErr                 error` (line 93). `extended_tools_test.go:645-649` (Read): `func (s *stubExpandedService) SupersedeActionItem(ctx context.Context, req mcpcommon.SupersedeActionItemRequest) (domain.ActionItem, error) { return s.supersedeResult, s.supersedeErr }`. Method-set match against the interface signature (parameter names differ but types match — name-irrelevant for interface satisfaction).
+5. `mage test-func ./internal/adapters/mcp_rpc TestStewardIntegrationDropOrchSupersedeRejected` ran live: `[SUCCESS] 1 test passed across 1 package` (8.23s). `handler_steward_integration_test.go:466` shows the test function `TestStewardIntegrationDropOrchSupersedeRejected` at the expected line.
+6. `mage test-pkg ./internal/adapters/mcp_common` ran live: `tests: 172, passed: 172, failed: 0`. `mage test-pkg ./internal/adapters/mcp_rpc` ran live: `tests: 232, passed: 232, failed: 0`. The 232 result is the load-bearing compile-gate signal — if `stubExpandedService` no longer satisfied `mcpcommon.ActionItemService` after the interface widened, the package would fail to build and these tests would not run.
+7. `git status --porcelain internal/adapters/` shows exactly: `M internal/adapters/mcp_common/app_service_adapter_lifecycle_test.go`, `M internal/adapters/mcp_common/mcp_surface.go`, `M internal/adapters/mcp_rpc/extended_tools_test.go` — and nothing else under `internal/adapters/`. Sibling Go D1.4 dirty file `internal/app/dispatcher/dispatcher_e2e_test.go` is outside this tree (disjoint). FE D1.4 dirty files (`ui/main.go`, `ui/app_test.go`, `ui/types.go`) are outside this tree (disjoint).
+
+**Trace or cases:**
+
+- **Interface-method position trace**: `ReparentActionItem` is at line 857 → `SupersedeActionItem` is at line 858 → `ListChildActionItems` follows at line 859. The "immediately after `ReparentActionItem`" claim from the builder and the spawn prompt is satisfied.
+- **Interface-satisfaction trace (compile gate)**: `AppServiceAdapter.SupersedeActionItem` at `app_service_adapter_mcp.go:1051` matches `(context.Context, SupersedeActionItemRequest) (domain.ActionItem, error)` ⇒ satisfies the new entry. `stubExpandedService.SupersedeActionItem` at `extended_tools_test.go:647` matches the same signature ⇒ satisfies the new entry. `mage test-pkg ./internal/adapters/mcp_rpc` returning 232/0 is the dispositive evidence that both implementations link.
+- **Happy-path trace**: actor (non-STEWARD `ActorTypeUser`) ⇒ `assertOwnerStateGate` no-op (item owner not STEWARD) ⇒ `service.SupersedeActionItem` performs the failed→complete transition with `outcome=superseded` + reason on `transition_notes` ⇒ assertions confirm all three observable fields. The A.4 outcome guard is satisfied via the upstream `UpdateActionItem(outcome="failure")` setup step.
+- **Gate-rejection trace**: STEWARD-owned fixture item + `AuthRequestPrincipalType="agent"` (drop-orch class) ⇒ `assertOwnerStateGate` returns `ErrAuthorizationDenied` ⇒ `service.SupersedeActionItem` is never reached. Item state is irrelevant — the gate keys on owner+principal type only. Test correctly does NOT move the item to `failed` because the gate fires before any state check.
+- **Empty-id trace**: `strings.TrimSpace("") == ""` ⇒ adapter returns `fmt.Errorf("action_item_id is required: %w", ErrInvalidCaptureStateRequest)` at line 1061 of the adapter ⇒ `errors.Is` matches and `Error()` contains the substring. Both asserts cover the wrapping AND the message.
+
+**Conclusion:** PASS. The interface extension lands at the exact claimed position with a matching signature; the adapter file is untouched (zero git diff) so the existing method satisfies the new entry by Go's structural-subtyping rules. The three adapter-layer tests are well-formed — they exercise the happy path, the gate rejection, and the sentinel-wrap missing-id case with concrete assertions. The `stubExpandedService` extension keeps the `mcp_rpc` package compiling (confirmed by the 232/0 run). The integration-level `TestStewardIntegrationDropOrchSupersedeRejected` regression guard is unaffected and passes. Working-tree scope is clean within `internal/adapters/` — only the three claimed paths are dirty, and sibling Go D1.4 / FE D1.4 dirty files sit outside this subtree.
+
+**Unknowns:** None. Every claim is backed by either direct file Read, `git diff` / `git status` output, or live `mage` test result.
+
+### Hylla Feedback
+
+N/A — Hylla MCP is OFF (`feedback_hylla_disabled_for_now.md`, 2026-05-18). Evidence gathering used `Read` for direct file inspection, `git diff` + `git status --porcelain` for diff-scope verification, and three live `mage` invocations (`test-pkg ./internal/adapters/mcp_common`, `test-pkg ./internal/adapters/mcp_rpc`, `test-func ./internal/adapters/mcp_rpc TestStewardIntegrationDropOrchSupersedeRejected`).
