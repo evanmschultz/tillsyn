@@ -103,7 +103,7 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 
 ### Droplet 1.4 — R7.1 + R7.2 + R7.3: e2e test enrichment
 
-**State:** in_progress
+**State:** done
 **Paths:**
 - `internal/app/dispatcher/dispatcher_e2e_test.go`
 **Packages:** `internal/app/dispatcher`

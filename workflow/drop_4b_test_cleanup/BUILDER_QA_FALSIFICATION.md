@@ -961,3 +961,135 @@ All ten spawn-list attacks landed (REFUTED or NIT). No speculative attacks dress
 ### Hylla Feedback
 
 Per `feedback_hylla_disabled_for_now.md` (2026-05-18 directive): Hylla MCP is OFF; no Hylla queries attempted. Fallback evidence sources: `Read` on targeted line ranges, `git diff HEAD --stat`, `git status --porcelain`, `git log --oneline`, `rtk grep` (rtk-proxied ripgrep), `go doc strings.TrimSpace` + `go doc unicode.IsSpace` (Go stdlib doc), and Context7 query against `/golang/go` for stdlib whitespace semantics (returned tangential results — `go doc` was the authoritative source). No `## Hylla Feedback` section content required per the 2026-05-18 rule.
+
+## Droplet 1.4 — Round 1
+
+- **Reviewer:** go-qa-falsification-agent
+- **Reviewed at:** 2026-05-18
+- **Files reviewed:**
+  - `internal/app/dispatcher/dispatcher_e2e_test.go` (D1.4 modifications, unstaged on `main`)
+  - `internal/app/dispatcher/monitor.go` (`applyCleanExitTransition`, `runHandle`, `transitionToFailed`)
+  - `internal/app/dispatcher/monitor_test.go` (unit-test coverage of pre-loop ctx-cancel branch)
+  - `internal/app/dispatcher/subscriber.go` (`handleSubscriberEvent`)
+  - `internal/app/dispatcher/dispatcher.go` (`dispatcher.transitionToFailed` Stage-8 path)
+  - `internal/domain/project.go` (`KindCatalogJSON` field type)
+  - `workflow/drop_4b_test_cleanup/PLAN.md` D1.4 entry
+  - `workflow/drop_4b_test_cleanup/BUILDER_WORKLOG.md` D1.4 Round 1 entry
+  - Commit `d949f6f` diff (origin of `applyCleanExitTransition`'s two new branches)
+- **Build-tool targets:**
+  - `mage test-pkg ./internal/app/dispatcher` (pass — 397/397, post-D1.4)
+  - `mage test-pkg ./internal/app/dispatcher` (pass — 389/389, pre-D1.4 via `git stash`)
+- **Verdict:** **PASS-WITH-FINDINGS**. D1.4 ships working integration coverage; tests are green. ONE CONFIRMED finding (Attack 1: C2 substitution leaves the pre-loop ctx-cancel branch from `d949f6f` UNCOVERED by the integration chain — exactly the path R7.2 named in PLAN.md). The builder's worklog labels the deviation honestly under "Note on C2 path labeled in PLAN.md" and frames it as "equivalent invariants" — that framing is wrong (C1, the pre-loop ctx-cancel, and the in-loop GateStatusSkipped are THREE distinct branches in `applyCleanExitTransition`). Disposition: defer scoped follow-up refinement; do NOT block D1.4 close, because (a) builder documented the deviation in worklog and (b) the in-loop Skipped branch IS now covered. Two NITs.
+
+### Attack-by-Attack Verdicts
+
+#### Attack 1 — C2 deviation from R7.2 spec
+
+- **Verdict: CONFIRMED (with disposition: refinement, not blocker).**
+- **Evidence trace:**
+  - `monitor.go:448-524` `applyCleanExitTransition` has FOUR mutually-exclusive non-error early-exit branches after commit `d949f6f`:
+    - **Empty-template fast path** (`tpl.SchemaVersion == "" || len(tpl.Kinds) == 0`) at line 467 → `transitionToComplete`. (Builder's "C1".)
+    - **Pre-loop ctx-cancel** (`len(tpl.Gates[item.Kind]) > 0 && len(results) == 0`) at line 492 → returns nil. (PLAN.md's "C2".)
+    - **In-loop Skipped** (`r.Status == GateStatusSkipped`) at line 500 → returns nil. (Builder's substituted "C2".)
+    - **All-passed** (loop end) at line 523 → `transitionToComplete`.
+  - Commit `d949f6f` ADDED BOTH the pre-loop ctx-cancel AND the in-loop Skipped branches in the same change. They are NOT "equivalent invariants" — they cover different scenarios (gates.Run short-circuit BEFORE any gate runs vs a gate that ran and returned Skipped). The behavioral output is the same (no state transition), but the code paths are distinct.
+  - PLAN.md D1.4 R7.2 line 116 explicitly cites "These paths were added inline at commit `d949f6f`" — naming BOTH branches by reference to that commit. The acceptance criterion at line 126 says "covers at least the C1 (already-complete skip) and C2 (ctx-cancel pre-loop) paths" — that's the pre-loop branch by name.
+  - `monitor_test.go:944-955` explicitly states: "The pre-loop ctx-cancel path is hard to test deterministically without exposing internals." The existing UNIT test layer thus does NOT cover the pre-loop branch directly either — R7.2's integration-coverage goal would have been the FIRST coverage of that branch.
+  - D1.4 only added `TestMonitorCleanExitSkippedGateLeavesInProgress`-style coverage at integration scope (in-loop branch). The pre-loop branch remains uncovered by integration tests; coverage at unit scope is also explicitly deferred.
+  - Builder's worklog "Note on C2 path labeled in PLAN.md" (lines 211) does document the deviation honestly, but the framing "the behavioral invariant ... is equivalent" understates the gap. The behavioral invariant is equivalent; the COVERAGE GUARANTEE the planner asked for (pinning the specific branch added at `d949f6f`) is not met.
+- **Disposition:** The builder substituted a different branch and disclosed it. The shipped C2 sub-test is real coverage of a real branch added in `d949f6f`. The MISSED branch (pre-loop ctx-cancel) remains uncovered at integration scope, which is a real gap but not a regression. Refinement candidate: add a follow-up droplet (post-D1.4 close) to wire the pre-loop ctx-cancel branch coverage, either by exposing a context-cancellation seam in `processMonitor` or by adding a unit test that asserts the `len(tpl.Gates[item.Kind]) > 0 && len(results) == 0` branch via direct construction. NOT a D1.4 close-blocker since builder documented the substitution.
+
+#### Attack 2 — R7.1 chain-reach assertion specificity
+
+- **Verdict: REFUTED.**
+- **Evidence trace:**
+  - The R7.1 test `TestAutoDispatchE2E_GateFailFullChain` (lines 549-572) asserts: `updateCalls >= 1` + `meta.Outcome == "failure"` + `meta.BlockedReason != ""` + `lastMoveCol == "col-failed"`.
+  - I checked all callers of `transitionToFailed` (rg, 21 matches). The ONLY other `transitionToFailed` in the dispatcher package is `dispatcher.transitionToFailed` at `dispatcher.go:687`. That function is invoked exclusively when `monitor.Track` returns an error (Stage 8 spawn failure, dispatcher.go:636-670).
+  - The test wires `installFakeClaudeBinary` which writes `#!/bin/sh\nexit 0\n` to PATH. `monitor.Track` constructs `cmd := exec.Command("claude", ...)` (via `BuildSpawnCommand`), so the shell script IS the binary; `exec.LookPath("claude")` resolves to the temp dir, `cmd.Start()` succeeds, the process exits 0, `cmd.Wait()` returns nil → `outcome.Crashed == false` → `runHandle` line 367 hits the clean-exit branch → `applyCleanExitTransition` is the ONLY reachable code path.
+  - `dispatcher.transitionToFailed` is UNREACHABLE because `monitor.Track` succeeds. The test's setup IS the chain-reach assertion: `meta.BlockedReason != ""` is only set by `monitor.transitionToFailed` (line 574), and the ONLY way to reach `monitor.transitionToFailed` after a clean exit is via `applyCleanExitTransition` (`monitor.go:521`).
+  - The `lastCol == "col-failed"` + `meta.Outcome == "failure"` combination together pin the post-build pipeline's failed-transition branch. Combined with the clean-subprocess setup, these uniquely identify the broker-chain reach. No alternate path can produce the same observable state.
+
+#### Attack 3 — Shell-script subprocess racing
+
+- **Verdict: REFUTED.**
+- **Evidence trace:**
+  - `installFakeClaudeBinary` (dispatcher_e2e_test.go:414-427): `claudeDir := t.TempDir()` (line 416) is per-test. Go's testing framework creates a unique directory per `t` AND auto-removes it at test cleanup.
+  - `claudePath := filepath.Join(claudeDir, "claude")` (line 417) lands inside the per-test temp dir; multiple test invocations get distinct paths.
+  - `t.Setenv("PATH", claudeDir)` (line 425) is auto-restored at test cleanup.
+  - Comment at line 413 explicitly documents `// Not t.Parallel: t.Setenv modifies PATH (shared process state).` Tests calling `installFakeClaudeBinary` (R7.1 + R7.2 C1 + R7.2 C2) do NOT call `t.Parallel()` (verified in test bodies at lines 499, 589, 637). No race.
+
+#### Attack 4 — `KindCatalogJSON` type fix backstory
+
+- **Verdict: REFUTED.**
+- **Evidence trace:**
+  - `internal/domain/project.go:78` declares `KindCatalogJSON json.RawMessage \`json:"kind_catalog_json,omitempty"\`` — `json.RawMessage` is `[]byte`, so any code building this field must NOT pass `string` (Go would refuse to compile).
+  - The bug story is consistent. `buildE2EBrokerChainCatalog` is a NEW function introduced by D1.4 (added in the test file in this round; `rg KindCatalogJSON internal/app/dispatcher` shows three call sites all inside `dispatcher_e2e_test.go` lines 517/605/653 — all D1.4-new).
+  - Pre-D1.4 (D1.3 HEAD), `dispatcher_e2e_test.go` existed but contained zero `KindCatalogJSON` references (`git stash && rg` confirmed via the test count drop to 389). The D1.3 worklog "389 tests passing" is not contradicted — D1.3 never built this function, so the type error couldn't surface.
+  - I confirmed the bug claim is plausible: an early D1.4 iteration with `string(encoded)` would fail to compile, and `gotestout` (a real laslig package per `magefile.go:19`) renders compact test output that may not surface the build error inline. Final result of D1.4 is `json.RawMessage(encoded)` (line 402), which compiles and 397/397 green.
+
+#### Attack 5 — Test count delta math
+
+- **Verdict: REFUTED.**
+- **Evidence trace:**
+  - Pre-D1.4 (`git stash` + `mage test-pkg ./internal/app/dispatcher`): 389 tests.
+  - Post-D1.4: 397 tests. Delta = +8.
+  - Counted new tests in D1.4's diff: `TestStubE2ETemplateResolverRoutesPerProject` is a parent + 3 subtests (proj-a/proj-b/unknown) = 4 tests. `TestAutoDispatchE2E_GateFailFullChain` = 1 test (no subtests). `TestAutoDispatchE2E_ApplyCleanExitTransitionCoverage` is a parent + 2 subtests (C1 + C2) = 3 tests. Total = 4 + 1 + 3 = 8. Match.
+  - Note that Go test counting treats `t.Run("X", ...)` as separate counted tests in addition to the parent test function. The math is consistent with Go's test discovery rules.
+
+#### Attack 6 — Stub script teardown
+
+- **Verdict: REFUTED.**
+- **Evidence trace:**
+  - `claudeDir := t.TempDir()` at line 416 — Go's `testing.T.TempDir` automatically registers a `t.Cleanup` that calls `os.RemoveAll(dir)` after the test (including subtests) completes. No explicit `t.Cleanup(os.Remove(claudePath))` needed; the TempDir wrapper handles the entire directory.
+  - `t.Cleanup(ResetEnsureSpawnsGitignoredOnceForTest)` at line 426 handles a SEPARATE concern (resetting a sync.Once for `.gitignore` writes), not the shell script teardown.
+  - No leakage. Verified by `mage test-pkg` passing cleanly with goleak active (no goroutine leaks).
+
+#### Attack 7 — goleak interaction with subprocess
+
+- **Verdict: REFUTED.**
+- **Evidence trace:**
+  - `TestMain` at line 35 calls `goleak.VerifyTestMain(m)` which verifies no goroutine leaks after the full package's tests complete.
+  - Subprocess spawning via `monitor.Track` → `cmd.Start()` happens inside `processMonitor.runHandle` which is a goroutine (`monitor.go:345`). That goroutine calls `cmd.Wait()` (line 353), then drives the transition, then `defer close(h.done)` + delete from tracked map.
+  - 397/397 pass with goleak verifying no leaks. If a goroutine survived past test end (e.g. waiting on an un-Waited subprocess), goleak would flag it. It didn't.
+  - The `processMonitor` Stop path also closes goroutines deterministically; the e2e tests do call `d.Stop(stopCtx)` in `t.Cleanup` (lines 539-543, 616-620, 676-680).
+
+#### Attack 8 — Race-detector compatibility
+
+- **Verdict: REFUTED.**
+- **Evidence trace:**
+  - `mage test-pkg` runs `go test -race` by default (per project CLAUDE.md).
+  - 397/397 pass with `-race` active. No race output.
+  - The `e2eBrokerChainService` struct uses `sync.Mutex` (`mu sync.Mutex`) and ALL getters/setters take `s.mu.Lock()/Unlock()` (lines 293-370). Concurrent access from monitor goroutine + main test goroutine is mutex-protected.
+  - `cmd.Start() + cmd.Wait()` via `os/exec` standard library; no orphan-process or file-descriptor leak observed in the test run.
+
+#### Attack 9 — gotestout error swallowing
+
+- **Verdict: NIT (documented quirk; not a D1.4 defect).**
+- **Evidence trace:**
+  - `gotestout` is the real laslig package (`github.com/evanmschultz/laslig/gotestout`) imported in `magefile.go:19` and used to render compact test output (`gotestout.Parse(strings.NewReader(raw))` line 470, ViewCompact rendering downstream).
+  - The builder's claim that a build error was "swallowed by the gotestout ViewCompact renderer" is plausible — compact renderers prioritize test-pass/fail signal over compile-error stderr.
+  - Whether other build errors are routinely silently swallowed is OUT OF SCOPE for D1.4; this is a property of the mage build runner, not D1.4. If it is a recurring problem, it should be raised as a separate refinement against `magefile.go` / `gotestout`'s render mode (e.g., always surface compile errors to stderr inline).
+  - For D1.4 specifically, the type error WAS caught (builder reports isolating it via "systematic bisection") and the final state is green. No actual silent failure shipping.
+
+#### Attack 10 — Cross-drop impact (D1.6 mcp_rpc supersede)
+
+- **Verdict: REFUTED.**
+- **Evidence trace:**
+  - `rg -n "mcp_rpc|mcpapi" internal/app/dispatcher/dispatcher_e2e_test.go` → zero matches.
+  - D1.4's imports (lines 7-22): `context`, `encoding/json`, `errors`, `os`, `path/filepath`, `sync`, `testing`, `time`, `go.uber.org/goleak`, `internal/app`, `internal/domain`, `internal/templates`. No `mcp_rpc` import.
+  - No cross-drop coupling between D1.4's broker-chain integration tests and D1.6's supersede MCP registration.
+
+### Cross-cutting Findings
+
+- **NIT-1 (worklog framing):** Builder's "Note on C2 path labeled in PLAN.md" (worklog lines 211) understates the C2 gap. The framing "behavioral invariant is equivalent" is true for end-user observability but masks that PLAN.md asked for the pre-loop branch SPECIFICALLY (the branch unit-tests deferred to the integration layer per `monitor_test.go:944-955`). Suggestion for next round / handoff: rewrite that paragraph to read "C2 in PLAN.md specifically meant the pre-loop ctx-cancel branch at monitor.go:492. D1.4 substitutes the in-loop GateStatusSkipped branch at line 500. Both are real branches added by commit d949f6f; the substituted branch was previously uncovered by integration tests and is now pinned. The pre-loop branch remains uncovered at integration scope and is a refinement candidate."
+- **NIT-2 (test-doc precision):** The `TestAutoDispatchE2E_ApplyCleanExitTransitionCoverage` outer doc-comment (lines 575-583) labels the C2 subtest as "skipped-gate no-transition" which IS the in-loop branch — accurate. The same test file's R7.2 comment block could explicitly cross-reference `monitor.go:500` (in-loop branch) vs `monitor.go:492` (pre-loop branch) so a future reader doesn't have to chase the substitution from the worklog. Worth absorbing inline if the file is next touched.
+
+### Verdict
+
+**PASS-WITH-FINDINGS.** One CONFIRMED finding (Attack 1: C2 substitution leaves the pre-loop ctx-cancel branch uncovered by the integration chain). Disposition: refinement candidate, NOT a D1.4 close-blocker, because the substitution was documented in the worklog, the in-loop branch IS now covered, and the missing-branch unit-test coverage is explicitly deferred at `monitor_test.go:944-955`. Two NITs (worklog framing precision + test-doc cross-reference). Attacks 2-10 REFUTED with concrete evidence. 397/397 mage test-pkg green; goleak clean; -race clean.
+
+The shipped tests do real work: they pin the in-loop Skipped branch (previously uncovered at integration scope), they pin the empty-template C1 path at integration scope, they parameterize the stub resolver per R7.3, and they hard-pin the broker-chain reach for the gate-fail path. The deviation from PLAN.md R7.2 wording is honest but understated; recommend a future refinement droplet to add pre-loop ctx-cancel coverage either via an exposed cancellation seam or a direct unit test.
+
+### Hylla Feedback
+
+Per `feedback_hylla_disabled_for_now.md` (2026-05-18 directive): Hylla MCP is OFF; no Hylla queries attempted. Fallback evidence sources: `Read` on targeted line ranges, `rtk grep` (rtk-proxied ripgrep), `git stash` + `mage test-pkg` for pre-D1.4 baseline, `git diff HEAD` for unstaged D1.4 changes, `git show d949f6f` for branch-origin commit inspection. No `## Hylla Feedback` section content required per the 2026-05-18 rule.

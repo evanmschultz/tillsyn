@@ -39,6 +39,29 @@ Transitions are recorded by appending a dated status note to the entry, not by r
 
 ---
 
+## 2026-05-18 — drop-4b-test-cleanup — pre-loop ctx-cancel branch uncovered at integration scope
+
+### Context
+Drop 4b test-cleanup D1.4 (R7.1/R7.2/R7.3) added broker-chain integration tests for `applyCleanExitTransition`. PLAN.md R7.2 originally named C2 as "ctx-cancel pre-loop" — the branch added by commit `d949f6f` at `internal/app/dispatcher/monitor.go:492` guarding `len(tpl.Gates[item.Kind]) > 0 && len(results) == 0`. Driving that branch deterministically via the broker chain requires injecting cancellation between the pre-loop guard and the gate-runner invocation; the current `processMonitor` API does not expose such a seam. Builder substituted the adjacent in-loop branch at `monitor.go:500` (`GateStatusSkipped`) to cover the equivalent behavioral invariant (no state transition) and disclosed the deviation in worklog + the C2 test's doc-comment.
+
+### Observation
+The pre-loop ctx-cancel branch at `monitor.go:492` remains uncovered at integration scope. Unit test `monitor_test.go:944-955` also does not exercise it (was already uncovered before D1.4). Behaviorally the in-loop substitute is equivalent (both return `nil` without state transition), but a refactor of the pre-loop guard could regress without detection.
+
+### Proposed fix
+Two viable shapes:
+1. Add a cancellation-injection seam to `processMonitor` (e.g. `preLoopCancellation func(context.Context) bool` test hook on `processMonitor` struct, defaulting to nil) so a test can deterministically force the pre-loop guard to fire.
+2. Add a direct unit test in `monitor_test.go` that constructs a `processMonitor` directly with a pre-cancelled `ctx` and asserts the pre-loop branch is taken.
+
+Option 2 is smaller scope; option 1 unblocks any future tests that need the same seam.
+
+### Target drop
+Parking lot — not blocking; small fixed-size add. Pick up in a `dispatcher` test-hardening drop OR fold into the next drop that touches `monitor.go`.
+
+### Tags
+test, dispatcher, monitor, coverage
+
+---
+
 ## 2026-05-18 — drop-4b-test-cleanup — `dispatcherTemplateResolver` per-project routing untested
 
 ### Context

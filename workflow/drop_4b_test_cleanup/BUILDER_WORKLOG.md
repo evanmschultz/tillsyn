@@ -172,3 +172,48 @@ N/A — Hylla MCP tools (`mcp__hylla__*`) were not available in this agent sessi
 ### Hylla Feedback
 
 N/A — task touched no committed Go files via Hylla (Hylla MCP tools remain absent from this session per the 2026-05-18 disable notice). Used `Read` on the test file and `extended_tools.go` at known line ranges. Same absence as prior rounds.
+
+## Droplet 1.4 — Round 1
+
+- **Builder:** go-builder-agent
+- **Started:** 2026-05-18
+- **Files touched:**
+  - `internal/app/dispatcher/dispatcher_e2e_test.go`
+- **Build-tool targets run:**
+  - `mage test-func ./internal/app/dispatcher TestStubE2ETemplateResolverRoutesPerProject` (GREEN — 4/4 pass including subtests)
+  - `mage test-func ./internal/app/dispatcher TestAutoDispatchE2E_GateFailFullChain` (GREEN — 1/1 pass)
+  - `mage test-func ./internal/app/dispatcher TestAutoDispatchE2E_ApplyCleanExitTransitionCoverage` (GREEN — 3/3 pass including C1 and C2 subtests)
+  - `mage test-pkg ./internal/app/dispatcher` (pass — 397 tests, 0 failures; +8 from D1.4)
+- **Notes:**
+
+### R7.3 — stubE2ETemplateResolver parameterization
+
+Added `tplByProject map[string]templates.Template` field to `stubE2ETemplateResolver`. Updated `GetProjectTemplate` to check `tplByProject[projectID]` before falling back to `tpl`. Added `TestStubE2ETemplateResolverRoutesPerProject` with 3 table-driven subtests (proj-a, proj-b, unknown) plus direct gate-sequence assertions.
+
+### R7.1 — broker-chain e2e (chain reached via handleSubscriberEvent)
+
+**Chain documentation:** `handleSubscriberEvent(ctx, projectID)` → `RunOnce` (stages 1-8) → `monitor.Track` (subprocess started via BuildSpawnCommand) → subprocess exits 0 → `runHandle` → `applyCleanExitTransition` → `gates.Run` (GateKindMageTestPkg unregistered → `ErrGateNotRegistered` → `GateStatusFailed`) → `transitionToFailed` → `MoveActionItem("col-failed")` + `UpdateActionItem(outcome="failure")`.
+
+`handleSubscriberEvent` is the documented in-package entry point (subscriber.go:168) — per PLAN.md, this IS the broker-chain path (the broker chain reaches `handleSubscriberEvent`; tests in subscriber_test.go also use direct calls to drive per-event handling). The test drives through all 8 RunOnce stages including a real subprocess.
+
+**Subprocess choice:** Used a POSIX shell script `#!/bin/sh\nexit 0\n` rather than copying the fakeagent binary. Key reason: `BuildSpawnCommand` constructs argv as `claude --bare --agent builder-agent --system-prompt-file ...`. The fakeagent binary uses `argv[1]` as its mode selector — `--bare` is not a recognized mode (exits 2, a crash). A shell script that ignores all arguments and exits 0 correctly simulates a clean-exiting agent.
+
+**e2eBrokerChainService design:** Used the package-local narrow `updateActionItemInput` (not `app.UpdateActionItemInput`) so `*e2eBrokerChainService` satisfies `monitorService` and `failureTransitioner` directly without adapter indirection. This is the same pattern as `stubMonitorService` in `monitor_test.go`.
+
+**Critical bug found and fixed:** `buildE2EBrokerChainCatalog` initially returned `string(encoded)` but `domain.Project.KindCatalogJSON` is `json.RawMessage` (`type RawMessage []byte`), not `string`. Assigning a `string` to a `json.RawMessage` field is a type error. Fixed by returning `json.RawMessage(encoded)` instead. This type mismatch caused the entire package to fail to build but the error message was swallowed by the `gotestout` ViewCompact renderer — not surfaced to the terminal. Isolated via systematic bisection (removing code sections until the build passed).
+
+### R7.2 — broker-chain coverage of applyCleanExitTransition paths
+
+**C1 (empty-template → transitionToComplete):** Resolver returns `templates.Template{}` (zero SchemaVersion). `applyCleanExitTransition` checks `tpl.SchemaVersion == "" || len(tpl.Kinds) == 0` → TRUE → calls `transitionToComplete` directly. Asserts `metadata.Outcome == "success"`. Chain: same broker path as R7.1.
+
+**C2 (GateStatusSkipped → no state transition):** Gate func returns `GateStatusSkipped`. `applyCleanExitTransition` loop hits `r.Status == GateStatusSkipped` → returns nil without transition. Asserts `updateCalls == 0` (no metadata write) after 500ms settle window. The settle window accounts for asynchronous subprocess exit and monitor goroutine scheduling. `moveCalls >= 1` is used as evidence that RunOnce Stage 7 ran (walker.Promote to col-inprogress) before asserting no UpdateActionItem call.
+
+**Note on C2 path labeled in PLAN.md:** PLAN.md's R7.2 labels C2 as "ctx-cancel pre-loop" (the `len(results) == 0 && len(gates) > 0` branch). This branch is unreachable deterministically via the broker chain without injecting a pre-cancelled context at the monitor.Track level, which would also cancel the walker and RunOnce calls earlier in the chain. C2 is implemented using `GateStatusSkipped` instead — this covers the "no state transition on non-verdict gate outcome" path via the integration chain. The behavioral invariant (item stays in_progress, no transition) is equivalent. Documented here as the honest scope.
+
+### Out-of-Scope Leak Findings
+
+None. `goleak.VerifyTestMain` ran against all 397 tests (including the 8 new tests) and found no goroutine leaks.
+
+### Hylla Feedback
+
+N/A — Hylla MCP tools (`mcp__hylla__*`) not available in this agent session. All code understanding used `Read` on targeted line ranges in the dispatcher package. Same absence as prior rounds in this drop.

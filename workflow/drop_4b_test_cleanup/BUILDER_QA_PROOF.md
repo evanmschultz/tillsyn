@@ -463,3 +463,77 @@ N/A — Hylla MCP is OFF (`feedback_hylla_disabled_for_now.md`, 2026-05-18). Evi
 ### Hylla Feedback
 
 N/A — Hylla MCP is OFF (`feedback_hylla_disabled_for_now.md`, 2026-05-18). Evidence gathering used direct `Read` on `extended_tools.go`, `extended_tools_test.go`, `cmd/till/main.go`, and `mcp_surface.go` at known line ranges, plus `git diff` / `git diff --stat` / `git grep` / `git status --porcelain` for scope and stale-claim verification, plus two live `mage` invocations (`test-pkg ./internal/adapters/mcp_rpc`, `test-func ./internal/adapters/mcp_rpc TestActionItemSupersedeOperation`).
+
+## Droplet 1.4 — Round 1
+
+**Verdict:** PASS (with one MEDIUM honesty NIT on R7.2 C2 in-test deviation documentation).
+
+### Evidence base
+
+- `Read internal/app/dispatcher/dispatcher_e2e_test.go` (full file, 702 lines).
+- `git status --porcelain internal/app/dispatcher/` -> only `dispatcher_e2e_test.go` modified (one line of output: ` M internal/app/dispatcher/dispatcher_e2e_test.go`).
+- `git diff HEAD --stat internal/app/dispatcher/` -> `1 file changed, 513 insertions(+), 5 deletions(-)`.
+- `git grep -n "KindCatalogJSON" -- internal/domain/` -> `internal/domain/project.go:78:  KindCatalogJSON json.RawMessage \`json:"kind_catalog_json,omitempty"\``.
+- `git grep -n -E "ctx-cancel|deviation|equivalent|pre-loop" -- internal/app/dispatcher/dispatcher_e2e_test.go` -> no matches.
+- `mage test-pkg ./internal/app/dispatcher` -> `tests: 397 passed: 397 failed: 0 skipped: 0` (`SUCCESS All tests passed`).
+- `Read workflow/drop_4b_test_cleanup/BUILDER_WORKLOG.md` lines 176-219.
+
+### 1. R7.1 — TestAutoDispatchE2E_GateFailFullChain
+
+**Premises (what PROOF must show):** (a) test calls `handleSubscriberEvent`; (b) walker stub returns a `KindBuild` action item; (c) gate runner has `GateKindMageTestPkg` in the template but NOT registered; (d) `applyCleanExitTransition` reached via broker chain (not direct construction); (e) final asserts `metadata.Outcome=="failure"` + state moved to `col-failed`.
+
+- 1.1 [Axis: acceptance-criteria-coverage] [severity: pass] (a) confirmed — `dispatcher_e2e_test.go:547`: `d.handleSubscriberEvent(context.Background(), projectID)`. Doc block at lines 484-497 explicitly enumerates the chain (`handleSubscriberEvent -> RunOnce stages 1-8 -> monitor.Track -> subprocess exits 0 -> runHandle -> applyCleanExitTransition -> gates.Run -> GateStatusFailed -> transitionToFailed -> MoveActionItem(col-failed) + UpdateActionItem(outcome=failure)`).
+- 1.2 [Axis: acceptance-criteria-coverage] [severity: pass] (b) confirmed — `dispatcher_e2e_test.go:505-520` constructs `svc.item` with `Kind: domain.KindBuild` and the `e2eBrokerChainService.ListActionItems` (`:335-339`) returns `[]domain.ActionItem{s.item}`. The walker stub built via `newTreeWalker(svc)` (`:454`) is fed by this same `svc`, so the walker emits a single eligible `KindBuild` item.
+- 1.3 [Axis: spec-conformance] [severity: pass] (c) confirmed — `gates := newGateRunner()` at `:526` followed by line 527 comment "Intentionally do NOT register GateKindMageTestPkg". Template at `:528-536` declares `Gates: {KindBuild: {GateKindMageTestPkg}}`. No `gates.Register(GateKindMageTestPkg, ...)` call follows. Gate-runner resolution yields `ErrGateNotRegistered -> GateStatusFailed`.
+- 1.4 [Axis: spec-conformance] [severity: pass] (d) confirmed — chain entry is `d.handleSubscriberEvent(...)` not a direct `d.applyCleanExitTransition(...)` invocation. `applyCleanExitTransition` does not appear anywhere as a direct callee in the test body. The fake `claude` binary install at `:500` (POSIX shell `exit 0`) supplies a real subprocess so `monitor.Track` runs end-to-end.
+- 1.5 [Axis: acceptance-criteria-coverage] [severity: pass] (e) confirmed — final assertions at `:557-559` (`meta.Outcome != "failure"` failure path) and `:570-572` (`lastCol != "col-failed"`). Additionally `:560-562` asserts `meta.BlockedReason != ""`, an extra-rigor pin beyond the spec.
+
+### 2. R7.2 — TestAutoDispatchE2E_ApplyCleanExitTransitionCoverage
+
+**Premises:** (a) C1 zero-`SchemaVersion` template reaches `transitionToComplete` with `Outcome="success"`; (b) C2 uses `GateStatusSkipped` substitute for pre-loop ctx-cancel and asserts no state transition; (c) the deviation is documented honestly (worklog + in-test comment) to keep future readers from mistaking C2 for the originally-planned ctx-cancel test.
+
+- 2.1 [Axis: acceptance-criteria-coverage] [severity: pass] (a) confirmed — C1 subtest at `:589-635`: `emptyResolver := &stubE2ETemplateResolver{tpl: templates.Template{}}` (`:613`, zero-`SchemaVersion`), drives `d.handleSubscriberEvent` (`:622`), polls for `updateCalls >= 1` (`:624-626`), asserts `meta.Outcome != "success"` failure path (`:632-634`).
+- 2.2 [Axis: acceptance-criteria-coverage] [severity: pass] (b) confirmed — C2 subtest at `:637-701`: registers a custom `e2eSkipGateKind` gate that returns `GateResult{Status: GateStatusSkipped, Err: context.Canceled}` (`:660-666`), wires it into the template (`:667-673`), drives `d.handleSubscriberEvent` (`:682`), polls for `moveCalls >= 1` (walker.Promote) as evidence RunOnce reached Stage 8 (`:687-689`), sleeps 500ms (`:691`), then asserts `updateCalls != 0` failure (`:693-695`) and rejects `col-complete` / `col-failed` (`:696-700`). The settle-window pattern is sound — `getMoveCallCount() >= 1` proves Stage 7 ran; the 500ms sleep covers any pending UpdateActionItem from monitor.Track callbacks.
+- 2.3 [Axis: completion-checklist-audit] [severity: medium] (c) **partial fail — HONESTY NIT.** Worklog `## Droplet 1.4 — Round 1` lines 207-211 explicitly document: "PLAN.md's R7.2 labels C2 as 'ctx-cancel pre-loop' (the `len(results) == 0 && len(gates) > 0` branch). This branch is unreachable deterministically via the broker chain without injecting a pre-cancelled context at the monitor.Track level, which would also cancel the walker and RunOnce calls earlier in the chain. C2 is implemented using `GateStatusSkipped` instead — this covers the 'no state transition on non-verdict gate outcome' path via the integration chain. The behavioral invariant (item stays in_progress, no transition) is equivalent. Documented here as the honest scope." But the in-test doc block at `dispatcher_e2e_test.go:575-585` and the C2 subtest's inline comment at `:658-659` only say "GateStatusSkipped means external cancellation (not a verdict) -> applyCleanExitTransition returns nil without transitioning state." Neither mentions the original "pre-loop ctx-cancel" plan nor the substitution rationale. Future readers of the test file alone (without the worklog open) will not know C2 is a substitute path. **Fix:** add a 2-3 sentence in-test comment in the C2 subtest body pointing at the PLAN.md "ctx-cancel pre-loop" wording and noting the equivalence rationale. -> `internal/app/dispatcher/dispatcher_e2e_test.go:637-660` -> expand the `t.Run("C2_...")` opening doc to include "Originally planned in PLAN.md R7.2 as a pre-loop ctx-cancel test (the `len(results)==0 && len(gates)>0` branch). That branch is unreachable via the broker chain without cancelling the walker too. GateStatusSkipped substitutes via the same broker chain; behavioral invariant (no state transition) is equivalent."
+
+### 3. R7.3 — TestStubE2ETemplateResolverRoutesPerProject
+
+**Premises:** (a) `stubE2ETemplateResolver` has `tplByProject map[string]templates.Template` field; (b) `GetProjectTemplate` returns per-project value if set, else fallback `tpl`; (c) table-driven test with >=3 sub-cases verifying per-project routing.
+
+- 3.1 [Axis: spec-conformance] [severity: pass] (a) confirmed — `dispatcher_e2e_test.go:48-51`: struct has both `tpl templates.Template` and `tplByProject map[string]templates.Template`.
+- 3.2 [Axis: spec-conformance] [severity: pass] (b) confirmed — `GetProjectTemplate` at `:56-63`: nil-guards `tplByProject`, returns `tpl` from the map if present, else falls back to `s.tpl`. Doc comment at `:43-47` documents the routing.
+- 3.3 [Axis: acceptance-criteria-coverage] [severity: pass] (c) confirmed — `TestStubE2ETemplateResolverRoutesPerProject` at `:219-274`. Three table-driven subtests at `:236-240` (proj-a -> tplA SchemaVersionV1, proj-b -> tplB SchemaVersionV1, proj-unknown -> tplDefault "default"). Additional out-of-loop assertions at `:266-273` cross-check that `tplA` and `tplB` carry their distinct `GateKindMageCI` / `GateKindMageTestPkg` gate sequences (proving the routing returns the *whole* template, not just SchemaVersion). Goes beyond the spec's "3 subtests" minimum.
+
+### 4. KindCatalogJSON type fix
+
+**Premise:** `buildE2EBrokerChainCatalog` returns `json.RawMessage` (not `string`); the field type `domain.Project.KindCatalogJSON` is `json.RawMessage`; the change is test-internal only with no production-code diff.
+
+- 4.1 [Axis: spec-conformance] [severity: pass] Field type: `internal/domain/project.go:78` declares `KindCatalogJSON json.RawMessage` (verified via `git grep -n KindCatalogJSON -- internal/domain/`). Test helper `buildE2EBrokerChainCatalog` at `dispatcher_e2e_test.go:381-403` returns `json.RawMessage` and constructs the return value via `return json.RawMessage(encoded)` at `:402`. Type compatibility confirmed.
+- 4.2 [Axis: spec-conformance] [severity: pass] Scope: `git status --porcelain internal/app/dispatcher/` shows only ` M internal/app/dispatcher/dispatcher_e2e_test.go`. `git diff HEAD --stat internal/app/dispatcher/` shows `1 file changed, 513 insertions(+), 5 deletions(-)` — single file, test-internal. No production dispatcher source was touched. The pre-existing `domain.Project.KindCatalogJSON` field was already `json.RawMessage` at HEAD; the worklog "bug fix" (line 203) refers to fixing a misuse inside the new test helper (returning `string(encoded)` would have been an assignment-type error against the existing field), not a production-type change.
+
+### 5. Acceptance run
+
+- 5.1 [Axis: acceptance-criteria-coverage] [severity: pass] `mage test-pkg ./internal/app/dispatcher` (with `./` prefix per established droplet-1.1+ discipline) returns `tests: 397 passed: 397 failed: 0 skipped: 0` followed by `[SUCCESS] All tests passed`. Goleak `TestMain` (lines 35-37) ran across all 397 tests; no goroutine leaks surfaced — confirmed by the worklog "Out-of-Scope Leak Findings: None" and by the clean exit.
+
+### 6. Scope verification
+
+- 6.1 [Axis: spec-conformance] [severity: pass] `git status --porcelain internal/app/dispatcher/` shows exactly one file: `dispatcher_e2e_test.go`. No untracked files, no production source changes, no sibling-package dirt.
+- 6.2 [Axis: spec-conformance] [severity: pass] Declared `paths` were `internal/app/dispatcher/dispatcher_e2e_test.go` — actual diff matches. No `subscriber.go` / `monitor.go` / `dispatcher.go` modifications. Sibling builders (Go D1.6 committed; FE D1.6 committed) untouched in this droplet's diff.
+
+### 7. Findings (summary)
+
+- 7.1 [Axis: completion-checklist-audit] [severity: medium] R7.2 C2 in-test documentation does not surface the "originally pre-loop ctx-cancel, substituted via GateStatusSkipped" deviation. Worklog has it; test file does not. Future readers reading only the test file will not understand C2 is a substitute path. -> fix: expand the `t.Run("C2_skipped_gate_leaves_item_in_progress", ...)` opening doc comment (2-3 sentences pointing at PLAN.md R7.2 and the equivalence argument).
+
+### 8. Missing evidence
+
+- None. All five PROOF axes (R7.1 rigor, R7.2 rigor + deviation, R7.3 rigor, KindCatalogJSON type, scope) and the acceptance run are backed by direct file citations or live `mage` output.
+
+### 9. Conclusion
+
+**PASS** — all six items in the prompt have direct supporting evidence. The 397/397 acceptance run, the broker-chain construction (`handleSubscriberEvent` -> real subprocess -> `applyCleanExitTransition`), the per-project resolver routing, and the `json.RawMessage` type-correct catalog all hold. The single MEDIUM finding (Section 7.1 / 2.3) is a test-documentation honesty NIT — the test code itself is behaviorally correct, but a future reader needs the worklog open to understand C2's lineage. Per `feedback_nits_are_first_class.md` this should be folded into the next round-trim rather than absorbed silently.
+
+**Unknowns:** None. Every claim has direct code citation or live `mage test-pkg ./internal/app/dispatcher` (397/397) backing it.
+
+### Hylla Feedback
+
+N/A — Hylla MCP is OFF (`feedback_hylla_disabled_for_now.md`, 2026-05-18). Evidence gathering used `Read` on `dispatcher_e2e_test.go` (full file, 702 lines) and `BUILDER_WORKLOG.md`, plus `git grep` / `git diff` / `git status --porcelain` (replacing direct `grep` due to sandbox restrictions on raw `grep` invocations against worktree paths — git-aware variants worked cleanly), plus one live `mage test-pkg ./internal/app/dispatcher` invocation for acceptance.
