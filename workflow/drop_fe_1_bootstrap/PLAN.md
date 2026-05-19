@@ -38,17 +38,25 @@ Droplets:
 - **State:** todo
 - **Paths:**
   - moves: `main.go` → `ui/main.go`, `wails.json` → `ui/wails.json`, `frontend/` → `ui/frontend/` (entire tree, including `astro.config.mjs`, `package.json`, `tsconfig.json`, `src/`, `tests/`, `public/`)
-  - writes: `.gitignore` (add `ui/build/`, `ui/frontend/node_modules/`, `ui/frontend/dist/`, `ui/frontend/.astro/`; remove now-stale `frontend/*` entries if present)
+  - writes: `ui/frontend/package.json` (add `"packageManager": "pnpm@9.0.0"` field — see §N9 for rationale)
+  - writes: `.gitignore` (add `ui/build/`, `ui/frontend/node_modules/`, `ui/frontend/dist/`, `ui/frontend/.astro/`; remove now-stale `frontend/*` entries if present; **MUST NOT** add `ui/frontend/pnpm-lock.yaml` — the lockfile is committed, see §N9)
   - writes: `ui/.gitignore` (Wails-specific artefacts: `build/bin/`, `build/darwin/`, `build/windows/`, `build/linux/`)
+  - commits: `ui/frontend/pnpm-lock.yaml` (created by `pnpm install` during this droplet — see §N9 for the pin-not-switch rationale)
 - **Packages:** `./ui` (new Go package, build-tag `wails`); `ui/frontend/` (Astro+Solid pnpm workspace).
 - **Acceptance:**
   - `git ls-files ui/main.go ui/wails.json ui/frontend/astro.config.mjs ui/frontend/package.json` returns all four paths.
   - `git ls-files frontend/ main.go wails.json` returns empty (originals fully relocated).
   - `cat ui/wails.json` shows `"frontend:dir": "frontend"` and `"frontend:dev:serverUrl": "http://localhost:4321"` (relative to the wails.json location — i.e. `ui/frontend/`).
   - `cat ui/main.go | head -1` shows `//go:build wails` build tag still present.
-  - `cd ui/frontend && pnpm install` exits 0 and produces `ui/frontend/node_modules/`.
+  - `grep -q '^//go:embed all:frontend/dist' ui/main.go` exits 0 — the embed directive is **literally unchanged** (still `//go:embed all:frontend/dist`, NOT helpfully-but-wrongly rewritten to `all:ui/frontend/dist`). Go resolves the path relative to `ui/main.go`'s dir, so `frontend/dist` correctly resolves to `ui/frontend/dist`. See §N10 for the relocation-trap rationale.
+  - `grep -q '"packageManager": "pnpm@' ui/frontend/package.json` exits 0 — pnpm version pinned for Corepack auto-fetch.
+  - `cd ui/frontend && pnpm install` exits 0 and produces `ui/frontend/node_modules/`. Lockfile is created at `ui/frontend/pnpm-lock.yaml`.
+  - `git ls-files ui/frontend/pnpm-lock.yaml` returns the path (lockfile committed, reproducible installs).
+  - `grep -q 'ui/frontend/pnpm-lock.yaml' .gitignore` exits **non-zero** (lockfile is NOT excluded).
   - `cd ui/frontend && pnpm run build` exits 0 and produces `ui/frontend/dist/index.html`.
-  - `mage ci` still passes green (Go gates unaffected — the `wails` build tag fence keeps `ui/main.go` out of the default build).
+  - `magefile.go` `verifySources()` (currently at L293 region — `git ls-files --error-unmatch magefile.go cmd/till/main.go cmd/till/main_test.go`) does NOT reference root `main.go`; the relocation does not break the source-tracking guard. Verified by `grep -n verifySources magefile.go`.
+  - `mage format` reports no diff against `ui/main.go` after relocation (relocated file remains gofumpt-clean — `magefile.go` `formatCheck` stage scans every `*.go` via `trackedGoFiles()` regardless of build tag, so this is a real `mage ci` precondition).
+  - `mage ci` still passes green (Go gates unaffected — the `wails` build tag fence keeps `ui/main.go` out of the default compile + test, and the format step is satisfied by the line above).
 - **Blocked by:** —
 
 ---
@@ -59,7 +67,7 @@ Droplets:
 - **Paths:** `magefile.go` (edit only the `CiFe` func, its alias map entry if any, and any doc comment that mentions `frontend/`).
 - **Packages:** root `magefile.go` (build-tag `mage`).
 - **Acceptance:**
-  - `mage -l` lists `ci-ui` (or `ciUI`) and **does NOT** list `ci-fe` (renamed, not added alongside — avoids alias drift).
+  - `mage -l` lists `ciUI` **AND** lists `ci-ui` (the hyphenated alias added to the `Aliases` map to match existing convention at `magefile.go:26-36` — e.g. `test-pkg`, `format-path`). `mage -l` **does NOT** list `ci-fe` (renamed, not added alongside — avoids alias drift).
   - `mage ciUI` runs `pnpm run test:unit` and `pnpm run build` inside `ui/frontend/` (not `frontend/`). On a freshly-relocated tree (post-D1.1), both stages exit 0.
   - `mage ci` continues green (CI target itself unchanged in scope).
   - `magefile.go` source no longer contains the substring `"frontend"` outside an explicit comment that points to `ui/frontend`.
@@ -71,29 +79,35 @@ Droplets:
 ### Droplet 1.3 — Wire `ui/main.go` to construct a real `*app.Service` against `.tillsyn/tillsyn.db`
 
 - **State:** todo
-- **Paths:** `ui/main.go` (replace the `NewApp(nil)` placeholder with real service construction — see `cmd/till/main.go:2314` and `:2414` for the existing pattern: `sqlite.Open(cfg.Database.Path)` then `app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{...})`). May add one local helper inside `ui/main.go` (single file in droplet to keep scope tight); do NOT introduce a new `ui/bridge/` package this drop (see `## Notes` §N2 — Q2 resolution).
+- **Paths:** `ui/main.go` (replace the `NewApp(nil)` placeholder with real service construction — see `cmd/till/main.go:2314` and `:2414` for the existing pattern: `sqlite.Open(cfg.Database.Path)` then `app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{...})`). May add one local helper inside `ui/main.go` (single file in droplet to keep scope tight); do NOT introduce a new `ui/bridge/` package this drop (see `## Notes` §N2 — Q2 resolution). If a local helper is added (e.g. `loadConfig()`), it lives as a `func` inside `ui/main.go`, NOT as a new file under `ui/`.
 - **Packages:** `./ui` (Wails main, build-tag `wails`); read-only deps on `github.com/evanmschultz/tillsyn/internal/app`, `github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite`, `github.com/evanmschultz/tillsyn/internal/config`, `github.com/google/uuid`.
 - **Acceptance:**
   - `ui/main.go` no longer contains the literal `NewApp(nil)` line; instead constructs `*app.Service` and passes it to `NewApp(svc)`.
   - The constructed service opens against the same DB path the CLI uses (`config.Load` + `cfg.Database.Path` resolution — mirror the `cmd/till/main.go` resolution, do not hardcode a path).
-  - On a dev machine with `.tillsyn/tillsyn.db` populated by at least one prior `till project create` invocation: `cd ui && wails build` produces a binary; `./build/bin/Tillsyn.app/Contents/MacOS/Tillsyn` (or the platform equivalent) starts without panic. Verified manually by orch-or-dev launching the binary; QA agent verifies via `wails build` exit code 0 + presence of the output binary.
-  - `cd ui && wails dev` connects to the Astro dev server at `http://localhost:4321` and opens a Wails window. JS console shows no IPC errors related to missing bindings.
+  - `grep -q '^//go:embed all:frontend/dist' ui/main.go` exits 0 — the embed directive is preserved verbatim across the `NewApp(nil)` → real-service rewrite (D1.3 must not helpfully-but-wrongly rewrite the path; the directive is path-relative to the file's dir, not the module root). This is the same guard as D1.1, repeated here to catch builder regressions.
+  - `cd ui && wails build` exits 0 AND the output binary exists at the expected platform path. On macOS (dev's env per session `Platform: darwin`): `./build/bin/Tillsyn.app/Contents/MacOS/Tillsyn` exists and `file ./build/bin/Tillsyn.app/Contents/MacOS/Tillsyn` reports a Mach-O binary. Note: `./build/bin/Tillsyn.app/...` is a **macOS-only path**; on Linux the binary lands at `./build/bin/Tillsyn`, on Windows at `.\build\bin\Tillsyn.exe`. Cross-platform packaging is out of scope per §N6.
+  - `cd ui && wails dev` connects to the Astro dev server at `http://localhost:4321` and opens a Wails window. JS console shows no IPC errors related to missing bindings. (Runtime window-open is a dev-launch confirmation gate at Phase 6, NOT this droplet's acceptance — QA agent's acceptance is `wails build` exit-code 0 + binary file exists + Mach-O check, all of which are QA-agent-executable headlessly.)
   - No changes outside `ui/main.go`. `mage ci` remains green (build-tag `wails` keeps this file out of the default Go build).
 - **Blocked by:** 1.1 (the file `ui/main.go` is created by D1.1 via relocation; D1.3 is the next writer of that file — file-shared, must serialize).
 
 ---
 
-### Droplet 1.4 — Expose `ListProjects` IPC method on the Wails App struct
+### Droplet 1.4 — Expose `ListProjects` IPC method on the Wails App struct + Go-side smoke test
 
 - **State:** todo
-- **Paths:** `ui/main.go` (add one exported method `func (a *App) ListProjects() ([]ProjectDTO, error)` and one tiny DTO type `ProjectDTO struct { ID string; Name string }` to keep the JS-side shape stable across `domain.Project` schema churn). Same file as D1.3; serialize via `blocked_by`.
+- **Paths:**
+  - writes: `ui/main.go` — add one exported method `func (a *App) ListProjects() ([]ProjectDTO, error)`. Same file as D1.3; serialize via `blocked_by`.
+  - writes: `ui/types.go` (new file, `package main`, build-tag `//go:build wails` for symmetry with `ui/main.go`) — defines the DTO type: `type ProjectDTO struct { ID string; Name string }`. Splitting the DTO out of `ui/main.go` pre-empts entrypoint-file bloat as more IPC methods land in future drops (see §N2 — F4-fals resolution; zero import-boundary cost since both files are `package main`).
+  - writes: `ui/app_test.go` (new file, `//go:build wails`) — Go-side smoke test for the bridge, see acceptance below.
 - **Packages:** `./ui`.
 - **Acceptance:**
   - `ui/main.go` defines `App.ListProjects() ([]ProjectDTO, error)` whose body calls `a.svc.ListProjects(a.ctx, false)` and maps each `domain.Project` to `ProjectDTO{ID: p.ID, Name: p.Name}`.
-  - `cd ui && wails dev` — opening the dev window, then in the browser DevTools console: `await window.go.main.App.ListProjects()` returns an array. When the local DB has ≥1 non-archived project, the array has length ≥1 and each element has non-empty `ID` and `Name`. When the DB is empty (cold dev machine), the call returns `[]` (not `null`, not throw) — this is the "DB-empty-but-wiring-works" acceptance shape.
-  - `cd ui && wails build` exits 0. Resulting binary, when launched, exposes the same method on `window.go.main.App` (verified by QA agent via `wails dev` since `wails build` headless inspection requires a runtime probe — the build-success + dev-mode probe pair is sufficient acceptance).
-  - DTO is defined inside `ui/main.go` (no new `ui/dto/` package this drop — same YAGNI rationale as N2).
-- **Blocked by:** 1.3 (D1.4 extends the same `ui/main.go` D1.3 just rewrote; serialize).
+  - `ui/types.go` exists, declares `package main`, carries `//go:build wails`, and defines `ProjectDTO` with exactly fields `ID string` and `Name string`. No other types in this drop.
+  - `ui/app_test.go` exists with `//go:build wails`, declares `package main`, and contains a test function named exactly `TestApp_ListProjects_ReturnsDTOForExistingProject`. The test constructs `*app.Service` against an in-memory or temp-file SQLite DB (builder picks impl; in-memory via `sqlite.Open(":memory:")` preferred if `internal/adapters/storage/sqlite` accepts it, else a `t.TempDir()`-rooted file), seeds at least one non-archived project via the existing service layer (`svc.CreateProject(...)` or equivalent), constructs `*App` against the seeded service, calls `app.ListProjects()`, and asserts: (a) `err == nil`, (b) `len(result) >= 1`, (c) every returned `ProjectDTO` has non-empty `ID` and `Name`, (d) the seeded project's `ID` + `Name` appear in the result set.
+  - `go test -tags wails ./ui/...` exits 0. This is the QA-agent-executable smoke gate — runs headlessly, no Wails CLI / dev-window / DevTools-console probe needed. (Default `mage test-pkg` does NOT include the `wails` build tag, so this test is invoked explicitly via the tagged command; future FE drops may add a `mage test-ui` target wrapping it.)
+  - `cd ui && wails build` exits 0; the output binary exposes `window.go.main.App.ListProjects` (verified transitively via the wailsbindings codegen succeeding during `wails build` — binding-generation failure surfaces as a non-zero exit code).
+  - The DTO is defined in `ui/types.go`, NOT inline in `ui/main.go`. `grep -q 'type ProjectDTO struct' ui/main.go` exits **non-zero**; `grep -q 'type ProjectDTO struct' ui/types.go` exits 0.
+- **Blocked by:** 1.3 (D1.4 extends the same `ui/main.go` D1.3 just rewrote; serialize). Note: `ui/types.go` and `ui/app_test.go` are new files D1.3 doesn't touch, but they are part of the same `./ui` package compile unit as `ui/main.go` — the serialize-on-`ui/main.go`-rewrite rule covers package-level locking too.
 
 ---
 
@@ -101,15 +115,18 @@ Droplets:
 
 - **State:** todo
 - **Paths:**
-  - writes: `ui/frontend/src/components/ProjectList.tsx` (Solid component, ~30-60 LOC: `createResource` against `window.go.main.App.ListProjects`, plain `<ul><li>` render of `id` + `name`, simple loading + error states).
-  - writes: `ui/frontend/src/pages/index.astro` (single Astro page using `MainLayout.astro` and mounting `<ProjectList client:load />` — see Notes §N3 on the `client:load` choice).
+  - writes: `ui/frontend/src/components/ProjectList.tsx` (Solid component, ~30-60 LOC: `createResource` against `window.go.main.App.ListProjects`, plain `<ul><li>` render of `id` + `name`, simple loading + error states; literal empty-state string `No projects yet` rendered when the resource resolves to an empty array). MUST contain the line `// MIGRATION TARGET: @hylla/stil-solid` — mandatory per `ui/frontend/tests/migration-markers.test.ts:36-44`, absence fails `pnpm run test:unit`.
+  - writes: `ui/frontend/src/pages/index.astro` (single Astro page using `MainLayout.astro` and mounting `<ProjectList client:idle />` — see Notes §N3 on the `client:idle` choice).
   - writes: `ui/frontend/src/types/wails.d.ts` (one tiny ambient declaration so the SolidJS component compiles cleanly under TypeScript: `declare global { interface Window { go: { main: { App: { ListProjects(): Promise<{ ID: string; Name: string }[]> } } } } }`).
 - **Packages:** `ui/frontend/` (Astro+Solid pnpm workspace). Does NOT touch any Go code.
 - **Acceptance:**
-  - `cd ui/frontend && pnpm run build` exits 0. `ui/frontend/dist/index.html` exists and contains a `<div id="...solid-island...">` or equivalent hydration marker for the `<ProjectList client:load />` island.
-  - `cd ui && wails dev` — the launched window shows: a heading, a `<ul>` with one `<li>` per non-archived project in the dev DB, each rendering `ID` and `Name`. When the dev DB is empty, the window shows a visible "No projects yet" empty-state string (component must render an empty-state, not a blank `<ul>` — that's the only way the QA agent can distinguish "loaded zero rows" from "binding crashed silently").
-  - `cd ui && wails build && open ./build/bin/Tillsyn.app` — same rendering inside the built binary.
-  - `migration-markers.test.ts` either passes (no marker required on `ProjectList.tsx`) OR `ProjectList.tsx` carries the `// MIGRATION TARGET: @hylla/stil-solid` marker; the planner picks: **carry the marker** to stay consistent with the migration-target convention already encoded in `ui/frontend/tests/migration-markers.test.ts`. Acceptance: `cd ui/frontend && pnpm run test:unit` exits 0 and the migration-markers test reports `ProjectList.tsx contains migration marker` as a passing case (not a vacuous skip).
+  - `cd ui/frontend && pnpm run build` exits 0. `ui/frontend/dist/index.html` exists and contains a hydration marker for the `<ProjectList client:idle />` island (Astro renders `client:idle` directives with a `<astro-island ... client="idle">` web-component wrapper — see Context7 `/withastro/docs` § "Client Directives" + `island.client` runtime tag).
+  - `grep -q '// MIGRATION TARGET: @hylla/stil-solid' ui/frontend/src/components/ProjectList.tsx` exits 0 (marker is mandatory, AND — not OR — per migration-markers test).
+  - `grep -q 'No projects yet' ui/frontend/src/components/ProjectList.tsx` exits 0 (literal empty-state string is present in source).
+  - `cd ui/frontend && pnpm run test:unit` exits 0. The migration-markers test reports `ProjectList.tsx` as a passing case (not a vacuous skip — `files.length > 0` branch must exercise).
+  - `cd ui && wails dev` — the launched window DOM contains (a) an `<h1>` or `<h2>` element with non-empty text content AND (b) a `<ul>` element. When the DB has projects: the `<ul>` has ≥1 `<li>` children, each containing both the project's `ID` and `Name` as visible text. When the DB is empty: the page contains the literal string `No projects yet` (component renders an empty-state, not a blank `<ul>` — that's the only way the QA agent can distinguish "loaded zero rows" from "binding crashed silently").
+  - **CLI cross-check (A3 verification — F10 proof resolution).** Against the SAME `.tillsyn/tillsyn.db` the dev window opens: capture `till project list` output (or equivalent CLI surface for non-archived listing) and the rendered `<li>` set from the dev window. Assert: the set of (ID, Name) pairs matches exactly modulo ordering. Same ordering not required; same set required. QA-agent path: capture `till project list` machine-readable output (JSON if available; else parse the table), capture the Solid-rendered list via a DOM dump or the dev-mode `await window.go.main.App.ListProjects()` JSON, deep-equal-modulo-ordering.
+  - `cd ui && wails build && open ./build/bin/Tillsyn.app` — same rendering inside the built binary (dev-launch confirmation at Phase 6, not this droplet's machine-checkable acceptance — the dev opens the binary and confirms visually).
 - **Blocked by:** 1.2 (mage target must run inside `ui/frontend/` so `pnpm run test:unit` resolves the relocated tree), 1.4 (the JS binding `window.go.main.App.ListProjects` must exist before the Solid component can `createResource` against it; runtime-only blocker, but the type declaration in `wails.d.ts` is the planner's compile-time pin).
 
 ---
@@ -123,11 +140,11 @@ Droplets:
 - **Packages:** root (`magefile.go` + `ui/README.md`). Same file `magefile.go` as D1.2 → must serialize.
 - **Acceptance:**
   - `mage -l` lists `ui-dev`, `ui-build`, and the unchanged `ci-ui` from D1.2.
-  - `mage uiBuild` (or alias `mage ui-build`) exits 0 on a clean checkout and produces a binary at `ui/build/bin/Tillsyn.app/Contents/MacOS/Tillsyn` (or platform-equivalent path; the magefile resolves `${GOOS}` to pick the right directory).
-  - `mage uiDev` (or alias `mage ui-dev`) starts the Wails dev loop without erroring out of the gate (process stays running until SIGINT — QA agent runs it with a short timeout wrapper and verifies stdout shows `Wails CLI v2.12.0` + `[Wails] Dev mode` markers within 10s).
+  - `mage uiBuild` (or alias `mage ui-build`) exits 0 on a clean checkout AND the output binary exists at the expected platform path. On macOS (dev's env per session `Platform: darwin`): `ui/build/bin/Tillsyn.app/Contents/MacOS/Tillsyn` exists. (Linux/Windows produce different paths — `ui/build/bin/Tillsyn` and `ui\build\bin\Tillsyn.exe` respectively; cross-platform packaging is out of scope per §N6.) No `wails` CLI version-string match — the Wails CLI version is dev-machine-controlled (see §N11); we depend only on the Go binding pin in `go.mod`.
+  - `mage uiDev` (or alias `mage ui-dev`) starts the Wails dev loop without erroring out of the gate. QA agent runs it with a 30s timeout wrapper and verifies (a) the process stays running until SIGINT (no immediate-exit failure), AND (b) stdout contains the literal substring `[Wails] Dev mode` (the dev-mode startup marker — this is a Wails-runtime emission, not a CLI-version-string check). 30s tolerates cold-cache `pnpm install` + first-time wails codegen on a slow dev machine.
   - `ui/README.md` exists and contains at minimum: "in-process Go bindings", "read-only this drop", "see REVISION_BRIEF.md", and the two mage target names.
   - `mage ci` remains green.
-- **Blocked by:** 1.2 (same `magefile.go` file; serialize), 1.5 (the `mage ui-build` smoke check exercises the full UI build — the proof view must render real data before the README can honestly claim "in-process bindings work").
+- **Blocked by:** 1.2 (same `magefile.go` file; serialize), 1.5 (the `mage ui-build` smoke check exercises the full UI build — the proof view must render real data before the README can honestly claim "in-process bindings work"). Note: D1.3 and D1.4 are transitive blockers via D1.5 (D1.5 blocked_by D1.4; D1.4 blocked_by D1.3); D1.6's explicit `blocked_by` list contains only the immediate `[1.2, 1.5]` per the `_BLOCKERS.toml` immediate-children rule.
 
 ---
 
@@ -155,13 +172,19 @@ This planner cannot relitigate L1 unilaterally (it is a locked architectural dec
 
 **Default if dev does not respond before Phase 4: A** (honor the locked decision).
 
-### N2 — Q2 (bridge package location) — resolved: directly in `ui/main.go`, no `ui/bridge/` this drop
+### N2 — Q2 (bridge package location) — resolved: `App` methods in `ui/main.go`, DTOs in `ui/types.go`, no `ui/bridge/` package this drop
 
-The brief's open question Q2 asks whether the binding glue lives in `ui/main.go` or a new `ui/bridge/` package. For this drop's scope (one read-only method, one DTO), a separate `ui/bridge/` package is YAGNI — it adds an import boundary that buys nothing when there is exactly one method to expose. The DTO + method definition land inline in `ui/main.go` (D1.4). When the FE grows to ≥3 IPC methods or starts needing typed projections that the JS-side wants to share across components, the next FE drop can extract `ui/bridge/` cleanly via a single-file refactor — at that point the boundary will be earned by real surface area.
+The brief's open question Q2 asks whether the binding glue lives in `ui/main.go` or a new `ui/bridge/` package. For this drop's scope (one read-only method, one DTO), a separate `ui/bridge/` package is YAGNI — it adds an import boundary that buys nothing when there is exactly one method to expose. **However**, the DTO itself is separable from the entrypoint at zero import-boundary cost: per round-1 falsification F4, splitting `ProjectDTO` into a sibling `ui/types.go` file (still `package main`, same dir, same build tag `//go:build wails`) pre-empts entrypoint bloat as future drops add more IPC methods — without paying for a new package. D1.4 writes `ui/types.go` for the DTO and keeps `App.ListProjects` in `ui/main.go`. The full `ui/bridge/` extraction (its own package, exported types, import boundary) waits until the FE accumulates ≥3 IPC methods + typed projections shared across components.
 
-### N3 — Q3 (Astro + SolidJS integration shape) — resolved on-disk: `@astrojs/solid-js` integration + `client:load` directive
+DTO field naming follows Go conventions: `ID string; Name string` (capitalized — exported). Wails serializes Go structs to JS as `{"ID": "...", "Name": "..."}` by default; the JS-side TypeScript declaration in `wails.d.ts` types this as `Promise<{ ID: string; Name: string }[]>` to match. Capitalized field names on the JS wire diverge from JS-idiom camelCase, but converting via `json:` tags adds friction now for zero benefit. Future FE drops MAY add struct tags to camelCase the wire format if the JS surface accumulates enough sprawl to warrant the conversion.
 
-The brief's open question Q3 asks how Astro mounts SolidJS islands. **On-disk evidence resolves this for us**: `frontend/package.json` (now `ui/frontend/package.json` post-D1.1) already depends on `@astrojs/solid-js@^4.4.0` and `solid-js@^1.9.7`, and `frontend/astro.config.mjs` already wires `integrations: [solidJs()]`. D1.5 uses the standard Astro island pattern: `<ProjectList client:load />` inside `index.astro`. The `client:load` directive (rather than `client:idle` or `client:visible`) is chosen because the proof view is the **only** content on the page and we want eager hydration to make the QA acceptance check ("the list renders within 2 seconds of window open") deterministic. Future FE drops should default to `client:idle` per FE-planning-agent doctrine; the eager-load choice here is a one-drop acceptance-determinism call.
+### N3 — Q3 (Astro + SolidJS integration shape) — resolved on-disk: `@astrojs/solid-js` integration + `client:idle` directive
+
+The brief's open question Q3 asks how Astro mounts SolidJS islands. **On-disk evidence resolves this for us**: `frontend/package.json` (now `ui/frontend/package.json` post-D1.1) already depends on `@astrojs/solid-js@^4.4.0` and `solid-js@^1.9.7`, and `frontend/astro.config.mjs` already wires `integrations: [solidJs()]`. D1.5 uses the standard Astro island pattern: `<ProjectList client:idle />` inside `index.astro`.
+
+**Round-1 falsification F3 reset the directive choice from `client:load` to `client:idle`.** Per Astro docs (Context7 `/withastro/docs` § "Client Directives"): `client:load` immediately loads and hydrates the component's JavaScript when the page loads — "ideal for high-priority UI elements that require immediate interactivity." `client:idle` waits for `requestIdleCallback` (fires within tens of ms of first paint in a Wails window with no other JS competing for the main thread). The ProjectList is a read-only list with no immediate-interactivity requirement; `client:load` is cargo-culted eager hydration. `client:idle` is the FE-planning-agent doctrine default and is the right choice for this bootstrap drop. Setting it correctly here keeps the pattern clean for future islands instead of relying on a paper "future drops should …" rule that subsequent planners must catch.
+
+QA acceptance (D1.5: "the launched window DOM contains …") remains satisfiable under `client:idle` — Playwright-style probes (`networkidle`, `domcontentloaded`) wait for hydration before asserting DOM content.
 
 ### N4 — Q1 (Go workspace integration) — resolved on-disk: same root module
 
@@ -189,19 +212,57 @@ This plan does NOT add:
 ### N8 — Blocker graph summary
 
 ```
-D1.1 ──────────────────────┬─▶ D1.2 ──────────┬─▶ D1.5
-                            │                  │
-                            └─▶ D1.3 ─▶ D1.4 ──┘
-                                              └─▶ D1.6
-                            │
-                            └────────────────────▶ D1.6 (via D1.2 + D1.5)
+D1.1 ──┬─▶ D1.2 ───────────────┬─▶ D1.5 ──▶ D1.6
+       │                       │             ▲
+       │                       │             │
+       └─▶ D1.3 ──▶ D1.4 ──────┘             │
+                                             │
+       D1.2 ────────────────────────────────-┘
 ```
 
 Concretely:
 - D1.1 unblocks D1.2 and D1.3 (both edit different files post-relocation).
 - D1.2 (magefile.go) and D1.3 (ui/main.go) edit disjoint files, both depend on D1.1 alone — they MAY run in parallel.
 - D1.3 unblocks D1.4 (same file `ui/main.go`, serialize).
-- D1.5 (frontend code) waits on D1.2 (mage target points at relocated tree) AND D1.4 (JS-side binding must exist).
-- D1.6 (magefile.go + README) waits on D1.2 (same file `magefile.go`) AND D1.5 (so the README's wiring claims are evidence-backed).
+- D1.5 (frontend code) waits on D1.2 (mage target points at relocated tree) AND D1.4 (JS-side binding must exist). D1.5 does NOT directly depend on D1.3 — the dependency is transitive through D1.4.
+- D1.6 (magefile.go + README) waits on D1.2 (same file `magefile.go`, serialize) AND D1.5 (so the README's wiring claims are evidence-backed). D1.6 does NOT directly depend on D1.3 or D1.4 — those are transitive through D1.5.
 
-Mirrored into `_BLOCKERS.toml` alongside this file.
+Mirrored into `_BLOCKERS.toml` alongside this file. No `blocked_by` edges changed in round 2 — only the diagram was redrawn to remove the misleading `D1.4 ──┘ └─▶ D1.6` indentation and to accurately show D1.6's two-edge dependency on D1.2 + D1.5.
+
+### N9 — Package manager decision (round-2 F2 resolution): pin pnpm via `packageManager`, commit lockfile
+
+Round-1 falsification F2 surfaced a CONFIRMED blocker: `REVISION_BRIEF.md` §1 reads "Node + npm available on dev machine" but `wails.json` (already on disk from prior bootstrap commits `a9bac6c` / `8d33539`) hardwires `"frontend:install": "pnpm install"` + `"frontend:build": "pnpm run build"` + `"frontend:dev:watcher": "pnpm run dev"`, the prior `frontend/package.json` carries no `packageManager` field, and there is no `pnpm-lock.yaml` on disk.
+
+**Dev decision (2026-05-18, round-2 brief):** pnpm + pin, NOT switch-to-npm. The prior bootstrap commits chose pnpm; this drop honors that choice and pins it deterministically.
+
+D1.1 ships two coupled edits to resolve F2:
+
+1. **Pin pnpm.** `ui/frontend/package.json` gains a `"packageManager": "pnpm@9.0.0"` field. Node 16.13+ honours `packageManager` as a Corepack hint — `corepack enable` (one-time dev-machine setup) ensures `pnpm` is auto-fetched at the pinned version regardless of what the dev manually installed. Removes the "dev has npm but plan says pnpm" environment gap.
+2. **Commit `pnpm-lock.yaml`.** After `pnpm install` runs (during D1.1 acceptance), the resulting `ui/frontend/pnpm-lock.yaml` is `git add`'d and committed alongside the rest of D1.1's relocation. Reproducible installs require a lockfile; absent the lock, every fresh `pnpm install` re-resolves the dependency graph from scratch, drifting silently. `.gitignore` must NOT exclude `ui/frontend/pnpm-lock.yaml` — D1.1 acceptance asserts this.
+
+**Brief-vs-plan drift flag for the orchestrator:** `REVISION_BRIEF.md` §1 still says "Node + npm available". The orchestrator should reconcile this in a follow-up post-round-2 (the planner is forbidden from editing `REVISION_BRIEF.md` directly per round-2 spawn instructions). Treat the brief language as superseded by the dev's 2026-05-18 round-2 decision recorded here.
+
+### N10 — `//go:embed` relocation trap (round-1 F2-proof / F1-fals resolution)
+
+`main.go` line 16 declares `//go:embed all:frontend/dist`. Go resolves `//go:embed` paths **relative to the source file's directory**, not relative to the module root. After `git mv main.go ui/main.go` + `git mv frontend ui/frontend`, the directive in `ui/main.go` resolves `frontend/dist` against `ui/`'s file directory → `ui/frontend/dist`, which is the correct new location.
+
+**The trap:** a well-meaning builder reading the relocation diff may "fix" the directive to `//go:embed all:ui/frontend/dist` to "match the new path". That rewrite breaks the embed (Go would then look for `ui/ui/frontend/dist` relative to `ui/main.go`). The directive must stay **literally unchanged** across D1.1's relocation AND across D1.3's `NewApp(nil)` → real-service rewrite AND across D1.4's `App.ListProjects` method addition.
+
+Both D1.1 and D1.3 acceptance carry the guard: `grep -q '^//go:embed all:frontend/dist' ui/main.go` exits 0. If a future drop legitimately needs to change the embed target (e.g. moving `frontend/dist` to a new build artifact location), the directive update + acceptance grep update land together in that drop, not silently.
+
+### N11 — Wails CLI version is dev-machine-controlled; only the Go binding pin is contractual (round-1 F5-fals resolution)
+
+`go.mod:93` pins `github.com/wailsapp/wails/v2 v2.12.0` — that's the Go-bindings module version this codebase compiles against, fully reproducible across machines via `go.sum`. The `wails` CLI binary itself is installed via `go install github.com/wailsapp/wails/v2/cmd/wails@latest` (or a specific version) into the dev's `$GOBIN` / `$PATH`; there is no `.wails-version` file, no project-local CLI version pin, no Corepack-equivalent mechanism for Go CLI tools.
+
+**The contract this drop depends on is the Go binding pin in `go.mod`, NOT the dev's installed CLI version.** Round-1 acceptance bullets that grep stdout for `Wails CLI v2.12.0` are removed in round 2:
+
+- D1.3 acceptance: drops the CLI version-string match entirely; uses `wails build` exit-code 0 + binary file existence + Mach-O `file` check.
+- D1.6 acceptance: greps stdout only for the literal `[Wails] Dev mode` marker (a Wails-runtime emission unaffected by CLI version), with a 30s timeout window (raised from round-1's 10s — see §N12).
+
+The Wails CLI version contract is documentary, not machine-checked: the dev's installed CLI should be a reasonably recent v2.x — version drift in the CLI rarely breaks codegen against a fixed Go-bindings pin, and when it does, the failure surfaces as `wails build` non-zero exit, which D1.3 + D1.6 acceptance catches.
+
+If a future drop discovers CLI/binding-version drift causing real codegen issues, the response is to either (a) re-pin `go.mod` to match the dev's CLI, or (b) document a "tested CLI versions" range in `ui/README.md`. Not to grep stdout strings.
+
+### N12 — Smoke-test 30s timeout (round-1 F9-fals resolution)
+
+Round-1 D1.6 acceptance set a 10s timeout window for the `mage uiDev` smoke check. Round-1 falsification F9 noted this is cold-cache-fragile: a freshly-cloned checkout running its first `pnpm install` + first-time wails codegen can take longer than 10s before the dev-mode marker appears. Round 2 raises the timeout to 30s. If a future drop's smoke check flakes at 30s, the diagnostic is to investigate dev-cache hygiene, not to keep loosening the bound — past 60s the smoke check stops being a smoke check.
