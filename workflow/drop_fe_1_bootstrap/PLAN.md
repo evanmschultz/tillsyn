@@ -35,7 +35,7 @@ Droplets:
 
 ### Droplet 1.1 — Relocate existing FE scaffold from repo root into `ui/` subtree
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - moves: `main.go` → `ui/main.go`, `wails.json` → `ui/wails.json`, `frontend/` → `ui/frontend/` (entire tree, including `astro.config.mjs`, `package.json`, `tsconfig.json`, `src/`, `tests/`, `public/`)
   - writes: `ui/wails.json` (after relocation, change `"outputfilename": "tillsyn"` → `"outputfilename": "Tillsyn"` — see §N13 for the binary-capitalization rationale)
@@ -56,7 +56,7 @@ Droplets:
   - `cd ui/frontend && pnpm install` exits 0 and produces `ui/frontend/node_modules/`. Lockfile is created at `ui/frontend/pnpm-lock.yaml`.
   - `git ls-files ui/frontend/pnpm-lock.yaml` returns the path (lockfile committed, reproducible installs).
   - `grep -q 'ui/frontend/pnpm-lock.yaml' .gitignore` exits **non-zero** (lockfile is NOT excluded).
-  - `cd ui/frontend && pnpm run build` exits 0 and produces `ui/frontend/dist/index.html`.
+  - `cd ui/frontend && pnpm run build` exits 0 — Astro's build pipeline runs to completion on the relocated tree (load-bearing signal). The prior bootstrap commits (`a9bac6c` / `8d33539`) did NOT scaffold `src/pages/`, so this droplet does not yet produce `dist/index.html` — D1.5 adds `ui/frontend/src/pages/index.astro` and `dist/index.html` materializes then. Build emits `dist/_astro/client.<hash>.js` and the carried-over `public/` assets, which is the right post-relocation state for a `src/pages/`-less tree.
   - `magefile.go` `verifySources()` (currently at L293 region — `git ls-files --error-unmatch magefile.go cmd/till/main.go cmd/till/main_test.go`) does NOT reference root `main.go`; the relocation does not break the source-tracking guard. Verified by `grep -n verifySources magefile.go`.
   - `mage format` reports no diff against `ui/main.go` after relocation (relocated file remains gofumpt-clean — `magefile.go` `formatCheck` stage scans every `*.go` via `trackedGoFiles()` regardless of build tag, so this is a real `mage ci` precondition).
   - `mage ci` still passes green (Go gates unaffected — the `wails` build tag fence keeps `ui/main.go` out of the default compile + test, and the format step is satisfied by the line above).
@@ -252,13 +252,17 @@ D1.1 ships two coupled edits to resolve F2:
 
 **Brief-vs-plan drift resolved.** `REVISION_BRIEF.md` §1 was reconciled by the orchestrator after round-2 planning to read "Node + pnpm available on dev machine. Plan pins `packageManager: \"pnpm@9.0.0\"` in `frontend/package.json` and commits `pnpm-lock.yaml` per Round 2 PLAN.md §N9 decision." Brief and plan now agree.
 
-### N10 — `//go:embed` relocation trap (round-1 F2-proof / F1-fals resolution)
+### N10 — Path-relative-resolution relocation traps (round-1 F2-proof / F1-fals resolution + D1.1-build symlink discovery)
 
-`main.go` line 16 declares `//go:embed all:frontend/dist`. Go resolves `//go:embed` paths **relative to the source file's directory**, not relative to the module root. After `git mv main.go ui/main.go` + `git mv frontend ui/frontend`, the directive in `ui/main.go` resolves `frontend/dist` against `ui/`'s file directory → `ui/frontend/dist`, which is the correct new location.
+Three traps share a structural shape: a directive/string holds a relative path that resolves against SOMETHING-other-than-the-module-root, and moving the holder file silently breaks resolution unless the path string is recomputed for the new depth.
 
-**The trap:** a well-meaning builder reading the relocation diff may "fix" the directive to `//go:embed all:ui/frontend/dist` to "match the new path". That rewrite breaks the embed (Go would then look for `ui/ui/frontend/dist` relative to `ui/main.go`). The directive must stay **literally unchanged** across D1.1's relocation AND across D1.3's `NewApp(nil)` → real-service rewrite AND across D1.4's `App.ListProjects` method addition.
+**Variant 1 — `//go:embed` directives (Go).** `main.go` line 16 declares `//go:embed all:frontend/dist`. Go resolves `//go:embed` paths **relative to the source file's directory**. After `git mv main.go ui/main.go` + `git mv frontend ui/frontend`, the directive in `ui/main.go` resolves `frontend/dist` against `ui/`'s file directory → `ui/frontend/dist`, which is correct. A well-meaning builder reading the relocation diff may "fix" the directive to `//go:embed all:ui/frontend/dist` to "match the new path". That rewrite breaks the embed (Go would then look for `ui/ui/frontend/dist` relative to `ui/main.go`). The directive must stay **literally unchanged** across D1.1's relocation AND across D1.3's `NewApp(nil)` → real-service rewrite AND across D1.4's `App.ListProjects` method addition. D1.1 and D1.3 acceptance both carry `grep -q '^//go:embed all:frontend/dist' ui/main.go` exits 0.
 
-Both D1.1 and D1.3 acceptance carry the guard: `grep -q '^//go:embed all:frontend/dist' ui/main.go` exits 0. If a future drop legitimately needs to change the embed target (e.g. moving `frontend/dist` to a new build artifact location), the directive update + acceptance grep update land together in that drop, not silently.
+**Variant 2 — Relative symlinks (filesystem).** A relative-target symlink resolves against the symlink's OWN directory, not the source-file's directory and not the module root. `frontend/public/.tillsyn-bindings.json` was a symlink with target string `../../.tillsyn/bindings.json` — from `frontend/public/` that resolves to repo-root `.tillsyn/bindings.json`. After `git mv frontend/public/ ui/frontend/public/`, the same target string resolves to `ui/.tillsyn/bindings.json` (one level deeper), which doesn't exist. Fix: recompute the target as `../../../.tillsyn/bindings.json` (one extra `../` per added directory depth). Discovered during D1.1 round-1 build when Vite's `prepareOutDir` `statSync`'d every `public/` entry before clearing `dist/` and hard-failed on the broken symlink. If `ln -s` is sandboxed, the equivalent fix goes through git plumbing: `git hash-object -w --stdin` to write the new target string as a blob, then `git update-index --add --cacheinfo 120000,<sha>,<path>` to install it as a symlink mode entry.
+
+**Variant 3 — Config-file relative paths (Astro / Vite / tsconfig).** `astro.config.mjs` and `tsconfig.json` may carry relative paths (`./src`, `./public`) that resolve against the config file's location. After relocation those typically remain correct (the relocation preserves the relative tree structure around the config file). But ABSOLUTE-from-repo-root paths in code or config (e.g. `publicDir: "/frontend/public"` if such ever existed) would silently break — the resolution baseline changed. D1.1 acceptance covers this indirectly via `pnpm run build` exit 0: a broken absolute path would fail the build. Future FE drops adding such paths should bracket the absolute-vs-relative choice in worklog notes.
+
+**General rule:** any string holding a relative path resolves against SOMETHING — file dir, working dir, config dir, symlink dir. Whenever a holder file moves, audit every relative-path-bearing string for the new depth. The acceptance grep guards above are belt-and-suspenders against well-meaning rewrites; the variant 2 fix above is the corrective action when discovery happens at build time.
 
 ### N11 — Wails CLI version is dev-machine-controlled; only the Go binding pin is contractual (round-1 F5-fals resolution)
 

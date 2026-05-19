@@ -1,0 +1,8 @@
+# Wails build artefacts (drop_fe_1_bootstrap D1.1).
+# Per-platform output directories produced by `wails build`.
+# pnpm-lock.yaml is NOT ignored — it is committed for reproducible installs
+# (see workflow/drop_fe_1_bootstrap/PLAN.md §N9).
+build/bin/
+build/darwin/
+build/windows/
+build/linux/

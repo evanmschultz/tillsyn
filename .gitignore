@@ -35,11 +35,12 @@ coverage.out
 .codex/
 .nvimlog
 
-# Wails build outputs and generated bindings (Drop 4c.6.1 W6.D1)
-build/bin/
-frontend/node_modules/
-frontend/dist/
-frontend/wailsjs/
+# Wails build outputs and generated bindings (Drop 4c.6.1 W6.D1; relocated under ui/ at drop_fe_1_bootstrap D1.1)
+ui/build/
+ui/frontend/node_modules/
+ui/frontend/dist/
+ui/frontend/.astro/
+ui/frontend/wailsjs/
 
 # Secrets — belt-and-suspenders
 .env
