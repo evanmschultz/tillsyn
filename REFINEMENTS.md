@@ -39,6 +39,25 @@ Transitions are recorded by appending a dated status note to the entry, not by r
 
 ---
 
+## 2026-05-18 — drop-4b-test-cleanup — `dispatcherTemplateResolver` per-project routing untested
+
+### Context
+Drop 4b test-cleanup R7.3 parameterizes `stubE2ETemplateResolver` to support per-project template routing and adds `TestStubE2ETemplateResolverRoutesPerProject`. The new test asserts the STUB routes per project. The REAL production resolver — `dispatcherTemplateResolver` at `cmd/till/main.go:2704` — lives in `package main` and is not importable from `internal/app/dispatcher`. Stub-only coverage was accepted for Drop 4b test-cleanup; the real-resolver test path was deferred to this entry so the deferral does not evaporate.
+
+### Observation
+`dispatcherTemplateResolver.GetProjectTemplate` (`cmd/till/main.go:2704`) holds the production per-project routing logic invoked by the dispatcher daemon. No test exists today in `cmd/till/main_test.go` (or anywhere importing `package main`) that asserts it correctly routes different `projectID` arguments to different templates. A future routing bug would not be caught by the package's existing tests — only by integration / dogfood.
+
+### Proposed fix
+Add `TestDispatcherTemplateResolverRoutesPerProject` (or equivalent) to `cmd/till/main_test.go`. The test constructs two project templates with distinguishable content, registers both via the real `dispatcherTemplateResolver` wiring, calls `GetProjectTemplate(ctx, projectIDA)` and `GetProjectTemplate(ctx, projectIDB)`, and asserts each returns the correct template. Mirror the table-driven style of the stub test added in Drop 4b test-cleanup D1.4 (R7.3).
+
+### Target drop
+Parking lot — not blocking; small fixed-size add. Pick up in a `cmd/till` test-hardening drop OR fold into the next drop that already touches `cmd/till/main.go`.
+
+### Tags
+test, dispatcher, cmd-till, ergonomics
+
+---
+
 ## 2026-05-16 — agent-isolation-followup — `wait_timeout` default-on for live-wait MCP ops
 
 ### Context
