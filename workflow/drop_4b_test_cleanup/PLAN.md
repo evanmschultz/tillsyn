@@ -39,6 +39,8 @@ See `REVISION_BRIEF.md` for the four refinement breakdowns with file/line pointe
 - `IsValidCommentTargetType("actionItem")` returns `true`.
 - Existing tests unchanged (no regressions on `"project"` and `"action_item"` paths).
 
+**Notes (F6 — alias persistence round-trip):** `internal/adapters/storage/sqlite/repo.go:3095` re-normalizes on read using `NormalizeCommentTargetType`. If any existing row was stored as `'actionItem'` (the pre-D1.1 schema-declared form), reading it back after D1.1 will produce `'action_item'` (different from the stored bytes). Anything doing an exact-string match on the stored form (e.g. a UNIQUE constraint, a future migration script) will see the drift. Mitigation: the pre-MVP no-migration-logic rule (`feedback_no_migration_logic_pre_mvp.md`) means the dev wipes `~/.tillsyn/tillsyn.db` on any schema/state-vocab change — so no live stored rows with the camelCase form are expected in the dev environment. This drift is accepted under that rule. Builder does NOT need to add a persistence-path regression test; the Notes here are the acceptance record.
+
 ---
 
 ### Droplet 1.2 — R5: MCP schema enum update for `till.comment`
@@ -49,20 +51,22 @@ See `REVISION_BRIEF.md` for the four refinement breakdowns with file/line pointe
 **Packages:** `internal/adapters/mcp_rpc`
 **Blocked by:** —
 
-**Scope:** Update the `target_type` schema enum in `registerCommentTools` (`extended_tools.go` line 2243) to reflect post-Drop-1.75 vocabulary. The current enum `("project", "branch", "phase", "actionItem", "subtask", "decision", "note")` includes stale pre-1.75 tokens. Replace with `("project", "action_item", "actionItem")` where `"action_item"` is the canonical form and `"actionItem"` is kept as an accepted alias (so callers that already pass `"actionItem"` continue to work after D1's domain fix). Update the `target_type` description string to note that `"action_item"` is the canonical post-Drop-1.75 form.
+**Scope:** Update the `target_type` schema enum in `registerCommentTools` (`extended_tools.go` line 2243) to reflect post-Drop-1.75 vocabulary. The current enum `("project", "branch", "phase", "actionItem", "subtask", "decision", "note")` includes stale pre-1.75 tokens. Replace with `("project", "action_item", "actionItem")` where `"action_item"` is the canonical form and `"actionItem"` is kept as an accepted alias (so callers that already pass `"actionItem"` continue to work after D1.1's domain fix). Update the `target_type` description string to replace the stale `"project|branch|phase|actionItem|subtask|decision|note"` literal with `"project|action_item|actionItem"` — the description string is what MCP callers read as the contract; leaving it stale recreates the original R5 schema-vs-runtime drift.
 
 This droplet is adapter-only (schema declaration). Domain validation is fixed in droplet 1.1. No new test file needed — tested via `mage test-pkg internal/adapters/mcp_rpc` (existing handler tests).
 
 **Changes:**
-- `internal/adapters/mcp_rpc/extended_tools.go`: change `mcp.Enum("project", "branch", "phase", "actionItem", "subtask", "decision", "note")` to `mcp.Enum("project", "action_item", "actionItem")` and update the description string for `target_type`.
+- `internal/adapters/mcp_rpc/extended_tools.go`: change `mcp.Enum("project", "branch", "phase", "actionItem", "subtask", "decision", "note")` to `mcp.Enum("project", "action_item", "actionItem")` at line 2243. Update the `target_type` description string from `"project|branch|phase|actionItem|subtask|decision|note"` to `"project|action_item|actionItem"`.
 
 **Acceptance:**
 - `mage test-pkg internal/adapters/mcp_rpc` passes.
 - Schema enum for `till.comment target_type` contains `"project"`, `"action_item"`, `"actionItem"` and excludes stale pre-1.75 tokens (`"branch"`, `"phase"`, `"subtask"`, `"decision"`, `"note"`).
+- The `target_type` description string lists exactly `"project|action_item|actionItem"` and contains no stale pre-1.75 tokens.
+- Regression: `IsValidCommentTargetType("branch")`, `IsValidCommentTargetType("phase")`, `IsValidCommentTargetType("subtask")`, `IsValidCommentTargetType("decision")`, `IsValidCommentTargetType("note")` all return `false` (domain layer enforces the shrunk enum). Builder adds these as table-driven cases in `internal/domain/comment_test.go` (or confirms they are implicitly covered by existing negative-case coverage) — the test confirming legacy-token rejection may live in either domain or mcp_rpc; builder picks the natural location.
 
 ---
 
-### Droplet 1.3 — R6 fixups + R7.4 file split
+### Droplet 1.3 — R6 fixups + R7.4 file split + goleak
 
 **State:** todo
 **Paths:**
@@ -71,21 +75,24 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 **Packages:** `internal/app/dispatcher`
 **Blocked by:** —
 
-**Scope:** Three R6 fixups + the R7.4 file split in one atomic step (merged because D3 renames the test being moved by D4; merging avoids a two-step rename-then-move).
+**DEV-ACTION PREREQ:** Before this droplet builds, the dev must run `go get go.uber.org/goleak` in the `main/` worktree shell. The goleak library is NOT in `go.mod` (confirmed). Builder blocks until the dep is available.
+
+**Scope:** Three R6 fixups + the R7.4 file split in one atomic step (merged because D3 renames the test being moved by D4; merging avoids a two-step rename-then-move). Also wires goleak goroutine-leak detection per dev approval (F4 resolution).
 
 **R6.1:** Rename `TestAutoDispatchE2EGatePassViaNewDispatcher` (subscriber_test.go line 543) to `TestAutoDispatch_NewDispatcherGateWiring`. The name overstates scope; the test's inline comment (lines 533-542) already documents the honest scope.
 
-**R6.2 (deviation from brief):** Do NOT add a `runtime.NumGoroutine()` bracket — it is unreliable in `t.Parallel()` suites (sibling tests inflate the count). Instead, add a comment near the `t.Cleanup` call in the renamed test: `// R6.2: goroutine-leak detection deferred; requires go.uber.org/goleak (not in go.mod). t.Cleanup(d.Stop) is the structural drain guard.`
+**R6.2:** Wire `go.uber.org/goleak` goroutine-leak detection. `TestAutoDispatchE2EGatePassViaNewDispatcher` (renamed to `TestAutoDispatch_NewDispatcherGateWiring`) does NOT call `t.Parallel()` (per its inline comment at line 541 — swaps the package-level `defaultCommandRunner` var). `TestAutoDispatchE2EGateFailViaNewDispatcher` DOES call `t.Parallel()` (line 626 in the current file; will be moved to `dispatcher_e2e_test.go` via R7.4 below). Since the two e2e tests have mixed parallel/non-parallel execution, use `goleak.VerifyTestMain(m)` in a `TestMain` function in `dispatcher_e2e_test.go` (the new file created by R7.4). Place `goleak.VerifyTestMain(m)` at the end of the `TestMain` body BEFORE calling `os.Exit`. Builder first checks whether any existing `TestMain` exists in the `dispatcher` package (no `TestMain` was found in the current file survey); if one is found, ADD `goleak.VerifyTestMain(m)` to the existing one rather than creating a new one. If `goleak.VerifyTestMain(m)` causes sibling-test goroutine-inflation false-positives during `mage test-pkg internal/app/dispatcher`, builder documents in worklog and falls back to `goleak.VerifyNone(t)` at the END of each e2e test body (not in `t.Cleanup` — goleak docs flag that as fragile).
 
-**R6.3:** Add a clarifying comment to the `lister.calls == 1` assertion in `TestDispatcherStartSpawnsPerProjectSubscribers`: `// "state transitions" in D5 spec means dispatcher lifecycle (Start/Stop), not action-item state. This lister-calls pin is the lifecycle-transition signal.`
+**R6.3:** Add a clarifying comment to the `lister.calls == 1` assertion in `TestDispatcherStartTriggersRunOnceOnEvent` (or whichever test pins subscriber lifecycle state): `// "state transitions" in D5 spec means dispatcher lifecycle (Start/Stop), not action-item state. This lister-calls pin is the lifecycle-transition signal.`
 
-**R7.4:** Create `internal/app/dispatcher/dispatcher_e2e_test.go` (new file, package `dispatcher`). Move `stubE2ETemplateResolver` (subscriber_test.go lines 509-522), the renamed `TestAutoDispatch_NewDispatcherGateWiring` (previously `TestAutoDispatchE2EGatePassViaNewDispatcher`), and `TestAutoDispatchE2EGateFailViaNewDispatcher` (subscriber_test.go lines 616-666) into the new file. Remove those symbols from `subscriber_test.go`. The new file gets the package declaration, required imports, and the moved symbols.
+**R7.4:** Create `internal/app/dispatcher/dispatcher_e2e_test.go` (new file, package `dispatcher`). Move `stubE2ETemplateResolver` (subscriber_test.go lines 509-522), the renamed `TestAutoDispatch_NewDispatcherGateWiring` (previously `TestAutoDispatchE2EGatePassViaNewDispatcher`), and `TestAutoDispatchE2EGateFailViaNewDispatcher` (subscriber_test.go lines 616-666) into the new file. Remove those symbols from `subscriber_test.go`. The new file gets the package declaration, required imports, goleak `TestMain`, and the moved symbols.
 
 **Acceptance:**
 - `mage test-pkg internal/app/dispatcher` passes with same test count.
-- `dispatcher_e2e_test.go` exists and contains the e2e tests.
+- `dispatcher_e2e_test.go` exists and contains the e2e tests and goleak `TestMain`.
 - `subscriber_test.go` no longer contains `stubE2ETemplateResolver` or the two e2e test functions.
 - `TestAutoDispatch_NewDispatcherGateWiring` exists (renamed from `TestAutoDispatchE2EGatePassViaNewDispatcher`); old name no longer exists.
+- Goleak is wired — either via `TestMain` + `goleak.VerifyTestMain(m)` or via `goleak.VerifyNone(t)` at end of each test body if `TestMain` causes sibling inflation. Builder worklog documents the approach taken.
 
 ---
 
@@ -99,53 +106,52 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 
 **Scope:** Enrich the e2e tests in `dispatcher_e2e_test.go` per R7.1, R7.2, R7.3.
 
-**R7.1:** Add `TestAutoDispatchE2E_GateFailFullChain` (new, not yet in tree). Wire a walker stub returning a `KindBuild` action item with a project that resolves. Drive `d.gates.Run` via the gate runner against the `GateKindMageTestPkg` template (not registered by `NewDispatcher`) — assert `GateStatusFailed` + `errors.Is(results[0].Err, ErrGateNotRegistered)`. If reaching `applyCleanExitTransition` via the broker chain requires injecting a fake processMonitor (the real chain tries to spawn an agent process), builder must document the actual scope in the worklog — direct `applyCleanExitTransition` unit coverage via a constructed monitor is acceptable if the full chain is impractical in an in-package test.
+**R7.1:** Add `TestAutoDispatchE2E_GateFailFullChain` (new, not yet in tree). The broker chain IS reachable from in-package tests: `TestDispatcherStartTriggersRunOnceOnEvent` (`subscriber_test.go:178`) and `TestHandleSubscriberEventInvokesRunOnceForEachEligibleItem` (`subscriber_test.go:445`) already drive `handleSubscriberEvent` end-to-end with stub walkers. For the gate-fail path (`ErrGateNotRegistered`), no subprocess spawn occurs because `applyCleanExitTransition` is called after the gate runner returns `GateStatusFailed` synchronously. Add a test using the same stub-walker pattern as those two existing tests: wire a walker stub returning a `KindBuild` action item, configure a `GateKindMageTestPkg` template (not registered by `NewDispatcher`), drive via `handleSubscriberEvent` (or the broker chain), assert `metadata.outcome=failure` on the action item after the monitor's `applyCleanExitTransition` fires. This is the end-to-end broker-chain test R7.1 requires. Builder documents the exact chain reached in the worklog. If the subscriber chain cannot be fully reached without a subprocess (builder discovers this at implementation time), builder MUST report in worklog and get dev sign-off before falling back to a direct-`processMonitor`-construction test — that fallback is NOT pre-authorized.
 
-**R7.2:** Add `TestAutoDispatchE2E_ApplyCleanExitTransitionCoverage` (new, not yet in tree). Use the `stubMonitorService` pattern from `monitor_test.go` to construct a `processMonitor` directly and call `applyCleanExitTransition` with scenarios covering: (C1) skip path when item is already `StateComplete` before gate run, and (C2) ctx-cancel pre-loop. These tests exercise the discriminated paths added inline at commit `d949f6f`. Builder notes honest scope in worklog.
+**R7.2:** Add `TestAutoDispatchE2E_ApplyCleanExitTransitionCoverage` (new, not yet in tree). Wire the subscriber chain as in R7.1, covering at least: (C1) skip path when item is already `StateComplete` before gate run, and (C2) ctx-cancel pre-loop. These paths were added inline at commit `d949f6f` and are unit-tested in `monitor_test.go` but NOT yet reached via the integration chain. The goal of R7.2 is the integration-chain coverage of those paths. Builder notes honest scope in worklog; same fallback rule as R7.1 applies (no pre-authorized direct-monitor fallback).
 
 **R7.3:** Parameterize `stubE2ETemplateResolver`. Add field `tplByProject map[string]templates.Template` to `stubE2ETemplateResolver`. In `GetProjectTemplate`, if `tplByProject[projectID]` is set, return it; else return `tpl`. Add one table-driven test `TestStubE2ETemplateResolverRoutesPerProject` (new, not yet in tree) asserting per-project routing returns the configured per-project template.
 
+**Notes (F5 — real-resolver limitation):** `TestStubE2ETemplateResolverRoutesPerProject` only proves the test stub routes per-project correctly; it does NOT pin production-resolver behavior. The real `dispatcherTemplateResolver` at `cmd/till/main.go:2704` lives in `package main` and is not importable from `internal/app/dispatcher`. Coverage of the real resolver's per-project routing logic is not testable from this package. This limitation is accepted for this drop. A future refinement adds a test in `cmd/till/main_test.go` (where `dispatcherTemplateResolver` lives) asserting per-project routing via the real resolver.
+
 **Acceptance:**
 - `mage test-pkg internal/app/dispatcher` passes.
-- `dispatcher_e2e_test.go` contains the three new tests plus the parameterized stub.
-- Builder worklog honestly describes scope of R7.1 and R7.2 (full chain vs direct monitor construction, whichever is achieved).
+- `dispatcher_e2e_test.go` contains the three new tests plus the parameterized `stubE2ETemplateResolver`.
+- `TestAutoDispatchE2E_GateFailFullChain` reaches `applyCleanExitTransition` via the broker chain (default path); fallback to direct-monitor construction requires dev sign-off documented in the worklog.
+- `TestAutoDispatchE2E_ApplyCleanExitTransitionCoverage` covers at least the C1 (already-complete skip) and C2 (ctx-cancel pre-loop) paths.
+- Builder worklog documents the exact chain reached for R7.1 and R7.2.
 
 ---
 
-### Droplet 1.5 — R8: `SupersedeActionItem` interface + adapter
+### Droplet 1.5 — R8: `SupersedeActionItem` interface addition
 
 **State:** todo
 **Paths:**
 - `internal/adapters/mcp_common/mcp_surface.go`
-- `internal/adapters/mcp_common/app_service_adapter_mcp.go`
 - `internal/adapters/mcp_common/app_service_adapter_lifecycle_test.go`
 **Packages:** `internal/adapters/mcp_common`
 **Blocked by:** —
 
-**Scope:** Wire the supersede path into the MCP adapter layer.
+**Scope:** Add `SupersedeActionItem` to the `ActionItemService` interface. The adapter method `AppServiceAdapter.SupersedeActionItem` ALREADY EXISTS at `internal/adapters/mcp_common/app_service_adapter_mcp.go:1051-1075` (Drop 4c.5 droplet B.1). The `app_service_adapter_mcp.go` body is NOT modified by this droplet — any attempt to re-implement the method will introduce a compile error (duplicate function definition).
 
-**`mcp_surface.go`:** Add `SupersedeActionItem(context.Context, SupersedeActionItemRequest) (domain.ActionItem, error)` to the `ActionItemService` interface (after `ReparentActionItem`). `SupersedeActionItemRequest` type already exists at line 354 (`internal/adapters/mcp_common/mcp_surface.go`).
+**`mcp_surface.go`:** Add `SupersedeActionItem(context.Context, SupersedeActionItemRequest) (domain.ActionItem, error)` to the `ActionItemService` interface at line 857 (after `ReparentActionItem`). `SupersedeActionItemRequest` type already exists at `mcp_surface.go:354`. This is the only change to `mcp_surface.go`.
 
-**`app_service_adapter_mcp.go`:** Implement `AppServiceAdapter.SupersedeActionItem`. Pattern:
-1. Nil-guard on `a.service`.
-2. Trim/validate `in.ActionItemID` non-empty.
-3. Call `withMutationGuardContext` for guard-context setup.
-4. Fetch the existing item via `a.service.GetActionItem` to run `assertOwnerStateGate`.
-5. Check orchestrator-role: if the authenticated caller (from context) has `principal_role != "orchestrator"`, return `ErrAuthorizationDenied` with a clear message ("supersede requires orchestrator-role session").
-6. Call `a.service.SupersedeActionItem(ctx, in.ActionItemID, in.Reason)`.
-7. Map errors via `mapAppError`.
-8. Return `domain.ActionItem`.
+**After the interface addition:** `AppServiceAdapter` already implements `SupersedeActionItem` at `app_service_adapter_mcp.go:1051-1075`. The compile-time interface-satisfaction check (via any existing test that assigns `*AppServiceAdapter` to `ActionItemService`) will confirm the method signature matches. Builder verifies via `mage test-pkg internal/adapters/mcp_common`.
+
+**Role-gating note:** The existing `SupersedeActionItem` adapter method (line 1051-1075) uses `withMutationGuardContext` + `assertOwnerStateGate` — the same STEWARD owner-state-gate pattern as `MoveActionItemState` and `ReparentActionItem`. It does NOT include an orchestrator-role check at the adapter layer, which is correct: role-gating for this operation belongs at the MCP-RPC layer via `authorizeMCPMutation("supersede_task", ...)` in D1.6. Builder must NOT add a role check to the adapter body.
 
 **Tests in `app_service_adapter_lifecycle_test.go`:**
-- Happy path: orchestrator session + failed item → returns superseded item.
-- Non-orchestrator session → `ErrAuthorizationDenied`.
-- STEWARD-owned item + non-steward session → `ErrAuthorizationDenied` (from `assertOwnerStateGate`).
+- Happy path: any authenticated session + failed item with correct STEWARD ownership → returns superseded item. (Use a non-STEWARD-owned item to bypass the `assertOwnerStateGate`, matching test patterns elsewhere in the file.)
+- STEWARD-owned item + non-steward session → `ErrAuthorizationDenied` (from `assertOwnerStateGate`). This mirrors the existing `TestStewardIntegrationDropOrchSupersedeRejected` at `handler_steward_integration_test.go:466` which exercises exactly this path via the full adapter.
 - Missing `ActionItemID` → `ErrInvalidCaptureStateRequest`.
+- `TestStewardIntegrationDropOrchSupersedeRejected` (`handler_steward_integration_test.go:466`) must still pass after this droplet lands — it calls `fixture.adapter.SupersedeActionItem` directly and tests that drop-orch-on-STEWARD-owned rejects. Builder verifies: `mage test-pkg internal/adapters/mcp_rpc` still green after D1.5 lands.
 
 **Acceptance:**
 - `mage test-pkg internal/adapters/mcp_common` passes.
-- `AppServiceAdapter` satisfies the updated `ActionItemService` interface (compile check via test).
-- Supersede with orchestrator session succeeds; without orchestrator session fails with auth error.
+- `ActionItemService` interface at `mcp_surface.go:848` includes `SupersedeActionItem(context.Context, SupersedeActionItemRequest) (domain.ActionItem, error)` after `ReparentActionItem`.
+- `app_service_adapter_mcp.go` is NOT modified (no re-implementation of existing method).
+- `TestStewardIntegrationDropOrchSupersedeRejected` at `handler_steward_integration_test.go:466` still passes (regression guard).
+- Adapter-layer test cases in `app_service_adapter_lifecycle_test.go` pass: happy path + STEWARD-owner-gate rejection + missing-ID validation.
 
 ---
 
@@ -162,31 +168,43 @@ This droplet is adapter-only (schema declaration). Domain validation is fixed in
 
 **`extended_tools.go`:**
 1. Add `"supersede"` to the `till.action_item` operation enum at line 1440: `mcp.Enum("get", "list", "search", "create", "update", "move", "move_state", "delete", "restore", "reparent", "supersede")`.
-2. Add `Reason *string `json:"reason"`` field to the `args` struct inside `handleActionItemOperation` (pointer-sentinel so it distinguishes absent from empty-string, consistent with the pointer pattern used for `Title`, `Description`, etc. post-Drop-4c.5-A.1).
-3. Add `case "supersede":` in `handleActionItemOperation` switch: validate `action_item_id` non-empty, validate `reason` pointer is non-nil and non-empty (return `invalid_request` if missing), call `authorizeMCPMutation` with action `"supersede_action_item"`, build actor tuple, call `tasks.SupersedeActionItem(ctx, mcpcommon.SupersedeActionItemRequest{ActionItemID: actionItemID, Reason: *args.Reason, Actor: actor})`, return JSON result.
-4. Update `till.action_item` description string to include `operation=supersede` in the operation list.
+2. Add `mcp.WithString("reason", mcp.Description("Required for operation=supersede. Human-readable reason why this failed item is being superseded."))` to the `till.action_item` tool schema parameters.
+3. Add `Reason *string `json:"reason"`` field to the `args` struct inside `handleActionItemOperation` (pointer-sentinel consistent with the `Owner`, `Title`, `Description` etc. pointer pattern established in Drop 4c.5-A.1 and visible at line 750 of the current struct). The `bindArgumentsStrict` decoder rejects unknown JSON keys — adding `Reason` to the struct is REQUIRED before the `supersede` case can receive the argument.
+4. Add `case "supersede":` in `handleActionItemOperation` switch: validate `action_item_id` non-empty (also call `rejectMutationDottedActionItemID` as other mutation cases do), validate `args.Reason` is non-nil and `strings.TrimSpace(*args.Reason)` non-empty (return `invalid_request` if missing or blank), call `authorizeMCPMutation` with action string `"supersede_task"` (matching the `_task` suffix convention used by `"restore_task"` (line 1357), `"reparent_task"` (line 1401), `"delete_task"` (line 1309), `"create_task"` (line 931)), build actor tuple via `buildAuthenticatedMutationActor`, call `tasks.SupersedeActionItem(ctx, mcpcommon.SupersedeActionItemRequest{ActionItemID: actionItemID, Reason: *args.Reason, Actor: actor})`, return JSON result.
+5. Update `till.action_item` description string (line 1439) to include `operation=supersede` in the operation list.
 
 **`extended_tools_test.go`:** Add table-driven tests for supersede:
 - Valid orchestrator session + `"failed"` item + non-empty reason → success, item returned with `LifecycleState=complete`.
-- Missing `reason` → `invalid_request`.
+- Missing `reason` (nil pointer) → `invalid_request`.
 - Non-orchestrator session → `auth_denied`.
-- Unknown `action_item_id` → `not_found`.
+- Non-subtree `action_item_id` (item belongs to a different auth scope) → `auth_denied`. Note: `authorizeMCPMutation` returns `auth_denied` for scope mismatches; this is NOT a `not_found`. The test case is named "non-subtree action_item_id → `auth_denied`", not "subtree-gating via not-found" (correcting round-1 wording per 1.5-proof).
+- Supersede on `todo`-state item (or `in_progress`, or `complete`) → typed error wrapping `ErrTransitionBlocked` with the `"supersede only applies to failed items"` message. This test pins the service-layer failed-only invariant (`service.go:1843-1845`) at the MCP boundary so a future refactor cannot silently weaken it for MCP callers.
 
 **Acceptance:**
 - `mage test-pkg internal/adapters/mcp_rpc` passes.
 - `till.action_item operation=supersede` is in the registered tool enum.
-- Tests cover role-gating, subtree-gating (via not-found), and the happy path.
+- The `args` struct inside `handleActionItemOperation` contains `Reason *string`.
+- The `till.action_item` schema includes `mcp.WithString("reason", ...)`.
+- `authorizeMCPMutation` action string is `"supersede_task"` (not `"supersede_action_item"`).
+- Tests cover: orchestrator role-gating (non-orch → `auth_denied`), non-subtree scope (`auth_denied`), happy path (failed item → complete), failed-only invariant (`todo`/`in_progress`/`complete` → `ErrTransitionBlocked`), and missing-reason (`invalid_request`).
 - `mage ci` passes (drop-end verification).
 
 ## Notes
-
-**Open questions for orchestrator / dev:**
-
-- **R6.2 deviation**: goroutine-leak bracket not implemented (unreliable in parallel test suite without `goleak`). Confirm: (a) accept deferred-comment approach, OR (b) dev runs `go get go.uber.org/goleak` and builder adds goleak assertions.
-- **R7.1/7.2 scope**: "integration chain" reaching `applyCleanExitTransition` via the full subscriber path requires injecting a fake processMonitor into the dispatcher (the real chain tries to spawn a claude agent process). Builder may fall back to direct `processMonitor.applyCleanExitTransition` unit-test construction. Confirm: (a) accept direct monitor unit test as sufficient, OR (b) require full subscriber chain (higher complexity, may need additional stub types).
 
 **Planner answers to REVISION_BRIEF §7 questions:**
 - **Q1 (R5 direction)**: option (a) confirmed. Domain alias normalization + schema enum update.
 - **Q2 (R6.1)**: rename (option a). Enrichment would duplicate R7 work.
 - **Q3 (R8 shape)**: `operation=supersede` on `till.action_item`. Not a new field on `update`.
 - **Q4 (R7.4)**: split into `dispatcher_e2e_test.go`. Clean extraction point at line ~509 in current `subscriber_test.go`.
+
+**Round-2 deviations from round-1 plan (all per dev-approved brief):**
+- **D1.5 scope corrected**: adapter method EXISTS at `app_service_adapter_mcp.go:1051-1075` (Drop 4c.5 B.1). D1.5 now scopes to interface-addition only; no adapter re-implementation.
+- **D1.5 role-gate removed**: orchestrator-role check belongs at D1.6's `authorizeMCPMutation` call, not at the adapter layer.
+- **D1.4 escape clause removed**: "direct monitor unit coverage acceptable if broker chain impractical" clause removed. Broker chain end-to-end is the REQUIRED default. Direct-monitor fallback requires dev sign-off in the worklog.
+- **D1.3 goleak wired**: dev approved `go get go.uber.org/goleak`. Builder wires `goleak.VerifyTestMain(m)` in new `dispatcher_e2e_test.go`; falls back to `VerifyNone(t)` at test-body end if `TestMain` causes sibling-test goroutine inflation.
+- **D1.6 action string corrected**: `"supersede_task"` not `"supersede_action_item"`.
+- **D1.6 args struct addition**: `Reason *string` field and `mcp.WithString("reason", ...)` schema declaration added — required for `bindArgumentsStrict` to accept the argument.
+- **D1.6 failed-only invariant test added**: 5th test case pinning `ErrTransitionBlocked` for non-failed items at the MCP boundary.
+- **D1.2 description-string acceptance tightened**: explicit bullet pins the new description string (not just enum values).
+- **D1.2 legacy-token rejection acceptance added**: confirms `"branch"`, `"phase"`, `"subtask"`, `"decision"`, `"note"` are rejected at domain layer.
+- **F5 accepted as stub-only**: real `dispatcherTemplateResolver` lives in `package main` and is not importable from `internal/app/dispatcher`. Stub-only coverage accepted; production-resolver test deferred to a future refinement in `cmd/till/main_test.go`.
