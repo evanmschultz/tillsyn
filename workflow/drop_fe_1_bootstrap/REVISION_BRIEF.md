@@ -9,8 +9,8 @@
 - HEAD `2124d2c` on `main`. Git clean.
 - Hylla is back on per dev 2026-05-18 (irrelevant to this drop — FE agents do not use Hylla; Hylla is Go-only today per `feedback_hylla_go_only_today.md`).
 - Dev has the Wails CLI installed (or will install once before build droplets fire). The planner does NOT spawn `wails init` itself — droplets do, and the dev's environment must have `wails` on `$PATH`. **Confirm-once with dev BEFORE Phase 4 builders start.**
-- Node + npm available on dev machine (Wails frontend templates use them).
-- No existing `ui/` directory in the repo (verified at brief authoring time).
+- Node + pnpm available on dev machine. Plan pins `packageManager: "pnpm@9.0.0"` in `frontend/package.json` and commits `pnpm-lock.yaml` per Round 2 PLAN.md §N9 decision.
+- No existing `ui/` directory in the repo (verified at brief authoring time). Round 1 planner confirmed a pre-existing FE scaffold at the REPO ROOT (commits `a9bac6c` + `8d33539`); dev confirmed Option A — relocate to `ui/` (Round 2 plan honors this).
 
 ## 2. Goal
 
