@@ -1,0 +1,11 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import ProjectList from '../components/ProjectList';
+---
+
+<MainLayout>
+  <main>
+    <h1>Tillsyn</h1>
+    <ProjectList client:idle />
+  </main>
+</MainLayout>

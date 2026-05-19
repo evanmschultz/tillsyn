@@ -411,3 +411,99 @@ Ready for build-QA-proof sibling result + dev-launch verification.
 ## Hylla Feedback
 
 N/A — Hylla is OFF per the 2026-05-18 rule. Used `Read`, `git diff`, `/usr/bin/grep` (via the absolute path), and source-of-truth signatures from `internal/app/service.go`, `internal/adapters/storage/sqlite/repo.go`, and `internal/domain/project.go`. Sandbox denied `go build`, `go vet`, `go test` — reported honestly and resolved every attack via static evidence.
+
+## Droplet 1.5 — Round 1
+
+- **QA agent:** `fe-qa-falsification-agent`
+- **Round:** 1
+- **Verdict:** PASS with 1 POSSIBLE + 3 NITs (counterexample count: 0 CONFIRMED, 1 POSSIBLE, 3 NIT, 6 REFUTED).
+- **Builder claim under attack:** D1.5 shipped `ui/frontend/src/components/ProjectList.tsx`, `ui/frontend/src/pages/index.astro`, and `ui/frontend/src/types/wails.d.ts`; SSR `window is not defined` issue was caught inline and patched with `typeof window === 'undefined'` guard in `fetchProjects`; `mage ciUI` exits 0; `dist/index.html` contains the `<astro-island ... client="idle">` shell with SSR'd empty-state markup.
+
+### Attacks
+
+**A1. SSR-to-hydrated empty-state flash on a populated DB. — POSSIBLE (visible-flicker UX concern, not a build break).**
+- Evidence: `dist/index.html` line 1 — SSR'd `<astro-island>` body contains the literal `<section data-hk="s00001"><h2>Projects</h2><!--$--><p data-hk="s00002000">No projects yet</p><!--/--></section>`. The SSR pass goes through the `typeof window === 'undefined'` branch, returns `[]`, and Solid renders the empty-state fallback into the static HTML.
+- Astro hydration semantics (Context7 confirmed `client:idle` hydrates after `requestIdleCallback` fires, i.e. after the page finishes loading). Per the `dist/index.html` `requestIdleCallback` polyfill block (`setTimeout(i, s.timeout||200)`), WebKit-without-`requestIdleCallback` waits **200 ms** before hydrating. WebKit (Safari Tech Preview, WKWebView ≥ macOS 14) DOES support `requestIdleCallback` natively as of late 2024 — but Wails embeds the system WebKit, so older macOS/WebKit may polyfill via `setTimeout`.
+- Sequence on a DB containing at least one project: (1) SSR shell paints "No projects yet" on first frame; (2) `client:idle` fires; (3) Solid mounts, `createResource` runs `fetchProjects` against `window.go.main.App.ListProjects()`; (4) IPC roundtrip resolves; (5) DOM swaps to populated `<ul>`. Visible flash duration ≈ idle delay (0–200 ms) + IPC roundtrip (single-digit ms). On a freshly-launched Wails window the user MAY see "No projects yet" before the list appears, even on a non-empty DB.
+- Why POSSIBLE (not CONFIRMED): the dev's actual DB state at first Phase-6 launch is unknown — if the DB is empty, the swap is a no-op and there is no visible state change. If the DB has projects, the flash is observable but typically brief (~50–250 ms total). This is a UX nit, not a contract violation. The PLAN.md row-130 dev-launch verification is the right gate to confirm whether it's perceptible.
+- Mitigation routes (none required at this droplet; FYI for a future cleanup drop):
+  1. Distinguish "haven't fetched yet" from "fetched, empty result" — e.g. render `<p>Loading…</p>` whenever `projects()` is `undefined` (current code's `<Show when={!projects.loading}>` reads `projects.loading` which is `false` on the SSR pass because the loader returned synchronously with `[]`). The current discriminator collapses "SSR-empty" with "client-resolved-empty."
+  2. Switch to `client:only="solid-js"` — skips SSR entirely, paints a brief blank then mounts. Trades flash-of-stale-empty for flash-of-blank.
+  3. Pass `props={{ ssr: 'skip' }}` and a `<noscript>` fallback — overkill for D1.5.
+
+**A2. `createResource` unmount cleanup. — NIT.**
+- Evidence: `ui/frontend/src/components/ProjectList.tsx:26` uses bare `createResource<Project[]>(fetchProjects)` with no source signal and no cleanup wiring.
+- Context7 / SolidJS docs: bare `createResource(fetcher)` does NOT pass an `AbortSignal` to the fetcher and does NOT auto-cancel in-flight promises on owner-scope disposal. The component's owner is the SolidJS reactive root tied to the `<astro-island>`'s hydrator. If the component unmounts mid-fetch (e.g. user closes the window during the IPC roundtrip), the IPC promise resolves into a destroyed owner.
+- Why NIT (not CONFIRMED or POSSIBLE): SolidJS swallows post-disposal resolutions silently — no console warning, no leaked subscription, no observable UI artifact (no other component holds a reference to `projects()`). Wails IPC promises are short-lived (single-digit ms) and the only unmount path in the bootstrap is full-window close, where the JS context is destroyed anyway. Real-world impact on D1.5 is zero. A later drop with route-driven mounts/unmounts (sidebar nav, modal flow) should adopt the `createEffect` + `AbortController` pattern shown in Context7 SolidJS docs, or accept that Wails IPC doesn't natively expose `AbortSignal`.
+
+**A3. TypeScript ambient DTO shape vs Go-side `ProjectDTO`. — REFUTED.**
+- `ui/types.go:14-17` defines `ProjectDTO struct { ID string; Name string }` with build tag `wails`. The Go `App.ListProjects` method (`ui/main.go:48-58`) maps `[]domain.Project` → `[]ProjectDTO{ID: p.ID, Name: p.Name}` explicitly — only ID and Name are projected; the other 11 fields on `domain.Project` (Slug, Description, HyllaArtifactRef, RepoBareRoot, RepoPrimaryWorktree, BuildTool, DevMcpServerName, Metadata, KindCatalogJSON, CreatedAt, UpdatedAt) never leave Go.
+- Attack premise was "Go marshals `domain.Project` with extra fields"; the projection sits server-side. The TypeScript ambient `Promise<{ ID: string; Name: string }[]>` at `ui/frontend/src/types/wails.d.ts:13` matches the wire format exactly. No extra-key pollution path exists.
+- The Wails wire format DOES preserve Go field-name capitalization by default (no `json:` tags on `ProjectDTO` → Wails uses field names verbatim → JS sees `{ID, Name}`). Builder's worklog claims this; verified against `ui/types.go` comment block lines 6-13 explicitly documenting the contract.
+- No counterexample.
+
+**A4. Migration-markers `1 skipped` — what's the OTHER test? — REFUTED.**
+- `ui/frontend/tests/migration-markers.test.ts:33-67` defines two `describe` blocks:
+  1. `src/components/` — at D1.5 this NOW contains `ProjectList.tsx`, so the `files.length === 0` branch is NOT taken; one real `it()` runs and PASSES (the new "ProjectList.tsx contains migration marker" pass).
+  2. `src/lib/vim/` — does NOT exist (D9 territory per worklog + REVISION_BRIEF migration target). The `files.length === 0` branch IS taken, registering one `it.skip(…)`.
+- So `2 tests | 1 skipped` decomposes as: 1 real pass + 1 vacuous skip. The skip is the expected D9-future vim-marker scaffold, not a hidden failure.
+- No counterexample.
+
+**A5. `<For>` vs `<Index>` keying — soft-delete-then-re-create same Name. — REFUTED for the bootstrap surface.**
+- `ui/frontend/src/components/ProjectList.tsx:44-50` uses `<For each={projects()}>` — keys by reference identity per Context7 SolidJS docs.
+- Attack premise: "if a project's ID changes (soft-delete then re-create with same Name), `<For>` may incorrectly preserve DOM state." Analysis:
+  - On refetch, `createResource` returns a NEW array reference from `window.go.main.App.ListProjects()`. The new array's items are NEW object literals (constructed Go-side per IPC roundtrip), so reference identity changes for EVERY item even if `{ID, Name}` are content-identical.
+  - `<For>` re-keys by item-reference identity (`===`). With fresh array + fresh items every refetch, `<For>` will rebuild every `<li>` — actually it does NOT incorrectly preserve state on soft-delete-re-create with same Name; it OVER-rebuilds (every refetch rebuilds every row). That's a different perf consideration, not the correctness bug the attack hypothesized.
+  - Future drops with `reconcile(fresh, { key: "ID" })` against a SolidJS `createStore` can fix the over-rebuild; D1.5 is read-only, refetch is rare, and the bootstrap shape is correct.
+- Builder's "stable IDs → `<For>` is correct" reasoning is slightly imprecise (reference identity, not ID-equality, drives `<For>` keying), but the chosen primitive is correct for the bootstrap; the precise semantics matter only when reconciliation is added in a future drop.
+- No counterexample.
+
+**A6. `role="alert"` placement. — REFUTED.**
+- `ui/frontend/src/components/ProjectList.tsx:37` — `role="alert"` is on the error fallback `<p>` element, which only mounts when `projects.error` is truthy. When the error clears, the element unmounts. When a new error appears, a NEW `role="alert"` element mounts — screen readers announce the entry into the live region.
+- The other two paths (loading, empty) use plain `<p>` with no ARIA role. No always-rendered `role="alert"` shell, no spurious announcements on loading/empty transitions.
+- The attack premise ("if on the always-rendered shell, screen readers announce every state change") is not realized here.
+- No counterexample. NIT for a follow-up: `aria-live="polite"` on the outer `<section>` might be a better fit for screen-reader UX (alert is too aggressive for "the project list refreshed"; polite is the standard for content updates). Not required for D1.5 acceptance.
+
+**A7. `client:idle` vs Wails IPC binding race on freshly-loaded window. — NIT.**
+- `client:idle` defers Solid hydration until `requestIdleCallback` fires (or `setTimeout(200ms)` polyfill on non-supporting WebKit). Wails injects `window.go.main.App` synchronously into the page context BEFORE the embedded JS runs — per Wails v2 documentation pattern (binding injection happens during page-loaded webview event, before the app's JS executes).
+- The risk is theoretical: if Wails were to lazily inject `window.go` AFTER document-load (e.g. async binding registration), `client:idle`'s wait-for-idle could fire after the page is interactive but before bindings exist, and `fetchProjects` would throw `TypeError: Cannot read property 'main' of undefined`. The builder's bootstrap doesn't defend against this directly (no `typeof window.go === 'undefined'` guard for the JS branch — only an SSR guard).
+- Why NIT (not POSSIBLE): Wails v2.12.0 docs + the established `cmd/till/main.go` pattern show synchronous binding injection. The race is not realistic on this version. Future drops that bump Wails major versions should re-verify. A defensive `if (!window.go?.main?.App?.ListProjects) return [];` in `fetchProjects` would cover any future Wails behavior change at zero runtime cost; FYI for a future hardening pass.
+
+**A8. MainLayout outer scroll container. — REFUTED.**
+- `ui/frontend/src/layouts/MainLayout.astro:1-13` — the only structural elements are `<html lang="en">`, `<head>` (meta + stylesheet link + title), and `<body><slot /></body>`. No outer scroll container, no fixed height, no `overflow: hidden` rule. Body uses default `display: block` + UA stylesheet.
+- `stil-tokens.css` is referenced (`<link rel="stylesheet" href="/stil-tokens.css" />` line 7), but it's a token file (per its name + the `stil-baseline.json` partnership) — design tokens (colors, font-size scale, spacing), not layout primitives.
+- The `<main><h1>Tillsyn</h1><ProjectList client:idle /></main>` block in `index.astro` sits directly inside `<body>` with no parent constraints.
+- No counterexample.
+
+**A9. Build-output sanity — `<astro-island>` shell + `client:idle` correctness. — REFUTED.**
+- `dist/index.html` (post-build, inspected line 1) contains: `<astro-island uid="ZlVu73" data-solid-render-id="s0" component-url="/_astro/ProjectList.BBbcfCQW.js" component-export="default" renderer-url="/_astro/client.CEmo_1HW.js" props="{}" ssr client="idle" opts="..." await-children>` — that's the canonical Astro 5 `<astro-island>` web-component wrapper with `client="idle"` attribute and `ssr` flag (pre-rendered content present).
+- `dist/_astro/` contains `ProjectList.BBbcfCQW.js` (the component bundle), `client.CEmo_1HW.js` (Solid hydrator), `web.Cx_12A-G.js` (Solid runtime). All three bundles built.
+- Bundle inspection (`dist/_astro/ProjectList.BBbcfCQW.js`) shows the minified `fetchProjects` retains the SSR guard: `async function L(){return typeof window>"u"?[]:window.go.main.App.ListProjects()}`. Guard survives minification.
+- No `client:only` regression — `client="idle"` confirmed.
+- No counterexample.
+
+**A10. `stil-tokens.css` consumption. — REFUTED.**
+- `ui/frontend/src/layouts/MainLayout.astro:7` declares `<link rel="stylesheet" href="/stil-tokens.css" />` in `<head>`. Astro's static-output handling rewrites `/stil-tokens.css` to point at `public/stil-tokens.css` (5.2 KB file, present pre-D1.5 from D1.1's relocation).
+- `dist/index.html` line 1 carries the rewritten `<link rel="stylesheet" href="/stil-tokens.css">` — the build copies `public/stil-tokens.css` to `dist/stil-tokens.css` (5.2 KB file in `dist/`, confirmed).
+- The bootstrap DOES use stil-tokens via the layout. ProjectList.tsx itself uses no scoped styling, so the tokens are loaded but not consumed by the component — they only affect typography baselines + body defaults inherited from `<body>`. That's the intended bootstrap shape per the builder's worklog ("Visual polish moves to `@hylla/stil-solid` in a later drop").
+- No counterexample. Stil-baseline.json (10.8 KB) is also in `dist/` — that's the baseline harness for stil's design-token contracts; not directly consumed but available for future drops.
+
+### Additional NITs Surfaced (Not From The Attack List)
+
+**N1. Discriminator collapse: SSR-empty vs CSR-empty.** Per A1 analysis, the `<Show when={!projects.loading}>` discriminator can't tell SSR's synchronous `[]` return from a real client-resolved empty result. A small refinement would set `projects.loading=true` until the client-side resource fires for the first time. Not blocking; flagged for the post-bootstrap polish drop.
+
+**N2. `String(projects.error)` formatting.** `ui/frontend/src/components/ProjectList.tsx:37` — `Error: {String(projects.error)}`. If the error is an `Error` instance, `String()` produces `"Error: <message>"` (no stack, no cause). For a bootstrap surface this is fine; future drops should consider `projects.error.message` to avoid the redundant `Error:` prefix or `JSON.stringify` for structured errors.
+
+**N3. SSR guard message clarity.** Lines 13-18 of `ProjectList.tsx` explain WHY the guard exists — good. But the guard returns `[]` silently. If Astro's SSR were ever swapped to a different runtime or `client:only` is later adopted, the silent-empty behavior could mask real failures. A `console.warn` in development mode (gated by `import.meta.env.DEV`) would surface accidental SSR-runs. Not blocking; future-hardening NIT.
+
+### Certificate
+
+- **Premises:** D1.5 must produce a working SolidJS `<ProjectList>` component hydrated via `client:idle` from `<MainLayout>`, with correct loading/error/empty/populated state discrimination, a TS ambient declaration matching the Go IPC wire format, a passing migration-marker test, and a build-output `dist/index.html` containing a hydration-shell + minified bundles.
+- **Evidence:** `Read` of `ui/frontend/src/components/ProjectList.tsx`, `ui/frontend/src/pages/index.astro`, `ui/frontend/src/types/wails.d.ts`, `ui/frontend/src/layouts/MainLayout.astro`, `ui/frontend/tests/migration-markers.test.ts`, `ui/main.go`, `ui/types.go`, `internal/domain/project.go` (field set); `Read` of `dist/index.html` + `dist/_astro/ProjectList.BBbcfCQW.js`; Context7 queries for Astro `client:idle` semantics + SolidJS `createResource` cleanup + `<For>` keying.
+- **Trace or cases:** 10 attacks (A1–A10) + 3 additional NITs (N1–N3). 6 REFUTED, 3 NIT, 1 POSSIBLE (A1 — SSR-to-hydrated empty-state flash, visible-UX-only, not a contract violation).
+- **Conclusion:** PASS (no CONFIRMED counterexample). A1's POSSIBLE is a visible-flicker UX concern that should be confirmed via dev-launch (Phase 6) and routed to a future polish drop if perceptible. 3 NITs raised for a future-hardening pass.
+- **Unknowns:**
+  - Dev-launch visual confirmation of A1 (whether the "No projects yet" → populated-list swap is perceptible on the actual Wails window). Routed to PLAN.md row 130-131 dev-launch verification.
+  - Wails IPC binding-injection ordering for newer Wails versions (A7 NIT). Not blocking; defensive guard suggested for future hardening.
+
+Ready for orchestrator review.

@@ -116,7 +116,7 @@ Droplets:
 
 ### Droplet 1.5 — Solid component + Astro page rendering the project list
 
-- **State:** todo
+- **State:** done
 - **Paths:**
   - writes: `ui/frontend/src/components/ProjectList.tsx` (Solid component, ~30-60 LOC: `createResource` against `window.go.main.App.ListProjects`, plain `<ul><li>` render of `id` + `name`, simple loading + error states; literal empty-state string `No projects yet` rendered when the resource resolves to an empty array). MUST contain the line `// MIGRATION TARGET: @hylla/stil-solid` — mandatory per `ui/frontend/tests/migration-markers.test.ts:36-44`, absence fails `pnpm run test:unit`.
   - writes: `ui/frontend/src/pages/index.astro` (single Astro page using `MainLayout.astro` and mounting `<ProjectList client:idle />` — see Notes §N3 on the `client:idle` choice).

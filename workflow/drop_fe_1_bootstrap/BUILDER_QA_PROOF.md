@@ -632,3 +632,97 @@ U4. **No archived-project test case.** The test seeds one non-archived project a
 ### Hylla Feedback
 
 N/A — FE droplet, Hylla is OFF entirely per `feedback_hylla_disabled_for_now.md` (2026-05-18). Used `Read`, `Bash` (rtk-proxied `rg` — raw `grep` was sandbox-denied this round), `git diff`, and `git status`. Narrow signature lookups (`OpenInMemory`, `ListProjects`, `CreateProject`) were handled cleanly by `rg` against `internal/`. `LSP` not consulted because all referenced symbols are clearly named and `Read`+`rg` resolution was sufficient.
+
+## Droplet 1.5 — Round 1
+
+- **Reviewer:** `fe-qa-proof-agent`
+- **Verdict:** **PASS**
+- **Date:** 2026-05-18
+- **Scope:** D1.5 acceptance bullets per spawn-prompt checks 1-6 (file correctness, build exit-0 + hydration marker, vitest non-vacuous, scope cleanliness). Dev-launched runtime checks (Wails window + CLI cross-check) are explicitly Phase 6 and out-of-scope.
+
+### Evidence Bundle
+
+E1. **`ui/frontend/src/components/ProjectList.tsx` (Read full file, 57 lines)** —
+  - Line 1: `// MIGRATION TARGET: @hylla/stil-solid` (exact literal match — spawn-prompt check 1a).
+  - Line 8: `import { createResource, For, Show } from 'solid-js';` — SolidJS primitives imported correctly.
+  - Lines 12-23: `fetchProjects(): Promise<Project[]>` — SSR guard at lines 19-21: `if (typeof window === 'undefined') { return []; }` (exact match — spawn-prompt check 1b).
+  - Line 22: `return window.go.main.App.ListProjects();` — exercises the Wails-injected bridge.
+  - Line 26: `const [projects] = createResource<Project[]>(fetchProjects);` — SolidJS resource pattern (spawn-prompt check 1c).
+  - Lines 31-54: Triple-nested `<Show>` — outer gates on `!projects.loading` with `fallback={<p>Loading…</p>}` (line 33); middle gates on `!projects.error` with `fallback={<p role="alert">Error: {String(projects.error)}</p>}` (line 37); inner gates on `(projects() ?? []).length > 0` with `fallback={<p>No projects yet</p>}` (line 41). Covers loading + error + empty + data states (spawn-prompt check 1d).
+  - Line 41: `<p>No projects yet</p>` — exact empty-state literal (spawn-prompt check 1e).
+  - Lines 43-51: `<ul><For each={projects()}>{(project) => (<li>{project.ID} — {project.Name}</li>)}</For></ul>` — `<ul><li>` structure displaying `ID + Name` per project (spawn-prompt check 1f).
+
+E2. **`ui/frontend/src/pages/index.astro` (Read full file, 11 lines)** —
+  - Line 2: `import MainLayout from '../layouts/MainLayout.astro';` — uses `MainLayout` (spawn-prompt check 2a).
+  - Line 3: `import ProjectList from '../components/ProjectList';` — imports the new component correctly (spawn-prompt check 2c).
+  - Line 6: `<MainLayout>` wrapper.
+  - Line 9: `<ProjectList client:idle />` — `client:idle` directive, NOT `client:load` (spawn-prompt check 2b).
+
+E3. **`ui/frontend/src/types/wails.d.ts` (Read full file, 18 lines)** —
+  - Line 6: `export {};` — makes the file a module (required for `declare global` augmentation).
+  - Lines 8-18: `declare global { interface Window { go: { main: { App: { ListProjects(): Promise<{ ID: string; Name: string }[]> } } } } }` — exact shape required by spawn-prompt check 3a.
+  - DTO field names `ID` and `Name` capitalized at line 13, matching `ProjectDTO` in `ui/types.go` lines 14-17 (`type ProjectDTO struct { ID string; Name string }`). Cross-surface name parity confirmed (spawn-prompt check 3b).
+
+E4. **Astro build via `pnpm --dir /Users/evanschultz/Documents/Code/hylla/tillsyn/main/ui/frontend run build` — exit 0.**
+  - 6 modules transformed; emits `dist/_astro/ProjectList.BBbcfCQW.js` (1.09 kB / gzip 0.54 kB), `dist/_astro/client.CEmo_1HW.js` (6.11 kB / gzip 2.56 kB), `dist/_astro/web.Cx_12A-G.js` (13.86 kB / gzip 5.73 kB).
+  - `▶ src/pages/index.astro` → `/index.html (+5ms)`; `1 page(s) built in 454ms`; `[build] Complete!`
+  - **`dist/index.html` Read directly.** Contains `<astro-island uid="ZlVu73" data-solid-render-id="s0" component-url="/_astro/ProjectList.BBbcfCQW.js" component-export="default" renderer-url="/_astro/client.CEmo_1HW.js" props="{}" ssr client="idle" opts="…" await-children>` — exact `<astro-island` substring with `client="idle"` attribute (spawn-prompt check 4).
+  - The SSR'd markup inside the island is `<section data-hk="s00001"><h2>Projects</h2><!--$--><p data-hk="s00002000">No projects yet</p><!--/--></section>` — the empty-state branch rendered during SSR (the SSR guard returned `[]` → `length > 0 === false` → `fallback={<p>No projects yet</p>}` taken). Confirms the guard works and the empty-state path is exercised before hydration.
+
+E5. **Vitest via `pnpm --dir /Users/evanschultz/Documents/Code/hylla/tillsyn/main/ui/frontend run test:unit` — exit 0.**
+  - Output: `✓ tests/migration-markers.test.ts (2 tests | 1 skipped) 1ms`; `Test Files 1 passed (1)`; `Tests 1 passed | 1 skipped (2)`.
+  - **Non-vacuous verification.** Read `tests/migration-markers.test.ts` (68 lines). Logic at lines 34-49: `const files = collectFiles(componentsDir, ['.tsx', '.ts'])`. With `ProjectList.tsx` now present under `src/components/`, `files.length === 1`, so the `else` branch (lines 41-48) iterates calling `it(\`${path.relative(frontendDir, file)} contains migration marker\`, …)` — a real `it()` registration, NOT `it.skip()`. The vitest summary `1 passed | 1 skipped (2)` matches exactly: the passing test is the `ProjectList.tsx` marker assertion (lines 42-47: `expect(content).toContain(COMPONENT_MARKER)` where `COMPONENT_MARKER = '// MIGRATION TARGET: @hylla/stil-solid'`); the skipped test is the vim-engine branch at line 55 (`src/lib/vim/` is still empty, expected D9 territory). Spawn-prompt check 5 met — non-vacuous.
+
+E6. **Scope via `git -C <worktree> status --porcelain ui/frontend/src/`.**
+  - Output: `?? ui/frontend/src/components/` + `?? ui/frontend/src/pages/` + `?? ui/frontend/src/types/` — three NEW directories (each containing exactly one new file per E1/E2/E3 reads). No `M` rows for `MainLayout.astro`, `astro.config.mjs`, or `tsconfig.json`. Existing files untouched (spawn-prompt check 6).
+
+### Spawn-Prompt Checks Cross-Reference
+
+| Check | Requirement | Evidence | Status |
+| --- | --- | --- | --- |
+| 1a | Line 1 = `// MIGRATION TARGET: @hylla/stil-solid` | E1 line 1 | PASS |
+| 1b | SSR guard `if (typeof window === 'undefined') return [];` | E1 lines 19-21 | PASS |
+| 1c | `createResource` against `window.go.main.App.ListProjects` | E1 lines 22, 26 | PASS |
+| 1d | `<Show>` covers loading + error + empty + data | E1 lines 31-54 (triple-nested) | PASS |
+| 1e | Literal `No projects yet` | E1 line 41 | PASS |
+| 1f | `<ul><li>` rendering `id + name` | E1 lines 43-51 | PASS |
+| 2a | Uses `MainLayout` | E2 lines 2, 6 | PASS |
+| 2b | Mounts `<ProjectList client:idle />` (NOT `client:load`) | E2 line 9 | PASS |
+| 2c | ProjectList imported correctly | E2 line 3 | PASS |
+| 3a | `declare global` with `Window.go.main.App.ListProjects(): Promise<{ ID: string; Name: string }[]>` | E3 lines 8-18 | PASS |
+| 3b | Capitalized `ID`/`Name` matching `ProjectDTO` in `ui/types.go` | E3 line 13 + ui/types.go lines 14-17 | PASS |
+| 4 | `pnpm run build` exit 0 + `dist/index.html` + `<astro-island … client="idle">` | E4 (build output + dist read) | PASS |
+| 5 | Migration-markers test PASSING non-vacuously | E5 (vitest `1 passed | 1 skipped` + test-source review) | PASS |
+| 6 | Only 3 new files; no edits to existing | E6 (`git status` output) | PASS |
+
+### Falsification Attacks Considered (mitigated)
+
+A1. **SSR guard might still leave a build-time error.** `pnpm run build` exit 0 with no warnings about the island; `dist/index.html` contains the SSR'd empty-state markup cleanly (E4). The guard returns `[]` synchronously, so `createResource`'s loader resolves immediately during the SSR pass; the triple `<Show>` then evaluates loading=false → error=undefined → `length > 0 === false` → empty-state fallback rendered. **Mitigated.**
+
+A2. **Empty-state literal in source might differ from what SSR emits.** E1 line 41 source = `<p>No projects yet</p>`; E4 dist HTML = `<p data-hk="s00002000">No projects yet</p>` (text content identical, Astro adds the `data-hk` hydration key). **Mitigated.**
+
+A3. **`client:idle` might be silently downgraded by Astro 5.** E4 dist HTML shows `client="idle"` attribute on the `<astro-island>` web component; the inline hydration runtime in `dist/index.html` uses `"requestIdleCallback"in window?window.requestIdleCallback(i,s):setTimeout(i,s.timeout||200)` — that's Astro 5's canonical `client:idle` hydration impl. **Mitigated.**
+
+A4. **TypeScript ambient declaration might collide with existing `ui/frontend/src/env.d.ts`.** E3 uses `export {}` to make the file a module + `declare global` to augment the `Window` interface — standard Astro/TS pattern. `env.d.ts` was not touched (E6 scope check). Augmentations are additive, no collision detected. **Mitigated.**
+
+A5. **DTO capitalization parity Go-side vs TS-side.** E3 line 13 declares `ID: string; Name: string`; cross-read of `ui/types.go` lines 14-17 (`type ProjectDTO struct { ID string; Name string }`, no `json:"…"` tags, so Wails serializes with default Go-export-case names `ID`/`Name`). Both surfaces agree. **Mitigated.**
+
+A6. **vitest `1 passed | 1 skipped` might not actually be the `ProjectList.tsx` case.** Reading the test source (E5) — `collectFiles(componentsDir, ['.tsx', '.ts'])` returns exactly the new `ProjectList.tsx`; the `else` branch fires a real `it()`. The vim branch (`src/lib/vim/`) is still empty so it goes through `it.skip()`. The arithmetic matches: 1 passed (`ProjectList.tsx contains migration marker`) + 1 skipped (vim-engine vacuous) = 2 total. **Mitigated.**
+
+A7. **`<Show>` might short-circuit incorrectly during SSR causing wrong markup.** SSR pass: `fetchProjects()` returns `[]` synchronously (guard). SolidJS `createResource` initializes with loader's synchronous return → `projects.loading === false`, `projects.error === undefined`, `projects()` returns `[]`. Outer `<Show when={!projects.loading}>` → true (enter); middle `<Show when={!projects.error}>` → true (enter); inner `<Show when={(projects() ?? []).length > 0}>` → false (take fallback `<p>No projects yet</p>`). Result matches E4 dist HTML exactly. **Mitigated.**
+
+A8. **Scope might silently include edits to existing files.** E6 `git status --porcelain ui/frontend/src/` returns only three `??` rows, no `M` rows. **Mitigated.**
+
+A9. **The `?? []` defensive default at line 40 might mask a runtime bug.** When `projects()` returns the resolved array, `?? []` short-circuits because the LHS is non-nullish. When the resource is in flight, the outer `<Show>` gate prevents the inner reads. The defensive default only fires in the synchronous initial-render edge where the SolidJS reactive system hasn't yet propagated, and `[]` is the correct semantic identity for "no data" — same path as the SSR guard. No observable runtime divergence. **Mitigated.**
+
+### Unknowns
+
+U1. **Dev-launched runtime cross-check (Wails window + CLI parity).** Spawn-prompt note: "The CLI cross-check (A3 — comparing rendered list to `till project list` output) is dev-launched at Phase 6." This QA verifies the static + SSR'd surface; the dynamic hydrated DOM with real `window.go.main.App.ListProjects()` data is dev-launched. **Routed — out-of-scope per spawn prompt.**
+
+U2. **`mage ci` deferred per spawn-prompt rule.** Sibling Go D1.4 + D1.6 builders are concurrently dirty in `internal/`; running `mage ci` here would either include sibling WIP (false-positive fail) or produce non-deterministic results. `mage ciUI` (which the builder ran successfully per BUILDER_WORKLOG.md line 153) is the correctly-scoped FE-only gate. **Routed — drop-end CI gate.**
+
+U3. **SolidJS reactive identity across resource refetches.** Builder noted `<For>` keying assumes "the same `{ID, Name}` shapes should produce identical references" across refetches. In practice, each `fetchProjects()` call produces a fresh array of fresh object literals, so `<For>` will see new reference identities and re-render rows. This is correct/expected SolidJS behavior — `<For>` keys on reference equality, but the diff is shallow on the array level: removing/adding rows is detected by identity comparison, and within-row text updates trigger `<li>` content re-renders. Not a defect; a non-issue for D1.5's empty-or-one-item rendering path. **Accepted — design judgment, not a D1.5 defect.**
+
+### Hylla Feedback
+
+N/A — FE droplet, Hylla is OFF entirely per `feedback_hylla_disabled_for_now.md` (2026-05-18). Used `Read` (4 file reads — `BUILDER_WORKLOG.md`, `ProjectList.tsx`, `index.astro`, `wails.d.ts`, plus `dist/index.html`, `migration-markers.test.ts`, `ui/types.go`), `Bash` (`pnpm --dir` build + test, `git status --porcelain`). No Hylla calls attempted (FE files aren't indexed today per `feedback_hylla_go_only_today.md`). No Context7 calls needed — SolidJS `createResource` + `<Show>` semantics and Astro `client:idle` hydration confirmed via reading the emitted dist HTML's inline hydration runtime, which encodes the exact `requestIdleCallback` strategy.
