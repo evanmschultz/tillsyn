@@ -1,0 +1,13 @@
+# _BLOCKERS.toml — workflow/drop_4b_test_cleanup/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+
+[[blockers]]
+node = "1.4"
+blocked_by = ["1.3"]
+reason = "dispatcher_e2e_test.go must exist (1.3 creates it + moves symbols) before 1.4 enriches it"
+
+[[blockers]]
+node = "1.6"
+blocked_by = ["1.2", "1.5"]
+reason = "1.2 must complete first (both touch internal/adapters/mcp_rpc/extended_tools.go — same file + package); 1.5 must complete first (till.action_item supersede case calls tasks.SupersedeActionItem which requires ActionItemService interface update)"
