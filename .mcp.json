@@ -3,6 +3,10 @@
     "tillsyn": {
       "command": "/Users/evanschultz/.local/bin/till",
       "args": ["mcp"]
+    },
+    "ta": {
+      "command": "/Users/evanschultz/.local/bin/ta",
+      "args": ["--project", "/Users/evanschultz/Documents/Code/hylla/tillsyn/main"]
     }
   }
 }
