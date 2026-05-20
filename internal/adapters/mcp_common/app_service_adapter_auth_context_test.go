@@ -528,7 +528,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				ResourceID:    fixture.actionItemA.ID,
 				Context: map[string]string{
 					"project_id":  fixture.projectID,
-					"target_type": "actionItem",
+					"target_type": "action_item",
 				},
 			},
 		},
@@ -543,7 +543,7 @@ func TestAppServiceAdapterAuthorizeMutationApprovedPathExplicitScopeResources(t 
 				ResourceID:    fixture.actionItemB.ID,
 				Context: map[string]string{
 					"project_id":  fixture.projectID,
-					"target_type": "actionItem",
+					"target_type": "action_item",
 				},
 			},
 		},

@@ -204,24 +204,22 @@ func TestNormalizeCommentTarget(t *testing.T) {
 	}
 }
 
-// TestNormalizeCommentTargetTypeAlias verifies that camelCase "actionItem" and
-// its mixed-case variants all normalize to the canonical "action_item" form and
-// are accepted by IsValidCommentTargetType. This covers the R5 bug where
-// strings.ToLower("actionItem") == "actionitem" did not match "action_item" in
-// the validCommentTargetTypes range loop without an explicit alias step.
-func TestNormalizeCommentTargetTypeAlias(t *testing.T) {
-	tests := []struct {
+// TestNormalizeCommentTargetTypeCanonicalOnly verifies that comment target
+// types accept only the canonical snake_case forms (project, action_item).
+// CamelCase forms (e.g. "actionItem") were rejected as part of the pre-MVP
+// canonical-only cleanup — there is no migration alias.
+func TestNormalizeCommentTargetTypeCanonicalOnly(t *testing.T) {
+	accepted := []struct {
 		name  string
 		input CommentTargetType
 		want  CommentTargetType
 	}{
-		{"camelCase actionItem", "actionItem", CommentTargetTypeActionItem},
-		{"mixed case ActionItem", "ActionItem", CommentTargetTypeActionItem},
-		{"all caps ACTIONITEM", "ACTIONITEM", CommentTargetTypeActionItem},
-		{"canonical action_item unchanged", "action_item", CommentTargetTypeActionItem},
-		{"whitespace-padded actionItem", " actionItem ", CommentTargetTypeActionItem},
+		{"canonical action_item", "action_item", CommentTargetTypeActionItem},
+		{"canonical action_item case-insensitive", "ACTION_ITEM", CommentTargetTypeActionItem},
+		{"canonical action_item whitespace-padded", " action_item ", CommentTargetTypeActionItem},
+		{"canonical project", "project", CommentTargetTypeProject},
 	}
-	for _, tc := range tests {
+	for _, tc := range accepted {
 		t.Run(tc.name, func(t *testing.T) {
 			got := NormalizeCommentTargetType(tc.input)
 			if got != tc.want {
@@ -229,6 +227,14 @@ func TestNormalizeCommentTargetTypeAlias(t *testing.T) {
 			}
 			if !IsValidCommentTargetType(tc.input) {
 				t.Fatalf("IsValidCommentTargetType(%q) = false, want true", tc.input)
+			}
+		})
+	}
+	rejected := []CommentTargetType{"actionItem", "ActionItem", "ACTIONITEM", "actionitem"}
+	for _, tc := range rejected {
+		t.Run("rejects "+string(tc), func(t *testing.T) {
+			if IsValidCommentTargetType(tc) {
+				t.Fatalf("IsValidCommentTargetType(%q) = true, want false (camelCase alias removed)", tc)
 			}
 		})
 	}

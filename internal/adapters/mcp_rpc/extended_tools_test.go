@@ -1408,14 +1408,14 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.comment", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"project_id":        "p1",
-			"target_type":       "actionItem",
+			"target_type":       "action_item",
 			"target_id":         "t1",
 			"summary":           "Thread summary",
 			"body_markdown":     "hello",
 			"agent_instance_id": "inst-1",
 			"lease_token":       "tok-1",
 		})},
-		{name: "till.comment", args: map[string]any{"operation": "list", "project_id": "p1", "target_type": "actionItem", "target_id": "t1"}},
+		{name: "till.comment", args: map[string]any{"operation": "list", "project_id": "p1", "target_type": "action_item", "target_id": "t1"}},
 		{name: "till.handoff", args: mergeArgs(validSessionArgs(), map[string]any{
 			"operation":         "create",
 			"project_id":        "p1",
@@ -3465,7 +3465,7 @@ func TestHandlerExpandedToolBuildsActorTupleFromAuthenticatedSession(t *testing.
 	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.comment", mergeArgs(validSessionArgs(), map[string]any{
 		"operation":         "create",
 		"project_id":        "p1",
-		"target_type":       "actionItem",
+		"target_type":       "action_item",
 		"target_id":         "t1",
 		"summary":           "Thread summary",
 		"body_markdown":     "hello",
@@ -3812,7 +3812,7 @@ func TestHandlerExpandedMutationFamiliesAcceptAuthContextHandles(t *testing.T) {
 	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(502, "till.comment", map[string]any{
 		"operation":         "create",
 		"project_id":        "p1",
-		"target_type":       "actionItem",
+		"target_type":       "action_item",
 		"target_id":         "t1",
 		"summary":           "Thread summary",
 		"body_markdown":     "hello",
@@ -6175,8 +6175,8 @@ func TestHandlerCommentToolTargetTypeEnumSchemaGuard(t *testing.T) {
 
 	commentSchema := findToolSchemaByName(t, toolsRaw, "till.comment")
 
-	// Assert the target_type enum equals exactly the post-Drop-1.75 vocabulary.
-	wantEnum := []string{"project", "action_item", "actionItem"}
+	// Assert the target_type enum equals exactly the canonical-only vocabulary.
+	wantEnum := []string{"project", "action_item"}
 	gotEnum := schemaPropertyEnumStrings(t, commentSchema, "target_type")
 	if len(gotEnum) != len(wantEnum) {
 		t.Fatalf("till.comment target_type enum = %#v, want exactly %#v", gotEnum, wantEnum)
@@ -6187,19 +6187,19 @@ func TestHandlerCommentToolTargetTypeEnumSchemaGuard(t *testing.T) {
 		}
 	}
 
-	// Assert no stale pre-Drop-1.75 tokens survive in the enum.
-	for _, stale := range []string{"branch", "phase", "subtask", "decision", "note"} {
+	// Assert no stale pre-Drop-1.75 tokens nor the dropped camelCase alias survive in the enum.
+	for _, stale := range []string{"branch", "phase", "subtask", "decision", "note", "actionItem"} {
 		if slices.Contains(gotEnum, stale) {
-			t.Fatalf("till.comment target_type enum contains stale pre-1.75 token %q: %#v", stale, gotEnum)
+			t.Fatalf("till.comment target_type enum contains stale token %q: %#v", stale, gotEnum)
 		}
 	}
 
-	// Assert the description string matches the post-1.75 vocabulary.
+	// Assert the description string matches the canonical-only vocabulary.
 	targetTypeDesc := schemaStringPropertyDescription(t, commentSchema, "target_type")
-	if !strings.Contains(targetTypeDesc, "project|action_item|actionItem") {
-		t.Fatalf("till.comment target_type description = %q, want to contain \"project|action_item|actionItem\"", targetTypeDesc)
+	if targetTypeDesc != "project|action_item" {
+		t.Fatalf("till.comment target_type description = %q, want exactly \"project|action_item\"", targetTypeDesc)
 	}
-	for _, staleToken := range []string{"branch", "phase", "subtask", "decision", "note"} {
+	for _, staleToken := range []string{"branch", "phase", "subtask", "decision", "note", "actionItem"} {
 		if strings.Contains(targetTypeDesc, staleToken) {
 			t.Fatalf("till.comment target_type description = %q, must not contain stale token %q", targetTypeDesc, staleToken)
 		}
