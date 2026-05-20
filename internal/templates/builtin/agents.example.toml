@@ -107,11 +107,29 @@ tools_allow = ["Read", "Bash"]
 # [gen] — language-agnostic generic group defaults.
 # -----------------------------------------------------------------------------
 #
-# Mirrors the go group structure. Use when the project is language-agnostic
-# or does not have a dedicated group template. Till-gen.toml bindings omit
-# [agent_bindings] by design; adopters declare bindings in their project-local
-# template.toml. The gen group is the safe default for non-Go projects until
-# a dedicated group ships.
+# Drop 4d_codex Phase 1: multi-backend routing example.
+#
+# Routing thesis: route deep-reasoning kinds (plan / QA-falsification /
+# research) to codex; keep specialist evidence-verification (QA-proof) on
+# claude opus; route atomic leaf work (build / commit) to claude haiku.
+#
+# client = "claude" is the group-level default; per-kind blocks below set
+# client = "codex" only where the codex backend is preferred.
+#
+# TODO(drop_4d): Replace MODEL_PLACEHOLDER below with the actual codex model
+# identifier for your ChatGPT-tier auth (e.g. "o3", "o4-mini", "gpt-5-codex").
+# The correct value depends on the OpenAI tier and model family available to
+# the spawning user. Check `till codex list-models` (or OpenAI dashboard)
+# and set it here + in any project-local agents.toml that overrides this file.
+#
+# When using client = "codex" you must also supply the OpenAI API key.
+# Add env_from_shell = { OPENAI_API_KEY = "OPENAI_API_KEY" } to each codex
+# per-kind block (or promote to the [gen] group default) once you have a key.
+#
+# Mirrors the go group structure. Till-gen.toml bindings omit [agent_bindings]
+# by design; adopters declare bindings in their project-local template.toml.
+# The gen group is the safe default for non-Go projects until a dedicated
+# group ships.
 
 [gen]
 client = "claude"
@@ -130,38 +148,69 @@ tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP"]
 tools_deny = []
 claude_md_addons = []
 
+# plan — deep decomposition reasoning. Routes to codex (cheap deep reasoning).
+# TODO(drop_4d): set model = "MODEL_PLACEHOLDER" to actual codex model ID.
 [gen.plan]
+client = "codex"
+model = "MODEL_PLACEHOLDER"
+effort = "medium"
 max_budget_usd = 8.0
 max_turns = 80
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__plugin_context7_context7__resolve-library-id", "mcp__plugin_context7_context7__query-docs", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
+# plan-qa-proof — evidence verification specialist. Stays on claude opus.
+# Proof is pattern-matching + citation; opus is the strongest verifier here.
+[gen.plan-qa-proof]
+client = "claude"
+model = "claude-opus-4-7"
+max_budget_usd = 4.0
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+# plan-qa-falsification — adversarial reasoning. Routes to codex at max effort.
+# Falsification benefits from the deepest available reasoning budget.
+# TODO(drop_4d): set model = "MODEL_PLACEHOLDER" to actual codex model ID.
+[gen.plan-qa-falsification]
+client = "codex"
+model = "MODEL_PLACEHOLDER"
+effort = "xhigh"
+max_budget_usd = 4.0
+tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
+
+# research — read-only investigation. Routes to codex (cheap, thorough).
+# TODO(drop_4d): set model = "MODEL_PLACEHOLDER" to actual codex model ID.
+[gen.research]
+client = "codex"
+model = "MODEL_PLACEHOLDER"
+effort = "high"
+max_budget_usd = 3.0
+
+# build — atomic leaf work via ≤4-block planner prompt. Routes to claude haiku.
+# Haiku is fast + cheap for well-scoped atomic droplets.
 [gen.build]
+client = "claude"
+model = "claude-haiku-4-5-20251001"
 tools_allow = ["Read", "Edit", "Write", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
-[gen.plan-qa-proof]
-model = "claude-opus-4-7"
-max_budget_usd = 4.0
-tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
-
-[gen.plan-qa-falsification]
-model = "claude-opus-4-7"
-max_budget_usd = 4.0
-tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
-
+# build-qa-proof — evidence verification. Stays on claude opus.
 [gen.build-qa-proof]
+client = "claude"
 model = "claude-opus-4-7"
 max_budget_usd = 3.0
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
+# build-qa-falsification — adversarial reasoning. Routes to codex at max effort.
+# TODO(drop_4d): set model = "MODEL_PLACEHOLDER" to actual codex model ID.
 [gen.build-qa-falsification]
-model = "claude-opus-4-7"
+client = "codex"
+model = "MODEL_PLACEHOLDER"
+effort = "xhigh"
 max_budget_usd = 3.0
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
-[gen.research]
-max_budget_usd = 3.0
-
+# commit — single-line conventional commit message. Routes to claude haiku.
+# Cheap + fast; commit message generation is a narrow, well-scoped task.
 [gen.commit]
+client = "claude"
 model = "claude-haiku-4-5-20251001"
 max_budget_usd = 0.10
 max_turns = 5
