@@ -1,6 +1,6 @@
 # Tillsyn — Project CLAUDE.md
 
-This file lives in the **`main/` worktree** at `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. `main/` is the `main`-branch checkout — real coding, building, testing, and committing against `main` happens here. **Drop orchs whose scope is the `main` branch launch from this directory.** STEWARD (the persistent MD-writing orchestrator) does NOT launch from `main/` — STEWARD launches from the bare root one directory up and edits `main/`'s files from there. The bare-root `CLAUDE.md` (one directory up) carries the same rules body; only the preamble differs.
+This file lives in `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. `main/` is the `main`-branch checkout — real coding, building, testing, and committing happen here. Orchestrators launch from this directory.
 
 ## Hard Rules (Inviolable)
 
@@ -21,421 +21,292 @@ Applies across every session, drop, agent, and surface in this project. Adding t
 
 - **Root of a drop** → `kind=plan`, `structural_type=drop` action_item directly under the project. Template auto-creates `plan-qa-proof` + `plan-qa-falsification` children.
 - **Droplet rows** → `kind=build` action_items as children of the root. Each declares `paths`, `packages`, description prose (acceptance criteria + role + scope). Template auto-creates `build-qa-proof` + `build-qa-falsification` children per build.
-- **Builder outputs** → `till.comment` on the build action_item. Includes Hylla feedback section, build verdict, files-touched list, `mage` output. Replaces `BUILDER_WORKLOG.md`.
-- **QA round verdicts** → `till.comment` on the QA twin action_items (proof + falsification). Replaces `BUILDER_QA_*.md` and `PLAN_QA_*.md`.
-- **Drop closeout** → `till.comment` on the root + state moves on `kind=closeout` / `kind=refinement` action_items addressing per-drop aggregation. Replaces `CLOSEOUT.md`.
+- **Builder outputs** → `till.comment` on the build action_item. Includes Hylla feedback section, build verdict, files-touched list, `mage` output.
+- **QA round verdicts** → `till.comment` on the QA twin action_items (proof + falsification).
+- **Drop closeout** → `till.comment` on the root + state moves on `kind=closeout` / `kind=refinement` action_items addressing per-drop aggregation.
 - **Cross-cutting decisions** → `kind=discussion` action_item: description = converged shape, comments = audit trail of dev quotes.
-- **Dev action items** → `till.handoff` addressed to the dev. Replaces "dev action" rows in MD plans.
+- **Dev action items** → `till.attention_item` addressed to the dev. NOT MD checklist rows.
 - Do NOT use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput` — they evaporate on compaction/restart. Finer granularity goes in child action_items.
 - **Read `WIKI.md` + `PLAN.md` at session start and after every compaction.** CLAUDE.md auto-loads; those two do not.
 - **Existing `workflow/drop_N/` MD directories stay in tree as historical audit** per `feedback_never_remove_workflow_files.md`. Do NOT create new MD content for new drops — Tillsyn-native is the system of record going forward.
-- **Adopter-template files** at `workflow/example/CLAUDE.md` + `workflow/example/drops/WORKFLOW.md` are kept as-is — those describe the MD-bridge pattern for projects adopting Tillsyn who don't yet have Tillsyn installed. Tillsyn-the-project does not follow its own adopter-bridge template.
-
-### Discussion Mode (Chat-Primary Until TUI Ergonomics Land)
-
-Cross-cutting decisions still park on a Tillsyn action item (description = converged shape, comments = audit trail of direct quotes). But the actual dev ↔ orchestrator back-and-forth happens **in chat** until the TUI comment flow is ergonomic enough to drive decisions through. Surface the full substance in chat — open decisions, options, tradeoffs, blockers — not just status pings. After each round with concrete decisions, mirror the converged points back into the action-item description and post a short audit-trail comment capturing dev direct quotes on corrections.
-
-## Cascade Plan
-
-The cascade (state-triggered autonomous agent dispatch) is designed in `PLAN.md` (lives in this directory). Cascade vocabulary canonical: `WIKI.md` § `Cascade Vocabulary` — never redefine here. That plan is the source of truth for cascade architecture, drop ordering, and hard prerequisites. This `CLAUDE.md` documents the **current pre-cascade workflow** the orchestrator uses today. Drop 4a landed the manual-trigger dispatcher (`internal/app/dispatcher/` + `till dispatcher run`); orchestrator-IS-dispatcher remains the documented pre-cascade fallback while dogfooding ramps. Drop 4b adds gate execution + post-build pipeline.
-
-## Cascade Tree Structure (Template Architecture)
-
-This is the cascade's template architecture by action-item `kind`. **Drop 1.75 landed the closed 12-kind `action_items.kind` enum in Go + SQL** (see "Post-Drop-1.75 Creation Rule" below). **Drop 3 encodes this tree as a template** and **Drop 4's dispatcher reads it** to bind agents, gates, and `child_rules`. Pre-cascade, the orchestrator approximates the same shape manually — spawning builders / QA agents by convention rather than via the dispatcher — but the `kind` values written into Tillsyn already match the target closed enum.
-
-### Post-Drop-1.75 Creation Rule
-
-Drop 1.75 is the **kind-collapse** drop. Two node tables survive: `projects` and `action_items`. `projects` has no `kind` column post-collapse. `action_items.kind` is a closed 12-value enum, chosen by the creator at creation time — there is no inferred default and no `actionItem` fallback kind. Old kinds (`task`, `actionItem`, `build-actionItem`, `subtask`, `qa-check`, `plan-actionItem`, `commit-and-reingest`, `a11y-check`, `visual-qa`, `design-review`, `phase`, `branch`, any `*-phase` variant, `decision`, `note`) are rewritten by `main/scripts/drops-rewrite.sql` into the new vocabulary; `action_items.scope` is mirrored from `kind` (scope removal lives in a future refinement drop).
-
-`action_items.kind` closed enum (12 values):
-
-| Kind                     | Purpose                                                                 |
-| ------------------------ | ----------------------------------------------------------------------- |
-| `plan`                   | Planning-dominant — planner agent decomposes work into children.        |
-| `research`               | Read-only investigation — research agent compiles findings, posts, dies. |
-| `build`                  | Code-changing leaf — builder agent implements, tests, commits.          |
-| `plan-qa-proof`          | Proof-completeness QA pass on a `plan` parent.                          |
-| `plan-qa-falsification`  | Falsification QA pass on a `plan` parent.                               |
-| `build-qa-proof`         | Proof-completeness QA pass on a `build` parent.                         |
-| `build-qa-falsification` | Falsification QA pass on a `build` parent.                              |
-| `closeout`               | Drop-end coordination — aggregates ledger / refinements / findings.     |
-| `commit`                 | Commit action — template-triggered under `plan` at level ≥ 2 (see Commit Cadence below). |
-| `refinement`             | Perpetual / long-lived tracking umbrella — drop-end entries roll up here. |
-| `discussion`             | Cross-cutting decision park — description = converged shape, comments = audit trail. |
-| `human-verify`           | Dev sign-off hold point — attention items + checklist children, no plan/QA. |
-
-**Customization (future drop — NOT Drop 1.75):** projects and orchestrators author custom kinds via template that attach as sub-action-items of specific generic kinds (e.g., a custom `ledger-update` under `closeout`, a custom `ledger-aggregation` under `refinement`). Drop 1.75 ships only the 12 generics plus the template hook. Drop 2 lands `metadata.role` as a first-class field; until then, role goes in description prose (`Role: builder`, `Role: qa-proof`, `Role: qa-falsification`, `Role: qa-a11y`, `Role: qa-visual`, `Role: design`, `Role: commit`, `Role: planner`, `Role: research`).
-
-**Project-level kind restriction (future drop).** Project templates will carry an allowed-kinds enum + a `disallow_generics` bool to restrict which kinds a project accepts — lands alongside template customization. Drop 1.75 treats all 12 kinds as allowed on every project.
-
-### Three Orthogonal Axes — `kind` × `metadata.role` × `metadata.structural_type`
-
-Every non-project node is classified along three independent axes, set explicitly at create time. None of them are inferred from the others. Templates `child_rules`, gate rules, and agent bindings dispatch on combinations of all three.
-
-- **`kind` (what work)** — the closed 12-value enum above (post-Drop-1.75). Names the kind of work the agent does (`build` / `plan` / `build-qa-proof` / …).
-- **`metadata.role` (who does it)** — closed enum (post-Drop-2): `builder`, `qa-proof`, `qa-falsification`, `qa-a11y`, `qa-visual`, `design`, `commit`, `planner`, `research`. The dual-axis design earns its keep on QA kinds where parent context disambiguates (`build-qa-proof` vs `plan-qa-proof` both carry `role=qa-proof`); non-QA role values exist for agent-binding-lookup symmetry. Pre-Drop-2 the role lives in description prose (`Role: builder`, `Role: qa-proof`, …); post-Drop-2 it lands on `metadata.role`.
-- **`metadata.structural_type` (where it sits in the cascade flow)** — closed 4-value enum landing in Drop 3: `drop | segment | confluence | droplet`. Names the node's cascade shape independent of role / kind. Atomicity rules: `droplet` MUST have zero children; `confluence` MUST have non-empty `blocked_by`; `segment` may recurse; `drop` is the level_1 cascade step.
-
-**Cascade vocabulary canonical: `WIKI.md` § `Cascade Vocabulary` — the worked-combinations table, atomicity rules, and orthogonality with `metadata.role` live there. Do not redefine the structural_type vocabulary in this file or any other doc.** Pre-Drop-3, `metadata.structural_type` is not yet validated at the create/update boundary; the orchestrator chooses values consistent with the WIKI definition and Drop 3 lands the validation. Adopters mirror the same canonical-pointer rule in their own project `CLAUDE.md` (see `workflow/example/CLAUDE.md` line 27).
-
-### Kind Hierarchy
-
-Two node types, one enum. `project` is a table, not a kind. Everything below is `action_items.kind`:
-
-```
-project                                                    (table: projects)
-└── plan (infinitely nestable)                             kind: plan                    ─→ agent: planning-agent              (opus)
-      ├── plan-qa-proof                                    kind: plan-qa-proof           ─→ agent: plan-qa-proof-agent         (opus)
-      ├── plan-qa-falsification                            kind: plan-qa-falsification   ─→ agent: plan-qa-falsification-agent (opus)
-      │
-      ├── research                                         kind: research                ─→ agent: research-agent              (opus)
-      │
-      ├── build (leaf)                                     kind: build                   ─→ agent: builder-agent               (sonnet)
-      │     ├── build-qa-proof                             kind: build-qa-proof          ─→ agent: build-qa-proof-agent        (sonnet)
-      │     └── build-qa-falsification                     kind: build-qa-falsification  ─→ agent: build-qa-falsification-agent (sonnet)
-      │
-      ├── plan (sub-plan — infinite nesting)               kind: plan                    (same shape, recurses)
-      │
-      ├── closeout                                         kind: closeout                (drop-end aggregation)
-      ├── commit                                           kind: commit                  (template-triggered, post-Drop-4)
-      ├── discussion                                       kind: discussion              (converged shape + audit trail)
-      ├── refinement                                       kind: refinement              (perpetual rollup)
-      └── human-verify                                     kind: human-verify            (dev sign-off hold point)
-```
-
-### Required Children (Auto-Create Rules)
-
-- **Every `plan`** auto-creates two children on creation: `plan-qa-proof`, `plan-qa-falsification`. Manual today; template `child_rules`-enforced in Drop 3.
-- **Every `build`** auto-creates two children on creation: `build-qa-proof`, `build-qa-falsification`.
-- `plan-qa-proof` and `plan-qa-falsification` are `blocked_by: plan` — they fire in parallel after the `plan` completes.
-- `build-qa-proof` and `build-qa-falsification` are `blocked_by: build` — they fire in parallel after the `build` completes **and** its post-build gates pass (see below).
-- `plan` nests infinitely. A planner creates sub-`plan`s when decomposition continues, or `build`s when the work is granular enough.
-- `research`, `discussion`, `closeout`, `refinement`, `human-verify` do NOT auto-create QA children — they are standalone action items. Research gets reviewed via comment thread; discussion converges in description; human-verify gates on attention-item sign-off.
-
-### Commit Cadence (Drop 2 Discussion Seed)
-
-`commit` is a real kind but current commit-every-`build` rate is too high. Proposed default heuristic for Drop 2 discussion:
-
-- **Auto-generate a `commit` child under any `plan` at level ≥ 2 whose subtree contains at least one `build` child in `complete` state.** Generation fires at plan close-time (not creation), so no-build plans (pure research / discussion / refinement) don't accrue orphan commit items.
-- **Template override** — templates can set `auto_commit = false` on a `plan` kind for local-only outputs (SQL migration scripts that never touch tracked code, scratch/throwaway work).
-- **Edge cases to resolve in the Drop 2 discussion item**: multi-PR drops (one commit per plan vs one per drop), cascade-owned commit vs dev-owned commit, partial-success subtrees (some `build` children complete, some failed).
-
-### Agent Bindings
-
-Pre-cascade: orchestrator spawns these manually via the `Agent` tool using Tillsyn auth credentials in the prompt.
-Post-Drop-3: the template binds kinds → agents; the dispatcher spawns them on `in_progress` transitions.
-Post-Drop-4a: Wave 2 delivered the dispatcher loop with manual-trigger CLI (`till dispatcher run --action-item <id>`); automatic dispatch on `in_progress` transitions lands in Drop 4b.
-
-| Kind                      | Agent                              | Model  | Role               | Edits Code? |
-| ------------------------- | ---------------------------------- | ------ | ------------------ | ----------- |
-| `plan`                    | `planning-agent`                   | opus   | `planner`          | No          |
-| `plan-qa-proof`           | `plan-qa-proof-agent`              | opus   | `qa-proof`         | No          |
-| `plan-qa-falsification`   | `plan-qa-falsification-agent`      | opus   | `qa-falsification` | No          |
-| `research`                | `research-agent`                   | opus   | `research`         | No          |
-| `build`                   | `builder-agent`                    | sonnet | `builder`          | **Yes**     |
-| `build-qa-proof`          | `build-qa-proof-agent`             | sonnet | `qa-proof`         | No          |
-| `build-qa-falsification`  | `build-qa-falsification-agent`     | sonnet | `qa-falsification` | No          |
-| `commit` _(Drop-4+)_      | `commit-message-agent`             | haiku  | `commit`           | No          |
-| `closeout` / `refinement` / `discussion` / `human-verify` | `orchestrator-managed` | —   | orchestrator       | No          |
-
-Agent names above are the **cascade defaults** — the bare names tillsyn dispatches against, resolving to the per-group embedded prompts at `internal/templates/builtin/agents/<group>/<name>.md` (substantive prompt content scheduled for Drop 4c.8 W4 — see `EMBED-PROMPTS-R1`). Users can override per project via template `agent_bindings`, or point a kind at a custom system-agent file on their own filesystem.
-
-### Post-Build Gates (Deterministic, Between `build` And Its QA Children)
-
-After a `build` action item reports success, before its `build-qa-proof` / `build-qa-falsification` children become eligible, gates run programmatically. No LLM except the commit agent.
-
-1. **`mage ci`** — on fail, the `build` moves to `failed`, gate output posted as a comment. Wave 0 of Drop 4a wired `mage ci` into `.githooks/pre-push`, so a clean push is itself the smoke check (dev runs `mage install-hooks` once per fresh clone).
-2. **Commit** — commit-agent (haiku) forms the message; system runs `git add` + `git commit`. Pre-cascade: orchestrator + dev do this manually (see Git Management (Pre-Cascade) below). Commit cadence follows the rule in "Commit Cadence" above — not every `build` generates a `commit` child.
-3. **Push** — `git push` when the template's `auto_push = true`. Pre-cascade: manual.
-4. **Hylla reingest** — NOT per-`build`. Drop-end only, orchestrator-run, after `gh run watch --exit-status` is green. See "Cascade Ledger + Hylla Feedback" + "Drop Closeout" below. Agents never call `hylla_ingest`.
-
-Only after all gates pass do the `build`'s QA children fire.
-
-### Blocker Semantics
-
-- **Parent-child** — a parent cannot move to `complete` while any child is incomplete or `failed`. Always-on invariant — Wave 1 of Drop 4a removed the `RequireChildrenComplete` policy bit; the rule is unconditional.
-- **`blocked_by`** — the only sibling and cross-drop ordering primitive. Planner sets these at creation time; Wave 2 of Drop 4a delivered the dispatcher's lock manager (file + package), and the conflict detector inserts runtime `blocked_by` on `in_progress` promotion when sibling locks conflict.
-- **File- and package-level blocking** — sibling `build` action items sharing a file in `paths` OR a package in `packages` MUST have an explicit `blocked_by` between them. Plan QA falsification attacks missing blockers. Package-level locking exists because a single Go package (e.g. `internal/domain` with ~25 files) shares one compile — editing different files in the same package still breaks the other agent's test run.
-
-### State-Trigger Dispatch
-
-Moving an action item to `in_progress` is the dispatch trigger (Drop 4+). Pre-cascade, the orchestrator IS the dispatcher — it reads the kind, picks the binding above, moves the item to `in_progress`, and spawns the subagent via the `Agent` tool with Tillsyn auth credentials and Hylla artifact ref in the prompt. Drop 4a delivered the manual-trigger dispatcher: `till dispatcher run --action-item <id>` (`cmd/till`) reads the same template `agent_bindings`, acquires file/package locks via the lock manager (`internal/app/dispatcher/locks_file.go` + `locks_package.go`), spawns the subagent via `claude --agent <name>`, and provisions auth via Wave-3's orch-self-approval flow. Per-drop work currently dogfoods both paths until Drop 4b's gate runner ships.
 
 ## Tillsyn Project
 
-The tillsyn project was **reset in Drop 0** — the prior messy project (`a0cfbf87-b470-45f9-aae0-4aa236b56ed9`, `default-go` template) was renamed to `TILLSYN-OLD` and a fresh, template-free project was created. Retiring `TILLSYN-OLD` via delete or archive is a Drop 10 refinement (project lifecycle ops bullet).
-
-- **Project ID**: `a5e87c34-3456-4663-9f32-df1b46929e30`
-- **Template**: none (fresh project, no template bound)
+- **Project ID**: `5d9b530c-b568-4830-9e16-058c957cfc05`
 - **Slug**: `tillsyn`
+- **Template**: none (fresh project, template-free)
+- **Hylla artifact**: `github.com/evanmschultz/tillsyn@main` (Hylla resolves `@main` to latest ingest)
 
-(Projects have no `kind` column post-Drop-1.75 — `action_items.kind` is the only kind enum. Language/stack info lives in `metadata` on the project.)
+Projects have no `kind` column post-Drop-1.75. Language/stack info lives in `metadata` on the project.
 
-## Hylla Baseline
+## Cascade Architecture
 
-- **Artifact ref**: `github.com/evanmschultz/tillsyn@main` — Hylla resolves `@main` to the latest ingest automatically. Do not track snapshot numbers or commit hashes here.
-- **Also stored on the Tillsyn project metadata** under `metadata.hylla_artifact_ref` so planners read it programmatically rather than copy-paste from this file.
-- **Ledger**: `LEDGER.md` tracks per-drop cost, node count (total / code / tests / packages), orphan deltas, refactors, and drop descriptions. Populated by STEWARD post-merge from the drop-orch's finalized `DROP_N_LEDGER_ENTRY` description.
-- **Hylla feedback**: `HYLLA_FEEDBACK.md` aggregates subagent-reported Hylla ergonomics and search-quality issues. Subagents report misses in their closing comment; drop-orch rolls them up into the `DROP_N_HYLLA_FINDINGS` description at drop end; STEWARD writes the MD post-merge.
+Drops live as Tillsyn action_item subtrees. Every non-project node is classified along three orthogonal axes: `kind` (what work), `metadata.role` (who does it; post-Drop-2), `metadata.structural_type` (where it sits — `drop | segment | confluence | droplet`; post-Drop-3). Canonical vocabulary lives in `WIKI.md § Cascade Vocabulary` — never redefine.
 
-### Code Understanding Rules
+### Closed 12-Kind Enum
 
-1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source for committed-code understanding. If Hylla does not return the expected result on the first search, exhaust every Hylla search mode — vector (`hylla_search` with `search_types: ["vector"]`), keyword (`hylla_search_keyword`), graph-nav (`hylla_graph_nav`), refs (`hylla_refs_find`) — before falling back to `LSP`, `Read`, `Grep`, `Glob`. **Whenever a Hylla miss forces a fallback, the subagent must record the miss in its closing comment** under a `## Hylla Feedback` heading so the orchestrator can aggregate it at drop end.
-2. **Changed since last ingest**: use `git diff` for files touched after the last Hylla ingest. Hylla is stale for those files until reingest.
-3. **Non-Go code** (markdown, TOML, YAML, magefile, SQL, etc.): use `Read`, `Grep`, `Glob`, `Bash` directly. Hylla doesn't cover non-Go files.
-4. **External semantics**: Context7 + `go doc` + `LSP` for library and language questions the repo can't answer itself.
-5. **`LSP` tool** (gopls-backed, provided by the `gopls-lsp@claude-plugins-official` plugin): symbol search, references, diagnostics, rename safety, definitions for live / uncommitted code. Auto-targets the active checkout (`main/`). Subagents: use `LSP` rather than shelling out to `gopls` or scraping with `grep`/`rg`.
+```toon
+kinds[12]{kind,purpose}:
+  plan,planning-dominant — decomposes work into children; nests infinitely; auto-creates plan-qa-* twins
+  research,read-only investigation — agent compiles findings posts dies (no QA children)
+  build,code-changing leaf — auto-creates build-qa-* twins; cannot contain further children
+  plan-qa-proof,proof-completeness QA on a plan parent; blocked_by parent
+  plan-qa-falsification,falsification QA on a plan parent; blocked_by parent
+  build-qa-proof,proof-completeness QA on a build parent; blocked_by parent + post-build gates
+  build-qa-falsification,falsification QA on a build parent; blocked_by parent + post-build gates
+  closeout,drop-end coordination aggregation
+  commit,commit action — template-triggered under plan at level ≥ 2
+  refinement,perpetual / long-lived tracking umbrella
+  discussion,cross-cutting decision park — description=converged shape comments=audit trail
+  human-verify,dev sign-off hold point — attention items + checklist children no plan/QA
+```
 
-## Build-QA-Commit Discipline
+### Agent Bindings (Cascade Defaults)
 
-**CRITICAL: No droplet is `complete` without per-droplet QA passing. Push + `gh run watch` + Hylla reingest are drop-end only — full sequence in `workflow/example/drops/WORKFLOW.md` Phases 4–7.**
+Pre-cascade: orchestrator spawns these via the `Agent` tool with Tillsyn auth in the prompt. Post-Drop-4a: dispatcher reads template bindings + spawns on `in_progress` transition.
 
-Per-droplet (Phases 4–5):
+```toon
+agent_bindings[9]{kind,agent_name,model,role,edits_code}:
+  plan,planning-agent,opus,planner,no
+  plan-qa-proof,plan-qa-proof-agent,opus,qa-proof,no
+  plan-qa-falsification,plan-qa-falsification-agent,opus,qa-falsification,no
+  research,research-agent,opus,research,no
+  build,builder-agent,sonnet,builder,yes
+  build-qa-proof,build-qa-proof-agent,sonnet,qa-proof,no
+  build-qa-falsification,build-qa-falsification-agent,sonnet,qa-falsification,no
+  commit,commit-message-agent,haiku,commit,no
+  closeout/refinement/discussion/human-verify,orchestrator-managed,—,orchestrator,no
+```
 
-1. **Build** — builder subagent implements the droplet.
-2. **QA Proof + Falsification (parallel)** — both must pass.
-3. **Fix** — if either QA fails, respawn builder, re-run QA until both green.
-4. **Commit** — `git add` the specific changed files, commit with conventional-commit format. No push yet.
+Agent names resolve via 3-tier walk: project `.tillsyn/agents/<group>/<name>.md` → user `~/.tillsyn/agents/<group>/<name>.md` → embedded `internal/templates/builtin/agents/<group>/<name>.md`.
 
-Drop-end (Phases 6–7):
+**Pre-cascade today**: parent Claude Code session uses `Agent` tool with `subagent_type` pointing at `~/.claude/agents/go-*.md` (legacy bridge — `go-builder-agent`, `go-planning-agent`, `go-qa-proof-agent`, `go-qa-falsification-agent`, `go-research-agent`; for FE: `fe-*` variants). The `go-*` / `fe-*` prefix is independent of the cascade's bare-name convention; the two surfaces converge when the dispatcher takes over spawning.
 
-5. **`mage ci` locally** — must pass clean.
-6. **Push + `gh run watch --exit-status`** — once, for the whole drop's work. No ingest on red CI.
-7. **Hylla reingest** — drop-end only, from the remote, `enrichment_mode=full_enrichment`.
+### Required Children (Auto-Create)
 
-No skipped QA. No per-droplet push. No claiming done without both QA passes.
+- Every `kind=plan` auto-creates `plan-qa-proof` + `plan-qa-falsification` (blocked_by parent).
+- Every `kind=build` auto-creates `build-qa-proof` + `build-qa-falsification` (blocked_by parent + post-build gates).
+- `research`, `discussion`, `closeout`, `refinement`, `human-verify` are standalone — no auto-QA.
 
-## Cascade Ledger + Hylla Feedback
+### Blockers + Atomicity
 
-Drop-orch owns the drop end-to-end per `workflow/example/drops/WORKFLOW.md` Phases 1–7, including closeout (Phase 7) — aggregating Hylla feedback, refinements, ledger entry, and wiki changelog into `workflow/drop_N/CLOSEOUT.md` before the PR merges.
+- **Parent-child**: parent cannot move to `complete` while any child is incomplete or `failed`. Always-on.
+- **`blocked_by`**: sibling + cross-drop ordering primitive. File-level + package-level locks (Drop 4a Wave 2) auto-insert runtime `blocked_by` on conflict.
+- **Atomicity**: planner prompt enforces "≤4 small code blocks per build droplet, declare paths + packages." Plan-QA falsification attacks missing blockers + over-sized droplets.
 
-**STEWARD is post-merge consolidation + validation.** After the drop's PR merges, STEWARD runs on `main`: reads `workflow/drop_N/CLOSEOUT.md`, splices the aggregated content into the top-level MDs (`LEDGER.md`, `REFINEMENTS.md`, `HYLLA_FEEDBACK.md`, `WIKI_CHANGELOG.md`, `HYLLA_REFINEMENTS.md`, `WIKI.md`), validates the splice, `git worktree remove drop/N`. That's it. STEWARD does not touch drop branches, does not run CI, does not call `hylla_ingest`. Full STEWARD spec: `STEWARD_ORCH_PROMPT.md`.
+### Post-Build Gates (Between `build` And Its QA Children)
 
-**Subagent responsibility:** every closing comment includes a `## Hylla Feedback` section. `None — Hylla answered everything needed.` if clean; otherwise record each miss:
+1. `mage ci` — on fail, build moves to `failed`. (Wave 0 wired into `.githooks/pre-push`; dev runs `mage install-hooks` once per fresh clone.)
+2. Commit — commit-message-agent (haiku) forms message; orchestrator + dev run `git add` + `git commit` pre-cascade.
+3. Push — `git push` when template `auto_push=true`. Pre-cascade: manual.
+4. Hylla reingest — NOT per-build. Drop-end only, orchestrator-run, after `gh run watch --exit-status` green. Subagents never call `hylla_ingest`.
 
-- **Query**: tool name + key inputs.
-- **Missed because**: your hypothesis (wrong search mode, schema gap, missing summary, stale ingest, etc.).
-- **Worked via**: the fallback tool + inputs that found the thing.
-- **Suggestion**: one-liner for what Hylla could do better.
+Only after all gates pass do the `build`'s QA children fire.
 
-Explicit "no miss" is still useful signal. Ergonomic-only gripes (awkward parameters, confusing response shapes, weird IDs) also go here.
+## Action-Item Lifecycle
 
-## Drop Closeout
+Four states: `todo`, `in_progress`, `complete`, `failed` (Drop 1 landed `failed` as a real terminal state).
 
-Drop-orch closes the drop per `workflow/example/drops/WORKFLOW.md` Phase 7 — aggregate Hylla feedback + refinements, write `CLOSEOUT.md`, flip drop state to `complete`, merge PR.
+- **Success**: `metadata.outcome="success"` + `completion_notes` + move to `complete`.
+- **Failure**: `metadata.outcome="failure"` + details in `completion_notes` + move to `failed`.
+- **Blocked**: `metadata.outcome="blocked"` + `metadata.blocked_reason` + report to orch + stop.
+- **Supersede**: dev-only CLI `till action_item supersede <id> --reason "..."` unsticks `failed → complete`.
 
-**Hylla ingest invariants (inviolable):**
-
-- Always `enrichment_mode=full_enrichment`. Never `structural_only`.
-- Always source from the GitHub remote (`github.com/evanmschultz/tillsyn@main`). Never from a local working copy.
-- Never before `git push` + `gh run watch --exit-status` green.
-- Only the drop-orch calls `hylla_ingest`. Subagents never do. STEWARD never does.
-
-## Git Management (Pre-Cascade)
-
-Until the cascade dispatcher takes over commits (`PLAN.md` Drop 11), **orchestrator + dev manage git manually**. The orchestrator does not commit from its own session — it asks the dev, or spawns a builder subagent when code changes are needed. Clean git state (for the files an action item declares) is a precondition for creating an action item; the orchestrator checks `git status --porcelain <paths>` before creation and asks the dev to clean up if dirty.
-
-### Post-Merge Branch Cleanup (Drop Closeout)
-
-After a drop PR merges, the closing orchestrator MUST run the cleanup sequence below **in this order**. Skipping steps leaves stale worktrees or branch refs that block future drops (the Drop 1.75 close-out hit this: a leftover `drop/1.5` worktree still had `main` checked out with uncommitted files, which blocked `gh pr merge`'s local sync + blocked the next drop's worktree from checking out `main`).
-
-1. **Merge with history preserved.** `gh pr merge <N> --merge --delete-branch` — `--merge` creates a merge commit that preserves every commit in the drop branch (NOT `--squash`, NOT `--rebase`). `--delete-branch` removes the remote ref when the local sync step succeeds.
-2. **If `gh pr merge`'s local sync step fails** (usually because another worktree has `main` checked out with uncommitted work), the server-side merge still succeeded — verify with `gh pr view <N> --json state,mergeCommit`. Then delete the remote branch explicitly: `git push origin --delete <branch>`.
-3. **`cd` into the `main/` worktree — NEVER run cleanup from inside the worktree you're about to remove.** Removing the worktree you're standing in pulls the rug out from the current shell.
-4. **Fast-forward main:** `git fetch origin && git pull --ff-only` in `main/`. Confirm the merge commit is at HEAD.
-5. **Remove the drop worktree:** `git worktree remove /path/to/drop/N` from `main/` or the bare root. If it refuses because of staged/unstaged changes, INVESTIGATE before `--force`-ing — those changes may be real work someone forgot to commit.
-6. **Delete the local branch ref:** `git branch -D drop/N`.
-7. **Verify clean:** `git worktree list` should show only bare + `main` (+ any live concurrent drops). `git branch -a` should show no stale local drop branches.
-
-**Guardrail against "uncommitted work in a stale worktree" recurrence:** every drop orchestrator MUST commit or explicitly stash all working-dir changes before marking its drop closed. A stale worktree holding `main` with staged files is an anti-pattern — if work isn't ready to commit, it should sit on its own named branch, not on `main` in a drop worktree. If a close-out orchestrator finds pending changes during step 5 above, they must route them (commit to a preservation branch, hand back to dev, or explicitly destroy with dev sign-off) — never silently force-remove.
-
-## Orchestrator-as-Hub Architecture
-
-The parent Claude Code session launched by the dev from this directory is always **the orchestrator**. There is no `.claude/agents/orchestration-agent.md` file — the orchestrator is defined by the invocation context, not by a markdown spec. Every other role (builder, qa, planner, closeout, research) is a subagent spawned via the `Agent` tool.
-
-**PREFER cascade subagents for code changes.** The cascade methodology (planner → builder → QA pair → commit) is the default execution path. Spawn a typed builder subagent (`go-builder-agent`, `fe-builder-agent`) via the `Agent` tool for normal code work — the cascade enforces atomic-droplet sizing, plan-QA discipline, and asymmetric build-QA verification that orchestrator-direct edits skip.
-
-**Orchestrator MAY edit Go (or other) code directly when the cascade adds overhead without value**: trivial typo fixes, single-constant updates, mid-flight build-green stabilization, NIT-class absorptions surfaced by build-QA. The judgment call: does the change benefit from a builder's TDD loop + build-QA gate, or is it small enough that the cascade is ceremony? When in doubt, prefer the builder.
-
-Even when editing directly, the orchestrator should still run the verification gates (`mage ci`, etc.) and commit per the build-QA-commit discipline.
-
-**Markdown doc ownership is split between drop-orch (drop branch) and STEWARD (`main` post-merge).** Drop-orchs (`DROP_N_ORCH`) own per-drop artifact content in `main/workflow/drop_N/` and any architecture-MD edits (`CLAUDE.md`, `PLAN.md`, `AGENT_CASCADE_DESIGN.md`, `STEWARD_ORCH_PROMPT.md`, `workflow/README.md`, `workflow/example/**`) when the drop's scope touches process — all on the drop branch, flowing to `main` via PR merge. STEWARD (persistent continuation orchestrator — `STEWARD_ORCH_PROMPT.md`) runs post-merge on `main`, reads `main/workflow/drop_N/` content, collates it into the six top-level MDs (`LEDGER.md`, `REFINEMENTS.md`, `HYLLA_FEEDBACK.md`, `WIKI_CHANGELOG.md`, `HYLLA_REFINEMENTS.md`, plus `WIKI.md` curation), then `git worktree remove drop/N` after drop-orch has deleted the remote + local branch refs.
-
-### How It Works
-
-1. Orchestrator plans, routes, delegates, and cleans up. Reads code + Hylla for research. Creates Tillsyn action items. Spawns subagents. Coordinates results.
-2. Subagents are ephemeral — they spawn, read their action item, do work, update the action item, die.
-3. Action-item state is the signal. On terminal state, the subagent sets `metadata.outcome` and moves to `complete` or `failed` (once Drop 1 lands, `failed` will be a real terminal state; until then, failures are represented in metadata).
-4. Subagents do not poll or watch anything. Read the action item at spawn, execute, update, return.
-5. Only the orchestrator uses attention items (human approval + inter-orchestrator coordination).
-
-### Agent State Management
-
-Every subagent manages its own Tillsyn action-item state. The orchestrator can't move role-gated items.
-
-**Spawn prompt vs. action-item description split:** the spawn prompt carries ephemeral fields (action_item_id, auth credentials, working directory, move-state directive); the action-item description carries durable content (Hylla artifact ref, paths, packages, acceptance criteria, mage targets, cross-references). Rule: if a field changes every spawn, put it in the prompt; if it's stable across time and authors, put it in the description.
-
-Full contract — exact spawn-prompt fields, exact description fields, spawn-gate checks — lives in each agent file at `~/.claude/agents/*.md` under "Required Prompt Fields" and "Spawn Prompt vs Action-Item Description Split." Don't duplicate it here.
-
-## Action-Item Lifecycle (Current HEAD)
-
-Four terminal-reachable states: `todo`, `in_progress`, `complete`, `failed` (Drop 1 landed `failed` as a real terminal state):
-
-- **Success**: set `metadata.outcome: "success"`, update `completion_contract.completion_notes`, move to `complete`.
-- **Failure**: set `metadata.outcome: "failure"`, note details in `completion_notes`, transition to `failed` (real terminal state since Drop 1).
-- **Blocked**: set `metadata.outcome: "blocked"` + `metadata.blocked_reason`, report to orchestrator, stop.
-- **Supersede** (post-Drop-1): human-only CLI `till action_item supersede <id> --reason "..."` unsticks `failed → complete`.
-
-No parent can move to terminal-success if any child is in `failed` or `blocked` state — always-on invariant (Wave 1 of Drop 4a removed the `RequireChildrenComplete` policy bit; the rule is unconditional).
+No parent reaches terminal-success if any child is `failed` or `blocked` (always-on invariant).
 
 ## Paths and Packages
 
-Wave 1 of Drop 4a landed `paths []string`, `packages []string`, `files []string`, `start_commit string`, and `end_commit string` as first-class fields on every `ActionItem` (`internal/domain/action_item.go`). Planners set `paths` + `packages` at creation; dispatcher's lock manager (Wave 2) reads `packages` for package-level locks and `paths` for file-level locks. Builders restrict edits to declared `paths`; reference-only material lives in `files`. `start_commit` / `end_commit` are opaque caller-populated strings (orchestrator pre-cascade; dispatcher post-Wave-2). Per-package compile collisions are blocked at `in_progress` promotion via runtime `blocked_by` insertion when a sibling holds the same package lock. Cross-reference: `WIKI.md § "Atomic Drop Granularity"` for the planner-side rule of thumb.
+Wave 1 of Drop 4a landed `paths []string`, `packages []string`, `files []string`, `start_commit string`, `end_commit string` as first-class fields on every ActionItem. Planners set `paths` + `packages` at creation. Builders restrict edits to declared `paths`; reference-only material goes in `files`.
+
+Sibling builds sharing a file in `paths` OR a package in `packages` MUST have explicit `blocked_by`. Per-package compile collisions block at `in_progress` promotion via runtime `blocked_by` insertion. Cross-reference: `WIKI.md § "Atomic Drop Granularity"`.
+
+## Orchestrator + Subagent Roles
+
+**Orchestrator** = the parent Claude Code session launched by the dev from this directory. Plans, routes, delegates, cleans up. Reads code + Hylla for research. Creates Tillsyn action items. Spawns subagents. Coordinates results.
+
+**Code-edit rule**: orchestrator PREFERS cascade subagents for code changes (cascade enforces atomic-droplet sizing + plan-QA + asymmetric build-QA). Orchestrator MAY edit Go (or other) code directly when cascade adds overhead without value: trivial typo fixes, single-constant updates, mid-flight build-green stabilization, NIT-class absorptions surfaced by build-QA. When in doubt, prefer the builder. Even when editing directly, run verification gates (`mage ci`, etc.) and commit per build-QA-commit discipline.
+
+**Subagent roles**:
+
+- **Builder** — ONLY role that edits source code. Spawned via `Agent` tool with Tillsyn auth credentials in the prompt.
+- **QA Proof / Falsification** — gated to QA. Read, verify, write closing comment, die. Never edit code. Run as parallel spawns (fresh context per pass).
+- **Planning** — decomposes a drop into atomic build droplets with `paths`/`packages`/acceptance. Never edits code.
+- **Research** — Claude's built-in `Explore` subagent for read-only investigation.
+
+**Coordination surfaces**:
+
+```toon
+surfaces[6]{tool,subagent_use,orch_use}:
+  till.action_item,read+update own item,create/update tasks + read state + move phases
+  till.comment,result comments on own item,guidance before spawns + drop-end aggregation
+  till.attention_item,never,inbox for human approvals + dev-action routing
+  till.handoff,never,structured next-action routing
+  till.auth_request,claim only,create+claim+approve (orch-self-approval for non-orch subagents)
+  till.capture_state,never,re-anchor scope on session start / restart
+```
+
+Subagents do NOT use attention_items / handoffs / @mentions / downward-sideways signaling.
 
 ## Auth and Leases
 
 - One active auth session per scope level at a time.
-- Orchestrator cleans up all child auth sessions and leases at end of phase/run.
-- Auth auto-revoke on terminal state lands in Drop 4b. Pre-Drop-4b, orchestrators (and STEWARD post-merge) manually revoke stale sessions via `till.auth_request operation=revoke`.
-- Orchestrators approve their own non-orch subagent auth requests scoped within their lease subtree (Wave 3 of Drop 4a). Cross-orch and orch-spawning-orch approvals still route through the dev TUI. Project-level `OrchSelfApprovalEnabled = *false` toggle is the total backstop (reverts ALL approves under that project to dev-TUI).
-- **Always report the auth session ID to the dev** when requesting or claiming auth. The dev needs visibility into active sessions.
+- Orchestrator cleans up child sessions + leases at end of phase/run.
+- Auth auto-revoke on terminal state lands in Drop 4b. Pre-Drop-4b, manually revoke stale sessions via `till.auth_request(operation=revoke)`.
+- Orchestrators approve their own non-orch subagent auth requests scoped within their lease subtree (Wave 3 of Drop 4a). Cross-orch + orch-spawning-orch approvals route through dev TUI.
+- Project-level `OrchSelfApprovalEnabled = *false` is the total backstop (reverts ALL approves under that project to dev-TUI).
+- **Always report the auth session ID + request ID to dev** when requesting or claiming auth.
 
-## Coordination Surfaces
+## Build-QA-Commit Discipline
 
-**Subagents:**
+**No build droplet is `complete` without per-droplet QA passing.** Push + `gh run watch` + Hylla reingest are drop-end only.
 
-- `till.action_item` — read the action item, update metadata, move state.
-- `till.comment` — result comments on their own action item.
-- No attention_items, no handoffs, no @mentions, no downward/sideways signaling.
+**Per-droplet**:
 
-**Orchestrator (this session):**
+1. Build — builder subagent implements the droplet.
+2. QA Proof + Falsification (parallel) — both must pass.
+3. Fix — if either QA fails, respawn builder + re-run QA until green.
+4. Commit — `git add` specific changed files, conventional-commit format. No push yet.
 
-- `till.action_item` — create/update tasks, read state, move phases.
-- `till.comment` — guidance before spawning subagents.
-- `till.attention_item` — inbox for human approvals.
-- `till.handoff` — structured next-action routing.
-- `/loop` polling (60-120s cadence) for attention items during long-running work.
+**Drop-end**:
 
-## Role Model
+5. `mage ci` locally — must pass clean.
+6. Push + `gh run watch --exit-status` — once for the whole drop. No ingest on red CI.
+7. Hylla reingest — drop-end only, from the remote, `enrichment_mode=full_enrichment`.
 
-- **Orchestrator** — the human-launched CLI session. Plans, routes, delegates, cleans up. Never edits Go code. Drop-orchs edit MDs on their drop branch (artifact content in `main/workflow/drop_N/` + architecture MDs when scope touches process); STEWARD edits MDs on `main` post-merge (collation into top-level MDs + worktree cleanup).
-- **Builder** — subagent. The ONLY role that edits Go code. Reads the action item, implements, updates, dies.
-- **QA Proof / QA Falsification** — subagents. Ephemeral. Read the action item, review, update with verdict, die.
-- **Planning** — subagent. Decomposes a drop into tasks with paths/packages/acceptance criteria.
-- **Research** — Claude's built-in `Explore` subagent.
-- **Human** — approves auth, reviews results, makes design decisions.
+**Subagent closing comments include `## Hylla Feedback` section.** Record each Hylla miss: Query + Missed because + Worked via + Suggestion. Or `None — Hylla answered everything needed.` if clean. Orchestrator aggregates at drop-end.
+
+**Hylla ingest invariants (inviolable)**:
+
+- Always `enrichment_mode=full_enrichment`. Never `structural_only`.
+- Always source from the GitHub remote (`github.com/evanmschultz/tillsyn@main`). Never from a local working copy.
+- Never before `git push` + `gh run watch --exit-status` green.
+- Only the drop-orch calls `hylla_ingest`. Subagents never do.
+
+## Git Management (Pre-Cascade)
+
+Until the cascade dispatcher takes over commits, orchestrator + dev manage git manually. Clean git state for an action item's declared `paths` is a precondition for creation; orch checks `git status --porcelain <paths>` before creation and asks dev to clean up if dirty.
+
+### Post-Merge Branch Cleanup
+
+After a drop PR merges:
+
+1. `gh pr merge <N> --merge --delete-branch` — preserves drop's commit history (NOT --squash / --rebase).
+2. If local sync fails (another worktree has main checked out with uncommitted work), the server-side merge still succeeded — verify with `gh pr view <N> --json state,mergeCommit`. Then `git push origin --delete <branch>` to clean the remote.
+3. `cd` into `main/` worktree — NEVER cleanup from inside the worktree being removed.
+4. `git fetch origin && git pull --ff-only` in `main/`.
+5. `git worktree remove /path/to/drop/N` from `main/` or bare root. If refuses, INVESTIGATE before `--force`.
+6. `git branch -D drop/N`.
+7. Verify clean: `git worktree list` + `git branch -a`.
+
+**Guardrail**: every drop-orch MUST commit or explicitly stash all working-dir changes before marking drop closed. A stale worktree holding `main` with staged files is an anti-pattern.
 
 ## Recovery After Session Restart
 
-1. `till.capture_state` — re-anchor project and scope context.
-2. `till.attention_item(operation=list, all_scopes=true)` — inbox state.
-3. Check `in_progress` tasks for staleness.
-4. Revoke orphaned auth sessions/leases.
-5. Resume from current action-item state.
-
-## Cascade Agents (Tillsyn Defaults — Go Project)
-
-The cascade-default 10 agents per group. Tillsyn dispatches against these bare names; the dispatcher resolves them via the 3-tier walk (project `.tillsyn/agents/<group>/<name>.md` → user `~/.tillsyn/agents/<group>/<name>.md` → embedded `internal/templates/builtin/agents/<group>/<name>.md`). Substantive embedded prompt content lands in Drop 4c.8 W4 (`EMBED-PROMPTS-R1`).
-
-| Agent Name                       | Kind(s) Served                                            | Model    | Purpose                                                                                |
-| -------------------------------- | --------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------- |
-| `planning-agent`                 | `plan`                                                    | opus     | Decompose work into atomic droplets with `blocked_by` wiring                           |
-| `plan-qa-proof-agent`            | `plan-qa-proof`                                           | opus     | Proof-completeness on a `plan` parent                                                  |
-| `plan-qa-falsification-agent`    | `plan-qa-falsification`                                   | opus     | Counterexamples against a `plan` parent                                                |
-| `research-agent`                 | `research`                                                | opus     | Read-only investigation; compiles findings                                             |
-| `builder-agent`                  | `build`                                                   | sonnet   | Implements + tests; the only role that edits code                                      |
-| `build-qa-proof-agent`           | `build-qa-proof`                                          | sonnet   | Proof-completeness on a `build` parent                                                 |
-| `build-qa-falsification-agent`   | `build-qa-falsification`                                  | sonnet   | Counterexamples against a `build` parent                                               |
-| `commit-message-agent`           | `commit`                                                  | haiku    | Forms the commit message; no code edits                                                |
-| `orchestrator-managed`           | `closeout` / `refinement` / `discussion` / `human-verify` | —        | Orchestrator-managed kinds (coordination, not LLM-dispatched)                          |
-
-**Pre-cascade — how the parent orchestrator spawns agents today (legacy bridge):**
-Today, while the dispatcher is in development, the parent Claude Code session uses the `Agent` tool with `subagent_type` pointing at LOCAL system-agent files under `~/.claude/agents/*.md` (currently named with a `go-` prefix: `go-builder-agent`, `go-planning-agent`, `go-qa-proof-agent`, `go-qa-falsification-agent`, `go-research-agent`). Those files are the **inspiration source** for the embedded prompt content in Drop 4c.8 W4 — the cascade defaults will inherit their Karpathy-style claude.md content + Section 0 reasoning shape. The legacy `go-*` prefix on system files is independent of the cascade's bare-name convention; the two surfaces will converge when the dispatcher takes over spawning (Drop 4c.7) and when `~/.claude/agents/*.md` are renamed to bare per `QA-SPLIT-R1` + `ORCH-MANAGED-R1`.
-
-Inline (no subagent file):
-
-- **research-agent** — Claude's built-in `Explore` subagent.
-
-### QA Discipline
-
-Two asymmetric passes, not duplicates:
-
-- **QA Proof** (`go-qa-proof-agent`, `/qa-proof`) — evidence completeness, reasoning coherence, trace coverage.
-- **QA Falsification** (`go-qa-falsification-agent`, `/qa-falsification`) — counterexamples, hidden deps, contract mismatches, YAGNI.
-
-Run both for every `build` action item. They are asymmetric — proof checks whether the evidence supports the claim; falsification tries to construct a counterexample. Spawn them as parallel subagents so each gets a fresh context window.
+```toon
+recovery_steps[5]{step,action}:
+  1,till.capture_state(project_id=...) to re-anchor scope
+  2,till.attention_item(operation=list, all_scopes=true) for inbox
+  3,check in_progress tasks for staleness
+  4,revoke orphaned auth sessions/leases
+  5,resume from current action-item state
+```
 
 ## Skill and Slash Command Routing
 
-| Command                 | When to Use                                                |
-| ----------------------- | ---------------------------------------------------------- |
-| `/plan-from-hylla`      | Hylla-grounded planning                                    |
-| `/qa-proof`             | Proof-oriented QA                                          |
-| `/qa-falsification`     | Falsification-oriented QA                                  |
-| `semi-formal-reasoning` | Explicit reasoning certificate for semantic/high-risk work |
+```toon
+commands[4]{command,when_to_use}:
+  /plan-from-hylla,Hylla-grounded planning
+  /qa-proof,Proof-oriented QA
+  /qa-falsification,Falsification-oriented QA
+  semi-formal-reasoning,Explicit reasoning certificate for semantic/high-risk work
+```
 
-## Semi-Formal Reasoning — Section 0 Response Shape
+## Section 0 Response Shape
 
-Every substantive response begins with a `# Section 0 — SEMI-FORMAL REASONING` block before the normal response body. Orchestrator-facing responses use five passes (`Planner` / `Builder` / `QA Proof` / `QA Falsification` / `Convergence`); subagent-facing responses use four (`Proposal` / `QA Proof` / `QA Falsification` / `Convergence`). Each pass uses the 5-field certificate: **Premises** / **Evidence** / **Trace or cases** / **Conclusion** / **Unknowns**.
+Every substantive response begins with a `# Section 0 — SEMI-FORMAL REASONING` block. Orchestrator-facing: 5 passes (`Planner` / `Builder` / `QA Proof` / `QA Falsification` / `Convergence`). Subagent-facing: 4 passes (`Proposal` / `QA Proof` / `QA Falsification` / `Convergence`). Each pass uses the 5-field certificate: **Premises** / **Evidence** / **Trace or cases** / **Conclusion** / **Unknowns**.
 
-**Canonical spec: `SEMI-FORMAL-REASONING.md`** (this directory). Read that file for the full rules, the subagent pass-through directive, and the Tillsyn artifact boundary (Section 0 reasoning lives in the orchestrator-facing response ONLY — never in Tillsyn descriptions, metadata, completion_notes, or comments).
+**Canonical full spec lives in `~/.claude/CLAUDE.md § "Semi-Formal Reasoning — Section 0 Response Shape"`** (global, mirrored across all projects). This project file enforces three load-bearing rules:
 
-Trivial-answer carve-out: one-line factual lookups and terse confirmations skip both Section 0 and the numbered body.
-
-Subagents do NOT inherit CLAUDE.md. When delegating substantive work, the spawn prompt MUST include the Section 0 directive verbatim (the exact wording is in `SEMI-FORMAL-REASONING.md` §Subagent Pass-Through).
+1. Section 0 on every substantive response (skip only for trivial one-line lookups).
+2. Section 0 stays in the orchestrator-facing response ONLY — never inside Tillsyn `description` / `metadata.*` / `completion_notes` / comments / handoffs / attention items.
+3. Subagent spawn prompts MUST carry the Section 0 directive verbatim (subagents don't inherit CLAUDE.md).
 
 ## Evidence Sources
 
 In order:
 
 1. **Hylla** — committed repo-local code.
-2. **`git diff`** — uncommitted local deltas and files changed since last ingest.
-3. **Context7 + `go doc` + gopls MCP** — external/language/tooling semantics.
+2. **`git diff`** — uncommitted local deltas / files changed since last ingest.
+3. **Context7** + **`go doc`** + **gopls MCP** — external / language / tooling semantics.
+
+## Code Understanding Rules
+
+1. **All Go code**: use Hylla MCP (`hylla_search`, `hylla_node_full`, `hylla_search_keyword`, `hylla_refs_find`, `hylla_graph_nav`) as the primary source. Exhaust every search mode (vector + keyword + graph-nav + refs) before falling back to `LSP`, `Read`, `Grep`, `Glob`. **Record every Hylla miss** in the subagent's closing comment under `## Hylla Feedback`.
+2. **Changed since last ingest**: use `git diff` — Hylla is stale for those files until reingest.
+3. **Non-Go code** (markdown, TOML, YAML, magefile, SQL): use `Read`, `Grep`, `Glob`, `Bash` directly.
+4. **External semantics**: Context7 + `go doc` + `LSP` for library / language questions the repo can't answer itself.
+5. **`LSP` tool** (gopls-backed): symbol search, references, diagnostics, rename safety for live / uncommitted code. Auto-targets `main/`.
 
 ## Project Structure
 
-- `cmd/till` — CLI/TUI entrypoint
-- `internal/domain` — core entities and invariants
-- `internal/app` — application services and use-cases (hexagonal core)
-- `internal/adapters/storage/sqlite` — SQLite persistence
-- `internal/adapters/server/mcpapi` — MCP handler
-- `internal/config` — TOML loading, defaults, validation
-- `internal/platform` — OS-specific paths
-- `internal/tui` — Bubble Tea / Bubbles / Lip Gloss
-- `magefile.go` — canonical build/test automation
+```toon
+packages[8]{path,purpose}:
+  cmd/till,CLI/TUI entrypoint + MCP server
+  internal/domain,core entities and invariants
+  internal/app,application services + use-cases (hexagonal core)
+  internal/adapters/storage/sqlite,SQLite persistence
+  internal/adapters/server/mcpapi,MCP handler
+  internal/config,TOML loading + defaults + validation
+  internal/platform,OS-specific paths
+  internal/tui,Bubble Tea / Bubbles / Lip Gloss
+```
+
+`magefile.go` at repo root is the canonical build/test automation. `ui/` is the Wails+Astro+Solid desktop FE.
 
 ## Tech Stack
 
-Go 1.26+ · Bubble Tea v2 · Bubbles v2 · Lip Gloss v2 · SQLite (`modernc.org/sqlite`, no CGO) · TOML (`github.com/pelletier/go-toml/v2`) · Laslig · Fang · `github.com/charmbracelet/log`
+```toon
+stack[10]{component,version_or_lib}:
+  language,Go 1.26+
+  tui_framework,Bubble Tea v2 + Bubbles v2 + Lip Gloss v2
+  sqlite,modernc.org/sqlite (no CGO)
+  toml,github.com/pelletier/go-toml/v2
+  cli,Fang + Laslig
+  logger,github.com/charmbracelet/log
+  fe_framework,SolidJS + Astro
+  fe_host,Wails v2 (ui/main.go + ui/wails.json)
+  fe_dev_port,localhost:51428
+  fe_pkg_manager,pnpm (pinned via packageManager field)
+```
 
 ## Dev MCP Server
 
-Test against `tillsyn-dev` (or the worktree-specific MCP name for non-main worktrees). Each worktree gets a unique MCP entry pointing at its own built binary. Full setup instructions — `claude mcp add` command, per-worktree naming scheme, active registrations — live in `CONTRIBUTING.md` §"Dev MCP Server Setup."
+Test against `tillsyn-dev` (or worktree-specific MCP name for non-main worktrees). Each worktree gets a unique MCP entry pointing at its own built binary. Setup instructions in `CONTRIBUTING.md § "Dev MCP Server Setup"`.
 
 ## Build Verification
 
-Before any `build` action item is marked complete:
+Before any `build` action item is `complete`:
 
-1. All relevant mage targets pass (discover via `mage -l`).
-2. **NEVER run `go test`, `go build`, `go run`, `go vet`, or any raw `go` toolchain command.** Always `mage <target>`. If a mage target has a bug, fix the target — don't bypass. No exceptions, orchestrator or subagent.
-3. **`mage install` is allowed for the orchestrator** when the dev needs the locally-installed `till` binary refreshed after a CLI / dispatcher / init-flow change shipped on disk. Build verification still uses `mage ci`; `mage install` is the install step, not a substitute for verification.
+1. All relevant mage targets pass (`mage -l` for the list).
+2. **NEVER raw Go toolchain** (`go test` / `go build` / `go run` / `go vet`). Always `mage <target>`. If a target has a bug, fix the target — don't bypass.
+3. `mage install` is allowed for the orchestrator when dev needs the `till` binary refreshed locally. Build verification still uses `mage ci`; `mage install` is install not verification.
 4. All template-generated QA subtasks completed.
 
-Key targets: `mage run`, `mage build`, `mage test-pkg <pkg>`, `mage test-func <pkg> <func>`, `mage test-golden`, `mage test-golden-update`, `mage format`, `mage ci`. Run `mage ci` before push. Coverage below 70% is a hard failure.
+Key targets: `mage run`, `mage build`, `mage test-pkg <pkg>`, `mage test-func <pkg> <func>`, `mage test-golden`, `mage test-golden-update`, `mage format`, `mage ci`, `mage uiDev`, `mage uiBuild`, `mage ciUI`. Run `mage ci` before push. Coverage below 70% is a hard failure.
 
 ## Go Development Rules
 
-- **Hexagonal architecture, interface-first boundaries, dependency inversion.**
+- **Hexagonal architecture**, interface-first boundaries, dependency inversion.
 - **TDD-first** where practical. Ship small tested increments.
 - **Smallest concrete design.** No abstraction for hypothetical future variation.
 - **Idiomatic Go** — naming, package structure, import grouping (stdlib / third-party / local).
-- **Go doc comments** on every top-level declaration and method, production and test.
-- **Errors**: wrap with `%w`, bubble up at clean boundaries, log context-rich failures at adapter/runtime edges, don't swallow.
+- **Go doc comments** on every top-level declaration and method.
+- **Errors**: wrap with `%w`, bubble at clean boundaries, log context-rich failures at adapter/runtime edges, don't swallow.
 - **Logger**: `github.com/charmbracelet/log` with styled console output. Dev-mode logs to `.tillsyn/log/`.
-- **Tests**: `*_test.go` co-located, table-driven, behavior-oriented assertions. `-race` via mage targets. For substantial TUI changes, update tea-driven tests + golden fixtures.
-- **Mage discipline**: run from the worktree root as plain `mage <target>` — no `GOCACHE=...` overrides. No workspace-local cache dirs (e.g. `.go-cache-*`).
-- **After touching Go code**: `mage ci` before handoff. For `.github/workflows/` or `magefile.go` changes: `mage ci` first. After pushing to fix/validate CI: `gh run watch --exit-status` until it lands green.
-- **Dependencies**: ask the dev to run `go get` / module updates in their own shell. No `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass flags.
-- **Context7**: before any code, after any test failure. If unavailable, record the fallback source.
-- **Markdown-first authoring** for Tillsyn `description`, `summary`, `body_markdown`, thread comments.
-- **Clarification**: when stuck, first ask goal-alignment questions, then specific implementation-detail questions.
+- **Tests**: `*_test.go` co-located, table-driven, behavior-oriented. `-race` via mage targets.
+- **Mage discipline**: plain `mage <target>` from worktree root. No `GOCACHE=...` overrides or workspace-local cache dirs.
+- **After touching Go code**: `mage ci` before handoff. For `.github/workflows/` or `magefile.go` changes: `mage ci` first. After pushing to fix CI: `gh run watch --exit-status` until green.
+- **Dependencies**: ask dev to run `go get` / module updates in their own shell. No `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass.
+- **Context7**: before any code, after any test failure.
+- **Markdown-first authoring** for Tillsyn `description`, `summary`, `body_markdown`, comments.
+- **Clarification**: when stuck, ask goal-alignment questions first, then implementation-detail questions.
