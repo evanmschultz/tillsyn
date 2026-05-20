@@ -17,7 +17,7 @@ import (
 // ExtractTerminalCost → ExtractTerminalReport).
 
 // CLIKind names the CLI binary family the dispatcher routes a spawn to. It is
-// a closed enum on string. Drop 4c ships CLIKindClaude only; Drop 4d adds
+// a closed enum on string. Drop 4c shipped CLIKindClaude; Drop 4d added
 // CLIKindCodex. Empty-string semantics (default-to-claude per F.7.17 locked
 // decision L15) are handled by the dispatcher's adapter-lookup path, NOT by
 // IsValidCLIKind below — IsValidCLIKind returns false on the empty string so
@@ -28,20 +28,29 @@ import (
 // without knowing this dispatcher-side enum.
 type CLIKind string
 
-// CLIKindClaude is the only CLI kind shipped in Drop 4c. The adapter
-// implementation lives in cli_adapter_claude.go (droplet 4c.F.7.17.3).
+// CLIKindClaude routes a spawn to the `claude` headless CLI. Adapter
+// implementation lives in internal/app/dispatcher/cli_claude (droplet
+// 4c.F.7.17.3).
 const CLIKindClaude CLIKind = "claude"
+
+// CLIKindCodex routes a spawn to the `codex` headless CLI (OpenAI Codex
+// exec mode, JSONL stream output). Adapter implementation lives in
+// internal/app/dispatcher/cli_codex (droplet 4d.2). Drop 4d adds this kind
+// so multi-backend agent_bindings can route plan / qa-falsification /
+// research kinds to codex while keeping qa-proof on claude opus and
+// build / commit on claude haiku.
+const CLIKindCodex CLIKind = "codex"
 
 // IsValidCLIKind reports whether k is a member of the closed CLIKind enum
 // shipped in this build. It returns true ONLY for kinds with a registered
-// adapter. Today that is CLIKindClaude alone; CLIKindCodex lands in Drop 4d.
+// adapter — today CLIKindClaude and CLIKindCodex.
 //
 // Empty string is NOT a valid CLIKind for IsValidCLIKind purposes — callers
 // who want the F.7.17 L15 default-to-claude semantics must apply the default
 // before calling this function.
 func IsValidCLIKind(k CLIKind) bool {
 	switch k {
-	case CLIKindClaude:
+	case CLIKindClaude, CLIKindCodex:
 		return true
 	default:
 		return false

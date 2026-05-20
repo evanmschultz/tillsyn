@@ -15,15 +15,19 @@ func TestIsValidCLIKindClaudeMember(t *testing.T) {
 	}
 }
 
-// TestIsValidCLIKindCodexNotYetInEnum asserts that "codex" — the kind Drop 4d
-// will add — is NOT a member of the closed enum shipped in Drop 4c. The test
-// is a regression guard: when Drop 4d lands, this test moves into the
-// positive-membership case below.
-func TestIsValidCLIKindCodexNotYetInEnum(t *testing.T) {
+// TestIsValidCLIKindCodexMember asserts CLIKindCodex (Drop 4d) is a member of
+// the closed enum. The const-typed call AND the bare-string("codex") call both
+// pass — the underlying string value matters because templates carry the kind
+// as a free string on AgentBinding.CLIKind and the dispatcher matches on the
+// string value at adapter-lookup time.
+func TestIsValidCLIKindCodexMember(t *testing.T) {
 	t.Parallel()
 
-	if IsValidCLIKind(CLIKind("codex")) {
-		t.Fatalf("IsValidCLIKind(\"codex\") = true; want false (codex lands in Drop 4d)")
+	if !IsValidCLIKind(CLIKindCodex) {
+		t.Fatalf("IsValidCLIKind(CLIKindCodex) = false; want true")
+	}
+	if !IsValidCLIKind(CLIKind("codex")) {
+		t.Fatalf("IsValidCLIKind(\"codex\") = false; want true")
 	}
 }
 
@@ -60,6 +64,18 @@ func TestCLIKindClaudeStringValue(t *testing.T) {
 
 	if got, want := string(CLIKindClaude), "claude"; got != want {
 		t.Fatalf("string(CLIKindClaude) = %q; want %q", got, want)
+	}
+}
+
+// TestCLIKindCodexStringValue mirrors TestCLIKindClaudeStringValue for the
+// Drop 4d CLIKindCodex const: the underlying string is exactly "codex" — the
+// value templates.AgentBinding.CLIKind carries when an adopter routes a kind
+// to codex via agents.toml.
+func TestCLIKindCodexStringValue(t *testing.T) {
+	t.Parallel()
+
+	if got, want := string(CLIKindCodex), "codex"; got != want {
+		t.Fatalf("string(CLIKindCodex) = %q; want %q", got, want)
 	}
 }
 
