@@ -2,14 +2,33 @@
 
 This file lives in the **`main/` worktree** at `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. `main/` is the `main`-branch checkout — real coding, building, testing, and committing against `main` happens here. **Drop orchs whose scope is the `main` branch launch from this directory.** STEWARD (the persistent MD-writing orchestrator) does NOT launch from `main/` — STEWARD launches from the bare root one directory up and edits `main/`'s files from there. The bare-root `CLAUDE.md` (one directory up) carries the same rules body; only the preamble differs.
 
+## Hard Rules (Inviolable)
+
+Applies across every session, drop, agent, and surface in this project. Adding to this list is fine; removing requires explicit dev sign-off.
+
+- **No human time estimates — use cascade-shape work estimates.** NEVER say "this will take 1-2 days" / "a few hours" / "a week of work" / "medium lift" / "should take a while." Agents run on a different clock than human devs; the framing is wrong AND annoying. Estimate in cascade units: droplets, plans, drops, segments, confluences. Examples: "≈3 build droplets across 2 packages," "one plan-QA pair + 4 build-QA pairs," "one drop with W1/W2 parallel sub-planners." Applies to chat responses, plan-item descriptions, agent prompts, Tillsyn comments, and every other surface. See `feedback_no_human_time_estimates.md` memory for anti-examples.
+- **Tillsyn-only for work tracking.** No Claude Code built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput` — they evaporate on compaction/restart. Finer granularity goes in child action items.
+- **Mage targets only for Go gates.** Never `go test`, `go build`, `go vet`, `gofmt`, `gofumpt`. Always `mage <target>`. If a target is missing, ADD the target; never bypass.
+- **No bash-dispatcher bridges in this repo.** Tillsyn's adapter framework (`internal/app/dispatcher/cli_adapter.go` + `RegisterAdapter` + per-CLI packages) is the dispatch surface. Do not ship `bin/agent-dispatch.sh`-style shell scripts inside `main/` or as adopter examples. Sandbox is declarative (template + `agents.toml` validators at `internal/templates/load.go`); process isolation is OS-level (PATH-shadowed shim, container).
+- **No arbitrary-argv knobs on `BindingResolved`.** REV-1 supersession explicitly killed `Command []string` and `ArgsPrefix []string`. Templates declare `cli_kind`; adapters encapsulate argv. Do not reintroduce. New CLI families get new adapters, not template-supplied argv strings.
+- **Atomicity is a planner-prompt concern, not dispatcher Go code.** Builders' droplet sizing is enforced structurally via `paths` + `packages` declarations + file/package lock manager (Drop 4a Wave 2), AND numerically via the planner prompt rule "≤4 small blocks per build droplet, declare paths + packages." Do not bake numeric atomicity into Go code.
+- **Multi-backend dogfood is the cost-relief mechanism.** Anthropic-only spend is unsustainable. Route `plan` + `*-qa-falsification` to Codex (gpt-5.x with reasoning-effort knobs); route `*-qa-proof` to claude-opus (specialist verification); route `build` + `commit` to claude-haiku (or `claude --bare` → ollama-localhost for tier-2 cheap-builder). See `project_multi_backend_dogfood_direction.md` memory for the full routing thesis + scope of `drop_4d_multi_backend`.
+
 ## Coordination Model
 
-Drops follow the MD-only cascade workflow. Phase sequence, file lifecycle, spawn contract, and restart recovery live in `workflow/example/drops/WORKFLOW.md` — drop-orchs read it at the start of every drop.
+**Drops live in Tillsyn as action_item subtrees.** The MD-per-drop pattern (`workflow/drop_N/PLAN.md`, `BUILDER_WORKLOG.md`, `CLOSEOUT.md`) was pre-cascade scaffolding. Drop 2 closed long ago; per `WIKI.md § "Coordination Model"`'s own promise, work-state moved into Tillsyn as the system of record. Dogfooding Tillsyn means **using Tillsyn for work tracking**, full stop.
 
-- **Drop artifacts** (plans, worklogs, QA rounds, closeout) live as MD under `workflow/drop_N/`. Tracked in git, reviewed in PR.
-- **Tillsyn coordinates** auth sessions, capability leases, and inter-orch MCP surfaces — not drop artifacts. The action-item tree in § "Cascade Tree Structure" below is the post-cascade target state, not how today's drops are tracked.
-- Do NOT use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput` — they evaporate on compaction/restart. Finer granularity goes in the drop's `PLAN.md` droplet rows.
-- **Read `WIKI.md` + `PLAN.md` + `workflow/example/drops/WORKFLOW.md` at session start and after every compaction.** CLAUDE.md auto-loads; those three do not.
+- **Root of a drop** → `kind=plan`, `structural_type=drop` action_item directly under the project. Template auto-creates `plan-qa-proof` + `plan-qa-falsification` children.
+- **Droplet rows** → `kind=build` action_items as children of the root. Each declares `paths`, `packages`, description prose (acceptance criteria + role + scope). Template auto-creates `build-qa-proof` + `build-qa-falsification` children per build.
+- **Builder outputs** → `till.comment` on the build action_item. Includes Hylla feedback section, build verdict, files-touched list, `mage` output. Replaces `BUILDER_WORKLOG.md`.
+- **QA round verdicts** → `till.comment` on the QA twin action_items (proof + falsification). Replaces `BUILDER_QA_*.md` and `PLAN_QA_*.md`.
+- **Drop closeout** → `till.comment` on the root + state moves on `kind=closeout` / `kind=refinement` action_items addressing per-drop aggregation. Replaces `CLOSEOUT.md`.
+- **Cross-cutting decisions** → `kind=discussion` action_item: description = converged shape, comments = audit trail of dev quotes.
+- **Dev action items** → `till.handoff` addressed to the dev. Replaces "dev action" rows in MD plans.
+- Do NOT use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput` — they evaporate on compaction/restart. Finer granularity goes in child action_items.
+- **Read `WIKI.md` + `PLAN.md` at session start and after every compaction.** CLAUDE.md auto-loads; those two do not.
+- **Existing `workflow/drop_N/` MD directories stay in tree as historical audit** per `feedback_never_remove_workflow_files.md`. Do NOT create new MD content for new drops — Tillsyn-native is the system of record going forward.
+- **Adopter-template files** at `workflow/example/CLAUDE.md` + `workflow/example/drops/WORKFLOW.md` are kept as-is — those describe the MD-bridge pattern for projects adopting Tillsyn who don't yet have Tillsyn installed. Tillsyn-the-project does not follow its own adopter-bridge template.
 
 ### Discussion Mode (Chat-Primary Until TUI Ergonomics Land)
 

@@ -95,14 +95,19 @@ Dotted addresses (`0.1.5.2`, `tillsyn-0.1.5.2`) are **read-only shorthand** — 
 
 ## Coordination Model
 
-Per-drop work lives in MD drop directories under `main/workflow/drop_N/`, stamped from `main/workflow/example/drops/_TEMPLATE/`. The per-drop lifecycle is canonical in `main/workflow/example/drops/WORKFLOW.md` (Phases 1–7: plan, plan-QA, discuss + cleanup, build, build-QA, verify, closeout). Tillsyn still owns orchestrator auth, project lookup, and cross-orch coordination (`till.handoff`, `till.attention_item`); per-drop work artifacts live in MD.
+**Tillsyn IS the work-tracking substrate.** Drop 2 closed; templates + `child_rules` + role gating + auto-QA-twin spawning + first-class `paths` / `packages` fields shipped. Work-state lives in Tillsyn action_items, not in MD drop directories. Dogfooding Tillsyn means using Tillsyn end-to-end for its own development.
 
-- Every drop gets its directory **before the planner runs** — not retroactive. Per-drop state lives in the drop's `PLAN.md` header; project-level tree state lives in project-root `PLAN.md`.
-- **Do not use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput`.** They are in-session-only and evaporate on compaction or restart, leaving the session blind to its own procedural state. If a turn needs finer procedural granularity, decompose the work into **child droplets inside the drop's `PLAN.md`** rather than bolting on a parallel in-session tracker.
-- No ad-hoc markdown worklogs outside the drop directory. No sticky notes. No "I'll track this in chat" handwave.
-- Post-Drop-2, the cascade target moves work-state into Tillsyn as the system of record (with templates, `child_rules`, role gating). Until then, MD drop dirs are the work-state substrate.
+- **A drop = a Tillsyn action_item subtree.** Root is `kind=plan`, `structural_type=drop`, directly under the project. Template auto-creates `plan-qa-proof` + `plan-qa-falsification` children.
+- **Droplet rows = `kind=build` action_items** as children of the root, with `paths` / `packages` declared and acceptance criteria in description prose. Template auto-creates `build-qa-proof` + `build-qa-falsification` children per build.
+- **Worklogs, QA verdicts, closeout findings = `till.comment` on the relevant action_item.** No standalone `*.md` files inside the drop dir for these — comments are the durable audit trail.
+- **Cross-cutting decisions = `kind=discussion` action_item.** Description = converged shape; comments = audit trail of dev direct quotes.
+- **Dev actions = `till.handoff` addressed to dev.** Not MD checklist rows.
+- **Do NOT use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput`.** They evaporate on compaction or restart. If a turn needs finer procedural granularity, decompose into child Tillsyn action_items.
+- **Existing `workflow/drop_N/` MD directories from pre-migration drops stay in tree as historical audit** per `feedback_never_remove_workflow_files.md`. Do NOT create new MD content for new drops — Tillsyn-native is the system of record going forward.
 
-External adopters: the pattern generalizes. Work-state substrate (MD today, Tillsyn post-cascade) must be durable — in-session trackers drift and evaporate.
+**External adopters:** the pattern generalizes. Work-state MUST be durable across compaction / restart / multi-session — Tillsyn (or an equivalent durable runtime in your stack) is the right substrate. In-session trackers drift and evaporate.
+
+**For adopters who don't yet have Tillsyn installed**, the MD-bridge pattern documented at `main/workflow/example/drops/WORKFLOW.md` + `main/workflow/example/CLAUDE.md` is the pre-Tillsyn scaffolding. Tillsyn-the-project does not follow its own adopter-bridge template — we use Tillsyn.
 
 ## Drop Decomposition Rules
 
