@@ -28,8 +28,12 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/templates"
 	// Side-effect import: cli_claude.init() registers the claude adapter
 	// with the dispatcher's CLIKind→adapter registry at process start. Drop
-	// 4c F.7.17.5 adapter wiring; Drop 4d adds a parallel cli_codex import.
+	// 4c F.7.17.5 adapter wiring.
 	_ "github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_claude"
+	// Side-effect import: cli_codex.init() registers the codex adapter with
+	// the dispatcher's CLIKind→adapter registry at process start. Drop 4d D3
+	// adapter wiring — parallel to cli_claude above.
+	_ "github.com/evanmschultz/tillsyn/internal/app/dispatcher/cli_codex"
 	"github.com/evanmschultz/tillsyn/internal/buildinfo"
 	"github.com/evanmschultz/tillsyn/internal/config"
 	"github.com/evanmschultz/tillsyn/internal/domain"
