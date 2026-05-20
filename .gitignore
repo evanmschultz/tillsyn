@@ -5,7 +5,10 @@
 /till
 /till.exe
 bin/
-dist/
+# /dist/ scoped to repo root — goreleaser output target. Path-scoped (vs bare
+# `dist/`) so it does not also match ui/frontend/dist/ at depth, which has its
+# own contents-exclude + .gitkeep re-include rule below.
+/dist/
 coverage.out
 
 # Tillsyn runtime state — ignore everything under .tillsyn/ except the
@@ -38,7 +41,12 @@ coverage.out
 # Wails build outputs and generated bindings (Drop 4c.6.1 W6.D1; relocated under ui/ at drop_fe_1_bootstrap D1.1)
 ui/build/
 ui/frontend/node_modules/
-ui/frontend/dist/
+# ui/frontend/dist/ — ignore generated contents but track a placeholder so the
+# Go //go:embed all:frontend/dist directive in ui/main.go compiles even when
+# the FE hasn't been built (e.g. fresh CI checkout). Pattern follows the same
+# contents-exclude + re-include shape used for .tillsyn/ above.
+ui/frontend/dist/*
+!ui/frontend/dist/.gitkeep
 ui/frontend/.astro/
 ui/frontend/wailsjs/
 ui/frontend/package.json.md5
