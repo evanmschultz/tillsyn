@@ -1,0 +1,19 @@
+# _BLOCKERS.toml — workflow/drop_4d_codex/
+# Immediate-children sibling blocker ledger.
+# Mirrors inline `Blocked by:` bullets in PLAN.md; PLAN.md is truth.
+# Scope: immediate children (droplets) of this drop only.
+
+[[blockers]]
+node = "4d.2"
+blocked_by = ["4d.1"]
+reason = "cli_codex/adapter.go calls dispatcher.CLIKindCodex const declared in 4d.1 (cli_adapter.go)"
+
+[[blockers]]
+node = "4d.3"
+blocked_by = ["4d.1", "4d.2"]
+reason = "register/register.go imports cli_codex package (4d.2) and uses CLIKindCodex const (4d.1)"
+
+[[blockers]]
+node = "4d.5"
+blocked_by = ["4d.2", "4d.4"]
+reason = "fixture-backed tests require cli_codex adapter implementation (4d.2) and the testdata fixture captured by dev (4d.4)"
