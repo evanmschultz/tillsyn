@@ -283,6 +283,27 @@ stack[10]{component,version_or_lib}:
 
 Test against `tillsyn-dev` (or worktree-specific MCP name for non-main worktrees). Each worktree gets a unique MCP entry pointing at its own built binary. Setup instructions in `CONTRIBUTING.md § "Dev MCP Server Setup"`.
 
+## ta MCP — Structured MD Editing
+
+`ta` is a tiny MCP server that exposes MD files as structured records with schemas. Use `mcp__ta__*` tools (NOT raw `Edit` / `Write`) when modifying MD files that have a ta schema registered. Schema lives at `<project>/.ta/schema.toml` — currently registers `contributing` (CONTRIBUTING.md sections) + cascade-tree dbs (`discussions`, `plans`, `project`). Adding schemas for CLAUDE.md / README.md / WIKI.md is a near-term task (sign-off required before schema edits land).
+
+```toon
+ta_tools[7]{tool,purpose}:
+  mcp__ta__schema,inspect or mutate the resolved schema (db / type / field)
+  mcp__ta__list_sections,enumerate record ids under a scope (file-parse order)
+  mcp__ta__get,read one record by id (raw bytes or structured fields) or every record under a prefix
+  mcp__ta__create,create a new record — fails if id exists — type required (db.type)
+  mcp__ta__update,PATCH-style update of existing record — partial overlay + atomic re-validation
+  mcp__ta__delete,remove a record by id OR whole file by id prefix
+  mcp__ta__search,structured + regex search across records under a scope
+```
+
+**Workflow** for editing a ta-managed MD: `list_sections` to see the structure → `get` the section by id → `update` the body field with PATCH-style overlay. The bracket header IS the id (e.g. `[contributing.section-installation]` → id `contributing.section-installation`). Validation failures return structured JSON naming the field + rule that failed.
+
+**Registration**: `ta` is in `.mcp.json` at project root with `--project /abs/path` arg pinned. Tool permissions in `.claude/settings.json` (machine-local — not in git). Run `claude mcp list` to verify after session restart.
+
+**NOT ta-managed** today: any MD without an entry in `.ta/schema.toml`. Use `Read` / `Edit` / `Write` for those. Aspirational: migrate the load-bearing docs (CLAUDE.md, README.md, WIKI.md) to ta-schema management over the next drops so all MD edits flow through validated structured surfaces.
+
 ## Build Verification
 
 Before any `build` action item is `complete`:
