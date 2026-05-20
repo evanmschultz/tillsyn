@@ -1142,23 +1142,28 @@ func TestBuilderAgentContractMarkerPresent(t *testing.T) {
 	}
 }
 
-// TestDefaultTemplateFSEmbedsPlaceholderAgentFiles asserts every Drop 4c.6.1
-// W4.D1 canonical agent file path resolves via `DefaultTemplateFS.Open` AND
-// every agent .md body contains the literal string "PLACEHOLDER" so a builder
-// mistakenly committing a stub prompt cannot pass embedded-FS introspection
-// silently. Mirrors the F.2.1 falsification mitigation #2 pattern (explicit
-// per-file list, never glob).
+// TestDefaultTemplateFSEmbedsAgentFiles asserts every Drop 4c.6.1 W4.D1
+// canonical agent file path resolves via `DefaultTemplateFS.Open` AND every
+// agent .md body is non-empty. Mirrors the F.2.1 falsification mitigation #2
+// pattern (explicit per-file list, never glob) so a deleted or renamed embed
+// path fails loud at test time rather than silently at spawn.
 //
-// Updated from the Drop 4c.6 W1.D1 version (21 paths = 3 groups × 7 names)
-// to the W4.D1 version (37 paths = 3 canonical groups × 10 names + till-gdd × 7):
+// Path count (37 + 1 example fixture = 38):
 //   - Canonical groups (`gen`, `go`, `fe`): 10 files each = 30 files.
-//   - `till-gdd` template-family: 7 files (unchanged from W1.D1).
-//   - Total agent files: 37. Plus `agents.example.toml` = 38 distinct paths.
+//   - `till-gdd` template-family: 7 files.
+//   - `builtin/agents.example.toml`: 1 example fixture.
 //
-// Substantive prompt content for the agent files lands in Drop 4c.8 W4; the
-// only contract this test enforces is (a) the embed.FS opens the file and
-// (b) the body carries the PLACEHOLDER marker so accidental drift surfaces.
-func TestDefaultTemplateFSEmbedsPlaceholderAgentFiles(t *testing.T) {
+// Drop 4d_codex retires the prior "must contain PLACEHOLDER" content
+// assertion: substantive prompt content lands incrementally per drop (drop
+// 4d_codex landed the 7 active gen/ prompts; closeout-agent / research-agent
+// / orchestrator-managed / all go/* / fe/* / till-gdd/* stay placeholder
+// pending later substantive drops). A blanket PLACEHOLDER assertion would
+// either reject the substantive content (its initial polarity) or
+// false-pass placeholder content (after polarity flip). Drop the content
+// shape check entirely; rely on the W3.D5 post-render validator at runtime
+// (`render.ErrInvalidAgentBody` Signals A + B + C) to catch malformed
+// bodies via the dispatcher path.
+func TestDefaultTemplateFSEmbedsAgentFiles(t *testing.T) {
 	t.Parallel()
 
 	// 10-file canonical groups: gen/, go/, fe/.
@@ -1176,8 +1181,8 @@ func TestDefaultTemplateFSEmbedsPlaceholderAgentFiles(t *testing.T) {
 				if err != nil {
 					t.Fatalf("io.ReadAll(%q): unexpected error: %v", path, err)
 				}
-				if !strings.Contains(string(body), "PLACEHOLDER") {
-					t.Fatalf("agent file %q body missing required \"PLACEHOLDER\" marker; W4.D1 placeholder discipline (substantive content lands Drop 4c.8 W4)", path)
+				if len(body) == 0 {
+					t.Fatalf("agent file %q body empty; embed.FS must ship a non-empty payload", path)
 				}
 			})
 		}
@@ -1199,8 +1204,8 @@ func TestDefaultTemplateFSEmbedsPlaceholderAgentFiles(t *testing.T) {
 			if err != nil {
 				t.Fatalf("io.ReadAll(%q): unexpected error: %v", path, err)
 			}
-			if !strings.Contains(string(body), "PLACEHOLDER") {
-				t.Fatalf("agent file %q body missing required \"PLACEHOLDER\" marker; W1.D1 placeholder discipline (substantive content lands Drop 4c.8 W4)", path)
+			if len(body) == 0 {
+				t.Fatalf("agent file %q body empty; embed.FS must ship a non-empty payload", path)
 			}
 		})
 	}
