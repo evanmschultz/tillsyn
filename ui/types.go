@@ -1,5 +1,3 @@
-//go:build wails
-
 package main
 
 // ProjectDTO is the wire-format projection of domain.Project exposed across

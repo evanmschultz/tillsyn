@@ -41,6 +41,7 @@ ui/frontend/node_modules/
 ui/frontend/dist/
 ui/frontend/.astro/
 ui/frontend/wailsjs/
+ui/frontend/package.json.md5
 
 # Secrets — belt-and-suspenders
 .env
