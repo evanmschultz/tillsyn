@@ -6,7 +6,7 @@ This file lives in `/Users/evanschultz/Documents/Code/hylla/tillsyn/main/`. `mai
 
 Applies across every session, drop, agent, and surface in this project. Adding to this list is fine; removing requires explicit dev sign-off.
 
-- **No human time estimates — use cascade-shape work estimates.** NEVER say "this will take 1-2 days" / "a few hours" / "a week of work" / "medium lift" / "should take a while." Agents run on a different clock than human devs; the framing is wrong AND annoying. Estimate in cascade units: droplets, plans, drops, segments, confluences. Examples: "≈3 build droplets across 2 packages," "one plan-QA pair + 4 build-QA pairs," "one drop with W1/W2 parallel sub-planners." Applies to chat responses, plan-item descriptions, agent prompts, Tillsyn comments, and every other surface. See `feedback_no_human_time_estimates.md` memory for anti-examples.
+- **No human time estimates — use cascade-shape work estimates.** NEVER say "this will take 1-2 days" / "a few hours" / "a week of work" / "medium lift" / "should take a while." Agents run on a different clock than human devs; the framing is wrong AND annoying. Estimate in cascade-shape units: cascades, drops, segments, confluences, droplets, plans. Examples: "≈3 build droplets across 2 packages," "one plan-QA pair + 4 build-QA pairs," "one cascade with W1/W2 parallel sub-planners + 6 build droplets." Applies to chat responses, plan-item descriptions, agent prompts, Tillsyn comments, and every other surface. See `feedback_no_human_time_estimates.md` memory for anti-examples.
 - **Tillsyn-only for work tracking.** No Claude Code built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput` — they evaporate on compaction/restart. Finer granularity goes in child action items.
 - **Mage targets only for Go gates.** Never `go test`, `go build`, `go vet`, `gofmt`, `gofumpt`. Always `mage <target>`. If a target is missing, ADD the target; never bypass.
 - **No bash-dispatcher bridges in this repo.** Tillsyn's adapter framework (`internal/app/dispatcher/cli_adapter.go` + `RegisterAdapter` + per-CLI packages) is the dispatch surface. Do not ship `bin/agent-dispatch.sh`-style shell scripts inside `main/` or as adopter examples. Sandbox is declarative (template + `agents.toml` validators at `internal/templates/load.go`); process isolation is OS-level (PATH-shadowed shim, container).
@@ -16,22 +16,24 @@ Applies across every session, drop, agent, and surface in this project. Adding t
 - **ALWAYS parallelize FE and core work — NEVER serialize without a real dependency.** Cross-lane work (FE in `ui/**` + core Go in `internal/**` / `cmd/**`) is disjoint by package and has zero file-level lock contention; the cascade's file/package lock manager (Drop 4a Wave 2) blocks same-lane sibling conflicts, NOT cross-lane work. Dispatch fe-builder-agent + go-builder-agent concurrently against unblocked droplets every cascade tick. The only legitimate serialization between FE and core is an explicit `blocked_by` edge naming a specific cross-lane symbol dependency (e.g. FE needs a new Go IPC method to exist before its component can call it). Default = parallel; serialization is the exception that requires justification. Same rule applies WITHIN a lane: anything not explicitly `blocked_by` another sibling runs concurrently. See `feedback_parallelize_unblocked_default.md` memory for the dev directive backing this.
 - **Playwright MANDATORY for FE work.** Every fe-builder / fe-qa spawn prompt MUST require: `mcp__plugin_playwright_playwright__browser_navigate` to `http://localhost:51428`, `browser_snapshot`, `browser_take_screenshot` (fullPage + saved to `.playwright-mcp/`), `browser_console_messages level=error` (0 errors required), `browser_evaluate` for computed-style token verification. NOT optional. NOT deferable to dev. If subagent tool allowlist blocks Playwright MCP, agent reports BLOCKED and orch runs the verification itself — never fabricated, never silently skipped. Dev called this out 2026-05-21 after multiple agents skipped visual verification.
 - **Responsive-first FE — mobile + tablet + desktop breakpoints from day one.** Per `feedback_responsive_first_fe.md`. Desktop Wails users resize their window freely; the layout MUST adapt at standard breakpoints (mobile 375x667, tablet 768x1024, desktop 1280x800+). Build mobile-first CSS, layer wider rules via `@media (min-width: ...)`. NavRail collapses to bottom-tabs / horizontal strip at narrow widths. Topbar drops subtitle at narrow widths. Use stil's canonical breakpoint tokens (from `/Users/evanschultz/Documents/Code/hylla/stil/main/src/styles/tokens.css`) — do NOT invent Tillsyn-local breakpoint values. Playwright verification MUST include `browser_resize` at all three breakpoints + screenshot at each. Why: (a) real desktop UX (resize-friendly is table stakes), (b) cross-platform leverage (patterns built here inform future `stil-swift` iOS + Android native ports — Hylla's design-system paradigm is "stil = canonical tokens; per-platform adapters render"). drop_fe_3 trimmed stil's mobile patterns from `global.css` (172-line vendored subset vs 708-line upstream); the first follow-up FE drop should restore those patterns by re-vendoring the full file.
-- **Plan-QA twins MUST close BEFORE sibling build droplets start.** Cascade discipline: plan-QA-proof + plan-QA-falsification on the drop root run to completion (with revision rounds if needed) BEFORE any `kind=build` child transitions to `in_progress`. drop_4d_codex's whole shipped-but-not-wired failure was caught only post-hoc because plan-QA fired AFTER 8 droplets shipped. The methodology spine is "plan down, build up" — plan-QA gates the build phase.
+- **Plan-QA twins MUST close BEFORE sibling build droplets start.** Cascade discipline: plan-QA-proof + plan-QA-falsification on the cascade root (or any nested plan node) run to completion (with revision rounds if needed) BEFORE any `kind=build` child transitions to `in_progress`. drop_4d_codex's whole shipped-but-not-wired failure was caught only post-hoc because plan-QA fired AFTER 8 droplets shipped. The methodology spine is "plan down, build up" — plan-QA gates the build phase.
 
 ## Coordination Model
 
-**Drops live in Tillsyn as action_item subtrees.** The MD-per-drop pattern (`workflow/drop_N/PLAN.md`, `BUILDER_WORKLOG.md`, `CLOSEOUT.md`) was pre-cascade scaffolding. Drop 2 closed long ago; per `WIKI.md § "Coordination Model"`'s own promise, work-state moved into Tillsyn as the system of record. Dogfooding Tillsyn means **using Tillsyn for work tracking**, full stop.
+**Cascades live in Tillsyn as action_item subtrees.** The MD-per-drop pattern (`workflow/drop_N/PLAN.md`, `BUILDER_WORKLOG.md`, `CLOSEOUT.md`) was pre-cascade scaffolding. Drop 2 closed long ago; work-state lives in Tillsyn as the system of record. Dogfooding Tillsyn means **using Tillsyn for work tracking**, full stop.
 
-- **Root of a drop** → `kind=plan`, `structural_type=drop` action_item directly under the project. Template auto-creates `plan-qa-proof` + `plan-qa-falsification` children.
-- **Droplet rows** → `kind=build` action_items as children of the root. Each declares `paths`, `packages`, description prose (acceptance criteria + role + scope). Template auto-creates `build-qa-proof` + `build-qa-falsification` children per build.
+- **Cascade = level-1 node.** A cascade is the whole tree of work that lives directly under the project. Going forward, new cascade titles use `CASCADE <NAME>` prefix (e.g. `CASCADE FOO BAR`); existing `DROP_<NAME>` titles stay historical and are not renamed.
+- **Root of a cascade** → `kind=plan`, `structural_type=cascade` action_item directly under the project (`parent_id=""` — the project is NOT modeled as a parent action_item; level-1 means empty parent_id). Template auto-creates `plan-qa-proof` + `plan-qa-falsification` children. Until the Go enum work at Tillsyn action_item `62569299-6522-401e-a15b-c6f61e2dc609` lands, level-1 still uses `structural_type=drop` as a placeholder.
+- **Drop = level-2+ vertical step.** "Drop" describes a vertical decomposition step inside a cascade. Most planning emits drops as planner children of the cascade root.
+- **Droplet rows** → `kind=build` action_items as descendants of the cascade root. Each declares `paths`, `packages`, description prose (acceptance criteria + role + scope). Template auto-creates `build-qa-proof` + `build-qa-falsification` children per build.
 - **Builder outputs** → `till.comment` on the build action_item. Includes Hylla feedback section, build verdict, files-touched list, `mage` output.
 - **QA round verdicts** → `till.comment` on the QA twin action_items (proof + falsification).
-- **Drop closeout** → `till.comment` on the root + state moves on `kind=closeout` / `kind=refinement` action_items addressing per-drop aggregation.
+- **Cascade-end closeout** → `till.comment` on the cascade root + state moves on `kind=closeout` / `kind=refinement` action_items addressing per-cascade aggregation.
 - **Cross-cutting decisions** → `kind=discussion` action_item: description = converged shape, comments = audit trail of dev quotes.
 - **Dev action items** → `till.attention_item` addressed to the dev. NOT MD checklist rows.
 - Do NOT use Claude Code's built-in `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` / `TaskStop` / `TaskOutput` — they evaporate on compaction/restart. Finer granularity goes in child action_items.
 - **Read `WIKI.md` + `PLAN.md` at session start and after every compaction.** CLAUDE.md auto-loads; those two do not.
-- **Existing `workflow/drop_N/` MD directories stay in tree as historical audit** per `feedback_never_remove_workflow_files.md`. Do NOT create new MD content for new drops — Tillsyn-native is the system of record going forward.
+- **Existing `workflow/drop_N/` MD directories stay in tree as historical audit** per `feedback_never_remove_workflow_files.md`. Do NOT create new MD content for new cascades — Tillsyn-native is the system of record going forward.
 
 ## Tillsyn Project
 
@@ -44,7 +46,7 @@ Projects have no `kind` column post-Drop-1.75. Language/stack info lives in `met
 
 ## Cascade Architecture
 
-Drops live as Tillsyn action_item subtrees. Every non-project node is classified along three orthogonal axes: `kind` (what work), `metadata.role` (who does it; post-Drop-2), `metadata.structural_type` (where it sits — `drop | segment | confluence | droplet`; post-Drop-3). Canonical vocabulary lives in `WIKI.md § Cascade Vocabulary` — never redefine.
+Cascades live as Tillsyn action_item subtrees. Every non-project node is classified along three orthogonal axes: `kind` (what work), `metadata.role` (who does it), `metadata.structural_type` (where it sits — `cascade | drop | segment | confluence | droplet`). Canonical vocabulary lives in `WIKI.md § Cascade Vocabulary` — never redefine. The 5th value `cascade` is the level-1 unit; `drop` is the level-2+ vertical step. Adding `cascade` to the Go `StructuralType` enum tracks at action_item `62569299-6522-401e-a15b-c6f61e2dc609`; until that lands, level-1 nodes carry `structural_type=drop` as a placeholder.
 
 ### Closed 12-Kind Enum
 
@@ -161,7 +163,7 @@ Subagents do NOT use attention_items / handoffs / @mentions / downward-sideways 
 
 ## Build-QA-Commit Discipline
 
-**No build droplet is `complete` without per-droplet QA passing.** Push + `gh run watch` + Hylla reingest are drop-end only.
+**No build droplet is `complete` without per-droplet QA passing.** Push + `gh run watch` + Hylla reingest are cascade-end only.
 
 **Per-droplet**:
 
@@ -170,20 +172,20 @@ Subagents do NOT use attention_items / handoffs / @mentions / downward-sideways 
 3. Fix — if either QA fails, respawn builder + re-run QA until green.
 4. Commit — `git add` specific changed files, conventional-commit format. No push yet.
 
-**Drop-end**:
+**Cascade-end**:
 
 5. `mage ci` locally — must pass clean.
-6. Push + `gh run watch --exit-status` — once for the whole drop. No ingest on red CI.
-7. Hylla reingest — drop-end only, from the remote, `enrichment_mode=full_enrichment`.
+6. Push + `gh run watch --exit-status` — once for the whole cascade. No ingest on red CI.
+7. Hylla reingest — cascade-end only, from the remote, `enrichment_mode=full_enrichment`.
 
-**Subagent closing comments include `## Hylla Feedback` section.** Record each Hylla miss: Query + Missed because + Worked via + Suggestion. Or `None — Hylla answered everything needed.` if clean. Orchestrator aggregates at drop-end.
+**Subagent closing comments include `## Hylla Feedback` section.** Record each Hylla miss: Query + Missed because + Worked via + Suggestion. Or `None — Hylla answered everything needed.` if clean. Orchestrator aggregates at cascade-end.
 
 **Hylla ingest invariants (inviolable)**:
 
 - Always `enrichment_mode=full_enrichment`. Never `structural_only`.
 - Always source from the GitHub remote (`github.com/evanmschultz/tillsyn@main`). Never from a local working copy.
 - Never before `git push` + `gh run watch --exit-status` green.
-- Only the drop-orch calls `hylla_ingest`. Subagents never do.
+- Only the cascade-orch calls `hylla_ingest`. Subagents never do.
 
 ## Git Management (Pre-Cascade)
 
@@ -191,17 +193,17 @@ Until the cascade dispatcher takes over commits, orchestrator + dev manage git m
 
 ### Post-Merge Branch Cleanup
 
-After a drop PR merges:
+After a cascade PR merges:
 
-1. `gh pr merge <N> --merge --delete-branch` — preserves drop's commit history (NOT --squash / --rebase).
+1. `gh pr merge <N> --merge --delete-branch` — preserves cascade's commit history (NOT --squash / --rebase).
 2. If local sync fails (another worktree has main checked out with uncommitted work), the server-side merge still succeeded — verify with `gh pr view <N> --json state,mergeCommit`. Then `git push origin --delete <branch>` to clean the remote.
 3. `cd` into `main/` worktree — NEVER cleanup from inside the worktree being removed.
 4. `git fetch origin && git pull --ff-only` in `main/`.
-5. `git worktree remove /path/to/drop/N` from `main/` or bare root. If refuses, INVESTIGATE before `--force`.
-6. `git branch -D drop/N`.
+5. `git worktree remove /path/to/cascade/N` from `main/` or bare root. If refuses, INVESTIGATE before `--force`.
+6. `git branch -D cascade/N` (or `drop/N` for historical branches).
 7. Verify clean: `git worktree list` + `git branch -a`.
 
-**Guardrail**: every drop-orch MUST commit or explicitly stash all working-dir changes before marking drop closed. A stale worktree holding `main` with staged files is an anti-pattern.
+**Guardrail**: every cascade-orch MUST commit or explicitly stash all working-dir changes before marking the cascade closed. A stale worktree holding `main` with staged files is an anti-pattern.
 
 ## Recovery After Session Restart
 

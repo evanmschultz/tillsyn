@@ -1,16 +1,18 @@
 # Cascade Methodology
 
-This is the canonical methodology document for the **Cascade SDD** approach Tillsyn implements and dogfoods. It describes how work decomposes top-down through a recursive plan/build/QA tree, how each node is classified along three orthogonal axes, how agents reason and converge, and what gates keep the cascade honest.
+This is the canonical methodology document for the **Cascade SDD** approach Tillsyn implements and dogfoods. It describes how work decomposes top-down through a recursive cascade tree, how each node is classified along three orthogonal axes, how agents reason and converge, and what gates keep the cascade honest.
 
 This document is a **skeleton** today. Each section captures the methodology's *shape* in 1-3 paragraphs, with placeholder markers indicating where post-dogfood measurement and benchmark data will be filled in. Adopters can read this end-to-end to understand the methodology; depth and worked benchmarks land after the first dogfood cycles produce real numbers.
 
-For the canonical vocabulary used throughout (drop / segment / confluence / droplet, the closed `kind` enum, the `role` enum), see `WIKI.md` § "Cascade Vocabulary" — that section is the single source of truth and this document cross-references rather than redefines it. Companion docs: `AGENTS_CONFIG.md` (per-machine `agents.toml` configuration reference) and `GDD_METHODOLOGY.md` (Graph-Driven Development methodology, which composes with this one post-Hylla-rev).
+For the canonical vocabulary used throughout (cascade / drop / segment / confluence / droplet, the closed `kind` enum, the `role` enum), see `WIKI.md` § "Cascade Vocabulary" — that section is the single source of truth and this document cross-references rather than redefines it. Companion docs: `AGENTS_CONFIG.md` (per-machine `agents.toml` configuration reference) and `GDD_METHODOLOGY.md` (Graph-Driven Development methodology, which composes with this one post-Hylla-rev).
+
+**Vocabulary note (2026-05-21):** Level-1 nodes (direct children of the project) are **cascades** — whole cascade trees of work that decompose into drops, segments, confluences, and droplets. **Drop** means a vertical decomposition step BELOW level-1; the level-1 unit is the cascade itself. Adding `cascade` as the 5th `structural_type` enum value is tracked at Tillsyn action_item `62569299-6522-401e-a15b-c6f61e2dc609`; until that Go work lands, level-1 nodes carry `structural_type=drop` as a placeholder.
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
 ## Plan Down, Build Up
 
-The methodology's spine is a single rule: **plan top-down, build bottom-up.** Planning starts at the highest level of the work — a drop, a feature, a release — and decomposes recursively into smaller plans, sub-plans, and finally atomic build droplets. Building inverts this: the smallest droplets land first, integration nodes follow once their inputs are green, and higher-level deliverables emerge from the bottom up. This is not a waterfall — every level of decomposition has its own QA pair, every level can fail and trigger a wipe-and-replan, and the recursion depth is bounded only by atomic-droplet sizing rules set per-template.
+The methodology's spine is a single rule: **plan top-down, build bottom-up.** Planning starts at the highest level of the work — a cascade, a feature, a release — and decomposes recursively into drops, sub-drops, segments, and finally atomic build droplets. Building inverts this: the smallest droplets land first, integration nodes follow once their inputs are green, and higher-level deliverables emerge from the bottom up. This is not a waterfall — every level of decomposition has its own QA pair, every level can fail and trigger a wipe-and-replan, and the recursion depth is bounded only by atomic-droplet sizing rules set per-template.
 
 There is **no cap on the number of children at any planning level.** A planner is free to emit two children or twenty, depending on what the work needs. The only hard constraint is *atomic-droplet sizing* — each leaf `build` droplet must be small enough that one builder agent can finish it cleanly in one shot (the till-go template defaults to 1-4 code blocks / 80-120 LOC + tests, but those numbers are template-defined, not methodology-hardcoded; adopters running other templates may differ). When work exceeds the atomic budget, planners emit a sub-plan child instead of a build child, and the sub-plan recurses with its own planner agent. Multi-level decomposition is the norm, not the exception.
 
@@ -22,15 +24,15 @@ The build phase reverses the flow. Atomic droplets at the deepest level run firs
 
 Every non-project node in the cascade is classified along three independent axes, set explicitly at create time. None of them are inferred from the others. Templates' `child_rules`, gate rules, and agent bindings dispatch on combinations of all three. The orthogonality matters: collapsing any two axes into one produces ambiguity at the dispatch layer and breaks plan-QA's ability to attack misclassification.
 
-The three axes are: **`kind` (what work)** — the closed 12-value enum (`plan`, `build`, `research`, `plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`, `closeout`, `commit`, `refinement`, `discussion`, `human-verify`); **`metadata.role` (who does it)** — the closed role enum (`builder`, `qa-proof`, `qa-falsification`, `qa-a11y`, `qa-visual`, `design`, `commit`, `planner`, `research`); and **`metadata.structural_type` (where it sits)** — the closed 4-value cascade-shape enum (`drop`, `segment`, `confluence`, `droplet`). The dual `kind` + `role` axes earn their keep on QA kinds where parent context disambiguates: `build-qa-proof` and `plan-qa-proof` both carry `role=qa-proof`, but the QA agent's verification axis differs based on parent kind.
+The three axes are: **`kind` (what work)** — the closed 12-value enum (`plan`, `build`, `research`, `plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`, `closeout`, `commit`, `refinement`, `discussion`, `human-verify`); **`metadata.role` (who does it)** — the closed role enum (`builder`, `qa-proof`, `qa-falsification`, `qa-a11y`, `qa-visual`, `design`, `commit`, `planner`, `research`); and **`metadata.structural_type` (where it sits)** — the closed 5-value cascade-shape enum (`cascade`, `drop`, `segment`, `confluence`, `droplet`). The dual `kind` + `role` axes earn their keep on QA kinds where parent context disambiguates: `build-qa-proof` and `plan-qa-proof` both carry `role=qa-proof`, but the QA agent's verification axis differs based on parent kind.
 
-For the canonical definitions of each enum value, the worked-combinations table, and atomicity rules (e.g. "`droplet` MUST have zero children" / "`confluence` MUST have non-empty `blocked_by`"), see `WIKI.md` § "Cascade Vocabulary." This methodology doc cross-references rather than duplicates that vocabulary, per the single-canonical-source rule in the wiki.
+For the canonical definitions of each enum value, the worked-combinations table, and atomicity rules (e.g. "`droplet` MUST have zero children" / "`confluence` MUST have non-empty `blocked_by`" / "`cascade` MUST be level-1"), see `WIKI.md` § "Cascade Vocabulary." This methodology doc cross-references rather than duplicates that vocabulary, per the single-canonical-source rule in the wiki.
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
 ## Closed 12-Value `kind` Enum
 
-`action_items.kind` is a closed 12-value enum, chosen by the creator at create time. There is no inferred default and no fallback kind. The enum partitions cascade work into named work-types: planning-dominant decomposition (`plan`); read-only investigation (`research`); code-changing leaf work (`build`); QA passes attached to both planning and build parents (`plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`); drop-end coordination (`closeout`, `commit`); long-lived umbrellas and decision parks (`refinement`, `discussion`); and dev sign-off hold points (`human-verify`).
+`action_items.kind` is a closed 12-value enum, chosen by the creator at create time. There is no inferred default and no fallback kind. The enum partitions cascade work into named work-types: planning-dominant decomposition (`plan`); read-only investigation (`research`); code-changing leaf work (`build`); QA passes attached to both planning and build parents (`plan-qa-proof`, `plan-qa-falsification`, `build-qa-proof`, `build-qa-falsification`); cascade-end coordination (`closeout`, `commit`); long-lived umbrellas and decision parks (`refinement`, `discussion`); and dev sign-off hold points (`human-verify`).
 
 Each kind has specific structural rules. `plan` and `build` auto-create QA-twin children via template `[[child_rules]]` — every `plan` gets `plan-qa-proof` + `plan-qa-falsification`, every `build` gets `build-qa-proof` + `build-qa-falsification`, both pairs `blocked_by` their parent. `research` does NOT auto-create QA twins — research outputs are findings, not implementation claims, so the proof/falsification asymmetry doesn't apply; the orchestrator reviews findings via comment thread. `closeout` / `refinement` / `discussion` / `human-verify` are standalone — they don't auto-create QA twins either; they have their own bespoke gates.
 
@@ -44,15 +46,15 @@ The `role` axis names *who does the work* — a closed enum: `builder`, `qa-proo
 
 The dual-axis `(kind, role)` design is what enables a single agent file to serve two kinds. The `qa-proof-agent.md` and `qa-falsification-agent.md` files in the till-go group are each authored once, and the agent reads `parent.kind` in its system prompt to determine whether to apply the plan-QA verification axis (atomic decomposition + parallelization graph + Specify-block well-formedness) or the build-QA axis (acceptance-criteria conformance + KindPayload-vs-diff drift + adversarial DecisionLog review).
 
-Pre-Drop-2 the role lives in description prose (`Role: builder`, `Role: qa-proof`); post-Drop-2 it lands on `metadata.role` as a first-class field. Either way, the role is set at create time and is mandatory — no inferred defaults, just like `kind` and `structural_type`.
+Pre-Drop-2 the role lived in description prose (`Role: builder`, `Role: qa-proof`); post-Drop-2 it lands on `metadata.role` as a first-class field. Either way, the role is set at create time and is mandatory — no inferred defaults, just like `kind` and `structural_type`.
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
-## `metadata.structural_type` Enum (drop / segment / confluence / droplet)
+## `metadata.structural_type` Enum (cascade / drop / segment / confluence / droplet)
 
-`structural_type` names *where a node sits in the cascade flow's structure*, independent of what kind of work it is or who does it. Picture water flowing down a series of waterfalls: a **drop** is one vertical step that may decompose into more steps; **segments** are parallel streams within a drop; **confluences** are merge points where streams rejoin; **droplets** are atomic, indivisible units that finish in one shot. The metaphor orients the vocabulary; enforcement happens at the create/update boundary.
+`structural_type` names *where a node sits in the cascade flow's structure*, independent of what kind of work it is or who does it. Picture water flowing down a series of waterfalls: a **cascade** is the whole waterfall sequence (the level-1 tree of work); a **drop** is one vertical step within the cascade; **segments** are parallel streams within a drop; **confluences** are merge points where streams rejoin; **droplets** are atomic, indivisible units that finish in one shot. The metaphor orients the vocabulary; enforcement happens at the create/update boundary.
 
-The 4-value enum is mandatory on every non-project node, validated at the create/update boundary post-Drop-3. Atomicity rules: `droplet` MUST have zero children (any child indicates misclassification — the parent should be `segment` or `drop`); `confluence` MUST have non-empty `blocked_by` (empty is a definitional contradiction since a confluence merges upstream streams); `segment` may recurse and contain droplets, sub-segments, or confluences; `drop` is the level-1 cascade step under the project root.
+The 5-value enum is mandatory on every non-project node, validated at the create/update boundary. Atomicity rules: `cascade` MUST be a level-1 node (empty `parent_id` — the project is not modeled as a parent action_item); `droplet` MUST have zero children (any child indicates misclassification — the parent should be `segment` or `drop`); `confluence` MUST have non-empty `blocked_by` (empty is a definitional contradiction since a confluence merges upstream streams); `segment` may recurse and contain droplets, sub-segments, or confluences; `drop` is any level-2+ vertical decomposition step within a cascade.
 
 For the orthogonality table showing how `structural_type` composes with `metadata.role` (canonical combinations like `(droplet, builder)` for build leaves and `(confluence, orchestrator)` for integration points), see `WIKI.md` § "Cascade Vocabulary" — that section is the single canonical source. This methodology doc holds the methodology-level explanation of *why* the axis exists separately from `kind` and `role`; the wiki holds the enforced vocabulary.
 
@@ -65,6 +67,69 @@ Each cascade kind binds to a specific agent at dispatch time. Agents are defined
 Agent files carry YAML frontmatter (`name`, `description`) and a substantive body. Runtime configuration — model choice, tool allowlists, environment variables, MCP config — lives in `agents.toml` (per-project) or `agents.local.toml` (per-machine, `.gitignore`d), NOT in agent-file frontmatter. The `tools_allow` list is overridable per-machine; `tools_deny` is a safety floor and rejects user override at startup. Frontmatter `model:` and `tools:` keys, if present in agent files, are stripped at render time when `agents.toml` has the corresponding key set — see `AGENTS_CONFIG.md` for the full configuration reference.
 
 Each agent has a tightly scoped role — planners decompose and never edit code; builders implement leaf work and never spawn other agents; QA agents read and verify but never edit. This separation-of-concerns is hardcoded structural invariant, not template-customizable. Cross-role boundary violations are rejected at the dispatch / MCP layer with structured errors citing the violated invariant.
+
+<!-- TODO populate post-dogfood with measured benchmarks -->
+
+## Role and Model Bindings
+
+Initial bindings during the hardcoded phase. Every binding below is configurable by path + kind in a refinement cascade. These are starting values for dogfood, not permanent law.
+
+| Role                     | Default Model | Edits Code? | Scope                                          |
+|--------------------------|---------------|-------------|------------------------------------------------|
+| Planner                  | opus / codex  | No          | Writes directives for children, authors plan   |
+| Plan-QA (proof)          | opus          | No          | Verifies evidence completeness of plan         |
+| Plan-QA (falsification)  | codex gpt-5.x | No          | Attacks plan for missed cases / bad blockers   |
+| Builder (droplet)        | sonnet/haiku  | **Yes**     | Implements one droplet                         |
+| Build-QA (proof)         | opus          | No          | Verifies completed sub-tree against acceptance |
+| Build-QA (falsification) | codex gpt-5.x | No          | Attacks completed sub-tree for integration gaps |
+| Research                 | opus          | No          | Read-only investigation; findings via comment  |
+| Commit agent             | haiku         | No          | Generates commit messages after gates pass     |
+
+**Rationale**: Multi-backend routing per `project_multi_backend_dogfood_direction.md`. Planning + QA-falsification is where judgment + adversarial thinking concentrate — route to codex (gpt-5.x with reasoning-effort knobs) for falsification, opus for proof. Builders run sonnet or haiku — cheap, fast, retry-friendly. Each per-kind/per-role override lives in `agents.toml`.
+
+<!-- TODO populate post-dogfood with measured benchmarks -->
+
+## QA Placement
+
+Three QA surfaces. None run at the droplet level.
+
+### Package-Level Build+Test (Automated, Not LLM)
+
+Every Go package that received droplet edits runs one `mage ci`-equivalent pass after all droplets targeting that package have reported complete. No LLM. No judgment. Pass/fail is deterministic.
+
+- **Pass**: package is green. The enclosing planner node's build-QA runs next.
+- **Fail**: enclosing planner node ingests the failure output, identifies which droplet(s) caused it, writes fix directives to those specific droplets, sets them back to `in_progress`. Siblings already green do not re-build. Repeat until the package is green.
+
+### Planner-Level Build-QA (LLM, Proof + Falsification)
+
+Once all direct children of a planner node are complete AND their package build+test gates are green, the planner node's **build-QA twins** run:
+
+- `build-qa-proof` — verifies the claimed behavior of the completed sub-tree is supported by the actual diff + tests.
+- `build-qa-falsification` — attacks the completed sub-tree for integration gaps, contract drift, missing edge-case coverage.
+
+Twins run in parallel. Both must pass before the planner node itself reports complete up to its parent.
+
+### Plan-QA (On Every Planner Node)
+
+When any planner node is created (at any level), the dispatcher auto-creates two plan-QA children: `plan-qa-proof` and `plan-qa-falsification`. Both are `blocked_by` the planner's output (the plan).
+
+- **Before descent.** The planner node cannot spawn its child planners (or child droplets) until both plan-QA twins pass — per the CLAUDE.md Hard Rule "Plan-QA twins MUST close BEFORE sibling build droplets start."
+- **Parallel within a node.** Proof and falsification run concurrently against the same plan output.
+
+### Second Plan-QA Sweep — Global L1 Re-Check
+
+When the plan-building pass reaches the leaves (final droplets written into the tree) AND the total tree depth under any cascade is **≥ 3**, a **second plan-QA pass** runs with full visibility into the constructed tree rooted at that cascade. It checks:
+
+- Blocker graph is acyclic.
+- No two sibling droplets share a `paths` or `packages` entry without an explicit `blocked_by`.
+- Acceptance criteria at the leaves actually compose into the cascade's stated outcome.
+- No orphan droplets (every droplet leads to the cascade's outcome).
+
+**Threshold is hardcoded to depth ≥ 3 for now. Configurable in a refinement cascade** (starting value, adjusted once we have dogfood data).
+
+### Why No Droplet-Level LLM QA
+
+Droplets are too small to QA meaningfully in isolation. Correctness at the droplet level is either trivially satisfied against the acceptance criteria or obviously wrong — `mage ci` catches the second case. LLM QA at this level pays full cost for near-zero signal. QA moves up to where integration actually happens.
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
@@ -102,7 +167,7 @@ The shape is what makes long agent threads navigable. Devs reviewing a plan-QA-p
 
 Agents working on Tillsyn use **Hylla** (the project's graph-of-symbols indexer) as the primary source for committed-code understanding. The ordering is: (1) Hylla for committed Go code; (2) `git diff` for files changed since the last Hylla ingest; (3) Context7 + `go doc` + LSP for external library / language / tooling semantics the repo can't answer itself. Non-Go files (markdown, TOML, YAML, magefile, SQL) fall through directly to `Read` / `Grep` / `Glob` since Hylla today indexes Go only.
 
-Hylla-first matters because the indexer's graph traversal (`hylla_graph_nav`, `hylla_refs_find`) surfaces relationships LSP and grep miss — call-graph queries, symbol summaries, semantic search across the committed graph. Agents that skip Hylla and reach for grep tend to find string matches but miss the actual call-graph dependency. When a Hylla query misses (the indexer doesn't return what was needed), agents are required to record the miss in their closing comment under a `## Hylla Feedback` heading; the orchestrator aggregates these at drop end to drive Hylla improvements.
+Hylla-first matters because the indexer's graph traversal (`hylla_graph_nav`, `hylla_refs_find`) surfaces relationships LSP and grep miss — call-graph queries, symbol summaries, semantic search across the committed graph. Agents that skip Hylla and reach for grep tend to find string matches but miss the actual call-graph dependency. When a Hylla query misses (the indexer doesn't return what was needed), agents are required to record the miss in their closing comment under a `## Hylla Feedback` heading; the orchestrator aggregates these at cascade-end to drive Hylla improvements.
 
 For projects that aren't Tillsyn (Hylla is Tillsyn-internal today), the equivalent rule is: use the project's primary semantic-graph indexer first, fall back to LSP and grep for misses, and record misses for tooling improvement. The principle is: prefer graph queries to string matches when a graph index is available.
 
@@ -130,9 +195,74 @@ Both passes must PASS for the parent to close. A failed proof OR a failed falsif
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
+## Blocker-Failure Re-QA Invariant
+
+When a node `A` fails and gets edits from its planner, the edits may change the assumptions `A`'s ancestors relied on. After `A` finally completes, the cascade runs mandatory re-QA sweeps.
+
+### Ancestor Re-QA (Primary)
+
+Every ancestor planner node from `A`'s parent up to the cascade root re-runs its **build-QA twins** (both proof + falsification). The twins verify the ancestor's claimed outcome still holds given `A`'s revised behavior.
+
+**Scope**: all the way up to the cascade root. Not pruned at package boundaries — even ancestors that share no `paths`/`packages` with the edited droplet run build-QA re-check, because ancestor planners' **plans** may have been written against `A`'s original output, not just its code.
+
+### Dependent Re-QA (Edge Case)
+
+Nodes `D` with `D.blocked_by` including `A` that have already completed re-run their build-QA twins once `A` finally passes.
+
+**This case should be rare.** Under correct `blocked_by` semantics, `D` should not have reached completion while `A` was in `failed` or post-failure-edit states — `D` would have been blocked from starting. The case opens only when:
+
+- `A` initially completed successfully.
+- `D` started and ran against `A`'s output.
+- `A`'s ancestor re-QA later found `A` incorrect, reopening `A`.
+- `A` got edited, completed again with different behavior.
+
+In that narrow window, `D` already used `A`'s old output; `D`'s build-QA twins must re-verify against `A`'s new output.
+
+### Parallel Sibling Non-Invalidation
+
+Siblings `B` with no `blocked_by` linkage to `A` — parallel by construction — do not re-run QA when `A` is edited. They share neither paths nor packages with `A` (enforced at plan-QA time), so their correctness is independent of `A`'s revised behavior.
+
+### Cost Acceptance
+
+Re-QA cost is real. It is the price of in-place planner edits with audit retention instead of throwing away and rebuilding. The cascade accepts the cost because the alternative — full-subtree rebuild on every failure — is strictly more expensive.
+
+<!-- TODO populate post-dogfood with measured benchmarks -->
+
+## Failure Handling
+
+### `failed` Is A First-Class State
+
+The cascade state model is `todo` / `in_progress` / `complete` / `failed`. Failed items remain in their original position in the tree (not moved), render in red in the TUI, trigger a warning notification, and parent nodes render a "has failed descendant" glyph so operators can jump to the failure without expanding every branch.
+
+### Planner Edits In Place
+
+When a droplet fails and its package build+test goes red:
+
+1. The enclosing planner node (the one whose children contain the failed droplet) moves to `in_progress` if it had advanced.
+2. The planner ingests failure output.
+3. The planner edits the failed droplet's acceptance, directives, `paths`, or splits it into two droplets.
+4. The failed droplet transitions `failed` → `in_progress`; the builder re-runs.
+5. Siblings that succeeded stay complete. They do not rerun unless their `paths` or `packages` intersect with the edited droplet — in which case the plan-time `blocked_by` should already have serialized them.
+
+### Wipe-and-Replan
+
+When a `kind=plan` node's plan-QA-falsification finds a structural defect (orphaned droplets, missing blockers, wrong decomposition), the children get atomically wiped and the planner respawns with synthesized failure context. This is the cascade's "throw away and rebuild" mode — reserved for plan-level structural failures, not droplet-level code failures.
+
+<!-- TODO populate post-dogfood with measured benchmarks -->
+
+## Parent-Children-Complete Invariant
+
+A parent node cannot be marked `complete` while any child is incomplete, `failed`, or `blocked`. This is an **always-on invariant** — not a policy bit, not template-configurable, not relaxable. The rule applies recursively: a level-2 plan can't close until every level-3 droplet under it is `complete`; a cascade can't close until every level-2 node is `complete`; and the entire cascade rolls up cleanly only when every leaf has finished and every parent's QA twins have passed.
+
+The invariant is enforced at the domain layer in `internal/domain/action_item.go` and at the `till.action_item(operation=update)` MCP boundary. Attempts to mark a parent `complete` with incomplete children return a closed sentinel error citing the offending children. Pre-Drop-1 the rule was policy-toggled; post-Drop-1 it's hardcoded.
+
+This invariant composes with the `failed` terminal state: when a `build` droplet's QA twin returns a falsification verdict, the build moves to `failed`, the parent plan can't close, and the wipe-and-replan flow fires. Without the parent-children-complete invariant, the cascade would silently close partial trees and lose audit trail.
+
+<!-- TODO populate post-dogfood with measured benchmarks -->
+
 ## `blocked_by` Ordering Primitive
 
-`blocked_by` is the **only sibling and cross-drop ordering primitive** in the cascade. Planners set `blocked_by` at creation time on every child that depends on a sibling's completion before its own work can start. The dispatcher reads `blocked_by` to gate `in_progress` transitions: a child cannot move to `in_progress` while any node in its `blocked_by` list is incomplete or `failed`.
+`blocked_by` is the **only sibling and cross-cascade ordering primitive** in the cascade. Planners set `blocked_by` at creation time on every child that depends on a sibling's completion before its own work can start. The dispatcher reads `blocked_by` to gate `in_progress` transitions: a child cannot move to `in_progress` while any node in its `blocked_by` list is incomplete or `failed`.
 
 `blocked_by` operates at two levels: planner-set (static, declared at creation) and dispatcher-inserted (dynamic, runtime). The dispatcher's lock manager inserts runtime `blocked_by` on `in_progress` promotion when sibling locks conflict — for example, when two `build` droplets share a Go package and would race on the package's compile/test unit, the dispatcher inserts a `blocked_by` between them so they serialize. Planners are required to set static `blocked_by` whenever sibling droplets share a file (`paths` overlap) or a package (`packages` overlap); plan-QA-falsification attacks missing static `blocked_by` as a primary risk.
 
@@ -140,13 +270,19 @@ The `blocked_by` primitive is what makes parallel builds safe. Without it, two b
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
-## Parent-Children-Complete Invariant
+## Audit Trail
 
-A parent node cannot be marked `complete` while any child is incomplete, `failed`, or `blocked`. This is an **always-on invariant** — not a policy bit, not template-configurable, not relaxable. The rule applies recursively: a level-2 plan can't close until every level-3 droplet under it is `complete`; a level-1 drop can't close until every level-2 node is `complete`; and the entire cascade rolls up cleanly only when every leaf has finished and every parent's QA twins have passed.
+Every edit a planner makes to an in-flight or failed actionItem must be retained. The history is inspectable — operators look back at "what was the first draft of this droplet versus what actually shipped."
 
-The invariant is enforced at the domain layer in `internal/domain/action_item.go` and at the `till.action_item(operation=update)` MCP boundary. Attempts to mark a parent `complete` with incomplete children return a closed sentinel error citing the offending children. Pre-Drop-1 the rule was policy-toggled; post-Drop-1 it's hardcoded.
+### What Must Be Retained
 
-This invariant composes with the `failed` terminal state landed in Drop 1: when a `build` droplet's QA twin returns a falsification verdict, the build moves to `failed`, the parent plan can't close, and the wipe-and-replan flow fires. Without the parent-children-complete invariant, the cascade would silently close partial trees and lose audit trail.
+- Every write to `description`, `acceptance`, `paths`, `packages`, `blocked_by`, `directives`, or any planner-editable field.
+- Every state transition with timestamp + transitioning principal.
+- Every comment (already append-only).
+
+### Storage — Full-Snapshot-Per-Change
+
+Every write stores the full node JSON. Simple, robust, no reconstruction logic. Storage cost scales linearly with edit-count × node-size. Dogfood measures whether this bounds out acceptably. Diff-based or hybrid snapshot-plus-diff storage is deferred until the snapshot-per-change cost becomes unwieldy. Dev directive: "don't optimize too soon."
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
@@ -156,19 +292,118 @@ Spawned subagents run in **bundle-isolated contexts** — they never see the orc
 
 Isolation matters because the orchestrator's CLAUDE.md and skills are tuned for orchestration — they're loaded with planning rules, dispatch rules, multi-agent coordination semantics. A spawned QA agent reading those would be confused into orchestrator-shaped reasoning. By stripping the entire normal context surface and hand-assembling exactly what the agent needs, Tillsyn guarantees each spawned agent sees only its role-tuned context — no leakage from the orchestrator's configuration.
 
-Sentinel-injection integration tests verify isolation end-to-end: synthetic "BLEED_SENTINEL" strings injected into `~/.claude/CLAUDE.md`, system agents, project CLAUDE.md, and hooks are asserted absent in the spawned process's actual prompt. The tests fail loudly if any normal context source leaks through. The post-render bundle validator (Drop 4c.6 W3) checks the spawned bundle's agent body is non-empty and substantive (not the prior stub-shape) before the spawn proceeds — a defense-in-depth gate against silent isolation regressions.
+Sentinel-injection integration tests verify isolation end-to-end: synthetic "BLEED_SENTINEL" strings injected into `~/.claude/CLAUDE.md`, system agents, project CLAUDE.md, and hooks are asserted absent in the spawned process's actual prompt. The tests fail loudly if any normal context source leaks through. The post-render bundle validator checks the spawned bundle's agent body is non-empty and substantive (not a stub) before the spawn proceeds — a defense-in-depth gate against silent isolation regressions.
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
-## Cross-References
+## Cascade Tree — Side-By-Side Worked Example
 
-Companion methodology and configuration docs live alongside this one at the repo root:
+Two cascades under one project. `CASCADE_0` blocks `CASCADE_1`. `CASCADE_0` is a domain-parallel scaffold (no shared packages, no shared paths). `CASCADE_1` is a sequential feature release (each L3 package consumes the package below via `blocked_by`).
 
-- **`AGENTS_CONFIG.md`** — adopter-facing reference for `agents.toml` schema, override semantics, env_set vs env_from_shell, tools_allow vs tools_deny scope, frontmatter strip behavior, `claude_md_addons`, and worked Bedrock / Vertex / OpenRouter / Ollama Cloud examples.
-- **`GDD_METHODOLOGY.md`** — Graph-Driven Development methodology (Hylla-flavored). Composes with Cascade Methodology: cascade describes *how work decomposes and verifies*; GDD describes *how knowledge is graph-indexed and traversed*. Substantive content lands post-Hylla-rev / post-dogfood per `project_methodology_docs_tracker.md`.
-- **`SPAWN_PIPELINE.md`** — the per-spawn bundle assembly pipeline (env vars, settings, MCP config, agent body resolution). Cited from the Isolation Enforcement section above.
-- **`CLI_ADAPTER_AUTHORING.md`** — guide for authoring new CLI adapters (today: Claude Code; future: Codex, others). Inherits the `--bare`-collapsed isolation framing.
-- **`WIKI.md` § "Cascade Vocabulary"** — single canonical source for the `kind` enum, `role` enum, `structural_type` enum, and the orthogonality table. This methodology doc cross-references rather than duplicates that vocabulary.
+Legend:
+- `P` = planner node. Plan-QA twins implicit on every `P`.
+- `BQ` = build-QA twins at a planner node.
+- `•` = droplet (builder). Package build+test gate implicit per package.
+- `═══▶` = cross-cascade or intra-cascade `blocked_by`.
+
+```
+═══════════════════════════════════════════════════════════════════════════════
+CASCADE 0 — PLATFORM SCAFFOLD         ║  CASCADE 1 — AUTH FEATURE RELEASE
+3 depths, package-parallel            ║  4 depths, package-sequential
+                                      ║  blocked_by: CASCADE 0 (cross-cascade)
+═══════════════════════════════════════════════════════════════════════════════
+
+L1  CASCADE 0  (P + plan-QA)          ║  L1  CASCADE 1  (P + plan-QA)
+     │                                 ║       │
+     │                                 ║       L2  auth-feature-strategy
+     │                                 ║            (P + plan-QA)
+     │                                 ║            plans package order
+     │                                 ║            │
+     ├─ L2  pkg-logger     ──┐         ║            │
+     │   (P + plan-QA)       │         ║            ├─ L3  pkg-user-entity
+     │   │                   │         ║            │   (P + plan-QA)
+     │   └─ L3 droplets:     │ parall  ║            │   │
+     │      • pkg-scaffold   │ no pkg  ║            │   └─ L4 droplets:
+     │      • config-bind    │ overlap ║            │      • user-struct
+     │      • unit-tests     │ no path ║            │      • password-hash
+     │   BQ twins            │ overlap ║            │   BQ twins
+     │                       │         ║            │
+     ├─ L2  pkg-config     ──┤         ║            ├─ L3  pkg-auth-service
+     │   (P + plan-QA)       │         ║            │   (P + plan-QA)
+     │   │                   │         ║            │   [blocked_by: pkg-user-entity]
+     │   └─ L3 droplets:     │         ║            │   │
+     │      • TOML-parser    │         ║            │   └─ L4 droplets:
+     │      • validator      │         ║            │      • verify-password
+     │      • defaults       │         ║            │      • token-issuance
+     │   BQ twins            │         ║            │      • ratelimit-hook
+     │                       │         ║            │   BQ twins
+     └─ L2  pkg-storage    ──┘         ║            │
+         (P + plan-QA)                 ║            └─ L3  pkg-http-adapter
+         │                             ║                (P + plan-QA)
+         └─ L3 droplets:               ║                [blocked_by: pkg-auth-service]
+            • schema-ddl               ║                │
+            • migrations               ║                └─ L4 droplets:
+            • conn-pool                ║                   • POST-/login
+         BQ twins                      ║                   • POST-/logout
+                                       ║                BQ twins
+  (L1 BQ twins roll up L2s)            ║
+                                       ║       (L2 BQ twins roll up L3s)
+                                       ║  (L1 BQ twins roll up L2)
+
+             │
+             │ ═══[blocks]═══▶  CASCADE_1
+             │
+```
+
+### Parallelism Read
+
+- **CASCADE_0** L2 children (`logger`, `config`, `storage`) have no shared `packages` and no shared `paths`. The dispatcher can spawn their planners in parallel, their droplets in parallel (within package boundaries — one package build gate per L2), and QA twins in parallel.
+- **CASCADE_1** L3 chain (`user-entity → auth-service → http-adapter`) is strict `blocked_by`. The dispatcher must serialize. Within each L3, droplets targeting that single package serialize via implicit intra-package `blocked_by` — they share compile.
+
+### Plan-Time Blocker Rules (validated by plan-QA)
+
+- Every sibling pair with overlapping `paths` has an explicit `blocked_by` between them.
+- Every sibling pair with overlapping `packages` has an explicit `blocked_by` between them.
+- No blocker cycles anywhere in the tree.
+
+<!-- TODO populate post-dogfood with measured benchmarks -->
+
+## Metrics and Instrumentation
+
+The methodology is benchmark-aimed; each cascade emits metrics aggregated at cascade-end.
+
+### Per-Droplet
+
+- **Build-green rate** — percentage of droplets that pass `mage ci`-class package gate on first builder attempt.
+- **Builder-retry count** — how many times a droplet was re-dispatched after a failed gate.
+- **Planner-edit count** — how many times the planner edited the droplet's description/acceptance/paths between attempts.
+- **Actual LOC delta** vs. the soft ~80 LOC target.
+- **Actual file count** vs. the soft ≤3 file ceiling.
+- **Builder model + time-to-completion + token cost**.
+
+### Per-Planner-Node
+
+- **Plan-QA pass rate** — does the plan survive plan-QA on first shot, or does it need revision?
+- **Plan-QA round count** — if plan fails, how many revision cycles until pass?
+- **Build-QA pass rate** — does the completed sub-tree survive build-QA?
+- **Droplet count per planner** — are planners over-decomposing (too many trivial droplets) or under-decomposing (bloated droplets)?
+
+### Per-Cascade
+
+- **Total cost** — by model tier.
+- **Total time-to-completion**.
+- **Re-QA frequency** — how often does ancestor re-QA fire? Signals plan-quality at the top of the tree.
+- **Parallelism extraction rate** — actual parallel spawns divided by the theoretical maximum the blocker graph permits.
+- **Blocker-cycle detection count** — how many cycles did plan-QA catch before they shipped?
+- **Path/package conflict count** — missing `blocked_by` between siblings that share paths or packages.
+
+### Comparative
+
+- **Cascade vs. monolithic-agent baseline**: patch-equivalence rate (per arxiv 2603.01896) and cost-per-cascade on matched workloads.
+- **Cascade vs. single-agent-with-Section-0-only**: same.
+- **Model-tier ablations**: builder sonnet vs. haiku on matched droplet workloads; planner opus vs. codex gpt-5.x.
+
+Instrumentation lives in each droplet's completion comment + the cascade-end aggregation comment. This becomes the source data for benchmark articles.
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
@@ -178,7 +413,7 @@ Cascade Methodology sits in the same problem space as Spec-Driven Development (S
 
 These commitments shape the comparison axes. Against pure Spec-Driven approaches, Cascade Methodology adds the recursive cascade tree + dynamic `blocked_by` lock graph + system-managed wipe-and-replan on failure. Against pure agentic frameworks, it adds the structured-Specify pass + Section 0 5-pass certificate + the asymmetric QA pair. Against feature-flagged "AI coding assistants," it adds end-to-end cascade-driven dispatch (no orchestrator hand-work in the steady state) and isolation-enforcement at the spawn boundary.
 
-Concrete benchmark axes — token cost per drop, end-to-end wall-clock per drop, error-rate after wipe-and-replan, integration-defect rate at confluences, escalation rate to human review — will be populated post-dogfood per `project_methodology_docs_tracker.md`'s benchmark plan. The methodology is benchmark-aimed; the skeleton ships before the numbers, and the numbers ship after the first dogfood cycles produce them.
+Concrete benchmark axes — token cost per cascade, end-to-end wall-clock per cascade, error-rate after wipe-and-replan, integration-defect rate at confluences, escalation rate to human review — will be populated post-dogfood per `project_methodology_docs_tracker.md`'s benchmark plan. The methodology is benchmark-aimed; the skeleton ships before the numbers, and the numbers ship after the first dogfood cycles produce them.
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
@@ -198,7 +433,7 @@ First worked-example data from running the methodology against Tillsyn's own dev
 
 Each miss spawned a reactive add-on droplet (`D4 tui`, `D7 cmd/till`, would-be `D8 dispatcher` absorbed by D7). The cascade still shipped clean, but with 40% more droplets than planned and an orchestrator-direct stabilization commit chain on top.
 
-**Refinement filed:** `REFINEMENTS.md` "Phase 4.2 close — planner missed 3 of 7 surfaces" — proposes a "Cross-package consumer audit" step in planner decomposition: before sizing droplets, enumerate every struct-literal site that references the to-be-removed field + every reader of that field.
+**Refinement filed:** Phase 4.2 close — planner missed 3 of 7 surfaces. Proposes a "Cross-package consumer audit" step in planner decomposition: before sizing droplets, enumerate every struct-literal site that references the to-be-removed field + every reader of that field.
 
 ### Phase 4.3 — `--language` CLI/MCP/TUI surface teardown (Phase 4.2's refinement applied)
 
@@ -232,7 +467,7 @@ Each miss spawned a reactive add-on droplet (`D4 tui`, `D7 cmd/till`, would-be `
 - D2 `441c093` (MIGRATE) — migrated `loadStewardSeedTemplate` seam from `func(lang string)` to `func(project domain.Project)`. Production tries `loadProjectTierTemplateOnly(&project)` first, falls back to `LoadBuiltinTemplate("till-gen")`. 6 fixture sites migrated. `mage ci` GREEN.
 - D4 `8f84693` (DELETE) — deleted `LoadDefaultTemplate` + `LoadDefaultTemplateForLanguage` + 5 language-axis tests + refreshed doc-comments across 5 files (`-372/+67` LOC delta). `mage ci` GREEN.
 
-**Build-QA NITs all addressed inline:** D2 falsification flagged the docstring's "6 STEWARD anchor seeds" claim as misleading (fallback-only invariant) — fixed at `e55fc22`. D4 falsification flagged orphan `ErrLanguageNotSupported` + pre-existing `ListBuiltinTemplates` doc-comment drift (missing `till-fe`) — both fixed at `bb110c1`. Per `feedback_nits_are_first_class.md`, every NIT addressed in-chain; no NITs deferred to future drops.
+**Build-QA NITs all addressed inline:** D2 falsification flagged the docstring's "6 STEWARD anchor seeds" claim as misleading (fallback-only invariant) — fixed at `e55fc22`. D4 falsification flagged orphan `ErrLanguageNotSupported` + pre-existing `ListBuiltinTemplates` doc-comment drift (missing `till-fe`) — both fixed at `bb110c1`. Per `feedback_nits_are_first_class.md`, every NIT addressed in-chain; no NITs deferred to future cascades.
 
 ### E2E-5/6/10 — Heterogeneous E2E friction bundle (plan-QA falsification caught a load-bearing planner premise error)
 
@@ -264,13 +499,13 @@ The Phase 4.2 → 4.3 jump established the plan-QA discipline. Phase 4.4 and E2E
 
 - **Plan-down-build-up** holds in practice — every cascade decomposed top-down then built bottom-up with `blocked_by` serialization. No droplet had to be split mid-build for sizing.
 - **Atomic-droplet sizing (1-4 code blocks)** is approximate but workable. Phase 4.3 D2 was at the upper bound (5-6 atomic edits across 3 files); accepted as cohesive single-surface change. The methodology's "by cohesion not by region count" framing carried this case.
-- **Three orthogonal axes** (`kind` × `role` × `structural_type`) — orthogonality earned its keep on QA kinds. Every QA pair carried `role=qa-proof` or `role=qa-falsification` regardless of parent `kind` (`plan-qa-proof` on level-1 plans + `build-qa-proof` on leaf builds), and the dispatch + reasoning differed based on parent context.
+- **Three orthogonal axes** (`kind` × `role` × `structural_type`) — orthogonality earned its keep on QA kinds. Every QA pair carried `role=qa-proof` or `role=qa-falsification` regardless of parent `kind` (`plan-qa-proof` on cascade roots + `build-qa-proof` on leaf builds), and the dispatch + reasoning differed based on parent context.
 - **Asymmetric QA pair** caught complementary surfaces. Proof PASS verdicts confirmed acceptance criteria; falsification PASS verdicts surfaced 12+ NITs / REFINEMENTS across the 3 cascades that proof never flagged. Running them separately (not as one combined review) was load-bearing — the orchestrator-direct D3 QA-falsification fallback verified the asymmetry: even a single-orchestrator run hits different findings on the falsification axis than on the proof axis.
 - **Build-QA-falsification → recursive droplet** is a real pattern. E2E-8's D4 demonstrates: build-QA can legitimately surface a follow-up scope that warrants its own droplet rather than orchestrator-direct absorption. The methodology framing handles this via "any new scope discovered mid-cascade gets its own droplet with full QA pair."
 
 ### Systematic benchmark axes (still pending)
 
-Token cost per cascade, end-to-end wall-clock per cascade, subagent failure-and-retry rates, escalation rate to human review — still unmeasured. These need instrumentation in Tillsyn itself (Drop 4d+ scope) before they can be populated. The qualitative discipline progression above is the load-bearing finding for the methodology shape; the quantitative numbers come once Tillsyn measures itself.
+Token cost per cascade, end-to-end wall-clock per cascade, subagent failure-and-retry rates, escalation rate to human review — still unmeasured. These need instrumentation in Tillsyn itself before they can be populated. The qualitative discipline progression above is the load-bearing finding for the methodology shape; the quantitative numbers come once Tillsyn measures itself.
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
 
@@ -284,11 +519,21 @@ This methodology is the synthesis of multiple threads:
 - **Section 0 certificate shape** — Ugare & Chandra, *Agentic Code Reasoning* (arxiv 2603.01896, Meta, 4 Mar 2026), with Tillsyn's two extensions (Evidence + Unknowns as first-class fields, plus the adversarial QA Falsification pass).
 - **Tillsyn-flavored Specify pass** — inspired by Spec-Driven Development frameworks (Specify, GitHub Spec Kit) and adapted to live in cascade-tree metadata rather than separate spec files.
 - **Closed-12-kind enum + orthogonal-axes design** — Tillsyn-internal, landed in Drop 1.75 with the kind-collapse migration; documented canonically in `WIKI.md` § "Cascade Vocabulary."
-- **`--bare`-collapsed isolation enforcement** — Anthropic's documented Claude Code `--bare` flag behavior; verified per `RESEARCH/ISOLATION_ENFORCEMENT_FIX.md` and shipped end-to-end in Drop 4c.6 W3.
+- **5-value `structural_type` with cascade-as-level-1** — Dev directive 2026-05-21; Go enum work tracked at Tillsyn action_item `62569299-6522-401e-a15b-c6f61e2dc609`.
+- **`--bare`-collapsed isolation enforcement** — Anthropic's documented Claude Code `--bare` flag behavior; shipped end-to-end in Drop 4c.6 W3.
 - **Atomic-droplet sizing rules** — till-go template values (1-4 code blocks, 80-120 LOC + tests) tuned through Drop 4c iterations; adopters using other templates may differ. The methodology-level invariant is *atomic sizing exists*, not the specific till-go numbers.
+- **Side-by-side worked example + metrics catalog + blocker-failure re-QA invariant + failure-handling rules + audit-trail storage** — originally drafted in `AGENT_CASCADE_DESIGN.md` (2026-04-18 design doc, since retired); merged into this methodology doc 2026-05-21.
 
 The methodology is intentionally template-customizable at the semantic edges (sizing numbers, model assignments, tool allowlists) and hardcoded-structural at the invariant edges (closed enums, parent-children-complete, isolation enforcement, separation-of-concerns between roles). The split follows Tillsyn's "templates define semantic behavior; Tillsyn enforces structural invariants" rule (`feedback_tillsyn_enforces_templates.md`).
 
 The skeleton in this document is intentionally evergreen at the methodology-shape level — the rules that change with measurement (sizing thresholds, escalation N-counts, token caps) are deferred to template config and post-dogfood numbers, while the rules that anchor the methodology (closed enums, asymmetric QA, plan-down-build-up, isolation-by-default) ship as load-bearing skeleton text. Future revisions will populate the post-dogfood benchmark sections and refine the template-defined edges in lockstep with measured outcomes.
 
 <!-- TODO populate post-dogfood with measured benchmarks -->
+
+## Related Files
+
+- `WIKI.md` § "Cascade Vocabulary" — single canonical source for the `kind` enum, `role` enum, `structural_type` enum, and the orthogonality table.
+- `CLAUDE.md` — project rules, Hard Rules, agent bindings, build-QA-commit discipline.
+- `AGENTS_CONFIG.md` — adopter-facing reference for `agents.toml` schema, override semantics, env_set vs env_from_shell, tools_allow vs tools_deny scope, frontmatter strip behavior, `claude_md_addons`, and worked Bedrock / Vertex / OpenRouter / Ollama Cloud examples.
+- `GDD_METHODOLOGY.md` — Graph-Driven Development methodology (Hylla-flavored). Composes with Cascade Methodology: cascade describes *how work decomposes and verifies*; GDD describes *how knowledge is graph-indexed and traversed*. Substantive content lands post-Hylla-rev / post-dogfood per `project_methodology_docs_tracker.md`.
+- `CLI_ADAPTER_AUTHORING.md` — guide for authoring new CLI adapters (today: Claude Code + Codex; future: Ollama-bridge, others). Inherits the `--bare`-collapsed isolation framing.
