@@ -15,9 +15,6 @@ import (
 // Unknown or missing fields degrade gracefully: Raw is always populated,
 // and the caller receives a non-terminal event with best-effort type
 // normalization.
-//
-// Full table-driven verification of codex event shapes lands in D5 once
-// fixture data is available.
 var ErrMalformedStreamLine = errors.New("cli_codex: malformed stream-json line")
 
 // parseStreamEvent decodes one JSONL line emitted by `codex exec --json` into
@@ -34,15 +31,16 @@ var ErrMalformedStreamLine = errors.New("cli_codex: malformed stream-json line")
 //   - Non-JSON input returns ErrMalformedStreamLine with Raw still populated
 //     from the original line bytes.
 //
-// Known codex event families (partially documented; pending D5 fixture):
+// Known codex event families (verified via D4 fixture capture):
 //
-//   - type="message"   — conversation message (role: "assistant" | "user")
-//   - type="function_call" / kind="function_call" — tool invocation
-//   - done=true / finish_reason present — terminal / end-of-stream event
-//   - type="error"     — error event
+//   - type="thread.started"  — session init; non-terminal.
+//   - type="turn.started"    — turn begin; non-terminal.
+//   - type="item.completed"  — item output (agent_message carries text); non-terminal.
+//   - type="turn.completed"  — turn end with usage; TERMINAL.
+//   - type="turn.failed"     — turn error; TERMINAL.
+//   - type="error"           — mid-stream error signal (precedes turn.failed); non-terminal.
 //
-// This function maps those families to the canonical vocabulary where
-// possible; unknown shapes pass through with Type set to the raw type string
+// Unknown type values pass through with Type set to the raw type string
 // (or empty if no type-like field is found).
 func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 	// Always copy line into Raw before any decoding so the returned
@@ -60,10 +58,6 @@ func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 		return ev, fmt.Errorf("%w: %v", ErrMalformedStreamLine, err)
 	}
 
-	// Best-effort type normalization. codex event shapes are partially
-	// undocumented; we look for common discriminator fields in priority order.
-	// The D5 fixture drop will harden this mapping with table-driven tests.
-
 	// Extract raw string helper (avoids repetition below).
 	getString := func(key string) string {
 		raw, ok := fields[key]
@@ -76,31 +70,6 @@ func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 		}
 		return s
 	}
-	getBool := func(key string) bool {
-		raw, ok := fields[key]
-		if !ok || len(raw) == 0 {
-			return false
-		}
-		var b bool
-		if err := json.Unmarshal(raw, &b); err != nil {
-			return false
-		}
-		return b
-	}
-
-	// Check for terminal markers first. codex signals end-of-stream via
-	// a `done` boolean field or a `finish_reason` string field. Both are
-	// treated as terminal regardless of the `type` field value.
-	isDone := getBool("done")
-	finishReason := getString("finish_reason")
-	if isDone || finishReason != "" {
-		ev.IsTerminal = true
-		ev.Type = "result"
-		if finishReason != "" {
-			ev.Subtype = finishReason
-		}
-		return ev, nil
-	}
 
 	// Map `type` or `kind` fields to the canonical vocabulary.
 	typeStr := getString("type")
@@ -110,34 +79,41 @@ func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 	ev.Type = typeStr
 
 	switch typeStr {
-	case "message":
-		// codex message event — look for role and content fields.
-		role := getString("role")
-		switch role {
-		case "assistant":
-			ev.Type = "assistant"
-			// Best-effort text extraction from content field.
-			if contentRaw, ok := fields["content"]; ok {
-				ev.Text = extractTextFromContent(contentRaw)
+	case "thread.started", "turn.started":
+		// Session/turn lifecycle events — non-terminal; pass through with
+		// Type set to the raw value. Raw retains thread_id etc. for callers.
+
+	case "item.completed":
+		// Item output event. Extract subtype and text from the nested item
+		// object: {"id":"...","type":"agent_message","text":"..."}.
+		if itemRaw, ok := fields["item"]; ok {
+			var item struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
 			}
-		case "user":
-			ev.Type = "user"
-		default:
-			ev.Type = "message"
+			if err := json.Unmarshal(itemRaw, &item); err == nil {
+				ev.Subtype = item.Type
+				ev.Text = item.Text
+			}
 		}
 
-	case "function_call":
-		// codex tool invocation event.
-		ev.Type = "assistant"
-		ev.ToolName = getString("name")
-		if inputRaw, ok := fields["arguments"]; ok {
-			ev.ToolInput = inputRaw
+	case "turn.completed":
+		// Terminal event — successful turn end with token usage.
+		// Cost stays nil: codex emits usage counts but no dollar cost field
+		// (per F.7.17 L11 nil signals absent, NOT zero).
+		ev.IsTerminal = true
+
+	case "turn.failed":
+		// Terminal event — turn ended with an error.
+		// Extract error.message from the nested error object.
+		if errRaw, ok := fields["error"]; ok {
+			ev.Text = extractErrorMessage(errRaw)
 		}
+		ev.IsTerminal = true
 
 	case "error":
-		// codex error event — pass through with type="error"; non-terminal
-		// because a terminal error event would carry done=true or finish_reason.
-		ev.Type = "error"
+		// Mid-stream error signal — non-terminal. A turn.failed event
+		// typically follows. Capture the message for monitor logging.
 		ev.Text = getString("message")
 
 	default:
@@ -149,30 +125,25 @@ func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 	return ev, nil
 }
 
-// extractTextFromContent attempts to decode a codex `content` field into
-// a plain text string. Content may be a plain string or an array of content
-// blocks (as used in some codex event shapes). Returns empty string on any
+// extractErrorMessage decodes a codex `error` field value into a plain text
+// string. The value may be a plain string or an object with a `message` key
+// (as in turn.failed: {"message":"..."}). Returns empty string on any
 // decode failure — best-effort only.
-func extractTextFromContent(raw json.RawMessage) string {
+func extractErrorMessage(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	// Try plain string first (common in simple codex events).
+	// Try plain string first (defensive; codex uses object form today).
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return s
 	}
-	// Try array of content blocks (OpenAI-style structured content).
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text,omitempty"`
+	// Try object with message field (documented codex error shape).
+	var obj struct {
+		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(raw, &blocks); err == nil {
-		for _, b := range blocks {
-			if b.Type == "text" && b.Text != "" {
-				return b.Text
-			}
-		}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return obj.Message
 	}
 	return ""
 }
@@ -182,12 +153,13 @@ func extractTextFromContent(raw json.RawMessage) string {
 // callers MUST check the bool before consuming the report.
 //
 // The function re-decodes ev.Raw into a flexible map for permissive field
-// access — codex's terminal event shape is partially undocumented. The D5
-// fixture drop will harden the field mapping with table-driven tests.
+// access. Two terminal event shapes are recognised:
 //
-// Cost extraction: codex may emit usage/cost in fields like `usage`,
-// `total_cost_usd`, or `cost`. We make a best-effort attempt; nil Cost
-// means "no cost telemetry found" per F.7.17 L11.
+//   - turn.completed: turn ended successfully with usage telemetry. Cost stays
+//     nil (codex emits token counts but no dollar cost field; per F.7.17 L11
+//     nil signals absent, NOT zero). Reason = "turn_completed".
+//   - turn.failed: turn ended with an error. Errors[0] = error.message.
+//     Reason = "turn_failed".
 func extractTerminalReport(ev dispatcher.StreamEvent) (dispatcher.TerminalReport, bool) {
 	if !ev.IsTerminal {
 		return dispatcher.TerminalReport{}, false
@@ -202,46 +174,31 @@ func extractTerminalReport(ev dispatcher.StreamEvent) (dispatcher.TerminalReport
 
 	report := dispatcher.TerminalReport{}
 
-	// Finish reason maps to Reason.
-	if raw, ok := fields["finish_reason"]; ok {
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			report.Reason = s
-		}
-	}
-	if report.Reason == "" {
-		// subtype may carry the reason (set by parseStreamEvent above).
-		report.Reason = ev.Subtype
+	// Determine event type to select extraction path.
+	var typeStr string
+	if raw, ok := fields["type"]; ok {
+		_ = json.Unmarshal(raw, &typeStr)
 	}
 
-	// Cost extraction: codex may use `total_cost_usd` (matching claude's
-	// field name) or a nested usage structure. Try flat field first.
-	if raw, ok := fields["total_cost_usd"]; ok {
-		var cost float64
-		if json.Unmarshal(raw, &cost) == nil {
-			report.Cost = &cost
-		}
-	}
+	switch typeStr {
+	case "turn.completed":
+		// Successful turn end. Usage telemetry is present but there is no
+		// dollar cost field — Cost stays nil per F.7.17 L11.
+		report.Reason = "turn_completed"
 
-	// Errors: codex may emit an `error` string or `errors` array.
-	if raw, ok := fields["errors"]; ok {
-		var errs []string
-		if json.Unmarshal(raw, &errs) == nil && len(errs) > 0 {
-			report.Errors = errs
-		}
-	}
-	if len(report.Errors) == 0 {
-		if raw, ok := fields["error"]; ok {
-			var errStr string
-			if json.Unmarshal(raw, &errStr) == nil && errStr != "" {
-				report.Errors = []string{errStr}
+	case "turn.failed":
+		// Turn ended with error. Extract error.message into Errors.
+		report.Reason = "turn_failed"
+		if errRaw, ok := fields["error"]; ok {
+			if msg := extractErrorMessage(errRaw); msg != "" {
+				report.Errors = []string{msg}
 			}
 		}
-	}
 
-	// Denials: codex does not currently document a permission_denials field;
-	// report.Denials stays nil (no denials). Future drops can extend this
-	// once the D5 fixture documents the actual codex terminal event shape.
+	default:
+		// Generic terminal event (IsTerminal was set by some other path).
+		// Return a minimal populated report so the dispatcher knows it ended.
+	}
 
 	return report, true
 }

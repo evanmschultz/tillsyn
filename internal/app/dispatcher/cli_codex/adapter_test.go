@@ -3,6 +3,7 @@ package cli_codex
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -473,115 +474,12 @@ func TestBuildCommand_MaxBudgetUSDWarningDoesNotError(t *testing.T) {
 	}
 }
 
-// --- Additional stream parsing tests for coverage -------------------------
-
-// TestParseStreamEvent_DoneTerminal asserts that a JSON object with done=true
-// is treated as a terminal event with Type="result".
-func TestParseStreamEvent_DoneTerminal(t *testing.T) {
-	t.Parallel()
-
-	line := []byte(`{"done":true}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	if !ev.IsTerminal {
-		t.Errorf("IsTerminal = false; want true for done=true event")
-	}
-	if ev.Type != "result" {
-		t.Errorf("Type = %q; want %q", ev.Type, "result")
-	}
-}
-
-// TestParseStreamEvent_FinishReasonTerminal asserts a finish_reason string
-// triggers the terminal path with Subtype set to the finish_reason value.
-func TestParseStreamEvent_FinishReasonTerminal(t *testing.T) {
-	t.Parallel()
-
-	line := []byte(`{"finish_reason":"stop","done":false}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	if !ev.IsTerminal {
-		t.Errorf("IsTerminal = false; want true for finish_reason event")
-	}
-	if ev.Subtype != "stop" {
-		t.Errorf("Subtype = %q; want %q", ev.Subtype, "stop")
-	}
-}
-
-// TestParseStreamEvent_MessageRoleAssistant asserts a message event with
-// role=assistant maps to Type="assistant" with a text content field.
-func TestParseStreamEvent_MessageRoleAssistant(t *testing.T) {
-	t.Parallel()
-
-	line := []byte(`{"type":"message","role":"assistant","content":"hello from codex"}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	if ev.Type != "assistant" {
-		t.Errorf("Type = %q; want %q", ev.Type, "assistant")
-	}
-	if ev.Text != "hello from codex" {
-		t.Errorf("Text = %q; want %q", ev.Text, "hello from codex")
-	}
-}
-
-// TestParseStreamEvent_MessageRoleUser asserts a message event with
-// role=user maps to Type="user".
-func TestParseStreamEvent_MessageRoleUser(t *testing.T) {
-	t.Parallel()
-
-	line := []byte(`{"type":"message","role":"user"}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	if ev.Type != "user" {
-		t.Errorf("Type = %q; want %q", ev.Type, "user")
-	}
-}
-
-// TestParseStreamEvent_MessageUnknownRole asserts a message event with an
-// unknown role maps to Type="message" (pass-through).
-func TestParseStreamEvent_MessageUnknownRole(t *testing.T) {
-	t.Parallel()
-
-	line := []byte(`{"type":"message","role":"system"}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	if ev.Type != "message" {
-		t.Errorf("Type = %q; want %q on unknown role", ev.Type, "message")
-	}
-}
-
-// TestParseStreamEvent_FunctionCallEvent asserts a function_call event maps
-// to Type="assistant" with ToolName populated.
-func TestParseStreamEvent_FunctionCallEvent(t *testing.T) {
-	t.Parallel()
-
-	line := []byte(`{"type":"function_call","name":"Bash","arguments":{"command":"ls"}}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	if ev.Type != "assistant" {
-		t.Errorf("Type = %q; want %q for function_call", ev.Type, "assistant")
-	}
-	if ev.ToolName != "Bash" {
-		t.Errorf("ToolName = %q; want %q", ev.ToolName, "Bash")
-	}
-	if ev.ToolInput == nil {
-		t.Errorf("ToolInput = nil; want non-nil for function_call with arguments")
-	}
-}
+// --- Additional stream parsing tests — real codex event shapes (D5) --------
 
 // TestParseStreamEvent_ErrorEvent asserts an error-type event maps to
-// Type="error" with the message field in Text.
+// Type="error" with the message field in Text, and is non-terminal.
+// This shape appears in real codex fixtures as a mid-stream error signal
+// preceding turn.failed.
 func TestParseStreamEvent_ErrorEvent(t *testing.T) {
 	t.Parallel()
 
@@ -596,71 +494,8 @@ func TestParseStreamEvent_ErrorEvent(t *testing.T) {
 	if ev.Text != "something failed" {
 		t.Errorf("Text = %q; want %q", ev.Text, "something failed")
 	}
-}
-
-// TestParseStreamEvent_KindFieldFallback asserts that when no "type" field
-// is present but a "kind" field is, the kind value is used as Type.
-func TestParseStreamEvent_KindFieldFallback(t *testing.T) {
-	t.Parallel()
-
-	line := []byte(`{"kind":"function_call","name":"Read","arguments":{}}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	// function_call via kind fallback maps to assistant.
-	if ev.Type != "assistant" {
-		t.Errorf("Type = %q; want %q via kind= fallback", ev.Type, "assistant")
-	}
-}
-
-// TestExtractTerminalReport_WithCostAndErrors asserts the terminal-report
-// decoder surfaces cost and errors from a codex terminal event.
-func TestExtractTerminalReport_WithCostAndErrors(t *testing.T) {
-	t.Parallel()
-
-	// Build a synthetic terminal event as if parseStreamEvent produced it.
-	terminalLine := []byte(`{"done":true,"finish_reason":"stop","total_cost_usd":0.05,"errors":["rate limit hit"]}`)
-	ev, err := parseStreamEvent(terminalLine)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	if !ev.IsTerminal {
-		t.Fatalf("parseStreamEvent did not mark event as terminal")
-	}
-
-	report, ok := extractTerminalReport(ev)
-	if !ok {
-		t.Fatalf("extractTerminalReport returned ok=false on terminal event")
-	}
-	if report.Cost == nil {
-		t.Fatalf("report.Cost = nil; want pointer to 0.05")
-	}
-	if got, want := *report.Cost, 0.05; got != want {
-		t.Errorf("*report.Cost = %v; want %v", got, want)
-	}
-	if len(report.Errors) != 1 || report.Errors[0] != "rate limit hit" {
-		t.Errorf("report.Errors = %v; want [\"rate limit hit\"]", report.Errors)
-	}
-}
-
-// TestExtractTerminalReport_SingleErrorField asserts the single `error`
-// string field (not `errors` array) is surfaced in report.Errors.
-func TestExtractTerminalReport_SingleErrorField(t *testing.T) {
-	t.Parallel()
-
-	terminalLine := []byte(`{"done":true,"error":"spawn failed"}`)
-	ev, err := parseStreamEvent(terminalLine)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-
-	report, ok := extractTerminalReport(ev)
-	if !ok {
-		t.Fatalf("extractTerminalReport returned ok=false on terminal event")
-	}
-	if len(report.Errors) != 1 || report.Errors[0] != "spawn failed" {
-		t.Errorf("report.Errors = %v; want [\"spawn failed\"]", report.Errors)
+	if ev.IsTerminal {
+		t.Errorf("IsTerminal = true; want false for mid-stream error event")
 	}
 }
 
@@ -677,20 +512,312 @@ func TestExtractTerminalReport_EmptyRawReturnsTrue(t *testing.T) {
 	}
 }
 
-// TestParseStreamEvent_ContentArrayBlocks asserts that a content field
-// structured as an array of typed blocks extracts the first "text" block.
-func TestParseStreamEvent_ContentArrayBlocks(t *testing.T) {
+// --- Fixture-based tests (D5) — verified against real codex JSONL output ---
+
+// TestParseStreamEvent_ThreadStarted asserts fixture line 1 decodes to
+// Type="thread.started", IsTerminal=false, and Raw retains the full JSON
+// including the thread_id field.
+func TestParseStreamEvent_ThreadStarted(t *testing.T) {
 	t.Parallel()
 
-	line := []byte(`{"type":"message","role":"assistant","content":[{"type":"text","text":"block text"},{"type":"other","text":"ignored"}]}`)
+	line := []byte(`{"type":"thread.started","thread_id":"019e480a-21d9-7312-80e1-ed6e34fb193b"}`)
 	ev, err := parseStreamEvent(line)
 	if err != nil {
 		t.Fatalf("parseStreamEvent: %v", err)
 	}
-	if ev.Type != "assistant" {
-		t.Errorf("Type = %q; want %q", ev.Type, "assistant")
+	if ev.Type != "thread.started" {
+		t.Errorf("Type = %q; want %q", ev.Type, "thread.started")
 	}
-	if ev.Text != "block text" {
-		t.Errorf("Text = %q; want %q (first text block)", ev.Text, "block text")
+	if ev.IsTerminal {
+		t.Errorf("IsTerminal = true; want false for thread.started")
 	}
+	if !bytes.Equal(ev.Raw, line) {
+		t.Errorf("Raw not preserved; got %q; want %q", string(ev.Raw), string(line))
+	}
+	// Verify thread_id is accessible via Raw for callers that need it.
+	var rawObj map[string]string
+	if err := json.Unmarshal(ev.Raw, &rawObj); err != nil {
+		t.Fatalf("unmarshal Raw: %v", err)
+	}
+	if rawObj["thread_id"] == "" {
+		t.Errorf("thread_id missing from Raw; want non-empty")
+	}
+}
+
+// TestParseStreamEvent_TurnStarted asserts fixture line 2 decodes to
+// Type="turn.started" and IsTerminal=false.
+func TestParseStreamEvent_TurnStarted(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"turn.started"}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if ev.Type != "turn.started" {
+		t.Errorf("Type = %q; want %q", ev.Type, "turn.started")
+	}
+	if ev.IsTerminal {
+		t.Errorf("IsTerminal = true; want false for turn.started")
+	}
+}
+
+// TestParseStreamEvent_ItemCompletedAgentMessage asserts fixture line 3
+// decodes to Type="item.completed", Subtype="agent_message", Text="ok",
+// and IsTerminal=false.
+func TestParseStreamEvent_ItemCompletedAgentMessage(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if ev.Type != "item.completed" {
+		t.Errorf("Type = %q; want %q", ev.Type, "item.completed")
+	}
+	if ev.Subtype != "agent_message" {
+		t.Errorf("Subtype = %q; want %q", ev.Subtype, "agent_message")
+	}
+	if ev.Text != "ok" {
+		t.Errorf("Text = %q; want %q", ev.Text, "ok")
+	}
+	if ev.IsTerminal {
+		t.Errorf("IsTerminal = true; want false for item.completed")
+	}
+}
+
+// TestParseStreamEvent_TurnCompletedIsTerminal asserts fixture line 4 (success
+// path) decodes to Type="turn.completed" and IsTerminal=true.
+func TestParseStreamEvent_TurnCompletedIsTerminal(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":21276,"cached_input_tokens":6528,"output_tokens":38,"reasoning_output_tokens":31}}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if ev.Type != "turn.completed" {
+		t.Errorf("Type = %q; want %q", ev.Type, "turn.completed")
+	}
+	if !ev.IsTerminal {
+		t.Errorf("IsTerminal = false; want true for turn.completed")
+	}
+}
+
+// TestParseStreamEvent_TurnFailedIsTerminal asserts the rate-limit fixture
+// line 4 decodes to Type="turn.failed" and IsTerminal=true.
+func TestParseStreamEvent_TurnFailedIsTerminal(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"turn.failed","error":{"message":"You've hit your usage limit. To get more access now, send a request to your admin or try again at 7:54 PM."}}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if ev.Type != "turn.failed" {
+		t.Errorf("Type = %q; want %q", ev.Type, "turn.failed")
+	}
+	if !ev.IsTerminal {
+		t.Errorf("IsTerminal = false; want true for turn.failed")
+	}
+}
+
+// TestParseStreamEvent_ErrorMidStream asserts the rate-limit fixture line 3
+// decodes to Type="error" and IsTerminal=false. It is a mid-stream signal
+// preceding turn.failed, not a terminal event.
+func TestParseStreamEvent_ErrorMidStream(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"error","message":"You've hit your usage limit. To get more access now, send a request to your admin or try again at 7:54 PM."}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if ev.Type != "error" {
+		t.Errorf("Type = %q; want %q", ev.Type, "error")
+	}
+	if ev.IsTerminal {
+		t.Errorf("IsTerminal = true; want false for mid-stream error event")
+	}
+	if ev.Text == "" {
+		t.Errorf("Text = empty; want non-empty error message")
+	}
+}
+
+// TestExtractTerminalReport_TurnCompletedReturnsTrue asserts extractTerminalReport
+// on a parsed turn.completed event returns ok=true, Cost=nil (codex has no
+// dollar cost field), Reason="turn_completed", and no errors.
+func TestExtractTerminalReport_TurnCompletedReturnsTrue(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":21276,"cached_input_tokens":6528,"output_tokens":38,"reasoning_output_tokens":31}}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if !ev.IsTerminal {
+		t.Fatalf("parseStreamEvent did not mark turn.completed as terminal")
+	}
+
+	report, ok := extractTerminalReport(ev)
+	if !ok {
+		t.Fatalf("extractTerminalReport returned ok=false on terminal event")
+	}
+	// Cost MUST be nil — codex has no dollar cost field (F.7.17 L11).
+	if report.Cost != nil {
+		t.Errorf("report.Cost = %v; want nil (codex emits no dollar cost)", *report.Cost)
+	}
+	if report.Reason != "turn_completed" {
+		t.Errorf("report.Reason = %q; want %q", report.Reason, "turn_completed")
+	}
+	if len(report.Errors) != 0 {
+		t.Errorf("report.Errors = %v; want empty on successful completion", report.Errors)
+	}
+}
+
+// TestExtractTerminalReport_TurnFailedReturnsTrue asserts extractTerminalReport
+// on a parsed turn.failed event returns ok=true, Reason="turn_failed", and
+// Errors contains the rate-limit message string.
+func TestExtractTerminalReport_TurnFailedReturnsTrue(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"turn.failed","error":{"message":"You've hit your usage limit. To get more access now, send a request to your admin or try again at 7:54 PM."}}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if !ev.IsTerminal {
+		t.Fatalf("parseStreamEvent did not mark turn.failed as terminal")
+	}
+
+	report, ok := extractTerminalReport(ev)
+	if !ok {
+		t.Fatalf("extractTerminalReport returned ok=false on terminal event")
+	}
+	if report.Reason != "turn_failed" {
+		t.Errorf("report.Reason = %q; want %q", report.Reason, "turn_failed")
+	}
+	if len(report.Errors) == 0 {
+		t.Fatalf("report.Errors is empty; want at least one error message")
+	}
+	if !strings.Contains(report.Errors[0], "usage limit") {
+		t.Errorf("report.Errors[0] = %q; want string containing %q", report.Errors[0], "usage limit")
+	}
+}
+
+// TestExtractTerminalReport_NonTerminalReturnsFalse_Fixture asserts
+// extractTerminalReport returns (zero, false) for a non-terminal thread.started
+// event parsed from a real fixture line.
+func TestExtractTerminalReport_NonTerminalReturnsFalse_Fixture(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"thread.started","thread_id":"019e480a-21d9-7312-80e1-ed6e34fb193b"}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if ev.IsTerminal {
+		t.Fatalf("thread.started unexpectedly marked terminal")
+	}
+
+	report, ok := extractTerminalReport(ev)
+	if ok {
+		t.Fatalf("extractTerminalReport ok=true on non-terminal event; want false")
+	}
+	zero := dispatcher.TerminalReport{}
+	if !reflect.DeepEqual(report, zero) {
+		t.Errorf("report = %+v; want zero TerminalReport on non-terminal event", report)
+	}
+}
+
+// TestParseStreamEvent_FullFixtureRoundtrip reads the entire success fixture
+// (codex_stream_minimal.jsonl), parses each line, and asserts exactly 4 events
+// with only the last (turn.completed) marked terminal.
+func TestParseStreamEvent_FullFixtureRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("testdata", "codex_stream_minimal.jsonl"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	lines := splitJSONLLines(data)
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 fixture lines; got %d", len(lines))
+	}
+
+	var terminalCount int
+	for i, line := range lines {
+		ev, err := parseStreamEvent(line)
+		if err != nil {
+			t.Fatalf("line %d: parseStreamEvent: %v", i+1, err)
+		}
+		if ev.IsTerminal {
+			terminalCount++
+			if i != len(lines)-1 {
+				t.Errorf("line %d is terminal; only the last line should be terminal", i+1)
+			}
+		}
+	}
+	if terminalCount != 1 {
+		t.Errorf("terminal count = %d; want exactly 1 (turn.completed)", terminalCount)
+	}
+
+	// Verify the last event is specifically turn.completed.
+	lastEv, _ := parseStreamEvent(lines[3])
+	if lastEv.Type != "turn.completed" {
+		t.Errorf("last event Type = %q; want %q", lastEv.Type, "turn.completed")
+	}
+}
+
+// TestParseStreamEvent_RateLimitFixtureRoundtrip reads the entire error fixture
+// (codex_stream_rate_limit_error.jsonl), parses each line, and asserts exactly
+// 4 events with only the last (turn.failed) marked terminal.
+func TestParseStreamEvent_RateLimitFixtureRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("testdata", "codex_stream_rate_limit_error.jsonl"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	lines := splitJSONLLines(data)
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 fixture lines; got %d", len(lines))
+	}
+
+	var terminalCount int
+	for i, line := range lines {
+		ev, err := parseStreamEvent(line)
+		if err != nil {
+			t.Fatalf("line %d: parseStreamEvent: %v", i+1, err)
+		}
+		if ev.IsTerminal {
+			terminalCount++
+			if i != len(lines)-1 {
+				t.Errorf("line %d is terminal; only the last line should be terminal", i+1)
+			}
+		}
+	}
+	if terminalCount != 1 {
+		t.Errorf("terminal count = %d; want exactly 1 (turn.failed)", terminalCount)
+	}
+
+	// Verify the last event is specifically turn.failed.
+	lastEv, _ := parseStreamEvent(lines[3])
+	if lastEv.Type != "turn.failed" {
+		t.Errorf("last event Type = %q; want %q", lastEv.Type, "turn.failed")
+	}
+}
+
+// splitJSONLLines splits JSONL data on newlines and drops any empty trailing
+// line that os.ReadFile produces for files ending with a newline character.
+func splitJSONLLines(data []byte) [][]byte {
+	parts := bytes.Split(data, []byte("\n"))
+	// Drop trailing empty line produced by a file-final newline.
+	if len(parts) > 0 && len(bytes.TrimSpace(parts[len(parts)-1])) == 0 {
+		parts = parts[:len(parts)-1]
+	}
+	return parts
 }
