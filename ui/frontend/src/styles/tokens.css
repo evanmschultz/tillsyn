@@ -51,7 +51,7 @@
   /* ─── Typography ───────────────────────────────────────────────────── */
   --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
   --font-serif: ui-serif, "Charter", "Source Serif 4", "Iowan Old Style", Georgia, serif;
-  --font-mono: "Iosevka Web", "Iosevka", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas, monospace;
 
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;

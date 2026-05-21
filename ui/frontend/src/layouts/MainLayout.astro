@@ -6,9 +6,12 @@
  *   - Imports vendored design tokens + reset + global styles from
  *     src/styles/ (refreshed from stil/main/src/styles/ at the current
  *     snapshot).
- *   - Imports the four self-hosted font families (Inter, JetBrains Mono,
- *     Iosevka, Fira Code) via @fontsource so we don't depend on a CDN
- *     reachable from inside the Wails webview.
+ *   - Imports the two self-hosted font families actually referenced by the
+ *     stil token stack (Inter for --font-sans, JetBrains Mono for
+ *     --font-mono) via @fontsource so we don't depend on a CDN reachable
+ *     from inside the Wails webview. Iosevka and Fira Code were dropped in
+ *     the FE3 cleanup pass — neither was referenced by any token or
+ *     selector after the stil vendor (~5.75 MB of dist bloat avoided).
  *   - Renders the L-frame shell: NavRail + Topbar + main content slot.
  */
 
@@ -19,10 +22,6 @@ import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/600.css";
-import "@fontsource/iosevka/400.css";
-import "@fontsource/iosevka/600.css";
-import "@fontsource/fira-code/400.css";
-import "@fontsource/fira-code/600.css";
 
 import NavRail from "../components/NavRail.astro";
 import Topbar from "../components/Topbar.astro";

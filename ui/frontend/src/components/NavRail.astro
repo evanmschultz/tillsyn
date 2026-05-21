@@ -32,7 +32,7 @@ const defaultItems: RailItem[] = [
 const { items = defaultItems } = Astro.props;
 ---
 
-<aside class="navrail" aria-label="Workspace">
+<nav class="navrail" aria-label="Workspace">
   <a
     class="navrail-mark"
     href="/"
@@ -46,20 +46,22 @@ const { items = defaultItems } = Astro.props;
     </svg>
   </a>
 
-  <nav class="navrail-list" aria-label="Primary sections">
+  <ul class="navrail-list" aria-label="Primary sections">
     {items.map((item) => (
-      <button
-        type="button"
-        class:list={["navrail-item", item.selected && "is-selected"]}
-        aria-label={item.label}
-        aria-current={item.selected ? "page" : undefined}
-        title={item.label}
-      >
-        <span aria-hidden="true">{item.icon}</span>
-      </button>
+      <li>
+        <button
+          type="button"
+          class:list={["navrail-item", item.selected && "is-selected"]}
+          aria-label={item.label}
+          aria-current={item.selected ? "page" : undefined}
+          title={item.label}
+        >
+          <span aria-hidden="true">{item.icon}</span>
+        </button>
+      </li>
     ))}
-  </nav>
-</aside>
+  </ul>
+</nav>
 
 <style>
   .navrail {

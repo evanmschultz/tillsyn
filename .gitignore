@@ -31,6 +31,10 @@ coverage.out
 .idea/
 *.swp
 *.swo
+
+# Playwright MCP scratch — screenshots + console logs from orch-side visual
+# verification. Useful artifacts for one session; not committed.
+.playwright-mcp/
 *~
 
 # Agent / tool state (keep local, never commit)

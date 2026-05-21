@@ -85,7 +85,10 @@
   color: var(--accent);
   font-variant-numeric: tabular-nums;
   letter-spacing: var(--tracking-wide);
-  font-weight: var(--weight-medium);
+  /* --weight-regular (400) matches the imported JetBrains Mono weight; using
+     --weight-medium (500) here would force the browser to synthesize bold,
+     producing visually weaker output. */
+  font-weight: var(--weight-regular);
 }
 
 .project-list-item-name {
