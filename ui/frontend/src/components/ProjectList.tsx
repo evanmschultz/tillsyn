@@ -6,24 +6,38 @@
 // component library in a later drop (see REVISION_BRIEF.md §3 Migration
 // Targets).
 import { createResource, For, Show } from 'solid-js';
+import { isServer } from 'solid-js/web';
 
 type Project = { ID: string; Name: string };
 
 async function fetchProjects(): Promise<Project[]> {
-  // SSR guard: Astro static-builds this island server-side to produce initial
-  // markup, but the Wails-injected window.go bridge only exists in the browser.
-  // Return an empty array during SSR; the resource refires on client hydration
-  // where window.go is defined. Without this guard, build-time SSR throws
-  // "window is not defined" and Astro serializes the error into the
-  // resumability stream — non-fatal but noisy.
-  if (typeof window === 'undefined') {
-    return [];
-  }
+  // The Wails-injected window.go bridge only exists in the browser. The
+  // createResource source signal below (`() => !isServer`) returns false
+  // during Astro SSR, which keeps the resource in its pending state and
+  // skips this fetcher entirely server-side. On client hydration the source
+  // becomes true and Solid re-evaluates the resource, firing this fetcher
+  // for the first time.
   return window.go.main.App.ListProjects();
 }
 
 export default function ProjectList() {
-  const [projects] = createResource<Project[]>(fetchProjects);
+  // SSR-aware resource: the source signal is `() => !isServer`. On the
+  // server side Solid sees a falsy source and leaves the resource pending
+  // (no SSR data serialization, no resolved empty-array baked into the
+  // hydration stream). On the client the source becomes truthy and the
+  // fetcher fires against the live Wails IPC bridge.
+  //
+  // Without this guard, a `typeof window === 'undefined'` short-circuit in
+  // the fetcher resolves the resource to `[]` server-side. Solid's async-SSR
+  // contract then serializes that resolved value into the page; the client
+  // reuses the serialized state and never re-fetches, leaving the UI stuck
+  // on the empty-state "No projects yet" fallback even when the underlying
+  // database has projects. See Solid's solid-ssr docs: "Data is serialized,
+  // sent with the page, and reused by the client as needed."
+  const [projects] = createResource<Project[], boolean>(
+    () => !isServer,
+    fetchProjects,
+  );
 
   return (
     <section>

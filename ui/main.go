@@ -4,8 +4,8 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"log"
 
+	charmLog "github.com/charmbracelet/log"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
 	"github.com/evanmschultz/tillsyn/internal/app"
 	"github.com/evanmschultz/tillsyn/internal/config"
@@ -70,16 +70,28 @@ func newServiceFromConfig() (*app.Service, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("load config %q: %w", paths.ConfigPath, err)
 	}
+	// Startup observability: emit the exact SQLite path the Wails host will
+	// open so future "the FE shows no data" debugging is one log line away.
+	// The Wails host and the `till` CLI / `till mcp` stdio runtime MUST resolve
+	// to the same DB file (both go through platform.DefaultPaths() +
+	// config.Load(); divergence here is a path-drift bug). Logged at Info so
+	// it surfaces in the `wails dev` console without needing debug flags.
+	charmLog.Info("ui host startup",
+		"config_path", paths.ConfigPath,
+		"db_path", cfg.Database.Path,
+		"db_default", paths.DBPath,
+	)
 	repo, err := sqlite.Open(cfg.Database.Path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open sqlite repository %q: %w", cfg.Database.Path, err)
 	}
+	charmLog.Info("ui host sqlite open", "db_path", cfg.Database.Path)
 	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
 		DefaultDeleteMode: app.DeleteMode(cfg.Delete.DefaultMode),
 	})
 	cleanup := func() {
 		if closeErr := repo.Close(); closeErr != nil {
-			log.Printf("warning: close sqlite repository: %v", closeErr)
+			charmLog.Warn("ui host sqlite close failed", "err", closeErr)
 		}
 	}
 	return svc, cleanup, nil
@@ -88,7 +100,7 @@ func newServiceFromConfig() (*app.Service, func(), error) {
 func main() {
 	svc, cleanup, err := newServiceFromConfig()
 	if err != nil {
-		log.Fatal(err)
+		charmLog.Fatal(err)
 	}
 	defer cleanup()
 
@@ -108,6 +120,6 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		charmLog.Fatal(err)
 	}
 }
