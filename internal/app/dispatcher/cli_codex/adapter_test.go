@@ -828,84 +828,96 @@ func splitJSONLLines(data []byte) [][]byte {
 
 // --- Fix 1 (D5 r1): item.completed canonical-type mapping tests -------------
 
-// TestParseStreamEvent_ItemCompleted_ToolUse asserts that item.completed with
-// item.type="tool_use" maps to canonical ev.Type="tool_use", Subtype="item.completed",
-// and that ToolName + ToolInput are populated from the item fields.
-func TestParseStreamEvent_ItemCompleted_ToolUse(t *testing.T) {
+// TestParseStreamEvent_ItemCompleted_UnknownSubkindFallthrough asserts the
+// permissive fallback for all item.type values that are not in the recognised
+// set. Per DROP-4D-R1 (REV-1 spirit), only "agent_message" has a verified
+// canonical mapping; all other subkinds — including codex's wider vocabulary
+// (commandExecution, fileChange, mcpToolCall, collabToolCall, reasoning, plan,
+// tool_use, function_call) — fall through to the default branch until D4-style
+// fixtures exist for each. The fallback contract: ev.Type="item.completed"
+// (codex wire-format event name), ev.Subtype=item.type (raw subkind for
+// forensics), ev.Text=item.text if present.
+func TestParseStreamEvent_ItemCompleted_UnknownSubkindFallthrough(t *testing.T) {
 	t.Parallel()
 
-	line := []byte(`{"type":"item.completed","item":{"id":"item_1","type":"tool_use","name":"Bash","arguments":{"command":"ls"}}}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
+	tests := []struct {
+		name        string
+		itemType    string
+		text        string
+		wantSubtype string
+	}{
+		{
+			name:        "commandExecution",
+			itemType:    "commandExecution",
+			text:        "ls -la",
+			wantSubtype: "commandExecution",
+		},
+		{
+			name:        "tool_use (speculative — no fixture)",
+			itemType:    "tool_use",
+			text:        "",
+			wantSubtype: "tool_use",
+		},
+		{
+			name:        "function_call (speculative — no fixture)",
+			itemType:    "function_call",
+			text:        "",
+			wantSubtype: "function_call",
+		},
+		{
+			name:        "reasoning (speculative — reads wrong field until fixture lands)",
+			itemType:    "reasoning",
+			text:        "let me think",
+			wantSubtype: "reasoning",
+		},
+		{
+			name:        "fileChange",
+			itemType:    "fileChange",
+			text:        "",
+			wantSubtype: "fileChange",
+		},
+		{
+			name:        "future_item_kind",
+			itemType:    "future_item_kind",
+			text:        "payload",
+			wantSubtype: "future_item_kind",
+		},
 	}
-	if ev.Type != "tool_use" {
-		t.Errorf("Type = %q; want %q", ev.Type, "tool_use")
-	}
-	if ev.Subtype != "item.completed" {
-		t.Errorf("Subtype = %q; want %q", ev.Subtype, "item.completed")
-	}
-	if ev.ToolName != "Bash" {
-		t.Errorf("ToolName = %q; want %q", ev.ToolName, "Bash")
-	}
-	if ev.ToolInput == nil {
-		t.Fatalf("ToolInput = nil; want non-nil JSON")
-	}
-	if !strings.Contains(string(ev.ToolInput), "command") {
-		t.Errorf("ToolInput = %q; want JSON containing 'command' key", string(ev.ToolInput))
-	}
-	if ev.IsTerminal {
-		t.Errorf("IsTerminal = true; want false for item.completed tool_use")
-	}
-}
 
-// TestParseStreamEvent_ItemCompleted_FunctionCall asserts that item.completed
-// with item.type="function_call" maps to canonical ev.Type="tool_use" (same
-// normalization path as tool_use).
-func TestParseStreamEvent_ItemCompleted_FunctionCall(t *testing.T) {
-	t.Parallel()
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	line := []byte(`{"type":"item.completed","item":{"id":"item_2","type":"function_call","name":"search","arguments":{"query":"test"}}}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	if ev.Type != "tool_use" {
-		t.Errorf("Type = %q; want %q (function_call must normalise to tool_use)", ev.Type, "tool_use")
-	}
-	if ev.Subtype != "item.completed" {
-		t.Errorf("Subtype = %q; want %q", ev.Subtype, "item.completed")
-	}
-	if ev.ToolName != "search" {
-		t.Errorf("ToolName = %q; want %q", ev.ToolName, "search")
-	}
-}
+			// Build a minimal item.completed JSON line for this subkind.
+			var lineStr string
+			if tc.text != "" {
+				lineStr = `{"type":"item.completed","item":{"type":"` + tc.itemType + `","text":"` + tc.text + `"}}`
+			} else {
+				lineStr = `{"type":"item.completed","item":{"type":"` + tc.itemType + `"}}`
+			}
+			line := []byte(lineStr)
 
-// TestParseStreamEvent_ItemCompleted_UnknownSubkind asserts the permissive
-// fallback: item.type values not in the recognised set leave ev.Type as
-// "item.completed" (the codex wire-format type) and put the raw item.type in
-// ev.Subtype.
-func TestParseStreamEvent_ItemCompleted_UnknownSubkind(t *testing.T) {
-	t.Parallel()
-
-	line := []byte(`{"type":"item.completed","item":{"id":"item_3","type":"future_item_kind","text":"payload"}}`)
-	ev, err := parseStreamEvent(line)
-	if err != nil {
-		t.Fatalf("parseStreamEvent: %v", err)
-	}
-	// Unknown subkind: ev.Type retains the codex wire-format event name.
-	if ev.Type != "item.completed" {
-		t.Errorf("Type = %q; want %q (unknown item subkind permissive fallback)", ev.Type, "item.completed")
-	}
-	// Subtype carries the raw item.type value for forensics/callers to refine.
-	if ev.Subtype != "future_item_kind" {
-		t.Errorf("Subtype = %q; want %q", ev.Subtype, "future_item_kind")
-	}
-	if ev.Text != "payload" {
-		t.Errorf("Text = %q; want %q", ev.Text, "payload")
-	}
-	if ev.IsTerminal {
-		t.Errorf("IsTerminal = true; want false for item.completed unknown subkind")
+			ev, err := parseStreamEvent(line)
+			if err != nil {
+				t.Fatalf("parseStreamEvent: %v", err)
+			}
+			// All unrecognised subkinds must fall through to the permissive
+			// default: ev.Type retains the outer codex wire-format event name.
+			if ev.Type != "item.completed" {
+				t.Errorf("Type = %q; want %q (unknown subkind must use permissive fallback)", ev.Type, "item.completed")
+			}
+			// Subtype carries the raw item.type for forensics.
+			if ev.Subtype != tc.wantSubtype {
+				t.Errorf("Subtype = %q; want %q", ev.Subtype, tc.wantSubtype)
+			}
+			if ev.Text != tc.text {
+				t.Errorf("Text = %q; want %q", ev.Text, tc.text)
+			}
+			if ev.IsTerminal {
+				t.Errorf("IsTerminal = true; want false for item.completed %s", tc.itemType)
+			}
+		})
 	}
 }
 

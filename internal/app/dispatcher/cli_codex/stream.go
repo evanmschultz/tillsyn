@@ -37,15 +37,21 @@ var ErrMalformedStreamLine = errors.New("cli_codex: malformed stream-json line")
 //   - type="turn.started"    — turn begin; non-terminal.
 //   - type="item.completed"  — item output; non-terminal. Canonical mapping:
 //     item.type="agent_message" → ev.Type="assistant", ev.Subtype="item.completed"
-//     item.type="tool_use"|"function_call" → ev.Type="tool_use", ev.Subtype="item.completed"
-//     item.type="reasoning" → ev.Type="reasoning", ev.Subtype="item.completed"
-//     unknown item.type → ev.Type="item.completed", ev.Subtype=item.type (permissive fallback)
+//     all other item.type values → ev.Type="item.completed", ev.Subtype=item.type (permissive fallback)
 //   - type="turn.completed"  — turn end with usage; TERMINAL.
 //   - type="turn.failed"     — turn error; TERMINAL.
 //   - type="error"           — mid-stream error signal (precedes turn.failed); non-terminal.
 //
-// Unknown type values pass through with Type set to the raw type string
-// (or empty if no type-like field is found).
+// Codex's real ThreadItem vocabulary is wider than the single verified subkind
+// above: agentMessage, commandExecution, fileChange, mcpToolCall,
+// collabToolCall, reasoning, plan, and others (see the codex SDK docs at
+// https://github.com/openai/codex). Per-subkind canonical mappings will land
+// as D4-style fixtures are captured for each subkind. Until then, unknown
+// subkinds fall through to the permissive default (ev.Type="item.completed",
+// ev.Subtype=item.type).
+//
+// Unknown top-level type values pass through with Type set to the raw type
+// string (or empty if no type-like field is found).
 func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 	// Always copy line into Raw before any decoding so the returned
 	// StreamEvent.Raw is detached from the caller's buffer. Stream readers
@@ -106,10 +112,8 @@ func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 		// Unknown item subkinds fall through to the permissive default below.
 		if itemRaw, ok := fields["item"]; ok {
 			var item struct {
-				Type      string          `json:"type"`
-				Text      string          `json:"text"`
-				Name      string          `json:"name"`      // tool name (tool_use / function_call)
-				Arguments json.RawMessage `json:"arguments"` // tool input args (codex wire format)
+				Type string `json:"type"`
+				Text string `json:"text"`
 			}
 			if err := json.Unmarshal(itemRaw, &item); err == nil {
 				switch item.Type {
@@ -120,21 +124,13 @@ func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 					ev.Type = "assistant"
 					ev.Subtype = "item.completed"
 					ev.Text = item.Text
-				case "tool_use", "function_call":
-					// Tool invocation — normalise to "tool_use" vocabulary.
-					ev.Type = "tool_use"
-					ev.Subtype = "item.completed"
-					ev.ToolName = item.Name
-					ev.ToolInput = item.Arguments
-				case "reasoning":
-					// Internal reasoning block — surface as "reasoning" type.
-					ev.Type = "reasoning"
-					ev.Subtype = "item.completed"
-					ev.Text = item.Text
 				default:
 					// Unknown item subkind — permissive pass-through. ev.Type
 					// retains the codex wire-format "item.completed" and Subtype
 					// carries the raw item.type value so callers can refine later.
+					// Per-subkind mappings land when D4-style fixtures exist for
+					// each subkind (commandExecution, fileChange, mcpToolCall,
+					// collabToolCall, reasoning, plan, etc.).
 					ev.Subtype = item.Type
 					ev.Text = item.Text
 				}
