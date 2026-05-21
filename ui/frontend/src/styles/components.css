@@ -1,0 +1,99 @@
+/*
+ * Tillsyn-local component styles that don't belong in the vendored stil
+ * stylesheets. Keep this file thin — anything that could plausibly live
+ * in stil's design system should be raised upstream rather than added here.
+ */
+
+/* ─── ProjectList ──────────────────────────────────────────────────────
+ * Cardless list of projects under the active workspace. Header sets the
+ * "Projects" pivot; rows render id + name with the id rendered in mono
+ * + accent for scannability (mirrors stil .component-card-id).
+ */
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.project-list-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.project-list-title {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  letter-spacing: var(--tracking-tight);
+}
+
+.project-list-hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.project-list-status {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-chrome);
+  border-radius: var(--radius-3);
+}
+
+.project-list-status[data-tone="error"] {
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--carl);
+}
+
+.project-list-status[data-tone="empty"] {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.project-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.project-list-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-4);
+  align-items: baseline;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-chrome);
+  border-radius: var(--radius-3);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.project-list-item:hover {
+  background: var(--bg-hover);
+}
+
+.project-list-item-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-wide);
+  font-weight: var(--weight-medium);
+}
+
+.project-list-item-name {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1,13 +1,61 @@
-<!DOCTYPE html>
+---
+/**
+ * MainLayout — Tillsyn's app-shell layout.
+ *
+ * Mirrors the stil Playground layout (drop_fe_3):
+ *   - Imports vendored design tokens + reset + global styles from
+ *     src/styles/ (refreshed from stil/main/src/styles/ at the current
+ *     snapshot).
+ *   - Imports the four self-hosted font families (Inter, JetBrains Mono,
+ *     Iosevka, Fira Code) via @fontsource so we don't depend on a CDN
+ *     reachable from inside the Wails webview.
+ *   - Renders the L-frame shell: NavRail + Topbar + main content slot.
+ */
+
+import "../styles/global.css";
+import "../styles/components.css";
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/600.css";
+import "@fontsource/iosevka/400.css";
+import "@fontsource/iosevka/600.css";
+import "@fontsource/fira-code/400.css";
+import "@fontsource/fira-code/600.css";
+
+import NavRail from "../components/NavRail.astro";
+import Topbar from "../components/Topbar.astro";
+
+interface Props {
+  title?: string;
+}
+
+const { title = "Tillsyn" } = Astro.props;
+---
+
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="generator" content={Astro.generator} />
-    <link rel="stylesheet" href="/stil-tokens.css" />
-    <title>Tillsyn</title>
+    <title>{title}</title>
   </head>
   <body>
-    <slot />
+    <div class="app">
+      <div class="app-rail">
+        <NavRail />
+      </div>
+
+      <div class="app-main">
+        <Topbar title={title} />
+        <div class="app-main-body">
+          <main class="app-content">
+            <slot />
+          </main>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

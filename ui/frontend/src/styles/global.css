@@ -1,0 +1,171 @@
+/*
+ * Vendored from stil/main/src/styles/global.css at the current snapshot.
+ *
+ * Base body styles + app-shell layout primitives (.app, .app-rail,
+ * .app-sidebar, .app-main, .app-content, .app-aside, etc.). Mirrors the
+ * stil playground shell so the Tillsyn FE reads as a Hylla product.
+ *
+ * Do not edit by hand for stylistic divergence — refresh from the stil repo
+ * when a token-pack drop syncs the design language. See drop_fe_3.
+ */
+
+@import "./tokens.css";
+@import "./reset.css";
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+  background: var(--bg-chrome);
+  transition:
+    background-color var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
+}
+
+::selection {
+  background: var(--carl-soft);
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─── App shell ────────────────────────────────────────────────────────
+ * NavRail · Sidebar · Topbar all share --bg-chrome with no seam.
+ * Viewport (.app-content) drops to --bg-surface with a single rounded
+ * inner corner — the only visible separator anywhere in the shell.
+ */
+
+.app {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg-chrome);
+}
+
+/* Chrome panels (rail / sidebar) push the viewport — they don't overlay it. */
+.app-rail,
+.app-sidebar {
+  flex-shrink: 0;
+  height: 100%;
+  background: var(--bg-chrome);
+  overflow: hidden;
+  position: relative;
+  z-index: 20;
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+.app-rail    { width: var(--rail-width); }
+.app-sidebar { width: var(--sidebar-width); }
+
+.app-rail > *    { min-width: var(--rail-width); height: 100%; overflow-y: auto; }
+.app-sidebar > * { min-width: var(--sidebar-width); height: 100%; overflow-y: auto; }
+
+body[data-rail-hidden="true"]    .app-rail    { width: 0; }
+body[data-sidebar-hidden="true"] .app-sidebar { width: 0; }
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-chrome);
+}
+
+.app-main-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.app-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-10) var(--space-12);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  background: var(--bg-surface);
+  border-top-left-radius: var(--corner-radius);
+}
+
+body[data-topbar-hidden="true"] .topbar {
+  height: 0;
+}
+
+@media (max-width: 880px) {
+  .app-content {
+    padding: var(--space-6) var(--space-5);
+  }
+}
+
+@media (max-width: 480px) {
+  .app-content {
+    padding: var(--space-4) var(--space-3);
+  }
+}
+
+/* ─── Unified input system (carried over for future surfaces) ────────── */
+
+input[type="text"],
+input[type="search"],
+input[type="email"],
+input[type="number"],
+input[type="password"],
+input[type="url"],
+textarea,
+select {
+  appearance: none;
+  background: var(--bg-chrome);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-3);
+  width: 100%;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+textarea {
+  resize: none;
+  min-height: 64px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+input[type="text"]:focus-visible,
+input[type="search"]:focus-visible,
+input[type="email"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="password"]:focus-visible,
+input[type="url"]:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

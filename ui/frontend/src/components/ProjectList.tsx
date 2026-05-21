@@ -1,12 +1,12 @@
 // MIGRATION TARGET: @hylla/stil-solid
 //
 // ProjectList renders the non-archived projects returned by the Go service
-// via the Wails in-process bridge (window.go.main.App.ListProjects). Plain
-// <ul><li> markup for D1.5; visual polish moves to the @hylla/stil-solid
-// component library in a later drop (see REVISION_BRIEF.md §3 Migration
-// Targets).
-import { createResource, For, Show } from 'solid-js';
-import { isServer } from 'solid-js/web';
+// via the Wails in-process bridge (window.go.main.App.ListProjects). Markup
+// uses Tillsyn-local CSS classes (src/styles/components.css) styled against
+// stil design tokens; the component itself moves to @hylla/stil-solid when
+// the upstream library exists (see REVISION_BRIEF.md §3 Migration Targets).
+import { createResource, For, Show } from "solid-js";
+import { isServer } from "solid-js/web";
 
 type Project = { ID: string; Name: string };
 
@@ -40,8 +40,14 @@ export default function ProjectList() {
   );
 
   return (
-    <section>
-      <h2>Projects</h2>
+    <section class="project-list" aria-labelledby="project-list-title">
+      <header class="project-list-header">
+        <h2 id="project-list-title" class="project-list-title">
+          Projects
+        </h2>
+        <span class="project-list-hint">drop_fe_3</span>
+      </header>
+
       {/*
         Outer guard gates on terminal resource states ("ready" + "errored")
         instead of the loading flag. This is load-bearing for SSR-hydration
@@ -56,21 +62,34 @@ export default function ProjectList() {
       */}
       <Show
         when={projects.state === "ready" || projects.state === "errored"}
-        fallback={<p>Loading…</p>}
+        fallback={<p class="project-list-status">Loading…</p>}
       >
         <Show
           when={!projects.error}
-          fallback={<p role="alert">Error: {String(projects.error)}</p>}
+          fallback={
+            <p
+              role="alert"
+              class="project-list-status"
+              data-tone="error"
+            >
+              Error: {String(projects.error)}
+            </p>
+          }
         >
           <Show
             when={(projects() ?? []).length > 0}
-            fallback={<p>No projects yet</p>}
+            fallback={
+              <p class="project-list-status" data-tone="empty">
+                No projects yet
+              </p>
+            }
           >
-            <ul>
+            <ul class="project-list-items">
               <For each={projects()}>
                 {(project) => (
-                  <li>
-                    {project.ID} — {project.Name}
+                  <li class="project-list-item">
+                    <span class="project-list-item-id">{project.ID}</span>
+                    <span class="project-list-item-name">{project.Name}</span>
                   </li>
                 )}
               </For>

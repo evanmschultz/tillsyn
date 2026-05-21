@@ -1,0 +1,126 @@
+---
+/**
+ * Topbar — the chrome strip at the top of the app shell.
+ *
+ * Mirrors the stil Topbar pattern (NavRail-aligned height + grid layout)
+ * but trimmed for Tillsyn's current surfaces. Held on the L-frame chrome,
+ * same --bg-chrome as the NavRail and Sidebar — no visible seam.
+ *
+ * NOTE: not a `// MIGRATION TARGET: @hylla/stil-solid` consumer — this is
+ * an Astro server component, not a Solid island. The migration marker
+ * rule (tests/migration-markers.test.ts) gates only .tsx/.ts files under
+ * src/components/.
+ */
+
+interface Props {
+  title?: string;
+}
+
+const { title = "Tillsyn" } = Astro.props;
+---
+
+<header class="topbar" aria-label="App topbar">
+  <div class="topbar-left">
+    <span class="topbar-brand">{title}</span>
+  </div>
+
+  <div class="topbar-center">
+    <span class="topbar-subtitle">Planning and coordination</span>
+  </div>
+
+  <div class="topbar-right">
+    <button type="button" class="topbar-icon-btn" aria-label="Settings (placeholder)" disabled>
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+    </button>
+  </div>
+</header>
+
+<style>
+  .topbar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 0 var(--space-4);
+    height: var(--topbar-height);
+    flex-shrink: 0;
+    background: var(--bg-chrome);
+    position: relative;
+    overflow: hidden;
+    transition: height var(--duration-base) var(--ease-out);
+  }
+
+  .topbar-left {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    justify-self: start;
+  }
+
+  .topbar-brand {
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+    color: var(--text-primary);
+  }
+
+  .topbar-center {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-tertiary);
+    font-size: var(--text-sm);
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .topbar-subtitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar-right {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    justify-self: end;
+  }
+
+  .topbar-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-2);
+    color: var(--text-secondary);
+    transition:
+      background-color var(--duration-fast) var(--ease-out),
+      color var(--duration-fast) var(--ease-out);
+  }
+
+  .topbar-icon-btn:hover:not([disabled]) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .topbar-icon-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .topbar-icon-btn[disabled] {
+    color: var(--text-tertiary);
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  @media (max-width: 640px) {
+    .topbar-center {
+      display: none;
+    }
+  }
+</style>

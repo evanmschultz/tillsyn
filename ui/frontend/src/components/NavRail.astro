@@ -1,0 +1,138 @@
+---
+/**
+ * NavRail — the thin chrome rail on the left edge.
+ *
+ * Mirrors the stil NavRail pattern (SigmaOS-style) — the brand mark sits
+ * at the top, navigation items below. For Tillsyn the rail holds the
+ * highest-level navigation pivot (projects, settings). Items are visual
+ * placeholders today; functional routing lands in a later drop.
+ *
+ * Shares --bg-chrome with the Topbar and (future) Sidebar — no visible seam.
+ *
+ * NOTE: not a `// MIGRATION TARGET: @hylla/stil-solid` consumer — Astro
+ * server component, not a Solid island. The migration-markers test gates
+ * only .tsx/.ts files under src/components/.
+ */
+
+interface RailItem {
+  icon: string;
+  label: string;
+  selected?: boolean;
+}
+
+interface Props {
+  items?: RailItem[];
+}
+
+const defaultItems: RailItem[] = [
+  { icon: "◆", label: "Projects", selected: true },
+  { icon: "⌘", label: "Settings" },
+];
+
+const { items = defaultItems } = Astro.props;
+---
+
+<aside class="navrail" aria-label="Workspace">
+  <a
+    class="navrail-mark"
+    href="/"
+    aria-label="Tillsyn home"
+  >
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+      <path
+        d="M12 2 L21 7 V17 L12 22 L3 17 V7 Z M12 4.4 L5 8.2 V15.8 L12 19.6 L19 15.8 V8.2 Z"
+        fill-rule="evenodd"
+      />
+    </svg>
+  </a>
+
+  <nav class="navrail-list" aria-label="Primary sections">
+    {items.map((item) => (
+      <button
+        type="button"
+        class:list={["navrail-item", item.selected && "is-selected"]}
+        aria-label={item.label}
+        aria-current={item.selected ? "page" : undefined}
+        title={item.label}
+      >
+        <span aria-hidden="true">{item.icon}</span>
+      </button>
+    ))}
+  </nav>
+</aside>
+
+<style>
+  .navrail {
+    width: 100%;
+    height: 100%;
+    background: var(--bg-chrome);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 0 var(--nav-padding-bottom);
+    gap: var(--space-2);
+  }
+
+  /* Brand mark pinned to topbar height so the first nav item sits at the
+   * same Y as a future sidebar's first item. */
+  .navrail-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--nav-item-height);
+    height: var(--topbar-height);
+    border-radius: var(--radius-2);
+    color: var(--accent);
+    transition:
+      background-color var(--duration-fast) var(--ease-out),
+      color var(--duration-fast) var(--ease-out);
+  }
+
+  .navrail-mark:hover {
+    background: var(--bg-hover);
+  }
+
+  .navrail-mark:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .navrail-list {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--nav-item-gap);
+    flex: 1;
+    width: 100%;
+  }
+
+  .navrail-item {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--nav-item-height);
+    height: var(--nav-item-height);
+    border-radius: var(--radius-2);
+    color: var(--text-tertiary);
+    font-size: 14px;
+    line-height: 1;
+    transition:
+      background-color var(--duration-fast) var(--ease-out),
+      color var(--duration-fast) var(--ease-out);
+  }
+
+  .navrail-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .navrail-item.is-selected {
+    background: var(--bg-selected);
+    color: var(--text-primary);
+  }
+
+  .navrail-item:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+</style>
