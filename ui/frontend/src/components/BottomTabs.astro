@@ -1,0 +1,59 @@
+---
+/**
+ * BottomTabs — mobile-only tab bar (≤640px), replaces NavRail at narrow widths.
+ *
+ * Visibility is controlled by global.css:
+ *   .app-bottom-tabs { display: none; }                          (base, desktop/tablet)
+ *   @media (max-width: 640px) { .app-bottom-tabs { display: flex; ... } }
+ *
+ * The default `items` override upstream stil's 4 cross-app pivots
+ * (Stil/Tillsyn/Hylla/Lykta) with Tillsyn's own NavRail-aligned pivots
+ * (Projects + Settings) so the mobile bar mirrors the desktop rail. Per
+ * drop_fe_4 QA-falsification NIT N2 / OQ-1, this override is load-bearing
+ * — do NOT restore upstream's cross-app defaults.
+ *
+ * NOTE: not a `// MIGRATION TARGET: @hylla/stil-solid` consumer — Astro
+ * server component, not a Solid island. `migration-markers.test.ts` gates
+ * only .tsx/.ts files under src/components/, so no marker is needed here.
+ */
+
+interface TabItem {
+  icon: string;
+  label: string;
+  selected?: boolean;
+}
+
+interface Props {
+  items?: TabItem[];
+}
+
+const defaultItems: TabItem[] = [
+  { icon: "◆", label: "Projects", selected: true },
+  { icon: "⌘", label: "Settings" },
+];
+
+const { items = defaultItems } = Astro.props;
+---
+
+<nav class="app-bottom-tabs" aria-label="Workspaces">
+  <button
+    type="button"
+    class="bottom-tabs-handle"
+    data-aside-toggle
+    aria-label="Open command sheet"
+  >
+    <span class="bottom-tabs-handle-pill" aria-hidden="true"></span>
+  </button>
+  <div class="bottom-tabs-row">
+    {items.map((item) => (
+      <button
+        type="button"
+        class:list={["bottom-tab", item.selected && "is-active"]}
+        aria-current={item.selected ? "page" : undefined}
+      >
+        <span class="bottom-tab-icon" aria-hidden="true">{item.icon}</span>
+        <span class="bottom-tab-label">{item.label}</span>
+      </button>
+    ))}
+  </div>
+</nav>
