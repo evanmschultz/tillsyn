@@ -499,6 +499,45 @@ func TestNewActionItemStructuralTypeValidation(t *testing.T) {
 	}
 }
 
+// TestValidatePositionalInvariant exercises the cascade-positional helper
+// extracted in Lane A D5 so the Service-layer Update + Reparent call sites
+// can share the same rule NewActionItem enforces at construction. Coverage
+// matches the four canonical cases enumerated in WIKI.md § Cascade
+// Vocabulary plus a representative level-agnostic value (droplet) to lock
+// in the no-op contract for the segment / confluence / droplet trio.
+//
+// Empty StructuralType is intentionally a no-op here — the upstream
+// ErrInvalidStructuralType gate fires before this helper at every call
+// site. Validating that branch through NewActionItem already covers the
+// composite shape.
+func TestValidatePositionalInvariant(t *testing.T) {
+	cases := []struct {
+		name     string
+		st       StructuralType
+		parentID string
+		want     error
+	}{
+		{name: "cascade at level-1 accepted", st: StructuralTypeCascade, parentID: "", want: nil},
+		{name: "cascade at level-2+ rejects", st: StructuralTypeCascade, parentID: "p-parent", want: ErrCascadeMustBeLevel1},
+		{name: "drop at level-2+ accepted", st: StructuralTypeDrop, parentID: "p-parent", want: nil},
+		{name: "drop at level-1 rejects", st: StructuralTypeDrop, parentID: "", want: ErrDropMustBeLevel2Plus},
+		{name: "droplet at level-1 accepted (level-agnostic)", st: StructuralTypeDroplet, parentID: "", want: nil},
+		{name: "droplet at level-2+ accepted (level-agnostic)", st: StructuralTypeDroplet, parentID: "p-parent", want: nil},
+		{name: "segment level-agnostic", st: StructuralTypeSegment, parentID: "", want: nil},
+		{name: "confluence level-agnostic", st: StructuralTypeConfluence, parentID: "p-parent", want: nil},
+		{name: "empty structural_type is no-op", st: "", parentID: "p-parent", want: nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ValidatePositionalInvariant(tc.st, tc.parentID)
+			if got != tc.want {
+				t.Fatalf("ValidatePositionalInvariant(%q, %q) = %v, want %v", tc.st, tc.parentID, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestActionItemMoveUpdateArchiveRestore verifies behavior for the covered scenario.
 func TestActionItemMoveUpdateArchiveRestore(t *testing.T) {
 	now := time.Now()

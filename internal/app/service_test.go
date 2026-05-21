@@ -1464,6 +1464,129 @@ func TestUpdateActionItem(t *testing.T) {
 	}
 }
 
+// TestUpdateActionItemEnforcesPositionalInvariant exercises Lane A D5's
+// closure of the C2 finding from the D1 build-QA-falsification comment.
+// Pre-D5, the cascade-positional invariant
+// (`cascade↔ParentID==""`, `drop↔ParentID!=""`) was enforced only inside
+// NewActionItem, so a UpdateActionItem patch promoting a non-root row to
+// structural_type=cascade — or demoting a root row to structural_type=drop —
+// bypassed the rule. Post-D5, the Update path re-validates the post-merge
+// (structural_type, parent_id) tuple against
+// domain.ValidatePositionalInvariant, returning the same sentinel errors
+// NewActionItem returns at construction time.
+//
+// Coverage:
+//
+//   - Patch {structural_type: "cascade"} on an existing non-root row →
+//     ErrCascadeMustBeLevel1. ParentID is not mutable through
+//     UpdateActionItem, so the existing persisted parent_id flows directly
+//     into the gate.
+//   - Patch {structural_type: "drop"} on an existing root row (parent_id
+//     == "") → ErrDropMustBeLevel2Plus.
+//   - Patch {structural_type: "droplet"} on either row → success (the
+//     three level-agnostic values are always accepted; this lock prevents
+//     a future refactor from broadening the rule to all five values).
+func TestUpdateActionItemEnforcesPositionalInvariant(t *testing.T) {
+	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name           string
+		seedParentID   string
+		seedStructural domain.StructuralType
+		patchST        domain.StructuralType
+		wantErr        error
+	}{
+		{
+			name:           "cascade patch on non-root rejects",
+			seedParentID:   "p-parent",
+			seedStructural: domain.StructuralTypeDroplet,
+			patchST:        domain.StructuralTypeCascade,
+			wantErr:        domain.ErrCascadeMustBeLevel1,
+		},
+		{
+			name:           "drop patch on root rejects",
+			seedParentID:   "",
+			seedStructural: domain.StructuralTypeCascade,
+			patchST:        domain.StructuralTypeDrop,
+			wantErr:        domain.ErrDropMustBeLevel2Plus,
+		},
+		{
+			name:           "droplet patch on non-root accepted",
+			seedParentID:   "p-parent",
+			seedStructural: domain.StructuralTypeDrop,
+			patchST:        domain.StructuralTypeDroplet,
+			wantErr:        nil,
+		},
+		{
+			name:           "droplet patch on root accepted (level-agnostic)",
+			seedParentID:   "",
+			seedStructural: domain.StructuralTypeCascade,
+			patchST:        domain.StructuralTypeDroplet,
+			wantErr:        nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			// Seed the referenced parent row so the lineage walker
+			// (actionItemLineage in capabilityScopesForActionItemLineage)
+			// can resolve the upward walk without tripping repo.GetActionItem
+			// "not found". The seed parent is a cascade root (level-1) so
+			// the child under test is a legitimate level-2+ row.
+			if tc.seedParentID != "" {
+				p, err := domain.NewActionItemForTest(domain.ActionItemInput{
+					Kind:           domain.KindPlan,
+					ID:             tc.seedParentID,
+					ProjectID:      "p1",
+					ColumnID:       "c1",
+					Position:       0,
+					Title:          "seed parent",
+					Priority:       domain.PriorityLow,
+					StructuralType: domain.StructuralTypeCascade,
+				}, now)
+				if err != nil {
+					t.Fatalf("seed parent NewActionItemForTest() error = %v", err)
+				}
+				repo.tasks[p.ID] = p
+			}
+			actionItem, err := domain.NewActionItemForTest(domain.ActionItemInput{
+				Kind:           domain.KindPlan,
+				ID:             "t-pos",
+				ProjectID:      "p1",
+				ParentID:       tc.seedParentID,
+				ColumnID:       "c1",
+				Position:       1,
+				Title:          "x",
+				Priority:       domain.PriorityLow,
+				StructuralType: tc.seedStructural,
+			}, now)
+			if err != nil {
+				t.Fatalf("seed NewActionItemForTest() error = %v", err)
+			}
+			repo.tasks[actionItem.ID] = actionItem
+
+			svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+			updated, err := svc.UpdateActionItem(context.Background(), UpdateActionItemInput{
+				ActionItemID:   actionItem.ID,
+				StructuralType: tc.patchST,
+			})
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("UpdateActionItem() err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UpdateActionItem() unexpected err = %v", err)
+			}
+			if updated.StructuralType != tc.patchST {
+				t.Fatalf("StructuralType = %q, want %q", updated.StructuralType, tc.patchST)
+			}
+		})
+	}
+}
+
 // TestUpdateActionItemAppliesMutationActorContext verifies context-supplied actor attribution is persisted on updates.
 func TestUpdateActionItemAppliesMutationActorContext(t *testing.T) {
 	repo := newFakeRepo()
@@ -3643,6 +3766,147 @@ func TestReparentActionItemAndListChildActionItems(t *testing.T) {
 	}
 	if len(children) != 1 || children[0].ID != child.ID {
 		t.Fatalf("unexpected child list %#v", children)
+	}
+}
+
+// TestReparentActionItemEnforcesPositionalInvariant exercises Lane A D5's
+// symmetric closure of the Update-path C2 finding for the parent_id-mutation
+// axis. Pre-D5, the cascade-positional invariant lived only inside
+// NewActionItem, so ReparentActionItem could promote a cascade row to a
+// non-root parent — or demote a drop row to the empty root — bypassing the
+// rule. Post-D5, ReparentActionItem re-validates the (current
+// structural_type, new parent_id) tuple against
+// domain.ValidatePositionalInvariant before touching the row, short-
+// circuiting BEFORE the parent existence / project-match / cycle gates so
+// invalid tuples never incur an unnecessary repo round-trip.
+//
+// Coverage:
+//
+//   - Cascade row reparented to a non-empty parent → ErrCascadeMustBeLevel1.
+//   - Drop row reparented to the empty root → ErrDropMustBeLevel2Plus.
+//   - Droplet (level-agnostic) reparented either direction → success. Locks
+//     in the no-op contract for the segment / confluence / droplet trio.
+func TestReparentActionItemEnforcesPositionalInvariant(t *testing.T) {
+	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name         string
+		rowST        domain.StructuralType
+		seedParentID string
+		newParentID  string
+		seedRoot     bool
+		wantErr      error
+	}{
+		{
+			name:         "cascade reparented to non-empty rejects",
+			rowST:        domain.StructuralTypeCascade,
+			seedParentID: "",
+			newParentID:  "root-of-other-tree",
+			seedRoot:     true,
+			wantErr:      domain.ErrCascadeMustBeLevel1,
+		},
+		{
+			name:         "drop reparented to empty rejects",
+			rowST:        domain.StructuralTypeDrop,
+			seedParentID: "root-of-cascade",
+			newParentID:  "",
+			seedRoot:     false,
+			wantErr:      domain.ErrDropMustBeLevel2Plus,
+		},
+		{
+			name:         "droplet reparented to non-empty accepted",
+			rowST:        domain.StructuralTypeDroplet,
+			seedParentID: "root-of-cascade",
+			newParentID:  "root-of-other-tree",
+			seedRoot:     true,
+			wantErr:      nil,
+		},
+		{
+			name:         "droplet reparented to empty accepted (level-agnostic)",
+			rowST:        domain.StructuralTypeDroplet,
+			seedParentID: "root-of-cascade",
+			newParentID:  "",
+			seedRoot:     false,
+			wantErr:      nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			project, _ := domain.NewProjectFromInput(domain.ProjectInput{ID: "p1", Name: "Inbox"}, now)
+			repo.projects[project.ID] = project
+			column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+			repo.columns[column.ID] = column
+
+			// Seed any referenced parents so cycle + project-match gates
+			// downstream of the positional gate would have data to consult.
+			// The invariant fires BEFORE those gates, but seeding mirrors
+			// real-world traffic where the parent exists.
+			if tc.seedParentID != "" {
+				p, err := domain.NewActionItemForTest(domain.ActionItemInput{
+					Kind:           domain.KindPlan,
+					ID:             tc.seedParentID,
+					ProjectID:      project.ID,
+					ColumnID:       column.ID,
+					Position:       0,
+					Title:          "seed parent",
+					Priority:       domain.PriorityLow,
+					StructuralType: domain.StructuralTypeCascade,
+				}, now)
+				if err != nil {
+					t.Fatalf("seed parent NewActionItemForTest() error = %v", err)
+				}
+				repo.tasks[p.ID] = p
+			}
+			if tc.seedRoot && tc.newParentID != "" {
+				np, err := domain.NewActionItemForTest(domain.ActionItemInput{
+					Kind:           domain.KindPlan,
+					ID:             tc.newParentID,
+					ProjectID:      project.ID,
+					ColumnID:       column.ID,
+					Position:       1,
+					Title:          "new parent",
+					Priority:       domain.PriorityLow,
+					StructuralType: domain.StructuralTypeCascade,
+				}, now)
+				if err != nil {
+					t.Fatalf("seed new-parent NewActionItemForTest() error = %v", err)
+				}
+				repo.tasks[np.ID] = np
+			}
+
+			row, err := domain.NewActionItemForTest(domain.ActionItemInput{
+				Kind:           domain.KindPlan,
+				ID:             "row-under-test",
+				ProjectID:      project.ID,
+				ParentID:       tc.seedParentID,
+				ColumnID:       column.ID,
+				Position:       2,
+				Title:          "row under test",
+				Priority:       domain.PriorityLow,
+				StructuralType: tc.rowST,
+			}, now)
+			if err != nil {
+				t.Fatalf("seed row NewActionItemForTest() error = %v", err)
+			}
+			repo.tasks[row.ID] = row
+
+			svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+			updated, err := svc.ReparentActionItem(context.Background(), row.ID, tc.newParentID)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("ReparentActionItem() err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReparentActionItem() unexpected err = %v", err)
+			}
+			if updated.ParentID != tc.newParentID {
+				t.Fatalf("ParentID = %q, want %q", updated.ParentID, tc.newParentID)
+			}
+		})
 	}
 }
 

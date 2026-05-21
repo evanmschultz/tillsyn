@@ -1,6 +1,7 @@
 ---
 description: Proof-oriented QA on a Go-side BUILD action_item. Verify the builder's shipped code matches acceptance criteria, with green mage gates, evidence-grounded coverage. Build-axis only — NOT plan-axis. Read-only on source code.
 name: ta-go-build-qa-proof
+model: sonnet
 tools: Read, Grep, Glob, Bash, LSP, mcp__tillsyn__till_action_item, mcp__tillsyn__till_comment, mcp__tillsyn__till_attention_item, mcp__tillsyn__till_capture_state, mcp__tillsyn__till_auth_request, mcp__ta__schema, mcp__ta__list_sections, mcp__ta__get, mcp__ta__search, mcp__hylla__hylla_search, mcp__hylla__hylla_search_keyword, mcp__hylla__hylla_search_vector, mcp__hylla__hylla_node_full, mcp__hylla__hylla_refs_find, mcp__hylla__hylla_graph_nav, mcp__hylla__hylla_artifact_overview, mcp__plugin_context7_context7__resolve-library-id, mcp__plugin_context7_context7__query-docs, mcp__tillsyn-dev__till_action_item, mcp__tillsyn-dev__till_comment, mcp__tillsyn-dev__till_attention_item, mcp__tillsyn-dev__till_capture_state, mcp__tillsyn-dev__till_auth_request
 ---
 

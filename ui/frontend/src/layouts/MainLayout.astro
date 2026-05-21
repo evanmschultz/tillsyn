@@ -1,18 +1,34 @@
 ---
 /**
- * MainLayout — Tillsyn's app-shell layout.
+ * MainLayout — Tillsyn's app-shell layout (Lane B D1 — 2-zone + status-footer).
  *
- * Mirrors the stil Playground layout (drop_fe_3):
- *   - Imports vendored design tokens + reset + global styles from
- *     src/styles/ (refreshed from stil/main/src/styles/ at the current
- *     snapshot).
- *   - Imports the two self-hosted font families actually referenced by the
- *     stil token stack (Inter for --font-sans, JetBrains Mono for
- *     --font-mono) via @fontsource so we don't depend on a CDN reachable
- *     from inside the Wails webview. Iosevka and Fira Code were dropped in
- *     the FE3 cleanup pass — neither was referenced by any token or
- *     selector after the stil vendor (~5.75 MB of dist bloat avoided).
- *   - Renders the L-frame shell: NavRail + Topbar + main content slot.
+ * Reuses stil's canonical flex paradigm from
+ * /Users/evanschultz/Documents/Code/hylla/stil/main/src/styles/global.css:45-52
+ * — `.app` STAYS `display: flex` (NO grid). The 708-line vendored stil CSS
+ * depends on flex push semantics (`flex-shrink: 0`, `transition: width`,
+ * `body[data-sidebar-hidden] .app-sidebar { width: 0 }`); switching to grid
+ * would break stil-canonical alignment for future stil-swift / iOS / Android
+ * adapters.
+ *
+ * Shell shape (Lane B Round-2 Option A absorption):
+ *   <body>            <-- outer flex column
+ *     <div class="app">                  <-- stil-canonical flex row
+ *       <aside class="app-sidebar">      <-- left sidebar (slot)
+ *       <main class="app-main">
+ *         <header class="app-topbar">    <-- brand-only Topbar (HV-2 default)
+ *         <slot/>                        <-- KanbanBoard / page content
+ *     <footer class="app-status-footer"> <-- SIBLING of .app (sticky-bottom)
+ *     <nav class="app-bottom-tabs">      <-- mobile only (CSS-gated ≤640)
+ *
+ * StatusFooter sits OUTSIDE `.app` because `.app { overflow: hidden }` would
+ * clip a sticky child. Outer `<body>` flex column gives sticky-bottom + no
+ * `position: fixed` hack.
+ *
+ * Imports:
+ *   - vendored design tokens + reset + global styles from src/styles/.
+ *   - Inter (sans) + JetBrains Mono via @fontsource (Wails webview offline).
+ *   - NavRail import + DOM REMOVED (Lane B D1) — `.app-rail` CSS stays
+ *     dormant in global.css for potential future revival.
  */
 
 import "../styles/global.css";
@@ -23,8 +39,8 @@ import "@fontsource/inter/600.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/600.css";
 
-import NavRail from "../components/NavRail.astro";
 import Topbar from "../components/Topbar.astro";
+import BottomTabs from "../components/BottomTabs.astro";
 
 interface Props {
   title?: string;
@@ -43,18 +59,26 @@ const { title = "Tillsyn" } = Astro.props;
   </head>
   <body>
     <div class="app">
-      <div class="app-rail">
-        <NavRail />
-      </div>
+      <aside class="app-sidebar">
+        <slot name="sidebar" />
+      </aside>
 
-      <div class="app-main">
-        <Topbar title={title} />
+      <main class="app-main">
+        <header class="app-topbar">
+          <Topbar title={title} />
+        </header>
         <div class="app-main-body">
-          <main class="app-content">
+          <div class="app-content">
             <slot />
-          </main>
+          </div>
         </div>
-      </div>
+      </main>
     </div>
+
+    <footer class="app-status-footer">
+      <slot name="statusFooter" />
+    </footer>
+
+    <BottomTabs />
   </body>
 </html>

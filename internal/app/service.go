@@ -2029,9 +2029,21 @@ func (s *Service) UpdateActionItem(ctx context.Context, in UpdateActionItemInput
 	// split. A non-empty input is normalized + validated against the
 	// closed StructuralType enum; mismatches surface as
 	// ErrInvalidStructuralType.
+	//
+	// After the assignment, the post-merge (structural_type, parent_id)
+	// pair is re-checked against the cascade-positional invariant via
+	// domain.ValidatePositionalInvariant so the Update path cannot bypass
+	// the rule NewActionItem enforces at construction (Lane A D5 — closes
+	// the C2 finding from the D1 build-QA-falsification comment). ParentID
+	// is not mutable through UpdateActionItem, so the existing persisted
+	// value flows in directly; the symmetric ReparentActionItem gate covers
+	// the parent_id-mutation half of the bypass.
 	if normalized := domain.NormalizeStructuralType(in.StructuralType); normalized != "" {
 		if !domain.IsValidStructuralType(normalized) {
 			return domain.ActionItem{}, domain.ErrInvalidStructuralType
+		}
+		if err := domain.ValidatePositionalInvariant(normalized, actionItem.ParentID); err != nil {
+			return domain.ActionItem{}, err
 		}
 		actionItem.StructuralType = normalized
 		actionItem.UpdatedAt = s.clock().UTC()
@@ -2570,6 +2582,19 @@ func (s *Service) ReparentActionItem(ctx context.Context, actionItemID, parentID
 		return domain.ActionItem{}, err
 	}
 	parentID = strings.TrimSpace(parentID)
+	// Cascade-positional invariant gate (Lane A D5 — closes the C2 finding
+	// from the D1 build-QA-falsification comment). Every reparent changes
+	// parent_id, so the new (structural_type, parent_id) pair must satisfy
+	// domain.ValidatePositionalInvariant against the current
+	// actionItem.StructuralType. Checked BEFORE the parent existence /
+	// project-match / cycle gates so the invariant short-circuits without
+	// extra repo round-trips when the tuple itself is invalid (e.g.
+	// reparenting a cascade row to any non-empty parent is unconditionally
+	// wrong regardless of whether that parent exists). UpdateActionItem
+	// holds the symmetric structural_type-patch half of the bypass closure.
+	if err := domain.ValidatePositionalInvariant(actionItem.StructuralType, parentID); err != nil {
+		return domain.ActionItem{}, err
+	}
 	var parent *domain.ActionItem
 	if parentID != "" {
 		parentActionItem, parentErr := s.repo.GetActionItem(ctx, parentID)

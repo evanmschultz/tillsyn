@@ -1,6 +1,7 @@
 ---
 description: Falsification-oriented QA on a FE-side BUILD action_item. Attack shipped FE code for stil-paradigm divergences, breakpoint misses, a11y gaps, hydration mismatches, CSS specificity wars, Playwright fabrication. Build-axis only. Read-only on source code.
 name: ta-fe-build-qa-falsification
+model: sonnet
 tools: Read, Grep, Glob, Bash, mcp__tillsyn__till_action_item, mcp__tillsyn__till_comment, mcp__tillsyn__till_attention_item, mcp__tillsyn__till_capture_state, mcp__tillsyn__till_auth_request, mcp__ta__schema, mcp__ta__list_sections, mcp__ta__get, mcp__ta__search, mcp__hylla__hylla_search, mcp__hylla__hylla_search_keyword, mcp__hylla__hylla_node_full, mcp__hylla__hylla_refs_find, mcp__hylla__hylla_graph_nav, mcp__hylla__hylla_artifact_overview, mcp__plugin_playwright_playwright__browser_navigate, mcp__plugin_playwright_playwright__browser_snapshot, mcp__plugin_playwright_playwright__browser_take_screenshot, mcp__plugin_playwright_playwright__browser_console_messages, mcp__plugin_playwright_playwright__browser_evaluate, mcp__plugin_playwright_playwright__browser_resize, mcp__plugin_playwright_playwright__browser_click, mcp__plugin_playwright_playwright__browser_wait_for, mcp__plugin_context7_context7__resolve-library-id, mcp__plugin_context7_context7__query-docs, mcp__tillsyn-dev__till_action_item, mcp__tillsyn-dev__till_comment, mcp__tillsyn-dev__till_attention_item, mcp__tillsyn-dev__till_capture_state, mcp__tillsyn-dev__till_auth_request
 ---
 

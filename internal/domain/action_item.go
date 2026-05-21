@@ -363,17 +363,13 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 	if !IsValidStructuralType(in.StructuralType) {
 		return ActionItem{}, ErrInvalidStructuralType
 	}
-	// Cascade-positional invariant per WIKI.md § Cascade Vocabulary (2026-05-21):
-	//   - structural_type=cascade is valid ONLY at level-1 (parent_id == "").
-	//   - structural_type=drop is valid ONLY at level-2+ (parent_id != "").
-	// Domain owns the axis; template [kinds.X].structural_type is advisory.
+	// Cascade-positional invariant per WIKI.md § Cascade Vocabulary
+	// (2026-05-21). Delegated to ValidatePositionalInvariant so the Service-
+	// layer update + reparent paths can reuse the same check (Lane A D5).
 	// `in.ParentID` is already TrimSpace'd above, so the empty-string compare
-	// is safe.
-	if in.StructuralType == StructuralTypeCascade && in.ParentID != "" {
-		return ActionItem{}, ErrCascadeMustBeLevel1
-	}
-	if in.StructuralType == StructuralTypeDrop && in.ParentID == "" {
-		return ActionItem{}, ErrDropMustBeLevel2Plus
+	// inside the helper is safe.
+	if err := ValidatePositionalInvariant(in.StructuralType, in.ParentID); err != nil {
+		return ActionItem{}, err
 	}
 	// Owner is a free-form principal-name string. Trim only — no closed-enum
 	// membership check, since future template-defined owned kinds can pick
@@ -709,6 +705,44 @@ func normalizeLabels(labels []string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// ValidatePositionalInvariant enforces the cascade-positional rule from
+// WIKI.md § Cascade Vocabulary (2026-05-21):
+//
+//   - structural_type=cascade is valid ONLY at level-1 (parent_id == "").
+//   - structural_type=drop is valid ONLY at level-2+ (parent_id != "").
+//   - segment, confluence, droplet are level-agnostic on this axis.
+//
+// The helper exists so the three Service-layer entry points that can
+// mutate the (structural_type, parent_id) pair — NewActionItem at create,
+// Service.UpdateActionItem on a structural_type patch, and
+// Service.ReparentActionItem on a parent_id move — share one rule rather
+// than reimplementing the two sentinel-error branches at each site
+// (Lane A D5).
+//
+// Callers are expected to pass a normalized StructuralType (lowercase,
+// trimmed) and a trimmed parentID. ValidatePositionalInvariant does not
+// re-normalize either input — the existing call sites already trim and
+// lowercase before reaching this gate, and tightening the contract here
+// keeps the helper a pure invariant check rather than a soft fallback.
+//
+// Return contract:
+//
+//   - StructuralType=cascade with non-empty parentID → ErrCascadeMustBeLevel1.
+//   - StructuralType=drop with empty parentID → ErrDropMustBeLevel2Plus.
+//   - All other combinations → nil. Empty StructuralType is intentionally
+//     a no-op here; ErrInvalidStructuralType belongs to the upstream enum-
+//     membership gate (NewActionItem's existing check, mirrored by the
+//     Service layer's IsValidStructuralType branch).
+func ValidatePositionalInvariant(st StructuralType, parentID string) error {
+	if st == StructuralTypeCascade && parentID != "" {
+		return ErrCascadeMustBeLevel1
+	}
+	if st == StructuralTypeDrop && parentID == "" {
+		return ErrDropMustBeLevel2Plus
+	}
+	return nil
 }
 
 // NormalizeActionItemPaths normalizes the Paths slice using the same rules
