@@ -37,9 +37,13 @@ coverage.out
 .playwright-mcp/
 *~
 
-# Agent / tool state (keep local, never commit)
-.claude/
-.codex/
+# Agent / tool state — track project-level configuration (.claude/agents/*.md +
+# .claude/settings.json) so subagent personas + tool allowlists travel with the
+# repo. Per-machine variants (.local.json + sessions/) stay ignored.
+.claude/*.local.json
+.claude/sessions/
+.codex/*.local.json
+.codex/sessions/
 .nvimlog
 
 # Wails build outputs and generated bindings (Drop 4c.6.1 W6.D1; relocated under ui/ at drop_fe_1_bootstrap D1.1)

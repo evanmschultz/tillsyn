@@ -13,7 +13,7 @@ Applies across every session, drop, agent, and surface in this project. Adding t
 - **No arbitrary-argv knobs on `BindingResolved`.** REV-1 supersession explicitly killed `Command []string` and `ArgsPrefix []string`. Templates declare `cli_kind`; adapters encapsulate argv. Do not reintroduce. New CLI families get new adapters, not template-supplied argv strings.
 - **Atomicity is a planner-prompt concern, not dispatcher Go code.** Builders' droplet sizing is enforced structurally via `paths` + `packages` declarations + file/package lock manager (Drop 4a Wave 2), AND numerically via the planner prompt rule "≤4 small blocks per build droplet, declare paths + packages." Do not bake numeric atomicity into Go code.
 - **Multi-backend dogfood is the cost-relief mechanism.** Anthropic-only spend is unsustainable. Route `plan` + `*-qa-falsification` to Codex (gpt-5.x with reasoning-effort knobs); route `*-qa-proof` to claude-opus (specialist verification); route `build` + `commit` to claude-haiku (or `claude --bare` → ollama-localhost for tier-2 cheap-builder). See `project_multi_backend_dogfood_direction.md` memory for the full routing thesis + scope of `drop_4d_multi_backend`.
-- **ALWAYS parallelize FE and core work — NEVER serialize without a real dependency.** Cross-lane work (FE in `ui/**` + core Go in `internal/**` / `cmd/**`) is disjoint by package and has zero file-level lock contention; the cascade's file/package lock manager (Drop 4a Wave 2) blocks same-lane sibling conflicts, NOT cross-lane work. Dispatch fe-builder-agent + go-builder-agent concurrently against unblocked droplets every cascade tick. The only legitimate serialization between FE and core is an explicit `blocked_by` edge naming a specific cross-lane symbol dependency (e.g. FE needs a new Go IPC method to exist before its component can call it). Default = parallel; serialization is the exception that requires justification. Same rule applies WITHIN a lane: anything not explicitly `blocked_by` another sibling runs concurrently. See `feedback_parallelize_unblocked_default.md` memory for the dev directive backing this.
+- **ALWAYS parallelize FE and core work — NEVER serialize without a real dependency.** Cross-lane work (FE in `ui/**` + core Go in `internal/**` / `cmd/**`) is disjoint by package and has zero file-level lock contention; the cascade's file/package lock manager (Drop 4a Wave 2) blocks same-lane sibling conflicts, NOT cross-lane work. Dispatch `ta-fe-builder` + `ta-go-builder` concurrently against unblocked droplets every cascade tick. The only legitimate serialization between FE and core is an explicit `blocked_by` edge naming a specific cross-lane symbol dependency (e.g. FE needs a new Go IPC method to exist before its component can call it). Default = parallel; serialization is the exception that requires justification. Same rule applies WITHIN a lane: anything not explicitly `blocked_by` another sibling runs concurrently. See `feedback_parallelize_unblocked_default.md` memory for the dev directive backing this.
 - **Playwright MANDATORY for FE work.** Every fe-builder / fe-qa spawn prompt MUST require: `mcp__plugin_playwright_playwright__browser_navigate` to `http://localhost:51428`, `browser_snapshot`, `browser_take_screenshot` (fullPage + saved to `.playwright-mcp/`), `browser_console_messages level=error` (0 errors required), `browser_evaluate` for computed-style token verification. NOT optional. NOT deferable to dev. If subagent tool allowlist blocks Playwright MCP, agent reports BLOCKED and orch runs the verification itself — never fabricated, never silently skipped. Dev called this out 2026-05-21 after multiple agents skipped visual verification.
 - **Responsive-first FE — mobile + tablet + desktop breakpoints from day one.** Per `feedback_responsive_first_fe.md`. Desktop Wails users resize their window freely; the layout MUST adapt at standard breakpoints (mobile 375x667, tablet 768x1024, desktop 1280x800+). Build mobile-first CSS, layer wider rules via `@media (min-width: ...)`. NavRail collapses to bottom-tabs / horizontal strip at narrow widths. Topbar drops subtitle at narrow widths. Use stil's canonical breakpoint tokens (from `/Users/evanschultz/Documents/Code/hylla/stil/main/src/styles/tokens.css`) — do NOT invent Tillsyn-local breakpoint values. Playwright verification MUST include `browser_resize` at all three breakpoints + screenshot at each. Why: (a) real desktop UX (resize-friendly is table stakes), (b) cross-platform leverage (patterns built here inform future `stil-swift` iOS + Android native ports — Hylla's design-system paradigm is "stil = canonical tokens; per-platform adapters render"). drop_fe_3 trimmed stil's mobile patterns from `global.css` (172-line vendored subset vs 708-line upstream); the first follow-up FE drop should restore those patterns by re-vendoring the full file.
 - **Plan-QA twins MUST close BEFORE sibling build droplets start.** Cascade discipline: plan-QA-proof + plan-QA-falsification on the cascade root (or any nested plan node) run to completion (with revision rounds if needed) BEFORE any `kind=build` child transitions to `in_progress`. drop_4d_codex's whole shipped-but-not-wired failure was caught only post-hoc because plan-QA fired AFTER 8 droplets shipped. The methodology spine is "plan down, build up" — plan-QA gates the build phase.
@@ -71,21 +71,25 @@ kinds[12]{kind,purpose}:
 Pre-cascade: orchestrator spawns these via the `Agent` tool with Tillsyn auth in the prompt. Post-Drop-4a: dispatcher reads template bindings + spawns on `in_progress` transition.
 
 ```toon
-agent_bindings[9]{kind,agent_name,model,role,edits_code}:
-  plan,planning-agent,opus,planner,no
-  plan-qa-proof,plan-qa-proof-agent,opus,qa-proof,no
-  plan-qa-falsification,plan-qa-falsification-agent,opus,qa-falsification,no
-  research,research-agent,opus,research,no
-  build,builder-agent,sonnet,builder,yes
-  build-qa-proof,build-qa-proof-agent,sonnet,qa-proof,no
-  build-qa-falsification,build-qa-falsification-agent,sonnet,qa-falsification,no
-  commit,commit-message-agent,haiku,commit,no
-  closeout/refinement/discussion/human-verify,orchestrator-managed,—,orchestrator,no
+agent_bindings[13]{kind,agent_name,model,role,edits_code,axis}:
+  plan_go,ta-go-planning,opus,planner,no,go-decomposition
+  plan_fe,ta-fe-planning,opus,planner,no,fe-decomposition
+  plan-qa-proof_go,ta-go-plan-qa-proof,opus,qa-proof,no,plan-axis
+  plan-qa-falsification_go,ta-go-plan-qa-falsification,codex-gpt5,qa-falsification,no,plan-axis
+  plan-qa-proof_fe,ta-fe-plan-qa-proof,opus,qa-proof,no,plan-axis
+  plan-qa-falsification_fe,ta-fe-plan-qa-falsification,codex-gpt5,qa-falsification,no,plan-axis
+  build_go,ta-go-builder,sonnet,builder,yes,go-implementation
+  build_fe,ta-fe-builder,sonnet,builder,yes,fe-implementation
+  build-qa-proof_go,ta-go-build-qa-proof,sonnet,qa-proof,no,build-axis
+  build-qa-falsification_go,ta-go-build-qa-falsification,codex-gpt5,qa-falsification,no,build-axis
+  build-qa-proof_fe,ta-fe-build-qa-proof,sonnet,qa-proof,no,build-axis
+  build-qa-falsification_fe,ta-fe-build-qa-falsification,codex-gpt5,qa-falsification,no,build-axis
+  closeout,ta-closeout,haiku,closeout,no,post-build-wrap
 ```
 
-Agent names resolve via 3-tier walk: project `.tillsyn/agents/<group>/<name>.md` → user `~/.tillsyn/agents/<group>/<name>.md` → embedded `internal/templates/builtin/agents/<group>/<name>.md`.
+**8-persona QA split (2026-05-21)**: per dev directive, the QA personas are SPLIT by axis (plan vs build) AND by language (go vs fe). Each persona's body focuses on its own axis — `ta-go-plan-qa-proof.md` carries plan-decomposition + parallelization-graph + Specify-block proof rules; `ta-go-build-qa-proof.md` carries acceptance-criteria + KindPayload-vs-diff + mage-gate proof rules. Same shape for falsification + FE. No more in-prompt branching; persona-per-axis is the canonical shape.
 
-**Pre-cascade today**: parent Claude Code session uses `Agent` tool with `subagent_type` pointing at `~/.claude/agents/go-*.md` (legacy bridge — `go-builder-agent`, `go-planning-agent`, `go-qa-proof-agent`, `go-qa-falsification-agent`, `go-research-agent`; for FE: `fe-*` variants). The `go-*` / `fe-*` prefix is independent of the cascade's bare-name convention; the two surfaces converge when the dispatcher takes over spawning.
+Agent names resolve via 3-tier walk: project `.tillsyn/agents/<group>/<name>.md` → user `~/.tillsyn/agents/<group>/<name>.md` → embedded `internal/templates/builtin/agents/<group>/<name>.md`. Pre-cascade today: Claude Code session uses `Agent` tool with `subagent_type` matching `.claude/agents/ta-*.md` names. Hylla MCP is READ-ONLY for all agents; FE personas apply the "Hylla = Go-only" doctrine (use normal tools for Astro / SolidJS / CSS / TOML).
 
 ### Required Children (Auto-Create)
 
