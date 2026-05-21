@@ -1,3 +1,54 @@
+[agents_md]
+description = 'Project agent-rules file — Codex (AGENTS.md) and Claude Code (CLAUDE.md) conventions. Sections addressable so project.standards_markdown_id can link to a specific section.'
+paths = ['AGENTS.md', 'CLAUDE.md']
+
+[agents_md.section]
+description = 'An H2 section of AGENTS.md / CLAUDE.md — addressable so project.standards_markdown_id can link to a specific section.'
+heading = 2
+
+[agents_md.section.fields]
+[agents_md.section.fields.body]
+format = 'markdown'
+type = 'string'
+
+[claude_agents]
+description = 'Claude Code subagent definitions. Tracks both the home library (`agents/<kind>/<name>.md`, kind-nested) and the per-project install (`.claude/agents/<flat-name>.md`, flat). Each markdown file is one agent record with YAML frontmatter as fields and the body as the system prompt.'
+paths = ['agents/*/*.md', '.claude/agents/*.md']
+
+[claude_agents.agent]
+body_field = 'prompt'
+description = "One Claude Code subagent definition. Filename stem is the agent's `name` field; body is the agent's system prompt. Stem layout differs by mount: home library uses `<kind>/<name>.md` (e.g. `agents/go/builder.md` → name `builder`); project install uses flat `<kind>-<name>.md` (e.g. `.claude/agents/go-builder.md` → name `go-builder`)."
+record_per = 'file'
+
+[claude_agents.agent.fields]
+[claude_agents.agent.fields.color]
+description = 'Optional UI hint for the Claude Code agent picker. Free-form; not enforced.'
+type = 'string'
+
+[claude_agents.agent.fields.description]
+description = 'When Claude should delegate to this subagent. Surfaced to the orchestrator as the routing hint at agent-selection time.'
+required = true
+type = 'string'
+
+[claude_agents.agent.fields.model]
+description = "Optional Claude model identifier override (e.g. 'sonnet', 'opus'). Omit to use the orchestrator's default."
+type = 'string'
+
+[claude_agents.agent.fields.name]
+description = 'Subagent identifier. Lowercase letters, digits, and hyphens only (Claude Code rule). Must match the filename stem so the on-disk name and the frontmatter name stay in sync. Home-nested example: `agents/go/builder.md` → `name = "builder"`. Project-flat example: `.claude/agents/go-builder.md` → `name = "go-builder"` (post-flatten).'
+required = true
+type = 'string'
+
+[claude_agents.agent.fields.prompt]
+description = "Markdown body — the subagent's system prompt. Mounted from the file body, not from frontmatter."
+format = 'markdown'
+required = true
+type = 'string'
+
+[claude_agents.agent.fields.tools]
+description = "Optional comma-separated tool allowlist (e.g. 'Read, Edit, Bash, mcp__hylla__hylla_search'). Omit to inherit the orchestrator's full tool set. Stored as a single YAML scalar to match Claude Code's frontmatter convention."
+type = 'string'
+
 [contributing]
 description = 'Contribution rules. Sections addressable.'
 paths = ['CONTRIBUTING.md']
