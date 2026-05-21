@@ -16,10 +16,10 @@ import (
 func TestConvertClaudeToolName_KnownServers(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name      string
-		input     string
-		wantSrv   string
-		wantTool  string
+		name     string
+		input    string
+		wantSrv  string
+		wantTool string
 	}{
 		// hylla — underscore→dot rewrite. Verbatim conversion-doc rows.
 		{

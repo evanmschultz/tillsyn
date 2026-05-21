@@ -1,6 +1,6 @@
 // Package dispatcher — Claude-Code → server-registered MCP tool-name conversion.
 //
-// Background
+// # Background
 //
 // Claude-Code exposes MCP tools to its own internal model namespace using the
 // flat `mcp__<server>__<tail>` form (e.g. `mcp__hylla__hylla_search_vector`).
@@ -21,8 +21,8 @@
 //
 // Canonical reference
 //
-//   ~/.claude/codex-mcp-dispatch-tool-conversion.md (lines 19-48 — the
-//   verbatim conversion table reproduced in the var declaration + tests).
+//	~/.claude/codex-mcp-dispatch-tool-conversion.md (lines 19-48 — the
+//	verbatim conversion table reproduced in the var declaration + tests).
 //
 // Upstream Codex issues that motivated the conversion rule
 //
