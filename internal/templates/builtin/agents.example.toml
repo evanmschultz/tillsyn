@@ -116,15 +116,17 @@ tools_allow = ["Read", "Bash"]
 # client = "claude" is the group-level default; per-kind blocks below set
 # client = "codex" only where the codex backend is preferred.
 #
-# TODO(drop_4d): Replace MODEL_PLACEHOLDER below with the actual codex model
-# identifier for your ChatGPT-tier auth (e.g. "o3", "o4-mini", "gpt-5-codex").
-# The correct value depends on the OpenAI tier and model family available to
-# the spawning user. Check `till codex list-models` (or OpenAI dashboard)
-# and set it here + in any project-local agents.toml that overrides this file.
+# Codex models pinned to `gpt-5.5` (top reasoning tier) below; effort is
+# tiered per role via `effort = "medium" | "high" | "xhigh"`. The single-model
+# + tiered-effort thesis lets one ChatGPT-tier entitlement cover plan + qa-
+# falsification + research with reasoning-budget controlling cost. Adopters
+# on a different tier can swap to `gpt-5.4` (mid) or `gpt-5.4-mini` (cheap
+# subagent tier) per OpenAI's Codex model catalog.
 #
-# When using client = "codex" you must also supply the OpenAI API key.
-# Add env_from_shell = { OPENAI_API_KEY = "OPENAI_API_KEY" } to each codex
-# per-kind block (or promote to the [gen] group default) once you have a key.
+# ChatGPT-account auth: codex CLI manages OAuth tokens itself under
+# `~/.codex/` — NO `OPENAI_API_KEY` env var is required for ChatGPT-tier
+# spawns. API-key-tier adopters add `env_from_shell = { OPENAI_API_KEY =
+# "OPENAI_API_KEY" }` to each codex block.
 #
 # Mirrors the go group structure. Till-gen.toml bindings omit [agent_bindings]
 # by design; adopters declare bindings in their project-local template.toml.
@@ -149,10 +151,9 @@ tools_deny = []
 claude_md_addons = []
 
 # plan — deep decomposition reasoning. Routes to codex (cheap deep reasoning).
-# TODO(drop_4d): set model = "MODEL_PLACEHOLDER" to actual codex model ID.
 [gen.plan]
 client = "codex"
-model = "MODEL_PLACEHOLDER"
+model = "gpt-5.5"
 effort = "medium"
 max_budget_usd = 8.0
 max_turns = 80
@@ -168,19 +169,17 @@ tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action
 
 # plan-qa-falsification — adversarial reasoning. Routes to codex at max effort.
 # Falsification benefits from the deepest available reasoning budget.
-# TODO(drop_4d): set model = "MODEL_PLACEHOLDER" to actual codex model ID.
 [gen.plan-qa-falsification]
 client = "codex"
-model = "MODEL_PLACEHOLDER"
+model = "gpt-5.5"
 effort = "xhigh"
 max_budget_usd = 4.0
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
 # research — read-only investigation. Routes to codex (cheap, thorough).
-# TODO(drop_4d): set model = "MODEL_PLACEHOLDER" to actual codex model ID.
 [gen.research]
 client = "codex"
-model = "MODEL_PLACEHOLDER"
+model = "gpt-5.5"
 effort = "high"
 max_budget_usd = 3.0
 
@@ -199,10 +198,9 @@ max_budget_usd = 3.0
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
 
 # build-qa-falsification — adversarial reasoning. Routes to codex at max effort.
-# TODO(drop_4d): set model = "MODEL_PLACEHOLDER" to actual codex model ID.
 [gen.build-qa-falsification]
 client = "codex"
-model = "MODEL_PLACEHOLDER"
+model = "gpt-5.5"
 effort = "xhigh"
 max_budget_usd = 3.0
 tools_allow = ["Read", "Grep", "Glob", "Bash", "LSP", "mcp__tillsyn__till_action_item", "mcp__tillsyn__till_comment"]
