@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"strings"
 
 	charmLog "github.com/charmbracelet/log"
 	"github.com/evanmschultz/tillsyn/internal/adapters/storage/sqlite"
@@ -51,6 +52,57 @@ func (a *App) ListProjects() ([]ProjectDTO, error) {
 	dtos := make([]ProjectDTO, 0, len(projects))
 	for _, p := range projects {
 		dtos = append(dtos, ProjectDTO{ID: p.ID, Name: p.Name})
+	}
+	return dtos, nil
+}
+
+// ListActionItems is the Wails IPC method exposed to the frontend as
+// window.go.main.App.ListActionItems(projectID). Returns every non-archived
+// action item belonging to projectID, projected into the JS-friendly
+// ActionItemDTO shape. Read-only — never mutates the store.
+//
+// projectID is whitespace-trimmed before delegation. If the trimmed value is
+// empty, the method returns (empty slice, nil) — NOT an error — so the
+// frontend can render the "Select a project" empty state cleanly without
+// catching a rejected promise. Callers that need to distinguish "no project
+// selected" from "project selected but empty" must look at the projectID they
+// passed, not at the return value.
+//
+// On a non-empty projectID, the method delegates to Service.ListActionItems
+// with includeArchived=false (archived items live outside the primary
+// browse view; a future projection can opt-in via a follow-up IPC method).
+// Service-layer errors surface verbatim — Wails serializes (T, error)
+// returns as a JS promise that rejects on non-nil error.
+//
+// The result is ALWAYS a non-nil slice (empty when the service returns zero
+// rows), matching ListProjects' contract so the FE never has to distinguish
+// null from []. Each domain.ActionItem maps field-for-field via plain string
+// conversion on the enum-typed columns (Kind, Role, StructuralType,
+// LifecycleState, Priority) — the underlying domain types are all `type X
+// string` so the conversion is allocation-free and round-trips the raw enum
+// token (e.g. "build", "builder", "droplet"). Drop FE 2.6 D1.
+func (a *App) ListActionItems(projectID string) ([]ActionItemDTO, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return []ActionItemDTO{}, nil
+	}
+	items, err := a.svc.ListActionItems(a.ctx, projectID, false)
+	if err != nil {
+		return nil, err
+	}
+	dtos := make([]ActionItemDTO, 0, len(items))
+	for _, item := range items {
+		dtos = append(dtos, ActionItemDTO{
+			ID:             item.ID,
+			ProjectID:      item.ProjectID,
+			ParentID:       item.ParentID,
+			Title:          item.Title,
+			Kind:           string(item.Kind),
+			Role:           string(item.Role),
+			StructuralType: string(item.StructuralType),
+			LifecycleState: string(item.LifecycleState),
+			Priority:       string(item.Priority),
+		})
 	}
 	return dtos, nil
 }
