@@ -35,7 +35,11 @@ var ErrMalformedStreamLine = errors.New("cli_codex: malformed stream-json line")
 //
 //   - type="thread.started"  — session init; non-terminal.
 //   - type="turn.started"    — turn begin; non-terminal.
-//   - type="item.completed"  — item output (agent_message carries text); non-terminal.
+//   - type="item.completed"  — item output; non-terminal. Canonical mapping:
+//     item.type="agent_message" → ev.Type="assistant", ev.Subtype="item.completed"
+//     item.type="tool_use"|"function_call" → ev.Type="tool_use", ev.Subtype="item.completed"
+//     item.type="reasoning" → ev.Type="reasoning", ev.Subtype="item.completed"
+//     unknown item.type → ev.Type="item.completed", ev.Subtype=item.type (permissive fallback)
 //   - type="turn.completed"  — turn end with usage; TERMINAL.
 //   - type="turn.failed"     — turn error; TERMINAL.
 //   - type="error"           — mid-stream error signal (precedes turn.failed); non-terminal.
@@ -51,10 +55,20 @@ func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 
 	ev := dispatcher.StreamEvent{Raw: raw}
 
-	// Decode into a flexible map for permissive field access. Non-JSON input
-	// returns the error sentinel but still provides Raw for the caller.
+	// Decode into a flexible map for permissive field access. If the unmarshal
+	// fails, check whether the input is valid JSON at all (non-object shapes
+	// like arrays, numbers, or strings). Valid non-object JSON is returned as a
+	// non-terminal event with Raw populated (permissive contract per doc above).
+	// Truly non-JSON input returns ErrMalformedStreamLine.
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(line, &fields); err != nil {
+		// Check if the input is valid JSON in a non-object form.
+		var jsonVal json.RawMessage
+		if jsonErr := json.Unmarshal(line, &jsonVal); jsonErr == nil {
+			// Valid JSON but not an object — return as non-terminal event with
+			// Raw populated and all other fields at zero value.
+			return ev, nil
+		}
 		return ev, fmt.Errorf("%w: %v", ErrMalformedStreamLine, err)
 	}
 
@@ -84,16 +98,46 @@ func parseStreamEvent(line []byte) (dispatcher.StreamEvent, error) {
 		// Type set to the raw value. Raw retains thread_id etc. for callers.
 
 	case "item.completed":
-		// Item output event. Extract subtype and text from the nested item
-		// object: {"id":"...","type":"agent_message","text":"..."}.
+		// Item output event. Decode the nested item object and translate
+		// item.type into the canonical ev.Type vocabulary so downstream
+		// consumers (e.g. commit_agent filtering on ev.Type=="assistant") are
+		// CLI-agnostic. ev.Subtype is always "item.completed" for recognised
+		// item subkinds, retaining the codex wire-format name for forensics.
+		// Unknown item subkinds fall through to the permissive default below.
 		if itemRaw, ok := fields["item"]; ok {
 			var item struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type      string          `json:"type"`
+				Text      string          `json:"text"`
+				Name      string          `json:"name"`      // tool name (tool_use / function_call)
+				Arguments json.RawMessage `json:"arguments"` // tool input args (codex wire format)
 			}
 			if err := json.Unmarshal(itemRaw, &item); err == nil {
-				ev.Subtype = item.Type
-				ev.Text = item.Text
+				switch item.Type {
+				case "agent_message":
+					// Assistant prose output — normalise to the canonical
+					// vocabulary so commit_agent's ev.Type=="assistant" filter
+					// matches codex-routed spawns.
+					ev.Type = "assistant"
+					ev.Subtype = "item.completed"
+					ev.Text = item.Text
+				case "tool_use", "function_call":
+					// Tool invocation — normalise to "tool_use" vocabulary.
+					ev.Type = "tool_use"
+					ev.Subtype = "item.completed"
+					ev.ToolName = item.Name
+					ev.ToolInput = item.Arguments
+				case "reasoning":
+					// Internal reasoning block — surface as "reasoning" type.
+					ev.Type = "reasoning"
+					ev.Subtype = "item.completed"
+					ev.Text = item.Text
+				default:
+					// Unknown item subkind — permissive pass-through. ev.Type
+					// retains the codex wire-format "item.completed" and Subtype
+					// carries the raw item.type value so callers can refine later.
+					ev.Subtype = item.Type
+					ev.Text = item.Text
+				}
 			}
 		}
 
@@ -187,13 +231,19 @@ func extractTerminalReport(ev dispatcher.StreamEvent) (dispatcher.TerminalReport
 		report.Reason = "turn_completed"
 
 	case "turn.failed":
-		// Turn ended with error. Extract error.message into Errors.
+		// Turn ended with error. Extract error.message into Errors. Always
+		// populate Errors with at least a sentinel string so consumers can
+		// distinguish "failed with no message" from "report was lost"
+		// (nil Errors would be ambiguous between the two cases).
 		report.Reason = "turn_failed"
+		msg := ""
 		if errRaw, ok := fields["error"]; ok {
-			if msg := extractErrorMessage(errRaw); msg != "" {
-				report.Errors = []string{msg}
-			}
+			msg = extractErrorMessage(errRaw)
 		}
+		if msg == "" {
+			msg = "codex: turn.failed without error.message"
+		}
+		report.Errors = []string{msg}
 
 	default:
 		// Generic terminal event (IsTerminal was set by some other path).

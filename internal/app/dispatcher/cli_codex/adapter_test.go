@@ -563,8 +563,10 @@ func TestParseStreamEvent_TurnStarted(t *testing.T) {
 }
 
 // TestParseStreamEvent_ItemCompletedAgentMessage asserts fixture line 3
-// decodes to Type="item.completed", Subtype="agent_message", Text="ok",
-// and IsTerminal=false.
+// decodes to the canonical vocabulary: Type="assistant", Subtype="item.completed",
+// Text="ok", and IsTerminal=false. Fix 1 (D5 r1): agent_message must map to
+// "assistant" so downstream consumers like commit_agent (ev.Type=="assistant"
+// filter) work correctly on codex-routed spawns.
 func TestParseStreamEvent_ItemCompletedAgentMessage(t *testing.T) {
 	t.Parallel()
 
@@ -573,11 +575,13 @@ func TestParseStreamEvent_ItemCompletedAgentMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseStreamEvent: %v", err)
 	}
-	if ev.Type != "item.completed" {
-		t.Errorf("Type = %q; want %q", ev.Type, "item.completed")
+	// agent_message MUST normalise to canonical "assistant" type (Fix 1 D5 r1).
+	if ev.Type != "assistant" {
+		t.Errorf("Type = %q; want %q (agent_message must map to canonical assistant type)", ev.Type, "assistant")
 	}
-	if ev.Subtype != "agent_message" {
-		t.Errorf("Subtype = %q; want %q", ev.Subtype, "agent_message")
+	// Subtype carries the codex wire-format event name for forensics.
+	if ev.Subtype != "item.completed" {
+		t.Errorf("Subtype = %q; want %q", ev.Subtype, "item.completed")
 	}
 	if ev.Text != "ok" {
 		t.Errorf("Text = %q; want %q", ev.Text, "ok")
@@ -820,4 +824,185 @@ func splitJSONLLines(data []byte) [][]byte {
 		parts = parts[:len(parts)-1]
 	}
 	return parts
+}
+
+// --- Fix 1 (D5 r1): item.completed canonical-type mapping tests -------------
+
+// TestParseStreamEvent_ItemCompleted_ToolUse asserts that item.completed with
+// item.type="tool_use" maps to canonical ev.Type="tool_use", Subtype="item.completed",
+// and that ToolName + ToolInput are populated from the item fields.
+func TestParseStreamEvent_ItemCompleted_ToolUse(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"item.completed","item":{"id":"item_1","type":"tool_use","name":"Bash","arguments":{"command":"ls"}}}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if ev.Type != "tool_use" {
+		t.Errorf("Type = %q; want %q", ev.Type, "tool_use")
+	}
+	if ev.Subtype != "item.completed" {
+		t.Errorf("Subtype = %q; want %q", ev.Subtype, "item.completed")
+	}
+	if ev.ToolName != "Bash" {
+		t.Errorf("ToolName = %q; want %q", ev.ToolName, "Bash")
+	}
+	if ev.ToolInput == nil {
+		t.Fatalf("ToolInput = nil; want non-nil JSON")
+	}
+	if !strings.Contains(string(ev.ToolInput), "command") {
+		t.Errorf("ToolInput = %q; want JSON containing 'command' key", string(ev.ToolInput))
+	}
+	if ev.IsTerminal {
+		t.Errorf("IsTerminal = true; want false for item.completed tool_use")
+	}
+}
+
+// TestParseStreamEvent_ItemCompleted_FunctionCall asserts that item.completed
+// with item.type="function_call" maps to canonical ev.Type="tool_use" (same
+// normalization path as tool_use).
+func TestParseStreamEvent_ItemCompleted_FunctionCall(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"item.completed","item":{"id":"item_2","type":"function_call","name":"search","arguments":{"query":"test"}}}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	if ev.Type != "tool_use" {
+		t.Errorf("Type = %q; want %q (function_call must normalise to tool_use)", ev.Type, "tool_use")
+	}
+	if ev.Subtype != "item.completed" {
+		t.Errorf("Subtype = %q; want %q", ev.Subtype, "item.completed")
+	}
+	if ev.ToolName != "search" {
+		t.Errorf("ToolName = %q; want %q", ev.ToolName, "search")
+	}
+}
+
+// TestParseStreamEvent_ItemCompleted_UnknownSubkind asserts the permissive
+// fallback: item.type values not in the recognised set leave ev.Type as
+// "item.completed" (the codex wire-format type) and put the raw item.type in
+// ev.Subtype.
+func TestParseStreamEvent_ItemCompleted_UnknownSubkind(t *testing.T) {
+	t.Parallel()
+
+	line := []byte(`{"type":"item.completed","item":{"id":"item_3","type":"future_item_kind","text":"payload"}}`)
+	ev, err := parseStreamEvent(line)
+	if err != nil {
+		t.Fatalf("parseStreamEvent: %v", err)
+	}
+	// Unknown subkind: ev.Type retains the codex wire-format event name.
+	if ev.Type != "item.completed" {
+		t.Errorf("Type = %q; want %q (unknown item subkind permissive fallback)", ev.Type, "item.completed")
+	}
+	// Subtype carries the raw item.type value for forensics/callers to refine.
+	if ev.Subtype != "future_item_kind" {
+		t.Errorf("Subtype = %q; want %q", ev.Subtype, "future_item_kind")
+	}
+	if ev.Text != "payload" {
+		t.Errorf("Text = %q; want %q", ev.Text, "payload")
+	}
+	if ev.IsTerminal {
+		t.Errorf("IsTerminal = true; want false for item.completed unknown subkind")
+	}
+}
+
+// --- Fix 2 (D5 r1): turn.failed sentinel test ---------------------------------
+
+// TestExtractTerminalReport_TurnFailedEmptyErrorReturnsSentinel asserts that
+// a turn.failed event with an empty or absent error.message still produces a
+// non-nil Errors slice containing the sentinel string. Consumers must be able
+// to distinguish "failed with no message" from "failed but report was lost."
+func TestExtractTerminalReport_TurnFailedEmptyErrorReturnsSentinel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		line []byte
+	}{
+		{
+			name: "empty error object",
+			line: []byte(`{"type":"turn.failed","error":{}}`),
+		},
+		{
+			name: "no error field",
+			line: []byte(`{"type":"turn.failed"}`),
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ev, err := parseStreamEvent(tc.line)
+			if err != nil {
+				t.Fatalf("parseStreamEvent: %v", err)
+			}
+			if !ev.IsTerminal {
+				t.Fatalf("IsTerminal = false; want true for turn.failed")
+			}
+
+			report, ok := extractTerminalReport(ev)
+			if !ok {
+				t.Fatalf("extractTerminalReport ok=false on terminal turn.failed event")
+			}
+			if report.Reason != "turn_failed" {
+				t.Errorf("Reason = %q; want %q", report.Reason, "turn_failed")
+			}
+			// Errors MUST be non-nil and contain the sentinel (Fix 2 D5 r1).
+			if len(report.Errors) == 0 {
+				t.Fatalf("Errors is empty; want at least sentinel string")
+			}
+			const sentinel = "codex: turn.failed without error.message"
+			if !strings.Contains(report.Errors[0], sentinel) {
+				t.Errorf("Errors[0] = %q; want string containing %q", report.Errors[0], sentinel)
+			}
+		})
+	}
+}
+
+// --- Fix 3 (D5 r1): permissive non-object JSON test ---------------------------
+
+// TestParseStreamEvent_AcceptsValidNonObjectJSON asserts that valid JSON which
+// is NOT a JSON object (array, number, string, etc.) is returned as a
+// non-terminal event with Raw populated and Type empty — no error. This
+// matches the doc-comment contract and the F.7.17 L14 spirit (Raw retention
+// over rejection).
+func TestParseStreamEvent_AcceptsValidNonObjectJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input []byte
+	}{
+		{name: "array", input: []byte("[1,2,3]")},
+		{name: "number", input: []byte("42")},
+		{name: "string", input: []byte(`"hello"`)},
+		{name: "null", input: []byte("null")},
+		{name: "empty array", input: []byte("[]")},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ev, err := parseStreamEvent(tc.input)
+			if err != nil {
+				t.Errorf("parseStreamEvent(%s) = error %v; want nil (valid non-object JSON must not error)", tc.name, err)
+			}
+			if !bytes.Equal(ev.Raw, tc.input) {
+				t.Errorf("Raw = %q; want %q (original bytes must be retained)", string(ev.Raw), string(tc.input))
+			}
+			if ev.Type != "" {
+				t.Errorf("Type = %q; want empty string for non-object JSON", ev.Type)
+			}
+			if ev.IsTerminal {
+				t.Errorf("IsTerminal = true; want false for non-object JSON")
+			}
+		})
+	}
 }
