@@ -37,11 +37,17 @@ import (
 // each pointer field. Callers construct the highest-priority overlays
 // (CLI/MCP/TUI) and pass them to ResolveBinding alongside the raw binding.
 //
-// Tools, ToolsAllowed, ToolsDisallowed, Env, AgentName, CLIKind, and
-// CommitAgent are NOT yet plumbed for override (only template-level
-// declaration). When CLI/MCP/TUI surfaces grow knobs for those, extend the
-// struct.
+// Tools, ToolsAllowed, ToolsDisallowed, Env, AgentName, and CommitAgent are
+// NOT yet plumbed for override (only template-level declaration). When
+// CLI/MCP/TUI surfaces grow knobs for those, extend the struct.
 type BindingOverrides struct {
+	// CLIKind overrides the CLI adapter family. Nil means no override at
+	// this layer — the rawBinding.CLIKind (or the F.7.17 L15
+	// default-to-claude substitution) controls. Non-nil takes precedence
+	// over rawBinding.CLIKind but the default-to-claude substitution still
+	// fires when the resulting value is empty.
+	CLIKind *CLIKind
+
 	// Model is the LLM model identifier override (e.g. "opus", "sonnet",
 	// "haiku"). Nil means "no override at this layer."
 	Model *string
@@ -109,8 +115,10 @@ type BindingOverrides struct {
 //   - CommitAgent (*string): promoted from rawBinding.CommitAgent (string).
 //     Empty string → nil; non-empty → pointer to a copy.
 //
-//   - CLIKind: copy from rawBinding; if empty, substitute CLIKindClaude per
-//     F.7.17 locked decision L15.
+//   - CLIKind: walk overrides highest→lowest; first non-nil *CLIKind wins
+//     over rawBinding.CLIKind. If the resolved value is empty (rawBinding
+//     empty + no override, or an explicit empty-string override), substitute
+//     CLIKindClaude per F.7.17 locked decision L15.
 //
 //   - BlockedRetryCooldown override: stored as a *time.Duration; the
 //     rawBinding's templates.Duration is promoted to *time.Duration via the
@@ -126,9 +134,25 @@ func ResolveBinding(rawBinding templates.AgentBinding, overrides ...*BindingOver
 		ToolsDisallowed:          cloneStringSlice(rawBinding.ToolsDisallowed),
 	}
 
-	// F.7.17 locked decision L15: default-to-claude when rawBinding.CLIKind
-	// is empty. Override plumbing for CLIKind is not yet wired (would belong
-	// on BindingOverrides if/when needed).
+	// CLIKind override cascade: walk overrides highest→lowest; first
+	// non-nil pointer wins. This runs BEFORE the default-to-claude block so
+	// overrides flow through the empty-check too — a non-nil override that
+	// resolves to empty still gets substituted to CLIKindClaude per F.7.17
+	// locked decision L15.
+	for _, o := range overrides {
+		if o == nil {
+			continue
+		}
+		if o.CLIKind != nil {
+			resolved.CLIKind = *o.CLIKind
+			break
+		}
+	}
+
+	// F.7.17 locked decision L15: default-to-claude when the resolved
+	// CLIKind is empty. Empty can result from either an empty rawBinding
+	// CLIKind with no override, or an override that explicitly resolves to
+	// empty — both flow through this substitution.
 	if resolved.CLIKind == "" {
 		resolved.CLIKind = CLIKindClaude
 	}
