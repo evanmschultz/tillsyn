@@ -1,6 +1,6 @@
 # Authoring a New CLI Adapter
 
-How to add support for a new headless CLI (codex, cursor-agent, goose, aider, …) to Tillsyn's spawn pipeline. Companion to `SPAWN_PIPELINE.md`.
+How to add support for a new headless CLI (cursor-agent, goose, aider, ollama-bridge, …) to Tillsyn's spawn pipeline. Two reference implementations live in tree: `internal/app/dispatcher/cli_claude/` (the original) and `internal/app/dispatcher/cli_codex/` (Drop 4d).
 
 ## Adapter Contract
 
@@ -14,7 +14,7 @@ type CLIAdapter interface {
 }
 ```
 
-Drop 4c ships `claude`. Drop 4d will ship `codex`. Both are line-delimited JSON (JSONL) on stdout.
+Drop 4c shipped `claude`; Drop 4d shipped `codex`. Both are line-delimited JSON (JSONL) on stdout. Drop 4d_5 (in flight) wires the per-kind routing so plan + QA-falsification dispatch to codex by default.
 
 ## Required CLI Properties
 
@@ -215,7 +215,7 @@ The Tillsyn `permission_grants` SQLite table includes a `cli_kind` column so a g
 - `--setting-sources ""` — excludes all three standard settings layers (user / project / local). Combined with `--settings <bundle>/plugin/settings.json`, the bundle is the sole permissions source.
 - `--strict-mcp-config` — restricts MCP to `--mcp-config` argument only, ignoring project `.mcp.json` and user `~/.claude.json`.
 
-**Common mistake for Drop 4d (codex) and beyond:** do NOT rely on agent-file priority tables to "win" over user-installed definitions. The priority table (managed settings → `--agents` flag → `.claude/agents/` → `~/.claude/agents/` → plugin) applies in non-bare mode. Under `--bare`, entries 3 and 4 are never consulted. Ship `--bare` and the bundle plugin; do not rely on priority-table ordering to enforce isolation.
+**Common mistake when authoring new adapters:** do NOT rely on agent-file priority tables to "win" over user-installed definitions. The priority table (managed settings → `--agents` flag → `.claude/agents/` → `~/.claude/agents/` → plugin) applies in non-bare mode. Under `--bare`, entries 3 and 4 are never consulted. Ship `--bare` and the bundle plugin; do not rely on priority-table ordering to enforce isolation. (This is for Claude-Code-shaped CLIs; non-Claude-Code adapters like a future ollama-bridge need different isolation flags per the wrapped CLI's documented surface.)
 
 **Bundle body must be substantive.** The bundle's `plugin/agents/<name>.md` is the ONLY agent definition Claude Code sees under `--bare`. If the body is empty or a one-liner stub, the agent runs with frontmatter only — no role definition, no tool discipline, no output format. Drop 4c.6 W3 wires embedded-default full agent content into every rendered bundle body and adds a post-render validator that rejects thin bodies at build time. Future adapters must apply equivalent logic: the bundle body is not a stub redirect, it IS the agent.
 
@@ -237,8 +237,9 @@ The Tillsyn `permission_grants` SQLite table includes a `cli_kind` column so a g
 
 ## References
 
-- `SPAWN_PIPELINE.md` — pipeline architecture overview.
-- `internal/app/dispatcher/cli_claude/` — reference implementation.
+- `internal/app/dispatcher/cli_claude/` — original reference implementation.
+- `internal/app/dispatcher/cli_codex/` — second shipped adapter (Drop 4d); useful diff against `cli_claude/` to see what's CLI-family-specific vs. dispatcher-contract-driven.
 - `internal/app/dispatcher/cli_adapter.go` — interface + value-object types.
 - `internal/app/dispatcher/mock_adapter_test.go` — contract test fixture.
+- `CASCADE_METHODOLOGY.md` § "Isolation Enforcement" — `--bare`-collapsed isolation rationale.
 - `WIKI.md` § "Cascade Vocabulary" — kind / role / structural_type axes.

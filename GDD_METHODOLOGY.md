@@ -8,11 +8,10 @@ governs how planning, building, and QA decompose down a tree of action items,
 GDD governs how committed code is *understood* through a structural + semantic
 graph (today: Hylla) so planners, builders, and QA agents read code-truth
 rather than retrieval-truth. Substantive content lands **post-Hylla-rev /
-post-dogfood** per `project_methodology_docs_tracker.md` and `SKETCH.md` § 14.2
-— this stub reserves the slot, documents intent, and lists what the populated
-doc must contain. Until then, the operational rules live in
-`CLAUDE.md § Code Understanding Rules` and `WIKI.md`; treat those as the
-authoritative pre-MVP source.
+post-dogfood** per `project_methodology_docs_tracker.md` — this stub reserves
+the slot, documents intent, and lists what the populated doc must contain.
+Until then, the operational rules live in `CLAUDE.md § Code Understanding Rules`
+and `WIKI.md`; treat those as the authoritative pre-MVP source.
 
 ## Status
 
@@ -42,7 +41,7 @@ The full doc will cover, at minimum:
 - Benchmarks comparing graph-grounded planning + QA against retrieval-only
   baselines, once dogfood data exists.
 
-## Prior-art research note (per `SKETCH.md` § 14.2.1)
+## Prior-art research note
 
 Before populating, survey adjacent or prior work in graph-grounded
 development methodologies — code-knowledge-graph systems, graph-RAG over
