@@ -1,12 +1,24 @@
 /*
- * Vendored from stil/main/src/styles/global.css at the current snapshot.
+ * Vendored from stil/main/src/styles/global.css at upstream SHA
+ *   dcf78cee858b08d4bf40f89aac6db440684841b0
+ * via drop_fe_4 (RESTORE STIL GLOBAL CSS FULL VENDOR — droplet
+ * a16d39e8-6037-43ad-9f5a-fc88874c8712). Full 708-line file restored after
+ * drop_fe_3 trimmed it to a 172-line subset that dropped the mobile/tablet
+ * patterns (drawer, sheet, bottom-tabs, aside-state, focus mode).
  *
  * Base body styles + app-shell layout primitives (.app, .app-rail,
- * .app-sidebar, .app-main, .app-content, .app-aside, etc.). Mirrors the
- * stil playground shell so the Tillsyn FE reads as a Hylla product.
+ * .app-sidebar, .app-main, .app-content, .app-aside, etc.) — same pattern
+ * the stil playground uses so the Tillsyn FE reads as a Hylla product and
+ * future stil-swift iOS/Android adapters can mirror the same shell.
  *
- * Do not edit by hand for stylistic divergence — refresh from the stil repo
- * when a token-pack drop syncs the design language. See drop_fe_3.
+ * Dormant rules (.app-sidebar, .app-aside, .focus-exit, .app-drawer-backdrop,
+ * .aside-drag-handle, .bottom-tab*) are intentional — DOM hooks land in
+ * later drops. Do NOT add class names matching these without also wiring
+ * the data-* attributes they expect.
+ *
+ * Refresh from the stil repo when a token-pack drop syncs the design
+ * language. Verbatim re-vendor (not selective restore) keeps Tillsyn from
+ * drifting from canonical stil.
  */
 
 @import "./tokens.css";
@@ -48,6 +60,9 @@ body {
  * NavRail · Sidebar · Topbar all share --bg-chrome with no seam.
  * Viewport (.app-content) drops to --bg-surface with a single rounded
  * inner corner — the only visible separator anywhere in the shell.
+ *
+ * Focus mode: body[data-focus="true"] hides rail, sidebar, topbar;
+ * the viewport goes edge-to-edge with a small floating exit pill.
  */
 
 .app {
@@ -59,7 +74,9 @@ body {
   background: var(--bg-chrome);
 }
 
-/* Chrome panels (rail / sidebar) push the viewport — they don't overlay it. */
+/* Chrome panels (rail / sidebar) push the viewport — they don't overlay it.
+ * Width animates 0 → token width. Inner content sets min-width so it doesn't
+ * reflow during the transition. */
 .app-rail,
 .app-sidebar {
   flex-shrink: 0;
@@ -90,6 +107,8 @@ body[data-sidebar-hidden="true"] .app-sidebar { width: 0; }
   background: var(--bg-chrome);
 }
 
+/* Body row inside .app-main — viewport + aside as flex siblings.
+ * Viewport flex-shrinks when aside opens, aside slides into the space. */
 .app-main-body {
   flex: 1;
   min-height: 0;
@@ -110,23 +129,469 @@ body[data-sidebar-hidden="true"] .app-sidebar { width: 0; }
   border-top-left-radius: var(--corner-radius);
 }
 
-body[data-topbar-hidden="true"] .topbar {
+/* When the aside is open, viewport gets a matching corner on the right
+ * — both top corners curve into the chrome behind. */
+body[data-aside-state="open"] .app-content {
+  border-top-right-radius: var(--corner-radius);
+}
+
+.app-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0);
+  pointer-events: none;
+  z-index: 15;
+  transition: background-color var(--duration-base) var(--ease-out);
+}
+
+/* Topbar: height transitions for show/hide. */
+body[data-topbar-hidden="true"] .topbar,
+body[data-focus="true"] .topbar {
   height: 0;
 }
 
+/* Focus mode: hide rail + sidebar via the same width-collapse pattern. */
+body[data-focus="true"] .app-rail,
+body[data-focus="true"] .app-sidebar {
+  width: 0;
+}
+
+/* When the left side is fully hidden, the rounded inner corner has nothing
+ * to nest under — drop it so the viewport is flush. */
+body[data-rail-hidden="true"][data-sidebar-hidden="true"] .app-content,
+body[data-focus="true"] .app-content {
+  border-top-left-radius: 0;
+}
+
+/* Focus mode also force-closes the right aside. */
+body[data-focus="true"] .app-aside { width: 0; }
+
+.focus-exit {
+  display: none;
+  position: fixed;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 30;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-2);
+  background: var(--bg-chrome);
+  color: var(--text-secondary);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+body[data-focus="true"] .focus-exit {
+  display: inline-flex;
+}
+
+.focus-exit:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.focus-exit:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Tablet/mobile: same push pattern. The chrome panels still flex-shrink
+ * cleanly via width transitions. Mobile sets aside-width to 100vw so an
+ * open aside takes over fully. */
 @media (max-width: 880px) {
   .app-content {
     padding: var(--space-6) var(--space-5);
   }
 }
 
-@media (max-width: 480px) {
+/* Base hide for mobile-only chrome. Mobile media query overrides to flex. */
+.app-bottom-tabs { display: none; }
+.aside-drag-handle { display: none; }
+
+/* ─── MOBILE (≤640px) ───────────────────────────────────────────────────
+ * Total layout reset. Desktop "push everything" model is replaced by:
+ *   - Rail → hidden, replaced by Bottom Tab Bar
+ *   - Sidebar → slide-from-left drawer (overlay, not push)
+ *   - Aside → bottom sheet (overlay, not push)
+ *   - Topbar → hamburger + title + ONE primary action
+ * stil-swift implements the same patterns natively as SwiftUI TabView,
+ * NavigationSplitView, and .sheet with detents.
+ */
+@media (max-width: 640px) {
+  /* Mobile: aside takes over the full screen when open. */
+  :root { --aside-width: 100vw; }
+
+  /* Rail is replaced entirely by the bottom tab bar. */
+  .app-rail { display: none !important; }
+
+  /* Sidebar becomes a slide-in drawer, not a flex column. */
+  .app-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--drawer-width);
+    z-index: 35;
+    transform: translateX(-100%);
+    transition: transform var(--duration-base) var(--ease-out);
+  }
+
+  /* On mobile, the sidebar's "hidden" attribute means closed; absence means open. */
+  body:not([data-sidebar-hidden="true"]) .app-sidebar {
+    transform: translateX(0);
+  }
+
+  body[data-sidebar-hidden="true"] .app-sidebar {
+    transform: translateX(-100%);
+  }
+
+  /* Drawer backdrop. */
+  .app-drawer-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgb(0 0 0 / 0.42);
+    z-index: 32;
+  }
+
+  body:not([data-sidebar-hidden="true"]) .app-drawer-backdrop {
+    display: block;
+  }
+
+  /* Aside becomes a bottom sheet. */
+  .app-aside {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: 100%;
+    height: var(--sheet-default-height);
+    border-top-left-radius: var(--radius-4);
+    border-top-right-radius: var(--radius-4);
+    border-bottom-left-radius: 0;
+    transform: translateY(100%);
+    transition: transform var(--duration-base) var(--ease-out);
+    z-index: 35;
+    /* Override the desktop flex-collapse mechanism. */
+    overflow: visible;
+  }
+
+  .app-aside > * {
+    width: 100%;
+    min-width: 0;
+  }
+
+  body[data-aside-state="open"] .app-aside {
+    transform: translateY(0);
+  }
+
+  /* Aside backdrop. */
+  body[data-aside-state="open"]::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: rgb(0 0 0 / 0.42);
+    z-index: 33;
+    pointer-events: auto;
+  }
+
+  /* Fullscreen state — sheet takes over the whole viewport, drops corner
+   * radii, leaves no backdrop strip above. Triggered by the drag-handle
+   * pull-up gesture. */
+  body[data-aside-fullscreen="true"] .app-aside {
+    height: 100vh;
+    height: 100dvh;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
+  body[data-aside-fullscreen="true"]::after {
+    background: rgb(0 0 0 / 0);
+  }
+
+  /* In fullscreen the sheet owns the whole viewport — workspace strip
+   * is redundant and would otherwise z-index-fight with the sheet. */
+  body[data-aside-fullscreen="true"] .app-bottom-tabs {
+    display: none;
+  }
+
+  /* Mobile gesture surfaces. Drag handle eats all gesture so vertical
+   * pulls don't scroll-chain to the page. Head allows vertical scroll
+   * but blocks horizontal pan so our horizontal-swipe pointer logic
+   * gets a clean delta. Body keeps default scrolling. */
+  .aside-drag-handle { touch-action: none; }
+  .aside-head        { touch-action: pan-y; }
+
+  /* Mobile drops the "Back" button — gestures (drag-down, tap-outside)
+   * cover the same job, and the header is already crowded with mode
+   * buttons. Desktop keeps it. */
+  .aside-back { display: none !important; }
+
+  /* Bottom tab bar — visible only at mobile. Replaces NavRail. The
+   * `bottom-tabs-handle` row above the workspace tabs is the
+   * Superhuman-style pull-up affordance for the command sheet. */
+  .app-bottom-tabs {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: calc(var(--bottom-tabs-height) + var(--sheet-handle-height));
+    background: var(--bg-chrome);
+    z-index: 30;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .bottom-tabs-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: var(--sheet-handle-height);
+    flex-shrink: 0;
+    background: transparent;
+    cursor: grab;
+  }
+
+  .bottom-tabs-handle-pill {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--text-tertiary);
+    opacity: 0.45;
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .bottom-tabs-handle:hover .bottom-tabs-handle-pill,
+  .bottom-tabs-handle:focus-visible .bottom-tabs-handle-pill {
+    opacity: 0.8;
+  }
+
+  .bottom-tabs-handle:focus-visible {
+    outline: none;
+  }
+
+  .bottom-tabs-row {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Viewport gets bottom padding so content isn't covered by the tab
+   * bar (which now includes the pull-handle row above the workspace
+   * tabs). */
   .app-content {
-    padding: var(--space-4) var(--space-3);
+    padding: var(--space-5) var(--space-4) calc(var(--bottom-tabs-height) + var(--sheet-handle-height) + env(safe-area-inset-bottom) + var(--space-4));
+    gap: var(--space-6);
+    border-top-left-radius: 0;
+  }
+
+  body[data-aside-state="open"] .app-content {
+    border-top-right-radius: 0;
+  }
+
+  /* Topbar height stays the same; mobile content inside handled by Topbar.astro. */
+}
+
+/* Drag handle styles — only visible at mobile (the base `display: none`
+ * is defined above). At mobile, becomes a 40×4 grab pill. */
+@media (max-width: 640px) {
+  .aside-drag-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: var(--sheet-handle-height);
+    flex-shrink: 0;
+    cursor: grab;
+  }
+
+  .aside-drag-handle::before {
+    content: "";
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--text-tertiary);
+    opacity: 0.5;
   }
 }
 
-/* ─── Unified input system (carried over for future surfaces) ────────── */
+@media (max-width: 480px) {
+  .app-content {
+    padding: var(--space-4) var(--space-3) calc(var(--bottom-tabs-height) + var(--sheet-handle-height) + env(safe-area-inset-bottom) + var(--space-4));
+  }
+}
+
+/* ─── BottomTabs item styles (mobile NavRail equivalent) ─────────────── */
+
+.bottom-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  letter-spacing: var(--tracking-wide);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.bottom-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.bottom-tab.is-active {
+  color: var(--accent);
+}
+
+.bottom-tab:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
+}
+
+.bottom-tab-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.bottom-tab-label {
+  font-weight: var(--weight-medium);
+}
+
+/* ─── Right Aside ─────────────────────────────────────────────────────── */
+
+/* TODO: no DOM consumer today; do not add class="app-aside" without also
+ * wiring data-aside-state. Right aside: pushes the viewport, same
+ * width-transition pattern as rail and sidebar. Width 0 → var(--aside-width).
+ * Inner content min-width keeps it from reflowing during the slide. Mobile:
+ * --aside-width = 100vw, viewport gets pushed to 0 (full-screen takeover). */
+.app-aside {
+  width: 0;
+  flex-shrink: 0;
+  background: var(--bg-chrome);
+  overflow: hidden;
+  transition: width var(--duration-base) var(--ease-out);
+  display: flex;
+  flex-direction: column;
+  border-top-left-radius: var(--corner-radius);
+}
+
+.app-aside > * {
+  width: var(--aside-width);
+  min-width: var(--aside-width);
+  height: 100%;
+}
+
+body[data-aside-state="open"] .app-aside {
+  width: var(--aside-width);
+}
+
+body[data-focus="true"] .app-aside {
+  border-top-left-radius: 0;
+}
+
+/* ─── Component card (playground reference wrapper) ──────────────────── */
+
+.component-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--bg-surface);
+  padding: var(--space-6);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--duration-fast) var(--ease-out);
+}
+
+/* Vim app-level focus marker — set by vim-controller when j/k navigates here. */
+.component-card[data-vim-focused="true"] {
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
+}
+
+.component-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.component-card-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-wide);
+  font-weight: var(--weight-medium);
+}
+
+.component-card-name {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  letter-spacing: var(--tracking-tight);
+}
+
+.component-card-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  background: var(--bg-chrome);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-1);
+}
+
+.component-card-note {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-top: calc(-1 * var(--space-2));
+  line-height: var(--leading-snug);
+}
+
+.component-card-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+@media (max-width: 480px) {
+  .component-card {
+    padding: var(--space-4);
+  }
+}
+
+/* ─── In-chrome label (floating reference tags) ──────────────────────── */
+
+.in-chrome-label {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  user-select: none;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.in-chrome-label-id {
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+}
+
+/* ─── Unified input system ─────────────────────────────────────────────
+ * SigmaOS-flavored: chrome fill, no border, generous radius. Every text
+ * field, search, select, textarea, checkbox, and range looks consistent.
+ * Override per-component only when truly needed.
+ */
 
 input[type="text"],
 input[type="search"],
@@ -168,4 +633,99 @@ textarea:focus-visible,
 select:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+/* Select — chevron via inline SVG, currentColor inherits text-tertiary. */
+select {
+  padding-right: calc(var(--space-3) + 18px);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888c95' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  background-size: 14px 14px;
+  cursor: pointer;
+}
+
+:root[data-theme="dark"] select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236a6e78' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+}
+
+/* Checkbox — uses an inset shadow as the visible boundary so it shows
+ * cleanly on either chrome or surface backgrounds. Carl fill when checked. */
+input[type="checkbox"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-1);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-tertiary);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+input[type="checkbox"]:hover {
+  box-shadow: inset 0 0 0 1.5px var(--text-secondary);
+}
+
+input[type="checkbox"]:checked {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 4px;
+  height: 8px;
+  border-right: 1.5px solid #2a1d0c;
+  border-bottom: 1.5px solid #2a1d0c;
+  transform: rotate(45deg);
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+  width: 100%;
+}
+
+/* Search wrapper — magnifier prefix + flat input inside a chrome pill. */
+.stil-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--bg-chrome);
+  border-radius: var(--radius-3);
+  padding: var(--space-2) var(--space-3);
+  width: 100%;
+}
+
+.stil-search input {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  flex: 1;
+  width: auto !important;
+}
+
+.stil-search input:focus-visible {
+  box-shadow: none !important;
+}
+
+.stil-search:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.stil-search-icon {
+  color: var(--text-tertiary);
+  display: inline-flex;
+  flex-shrink: 0;
 }
