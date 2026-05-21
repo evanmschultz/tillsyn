@@ -1,6 +1,8 @@
 package cli_codex
 
 import (
+	"github.com/charmbracelet/log"
+
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
 )
 
@@ -61,6 +63,25 @@ func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePat
 		//   -c model_reasoning_effort=<value>
 		// (per OQ1: -c, --config <key=value>  Override a config value)
 		argv = append(argv, "-c", "model_reasoning_effort="+*binding.Effort)
+	}
+
+	// MaxTurns and MaxBudgetUSD are not supported by the codex CLI adapter.
+	// The codex exec sub-command has no equivalent flags for these fields.
+	// Silently dropping them would violate parity-and-clarity doctrine
+	// (feedback_parity_clarity_no_silent_failures.md). Log a WARN at
+	// BuildCommand time so the caller receives an observable signal without
+	// breaking the spawn — these are informational caps, not hard blockers.
+	if binding.MaxTurns != nil {
+		log.Warn("cli_codex: MaxTurns is not supported by the codex adapter; field ignored",
+			"agent", binding.AgentName,
+			"max_turns", *binding.MaxTurns,
+		)
+	}
+	if binding.MaxBudgetUSD != nil {
+		log.Warn("cli_codex: MaxBudgetUSD is not supported by the codex adapter; field ignored",
+			"agent", binding.AgentName,
+			"max_budget_usd", *binding.MaxBudgetUSD,
+		)
 	}
 
 	return argv

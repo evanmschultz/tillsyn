@@ -28,6 +28,7 @@
 package cli_codex
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -71,14 +72,14 @@ func New() dispatcher.CLIAdapter {
 // The system prompt is fed to the codex process via stdin — codex reads
 // the prompt from stdin when no positional [PROMPT] argument is provided
 // (per OQ1: "If not provided as an argument (or if `-` is used), instructions
-// are read from stdin"). The file at paths.SystemPromptPath is opened here
-// and assigned to cmd.Stdin; the calling pipeline runs cmd.Start() before
-// the file handle needs to be closed. Callers that need explicit close
-// timing must wrap the returned *exec.Cmd.
+// are read from stdin"). The file at paths.SystemPromptPath is read entirely
+// into memory with os.ReadFile and injected as a bytes.Reader. This avoids
+// an open *os.File fd that would never be closed by cmd.Wait — bytes.Reader
+// carries no fd lifecycle concern.
 //
 // Returns an error if any name in binding.Env is unset in the orchestrator
 // process (fail-loud per F.7.17 P5) or if paths.SystemPromptPath cannot be
-// opened.
+// read.
 //
 // ctx is plumbed through exec.CommandContext so the dispatcher's lifecycle
 // (timeout / cancellation) propagates to the spawned codex process.
@@ -92,19 +93,20 @@ func (a *codexAdapter) BuildCommand(
 		return nil, fmt.Errorf("cli_codex: build command: %w", err)
 	}
 
-	// Open the system prompt file for stdin injection. codex reads its prompt
-	// from stdin when no positional argument is given (OQ1). We open the file
-	// here so BuildCommand fails loud if the path is absent rather than letting
-	// the spawned process run with no prompt.
-	promptFile, err := os.Open(paths.SystemPromptPath)
+	// Read the system prompt file into memory for stdin injection. codex reads
+	// its prompt from stdin when no positional argument is given (OQ1). We
+	// read the entire file here so BuildCommand fails loud if the path is
+	// absent, and we avoid leaving an open *os.File that cmd.Wait would not
+	// close — bytes.Reader carries no fd lifecycle concern.
+	promptBytes, err := os.ReadFile(paths.SystemPromptPath)
 	if err != nil {
-		return nil, fmt.Errorf("cli_codex: build command: open system prompt: %w", err)
+		return nil, fmt.Errorf("cli_codex: build command: read system prompt: %w", err)
 	}
 
 	argv := assembleArgv(binding, paths)
 	cmd := exec.CommandContext(ctx, codexBinaryName, argv[1:]...)
 	cmd.Env = env
-	cmd.Stdin = promptFile
+	cmd.Stdin = bytes.NewReader(promptBytes)
 	return cmd, nil
 }
 
