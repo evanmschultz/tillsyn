@@ -2283,6 +2283,20 @@ func executeCommandFlow(
 			return fmt.Errorf("bootstrap identity.actor_id: %w", err)
 		}
 	}
+
+	// Drop 4d_5 D0: load <cwd>/agents.toml (+ agents.local.toml override) and
+	// fail loud at boot when the resolved Preset.Client disagrees with the
+	// embedded default template's AgentBinding.CLIKind for any (group, kind)
+	// pair. Absence of agents.toml is fine — adopters on a fresh machine
+	// boot with a nil registry and the validator passes vacuously per
+	// templates.ValidateAgentsTemplateClientConflict's nil-registry guard.
+	// The local variable is held for D4D's pass-through to NewDispatcher;
+	// today the dispatcher reads agents.toml lazily per-spawn via the
+	// service's GetProjectTemplate seam.
+	_, err = loadAgentsRegistryAndValidate(agentsRegistrySearchDir())
+	if err != nil {
+		return fmt.Errorf("load agents.toml: %w", err)
+	}
 	bootstrapRequired := startupBootstrapRequired(cfg)
 	rootDir := runtimeRootDir(paths, dbPath)
 
@@ -4129,4 +4143,150 @@ func sanitizeLogFileStem(appName string) string {
 		return "tillsyn"
 	}
 	return stem
+}
+
+// agentsRegistrySearchDirFn is the indirection used by
+// agentsRegistrySearchDir to discover the current working directory. Tests
+// override this to inject a deterministic search root for the agents.toml
+// boot loader.
+var agentsRegistrySearchDirFn = os.Getwd
+
+// agentsRegistrySearchDir returns the directory the boot loader scans for
+// `agents.toml` (and the optional `agents.local.toml` override). The default
+// is the OS-reported current working directory — `till` is canonically
+// invoked from the project root where `till init` materialised
+// `<projectRoot>/agents.toml`. When os.Getwd fails (containerised CI with a
+// torn-down CWD) the function returns "" and the loader treats every
+// resolved file as absent, matching the nil-registry guard.
+func agentsRegistrySearchDir() string {
+	dir, err := agentsRegistrySearchDirFn()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+// loadAgentsRegistryAndValidate loads the per-project agents.toml (and the
+// optional agents.local.toml override) from searchDir and runs the
+// parallel-peer conflict detector against every embedded default template.
+// Drop 4d_5 D0 hook.
+//
+// Boot-time contract per dev decision 2.1 + round-2 Open Q 6.3:
+//
+//   - agents.toml absence is FINE. The loader returns (nil, nil) so adopters
+//     on a fresh machine boot cleanly. The legacy single-template
+//     resolution path takes over per F.7.17 L15 default-to-claude.
+//   - agents.local.toml absence is FINE. Override file is optional.
+//   - agents.toml parse / decode failures are fatal — surfaces as a
+//     *config.ConfigError envelope with file/block/line context.
+//   - agents.local.toml present + agents.toml absent is REJECTED — local
+//     without project is an authoring footgun that the merge surface
+//     cannot defend against.
+//   - tools_deny in agents.local.toml triggers ErrToolsDenyNotOverridable
+//     via config.Merge before the conflict validator runs.
+//   - ValidateAgentsTemplateClientConflict against EVERY embedded default
+//     template fails loud on the first (group, kind) disagreement. Floor
+//     check: catches the obvious "agents=codex template=claude" mismatch
+//     at the boot of the till CLI, not at first agent spawn.
+//
+// Returns the merged *config.AgentsRegistry on success (held by the caller
+// for D4D's NewDispatcher pass-through). A nil registry is returned with
+// nil error when agents.toml is absent — adopters who never opt into
+// per-project agents.toml inherit the legacy resolution path.
+func loadAgentsRegistryAndValidate(searchDir string) (*config.AgentsRegistry, error) {
+	searchDir = strings.TrimSpace(searchDir)
+	if searchDir == "" {
+		return nil, nil
+	}
+
+	agentsPath := filepath.Join(searchDir, "agents.toml")
+	localPath := filepath.Join(searchDir, "agents.local.toml")
+
+	agentsExists := fileExists(agentsPath)
+	localExists := fileExists(localPath)
+
+	if !agentsExists && !localExists {
+		// No per-project config — nil-registry guard handles the floor
+		// check.
+		return nil, nil
+	}
+	if !agentsExists && localExists {
+		return nil, fmt.Errorf("found %q without %q; the local override requires a project-level agents.toml to merge over", localPath, agentsPath)
+	}
+
+	projectRegistry, err := config.LoadMultiGroupRegistry(agentsPath)
+	if err != nil {
+		return nil, fmt.Errorf("load %q: %w", agentsPath, err)
+	}
+
+	var merged config.AgentsRegistry
+	if localExists {
+		localRegistry, err := config.LoadMultiGroupRegistry(localPath)
+		if err != nil {
+			return nil, fmt.Errorf("load %q: %w", localPath, err)
+		}
+		merged, err = config.Merge(localRegistry, projectRegistry)
+		if err != nil {
+			return nil, fmt.Errorf("merge agents config: %w", err)
+		}
+	} else {
+		merged = projectRegistry
+	}
+
+	// Conflict-floor: run ValidateAgentsTemplateClientConflict against
+	// every embedded default template the adopter could plausibly point
+	// their project at. The floor catches the obvious config-mismatch bug
+	// at boot rather than at first spawn (round-2 Open Q 6.3 resolution).
+	for _, name := range templates.BuiltinTemplateNames() {
+		tpl, err := templates.LoadBuiltinTemplate(name)
+		if err != nil {
+			return nil, fmt.Errorf("load embedded template %q: %w", name, err)
+		}
+		catalog := templates.Bake(tpl)
+		if err := templates.ValidateAgentsTemplateClientConflict(&merged, &catalog); err != nil {
+			return nil, fmt.Errorf("agents.toml + builtin template %q: %w", name, err)
+		}
+	}
+
+	// Project-local template floor: if the adopter has authored a
+	// `<searchDir>/.tillsyn/template.toml`, validate the conflict surface
+	// against THAT catalog too. The project-local template is the binding
+	// shape the dispatcher actually consumes per-spawn (via the per-project
+	// KindCatalogJSON envelope), so it's the surface where a real conflict
+	// most often surfaces. Project-local absence is fine — adopters who
+	// haven't run `till init` yet inherit the embedded floor coverage above.
+	projectLocalTemplatePath := filepath.Join(searchDir, ".tillsyn", "template.toml")
+	if fileExists(projectLocalTemplatePath) {
+		f, err := os.Open(projectLocalTemplatePath)
+		if err != nil {
+			return nil, fmt.Errorf("open %q: %w", projectLocalTemplatePath, err)
+		}
+		tpl, loadErr := templates.Load(f)
+		_ = f.Close()
+		if loadErr != nil {
+			return nil, fmt.Errorf("load %q: %w", projectLocalTemplatePath, loadErr)
+		}
+		catalog := templates.Bake(tpl)
+		if err := templates.ValidateAgentsTemplateClientConflict(&merged, &catalog); err != nil {
+			return nil, fmt.Errorf("agents.toml + project template %q: %w", projectLocalTemplatePath, err)
+		}
+	}
+
+	return &merged, nil
+}
+
+// fileExists reports whether path resolves to an existing file (not a
+// directory) via os.Stat. The helper centralises the existence probe used
+// by loadAgentsRegistryAndValidate for both agents.toml and
+// agents.local.toml so the agents-loader's behaviour is consistent
+// regardless of error mode (ENOENT vs EACCES vs anything-else collapses to
+// "absent"). Directories at the canonical paths are also treated as
+// absent — a stray `agents.toml/` directory is an adopter authoring
+// mistake, not a file the loader should try to parse.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
 }

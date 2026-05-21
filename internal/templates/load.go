@@ -14,6 +14,7 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
+	"github.com/evanmschultz/tillsyn/internal/config"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
@@ -2323,4 +2324,227 @@ func validateClaimVsImplCoherence(tpl Template, claimsFn func(tpl Template) []st
 		}
 	}
 	return nil
+}
+
+// ErrConflictingCLIKind is the sentinel returned by
+// ValidateAgentsTemplateClientConflict when an agents.toml Preset.Client and a
+// template.toml AgentBinding.CLIKind disagree for the same (group, kind) pair
+// after normalisation. Drop 4d_5 D0 introduced this sentinel as the parallel-
+// peer conflict signal per dev decision 2.1: agents and template are PEERS
+// (no ranked priority); a disagreement is a template-author / config-author
+// error that fails loud at boot.
+//
+// Callers detect via errors.Is(err, ErrConflictingCLIKind); the wrapped
+// envelope is a *ConflictingCLIKindError that carries {Group, Kind, AgentsValue,
+// TemplateValue} so adopters see which knobs disagree.
+//
+// Distinct from ErrInvalidAgentBinding (per-binding field-shape failure) and
+// ErrUnknownAgentName (dangling agent reference): this sentinel is a
+// cross-axis coherence failure between agents.toml and template.toml.
+//
+// Drop 4d_5 D0 hook.
+var ErrConflictingCLIKind = errors.New("agents.toml Preset.Client and template.toml AgentBinding.CLIKind disagree")
+
+// ConflictingCLIKindError is the typed envelope wrapping ErrConflictingCLIKind.
+// Each field names one axis of the disagreement so adopters can pinpoint the
+// offending knobs in their agents.toml and template.toml.
+//
+//   - Group is the agents.toml group name (e.g. "go", "gen", "fe") whose
+//     Preset.Client value participates in the conflict. Empty when the
+//     conflict originates from a kind-level override rather than a group
+//     default — today's schema only carries Client at Preset / Override
+//     level, so Group is always populated; reserved for forward-compat.
+//   - Kind is the cascade kind (closed 12-value domain.Kind enum) the
+//     conflict applies to.
+//   - AgentsValue is the resolved agents-side Client (after Preset →
+//     Override field-level inheritance via config.Resolve), normalized via
+//     normalizeClient.
+//   - TemplateValue is the template-side AgentBinding.CLIKind for the same
+//     Kind, normalized via normalizeClient.
+//
+// Error() renders a human-readable line naming all four fields so the
+// dev sees the exact (group, kind) pair to reconcile. Unwrap returns
+// ErrConflictingCLIKind so errors.Is routes correctly.
+type ConflictingCLIKindError struct {
+	Group         string
+	Kind          domain.Kind
+	AgentsValue   string
+	TemplateValue string
+}
+
+// Error renders the envelope as a one-line diagnostic naming the offending
+// (group, kind) pair plus the disagreeing values. The format is:
+//
+//	"agents.toml [<group>] resolves kind %q to client %q but template.toml AgentBinding[%q].cli_kind = %q (parallel-peer conflict)"
+//
+// Normalised values are quoted verbatim so the dev sees what the validator
+// compared, not the raw authoring text — case-fold + whitespace-trim happen
+// before comparison per round-2 falsification HIGH-3.
+func (e *ConflictingCLIKindError) Error() string {
+	if e == nil {
+		return "<nil ConflictingCLIKindError>"
+	}
+	return fmt.Sprintf(
+		"%s: agents.toml [%s] resolves kind %q to client %q but template.toml AgentBinding[%q].cli_kind = %q (parallel-peer conflict)",
+		ErrConflictingCLIKind.Error(),
+		e.Group,
+		string(e.Kind),
+		e.AgentsValue,
+		string(e.Kind),
+		e.TemplateValue,
+	)
+}
+
+// Unwrap returns ErrConflictingCLIKind so errors.Is(err, ErrConflictingCLIKind)
+// routes correctly for callers that detect the sentinel without inspecting the
+// typed envelope.
+func (e *ConflictingCLIKindError) Unwrap() error {
+	return ErrConflictingCLIKind
+}
+
+// normalizeClient is the canonical normaliser shared by D0's conflict
+// detector and D2's BindingOverridesFromPreset. Trims surrounding whitespace
+// then lower-cases the result so authoring case-drift (e.g. "Codex" /
+// "CODEX" / "codex" / "  codex  ") collapses to one canonical form for
+// comparison.
+//
+// The function is intentionally minimal — no Unicode normalisation, no
+// internal whitespace collapse, no synonym expansion. The CLIKind vocabulary
+// is a small closed set of ASCII identifiers ("claude", "codex"); silent
+// case-fold drift was the round-2 HIGH-3 falsification finding and the only
+// drift this helper exists to mitigate.
+//
+// Symmetric usage contract: BOTH sides of a CLIKind comparison MUST pass
+// through normalizeClient before equality is tested. Per round-2 HIGH-3:
+// applying normalisation to only one side would raise false conflicts on
+// adopters whose agents.toml writes "Codex" and template.toml writes "codex".
+//
+// Drop 4d_5 D0 hook.
+func normalizeClient(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// ValidateAgentsTemplateClientConflict reports the first parallel-peer conflict
+// between an agents.toml registry and a template.toml KindCatalog per dev
+// decision 2.1 (Drop 4d_5 D0). The two surfaces are PEERS — neither outranks
+// the other — so a disagreement is a config-author error that fails loud.
+//
+// Conflict definition: for each (group, kind) pair where:
+//
+//  1. The catalog has an AgentBinding for `kind` whose CLIKind is non-empty
+//     after normalizeClient, AND
+//  2. config.Resolve(registry, group, string(kind)) returns a Preset whose
+//     Client is non-empty after normalizeClient, AND
+//  3. The two normalized values differ.
+//
+// Both sides MUST pass through normalizeClient before comparison so
+// authoring case-drift (e.g. agents.toml "Codex" vs template.toml "codex")
+// is NOT a false conflict (round-2 falsification HIGH-3 mitigation).
+//
+// Single-side specification: if only one side sets a non-empty value, the
+// validator treats the conflict as absent — the other side is "open" and
+// the populated side wins implicitly at the adapter-lookup layer (per
+// F.7.17 L15: empty CLIKind defaults to claude at adapter time; D2 wires
+// the agents-side fallback path).
+//
+// Neither side: both empty → no conflict (default-to-claude resolution
+// applies at adapter time per F.7.17 L15).
+//
+// Nil-registry guard: a nil registry pointer (or zero-value AgentsRegistry
+// map) is treated as "no agents-side preset for any kind" — every kind
+// passes vacuously. Same applies to a nil catalog or one with a nil
+// AgentBindings map. The validator returns nil rather than panicking so
+// adopters running on a fresh machine (no agents.toml) still boot.
+//
+// Iteration order: groups iterate in sorted lexical order (config.Resolve
+// is keyed by group name); kinds iterate in the closed
+// deterministicKindOrder list mirrored from config.deterministicKindOrder.
+// Combined, the first conflict surfaced is byte-identical across runs
+// regardless of Go map iteration randomness.
+//
+// Return semantics: the validator returns on the FIRST conflict it finds —
+// the error surface is bounded. Future drops that want exhaustive
+// per-pair reporting can switch to error aggregation; the load-time-reject
+// pattern doesn't need it today.
+//
+// All non-nil returns wrap ErrConflictingCLIKind via the
+// *ConflictingCLIKindError envelope so callers using
+// `errors.Is(err, ErrConflictingCLIKind)` route correctly and
+// `errors.As(err, &*ConflictingCLIKindError)` recovers the offending values.
+//
+// Drop 4d_5 D0 hook.
+func ValidateAgentsTemplateClientConflict(registry *config.AgentsRegistry, catalog *KindCatalog) error {
+	if registry == nil || catalog == nil {
+		return nil
+	}
+	if len(*registry) == 0 || len(catalog.AgentBindings) == 0 {
+		return nil
+	}
+
+	// Sort group names for deterministic iteration regardless of Go map
+	// shuffling. Conflict-error UX must be byte-identical across runs so
+	// dev grep + CI logs match.
+	groups := make([]string, 0, len(*registry))
+	for g := range *registry {
+		groups = append(groups, g)
+	}
+	sort.Strings(groups)
+
+	for _, group := range groups {
+		for _, kind := range conflictCheckKinds {
+			binding, ok := catalog.AgentBindings[kind]
+			if !ok {
+				continue
+			}
+			templateNorm := normalizeClient(binding.CLIKind)
+			if templateNorm == "" {
+				// Template side is "open" — agents wins implicitly at
+				// adapter-lookup time. No conflict.
+				continue
+			}
+			preset, _ := config.Resolve(*registry, group, string(kind))
+			agentsNorm := normalizeClient(preset.Client)
+			if agentsNorm == "" {
+				// Agents side is "open" — template wins implicitly. No
+				// conflict.
+				continue
+			}
+			if agentsNorm == templateNorm {
+				continue
+			}
+			return &ConflictingCLIKindError{
+				Group:         group,
+				Kind:          kind,
+				AgentsValue:   agentsNorm,
+				TemplateValue: templateNorm,
+			}
+		}
+	}
+	return nil
+}
+
+// conflictCheckKinds mirrors the closed 12-value Kind enum sequence used by
+// ValidateAgentsTemplateClientConflict's per-kind iteration. Hard-coded slice
+// (mirrors domain/kind.go's validKinds + config.deterministicKindOrder) so
+// the validator's first-conflict diagnostic is byte-identical across runs —
+// Go map iteration order is intentionally randomized.
+//
+// LOUD WARNING TO FUTURE DROPS THAT ADD NEW KINDS: extend this slice with
+// the new kind constant in the same drop that introduces it. Failing to do
+// so will silently bypass the new kind from the conflict scan.
+//
+// Drop 4d_5 D0 hook.
+var conflictCheckKinds = []domain.Kind{
+	domain.KindPlan,
+	domain.KindResearch,
+	domain.KindBuild,
+	domain.KindPlanQAProof,
+	domain.KindPlanQAFalsification,
+	domain.KindBuildQAProof,
+	domain.KindBuildQAFalsification,
+	domain.KindCloseout,
+	domain.KindCommit,
+	domain.KindRefinement,
+	domain.KindDiscussion,
+	domain.KindHumanVerify,
 }
