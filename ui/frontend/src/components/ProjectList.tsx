@@ -42,8 +42,20 @@ export default function ProjectList() {
   return (
     <section>
       <h2>Projects</h2>
+      {/*
+        Outer guard gates on terminal resource states ("ready" + "errored")
+        instead of the loading flag. This is load-bearing for SSR-hydration
+        match: with the source-signal `() => !isServer`, SSR sees state=
+        "unresolved" (loading=false) and the client-initial render sees state=
+        "pending" (loading=true). If the outer Show were `when={!projects.
+        loading}`, SSR would render the projects branch while the client would
+        render the Loading fallback — DOM mismatch → Solid throws Hydration
+        Mismatch and the UI stays stuck on whatever SSR painted. Gating on
+        terminal states keeps SSR + client-initial both on the "Loading…"
+        fallback so hydration's DOM matches.
+      */}
       <Show
-        when={!projects.loading}
+        when={projects.state === "ready" || projects.state === "errored"}
         fallback={<p>Loading…</p>}
       >
         <Show
