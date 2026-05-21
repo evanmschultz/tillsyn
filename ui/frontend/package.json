@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@9.0.0",
+  "packageManager": "pnpm@10.11.0",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
@@ -24,6 +24,8 @@
     "@fontsource/fira-code": "^5.2.7",
     "@fontsource/inter": "^5.2.8",
     "@fontsource/iosevka": "^5.2.5",
-    "@fontsource/jetbrains-mono": "^5.2.8"
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@nanostores/solid": "^1.1.1",
+    "nanostores": "^1.3.0"
   }
 }
