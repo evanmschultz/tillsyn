@@ -6,6 +6,10 @@ export default defineConfig({
   integrations: [solidJs()],
   output: 'static',
   server: {
-    port: 4321,
+    // Pinned to match ui/wails.json frontend:dev:serverUrl. Wails proxies its
+    // webview to this port during `mage uiDev` — drift between the two configs
+    // surfaces as "Timeout waiting for frontend DevServer" + blank-white-screen
+    // because the Wails proxy can't reach the Astro server.
+    port: 51428,
   },
 });
