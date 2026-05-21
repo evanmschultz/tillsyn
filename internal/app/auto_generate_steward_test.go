@@ -197,11 +197,14 @@ func TestAutoGenSeedsLevel2FindingsOnNumberedDropCreation(t *testing.T) {
 	}
 
 	const dropN = 3
+	// Lane A D1 (2026-05-21): level-1 plan node uses StructuralTypeCascade
+	// per the new positional invariant in NewActionItem — `drop` is now
+	// restricted to level-2+ and `cascade` is the level-1 unit.
 	drop, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:      project.ID,
 		ColumnID:       columns[0].ID,
 		Kind:           domain.KindPlan,
-		StructuralType: domain.StructuralTypeDrop,
+		StructuralType: domain.StructuralTypeCascade,
 		DropNumber:     dropN,
 		Title:          "DROP_3",
 		Description:    "Numbered drop 3.",
@@ -421,11 +424,12 @@ func TestRaiseRefinementsGateForgottenAttentionIsIdempotent(t *testing.T) {
 	}
 
 	const dropN = 7
+	// Lane A D1 (2026-05-21): level-1 plan node uses StructuralTypeCascade.
 	if _, err := svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:      project.ID,
 		ColumnID:       columns[0].ID,
 		Kind:           domain.KindPlan,
-		StructuralType: domain.StructuralTypeDrop,
+		StructuralType: domain.StructuralTypeCascade,
 		DropNumber:     dropN,
 		Title:          "DROP_7",
 		Description:    "Numbered drop 7 for idempotency check.",
@@ -533,11 +537,12 @@ func TestAutoGenSeedsRejectsMissingAnchor(t *testing.T) {
 	}
 
 	// Numbered drop creation should fail — no anchors to parent findings.
+	// Lane A D1 (2026-05-21): level-1 plan node uses StructuralTypeCascade.
 	_, err = svc.CreateActionItem(context.Background(), CreateActionItemInput{
 		ProjectID:      project.ID,
 		ColumnID:       columns[0].ID,
 		Kind:           domain.KindPlan,
-		StructuralType: domain.StructuralTypeDrop,
+		StructuralType: domain.StructuralTypeCascade,
 		DropNumber:     5,
 		Title:          "DROP_5",
 		Priority:       domain.PriorityMedium,

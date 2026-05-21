@@ -888,11 +888,13 @@ empty reason defeats the point.
 		Short: "Create one action item under a project",
 		Long: strings.TrimSpace(`
 Create one action item under the specified project. The --structural-type flag
-defaults to the FF4 smart-default per kind: plan and refinement default to
-segment; all other kinds default to droplet. Supply --structural-type explicitly
-to override (valid values: drop|segment|confluence|droplet).
+defaults to the cascade-aware smart-default: level-1 (no --parent-id) defaults
+to cascade; level-2+ uses the kind-derived default — plan and refinement to
+segment, all other kinds to droplet. Supply --structural-type explicitly to
+override (valid values: cascade|drop|segment|confluence|droplet).
 
-Defaults: plan and refinement -> segment; all other kinds -> droplet.
+Defaults: level-1 -> cascade; level-2+ plan/refinement -> segment; all other
+kinds at level-2+ -> droplet.
 
 The action item is placed on the project's first column (sorted by position)
 automatically — no --column-id flag is required. Pass --parent-id to nest the

@@ -201,10 +201,11 @@ type LoadOptions struct {
 //     the embedded default templates; catches typo-stripped adopter
 //     templates. Drop 4c.5 F.5.2 hook (replaced the prior no-op stub).
 //     f. validateKindStructuralCoherence — assert every [kinds.X] row
-//     whose structural_type == "drop" has at least one [[child_rules]]
-//     entry with when_parent_kind == X. The thin cross-axis wedge
-//     between structural_type and child_rules; full coherence is
-//     post-MVP. Drop 4c.5 F.5.2 hook.
+//     whose structural_type is "drop" OR "cascade" has at least one
+//     [[child_rules]] entry with when_parent_kind == X. The thin cross-axis
+//     wedge between structural_type and child_rules; full coherence is
+//     post-MVP. Drop 4c.5 F.5.2 hook (drop-coherence); extended to also
+//     cover cascade in Drop 4d_5 Lane A D3 per HV-1 = Option A.
 //     g. validateGateKinds — assert every gate-kind string in
 //     Template.Gates value slices is a member of the closed
 //     GateKind enum (4b.1 hook).
@@ -400,20 +401,24 @@ var (
 	ErrUnreachableChildRule = errors.New("template child_rules contain an unreachable rule")
 
 	// ErrIncoherentStructuralType is returned by validateKindStructuralCoherence
-	// when a [kinds.X] row declares `structural_type = "drop"` AND no
-	// [[child_rules]] entry has `when_parent_kind = X`. A drop structural type
-	// names a kind that decomposes into cascade work; a drop kind with no
+	// when a [kinds.X] row declares `structural_type = "drop"` OR
+	// `structural_type = "cascade"` AND no [[child_rules]] entry has
+	// `when_parent_kind = X`. Both drop and cascade structural types name a
+	// kind that decomposes into further cascade work; such a kind with no
 	// auto-create children is structurally orphaned.
 	//
-	// The check is restricted to structural_type=drop today; other structural
-	// types (droplet / segment / confluence) do not gate on child_rules
-	// presence in Drop 4c.5. Full structural_type ↔ kind ↔ role coherence
-	// validation is post-MVP.
+	// The check is restricted to structural_type=drop and structural_type=cascade
+	// today (Drop 4d_5 Lane A D3 extended the predicate from drop-only to
+	// drop+cascade); other structural types (droplet / segment / confluence)
+	// do not gate on child_rules presence. Full structural_type ↔ kind ↔ role
+	// coherence validation is post-MVP.
 	//
 	// The wrapped message names the offending kind, the structural_type
 	// value, and the missing-rule shape so adopters see the exact line they
 	// need to add (a [[child_rules]] entry with when_parent_kind set to the
-	// offending kind).
+	// offending kind). Per Drop 4d_5 Lane A D3 round-2 plan-QA-falsif NIT-1,
+	// this single sentinel covers both drop and cascade — no separate
+	// ErrMissingCascadeChildRules sentinel is needed.
 	ErrIncoherentStructuralType = errors.New("template kind has incoherent structural_type")
 
 	// ErrUnknownKindReference is returned when a [child_rules] entry
@@ -1366,28 +1371,33 @@ func validateChildRuleReachability(tpl Template) error {
 
 // validateKindStructuralCoherence asserts a thin cross-axis invariant between
 // the [kinds.X] structural_type axis and the [[child_rules]] auto-create axis:
-// any kind declared with `structural_type = "drop"` MUST have at least one
-// [[child_rules]] entry where `when_parent_kind == X`. A "drop" structural type
-// names a kind that decomposes into cascade work; a drop kind with no
+// any kind declared with `structural_type = "drop"` OR `structural_type =
+// "cascade"` MUST have at least one [[child_rules]] entry where
+// `when_parent_kind == X`. Both "drop" and "cascade" structural types name a
+// kind that decomposes into further cascade work; such a kind with no
 // child-rule entries pointing at it is structurally orphaned and represents a
 // template-author mistake.
 //
 // The check is conditional on the kind's structural_type being EXACTLY "drop"
-// (the closed StructuralType enum has four values: drop / segment / confluence
-// / droplet — see WIKI.md §"Cascade Vocabulary"). Other structural types do
-// NOT trigger this check:
+// or EXACTLY "cascade" (the closed StructuralType enum has five values:
+// drop / segment / confluence / droplet / cascade — see WIKI.md § "Cascade
+// Vocabulary"). Drop 4d_5 Lane A HV-1 = Option A landed the `cascade` value
+// as the decomposing level-1 structural unit; this validator was extended to
+// require child_rules for cascade kinds for the same reason it requires them
+// for drop kinds. The other three structural types do NOT trigger this check:
 //
 //   - droplet: terminal node, no decomposition expected.
 //   - segment: may recurse but coherence shape is handled by the kind's own
 //     auto-create chain in a future drop.
 //   - confluence: defined by `blocked_by` non-empty, not by child_rules.
 //
-// Drop 4c.5 F.5.2 ships only the drop-coherence wedge; full structural-type ↔
-// kind ↔ role coherence is post-MVP. The embedded till-go.toml (rebadged
-// from default-go.toml in Drop 4c.6 W5.D1) uses `structural_type = "droplet"`
+// Drop 4c.5 F.5.2 shipped the drop-coherence wedge; Drop 4d_5 Lane A D3
+// extended the predicate to cover cascade. Full structural-type ↔ kind ↔ role
+// coherence is post-MVP. The embedded till-go.toml (rebadged from
+// default-go.toml in Drop 4c.6 W5.D1) uses `structural_type = "droplet"`
 // for every kind today (per Drop 3 Note 1 in THEME_F_PLAN.md), so this
 // validator is a no-op against the default. It only fires on adopter
-// templates that opt into structural_type=drop.
+// templates that opt into structural_type=drop or structural_type=cascade.
 //
 // The validator returns on the FIRST offending kind to keep the error surface
 // bounded; outer-map iteration order over tpl.Kinds is non-deterministic in
@@ -1395,7 +1405,9 @@ func validateChildRuleReachability(tpl Template) error {
 // zero or one kind will fail on any given template.
 //
 // All non-nil returns wrap ErrIncoherentStructuralType so callers using
-// `errors.Is(err, ErrIncoherentStructuralType)` route correctly.
+// `errors.Is(err, ErrIncoherentStructuralType)` route correctly. Per Drop 4d_5
+// Lane A D3 round-2 plan-QA-falsif NIT-1, the existing sentinel is REUSED
+// for the cascade case (no new ErrMissingCascadeChildRules sentinel).
 func validateKindStructuralCoherence(tpl Template) error {
 	// Index existing [[child_rules]] entries by parent kind for O(1) lookup
 	// of the "any rule with when_parent_kind == X" presence test.
@@ -1404,12 +1416,12 @@ func validateKindStructuralCoherence(tpl Template) error {
 		parentsWithRules[rule.WhenParentKind] = struct{}{}
 	}
 	for kind, row := range tpl.Kinds {
-		if row.StructuralType != domain.StructuralTypeDrop {
+		if row.StructuralType != domain.StructuralTypeDrop && row.StructuralType != domain.StructuralTypeCascade {
 			continue
 		}
 		if _, ok := parentsWithRules[kind]; !ok {
-			return fmt.Errorf("%w: kind %q has structural_type=%q but no [[child_rules]] entry has when_parent_kind=%q (drop kinds must decompose)",
-				ErrIncoherentStructuralType, kind, domain.StructuralTypeDrop, kind)
+			return fmt.Errorf("%w: kind %q has structural_type=%q but no [[child_rules]] entry has when_parent_kind=%q (drop/cascade kinds must decompose)",
+				ErrIncoherentStructuralType, kind, row.StructuralType, kind)
 		}
 	}
 	return nil

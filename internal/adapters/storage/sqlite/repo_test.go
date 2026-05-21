@@ -2417,21 +2417,31 @@ func TestRepository_PersistsActionItemStructuralTypeAndIrreducible(t *testing.T)
 	// Round-trip every member of the closed StructuralType enum, paired with
 	// distinct Irreducible flags so true and false both exercise the SQLite
 	// INTEGER 0/1 conversion path.
+	//
+	// Lane A D1 (2026-05-21): cascade is the level-1 unit (parent_id == "")
+	// and drop is restricted to level-2+ (parent_id != ""). We seed a
+	// level-1 cascade row first so the level-2+ drop row has a parent it
+	// can point at. Segment/confluence/droplet stay level-agnostic and
+	// remain at level-1 (no parent) for SELECT-by-parent ordinal coverage.
+	const cascadeID = "t-st-cascade"
 	cases := []struct {
 		id             string
+		parentID       string
 		structuralType domain.StructuralType
 		irreducible    bool
 	}{
-		{id: "t-st-drop", structuralType: domain.StructuralTypeDrop, irreducible: false},
-		{id: "t-st-segment", structuralType: domain.StructuralTypeSegment, irreducible: false},
-		{id: "t-st-confluence", structuralType: domain.StructuralTypeConfluence, irreducible: false},
-		{id: "t-st-droplet", structuralType: domain.StructuralTypeDroplet, irreducible: true},
+		{id: cascadeID, parentID: "", structuralType: domain.StructuralTypeCascade, irreducible: false},
+		{id: "t-st-drop", parentID: cascadeID, structuralType: domain.StructuralTypeDrop, irreducible: false},
+		{id: "t-st-segment", parentID: "", structuralType: domain.StructuralTypeSegment, irreducible: false},
+		{id: "t-st-confluence", parentID: "", structuralType: domain.StructuralTypeConfluence, irreducible: false},
+		{id: "t-st-droplet", parentID: "", structuralType: domain.StructuralTypeDroplet, irreducible: true},
 	}
 
 	for i, tc := range cases {
 		item, err := domain.NewActionItem(domain.ActionItemInput{
 			ID:             tc.id,
 			ProjectID:      project.ID,
+			ParentID:       tc.parentID,
 			ColumnID:       column.ID,
 			Kind:           domain.KindBuild,
 			StructuralType: tc.structuralType,
@@ -2483,13 +2493,21 @@ func TestRepository_PersistsActionItemStructuralTypeAndIrreducible(t *testing.T)
 		}
 	}
 
-	// ListActionItemsByParent exercises the third SELECT path.
+	// ListActionItemsByParent exercises the third SELECT path. Lane A D1
+	// (2026-05-21): only the rows with empty ParentID surface under the ""
+	// root listing; the level-2+ drop row appears under its cascade parent.
+	rootCases := 0
+	for _, tc := range cases {
+		if tc.parentID == "" {
+			rootCases++
+		}
+	}
 	parentListed, err := repo.ListActionItemsByParent(ctx, project.ID, "")
 	if err != nil {
 		t.Fatalf("ListActionItemsByParent() error = %v", err)
 	}
-	if len(parentListed) != len(cases) {
-		t.Fatalf("ListActionItemsByParent() length = %d, want %d", len(parentListed), len(cases))
+	if len(parentListed) != rootCases {
+		t.Fatalf("ListActionItemsByParent(root) length = %d, want %d", len(parentListed), rootCases)
 	}
 
 	// Reassign on update: flip Irreducible and reassign StructuralType to a

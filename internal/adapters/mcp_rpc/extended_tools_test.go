@@ -2734,15 +2734,17 @@ func TestHandlerInstructionsToolReturnsEmbeddedDocs(t *testing.T) {
 	if !slices.Contains(available, "README.md") {
 		t.Fatalf("available docs missing README.md: %#v", available)
 	}
-	if !slices.Contains(available, "AGENTS.md") {
-		t.Fatalf("available docs missing AGENTS.md: %#v", available)
-	}
 	mdGuidance, ok := structured["md_file_guidance"].(map[string]any)
 	if !ok {
 		t.Fatalf("md_file_guidance missing: %#v", structured)
 	}
-	if _, ok := mdGuidance["AGENTS.md"]; !ok {
-		t.Fatalf("md_file_guidance missing AGENTS.md guidance: %#v", mdGuidance)
+	// Tillsyn intentionally does NOT ship AGENTS.md or CLAUDE.md at repo root:
+	// cascade agents receive only the context they need via spawn prompts, not
+	// from repo-root policy files. md_file_guidance must still return guidance
+	// for at least README.md so external callers know how to author project
+	// docs, but AGENTS.md/CLAUDE.md keys are not required.
+	if _, ok := mdGuidance["README.md"]; !ok {
+		t.Fatalf("md_file_guidance missing README.md guidance: %#v", mdGuidance)
 	}
 }
 

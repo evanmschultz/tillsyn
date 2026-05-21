@@ -131,3 +131,21 @@ claude mcp add --scope local tillsyn-dev-drop-1 -- /Users/evanschultz/Documents/
 **After every `mage build`** in a given worktree, that worktree's binary updates in place and MCP picks up the change on the next invocation — no re-registration needed. Orchestrators reference their worktree's MCP name (not the generic `tillsyn-dev`) unless they're the STEWARD session launched from `main/`. Confirm with `claude mcp list`.
 
 **When retiring a worktree,** remove its MCP entry with `claude mcp remove <name>`.
+
+## Cascade structural_type one-shot migration (2026-05-21)
+
+After this drop merges, every existing level-1 `action_items` row in your local `~/.tillsyn/tillsyn.db` still carries `structural_type='drop'` — the value used as a placeholder before the cascade enum landed. Per dev decision O1, apply the one-shot SQL UPDATE below BEFORE running the first mutation against the migrated binary, so the in-flight plan roots flip cleanly to `structural_type='cascade'` and the new positional invariant guards engage on subsequent writes.
+
+```bash
+sqlite3 ~/.tillsyn/tillsyn.db "UPDATE action_items SET structural_type='cascade' WHERE parent_id='' AND structural_type='drop';"
+```
+
+Verify the result with this SELECT:
+
+```bash
+sqlite3 ~/.tillsyn/tillsyn.db "SELECT id, title, structural_type FROM action_items WHERE parent_id='' LIMIT 20;"
+```
+
+Every row should show `structural_type=cascade`. After verification, restart the `tillsyn-dev` MCP server (or your worktree's MCP entry) so the running binary picks up the migrated rows instead of caching the pre-migration state.
+
+**Idempotency:** the UPDATE filters on BOTH `parent_id=''` AND `structural_type='drop'`, so any level-1 row that already carries a non-drop type (e.g. `cascade` or `segment` set by hand) is left untouched. Re-running the statement on an already-migrated DB matches zero rows — the operation is safe to apply repeatedly.

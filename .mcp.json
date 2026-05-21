@@ -9,8 +9,8 @@
       "args": ["--project", "/Users/evanschultz/Documents/Code/hylla/tillsyn/main"]
     },
     "hylla": {
-      "type": "http",
-      "url": "http://127.0.0.1:7389/mcp"
+      "command": "/Users/evanschultz/go/bin/hylla",
+      "args": ["mcp"]
     }
   }
 }

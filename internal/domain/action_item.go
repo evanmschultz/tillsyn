@@ -363,6 +363,18 @@ func NewActionItem(in ActionItemInput, now time.Time) (ActionItem, error) {
 	if !IsValidStructuralType(in.StructuralType) {
 		return ActionItem{}, ErrInvalidStructuralType
 	}
+	// Cascade-positional invariant per WIKI.md § Cascade Vocabulary (2026-05-21):
+	//   - structural_type=cascade is valid ONLY at level-1 (parent_id == "").
+	//   - structural_type=drop is valid ONLY at level-2+ (parent_id != "").
+	// Domain owns the axis; template [kinds.X].structural_type is advisory.
+	// `in.ParentID` is already TrimSpace'd above, so the empty-string compare
+	// is safe.
+	if in.StructuralType == StructuralTypeCascade && in.ParentID != "" {
+		return ActionItem{}, ErrCascadeMustBeLevel1
+	}
+	if in.StructuralType == StructuralTypeDrop && in.ParentID == "" {
+		return ActionItem{}, ErrDropMustBeLevel2Plus
+	}
 	// Owner is a free-form principal-name string. Trim only — no closed-enum
 	// membership check, since future template-defined owned kinds can pick
 	// their own owner names. Whitespace-only collapses to empty. Persistent

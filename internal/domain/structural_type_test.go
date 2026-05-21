@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestIsValidStructuralType exercises the closed 4-value StructuralType enum
+// TestIsValidStructuralType exercises the closed 5-value StructuralType enum
 // membership check, including the explicit rejection of the empty string at
 // this validator level (callers that want to permit an unset structural type
 // short-circuit on emptiness themselves).
@@ -21,6 +21,8 @@ func TestIsValidStructuralType(t *testing.T) {
 		{name: "segment", st: StructuralTypeSegment, want: true},
 		{name: "confluence", st: StructuralTypeConfluence, want: true},
 		{name: "droplet", st: StructuralTypeDroplet, want: true},
+		{name: "cascade", st: StructuralTypeCascade, want: true},
+		{name: "cascade with surrounding whitespace + mixed case", st: StructuralType("  Cascade  "), want: true},
 		{name: "empty string is invalid", st: StructuralType(""), want: false},
 		{name: "unknown value", st: StructuralType("foobar"), want: false},
 	}
@@ -51,6 +53,7 @@ func TestNormalizeStructuralType(t *testing.T) {
 		{name: "empty stays empty", in: StructuralType(""), want: StructuralType("")},
 		{name: "mixed case + whitespace", in: StructuralType("  Confluence  "), want: StructuralTypeConfluence},
 		{name: "whitespace-only normalizes to empty", in: StructuralType("   "), want: StructuralType("")},
+		{name: "uppercase cascade lowercases to cascade", in: StructuralType("CASCADE"), want: StructuralTypeCascade},
 	}
 
 	for _, tc := range cases {
@@ -146,6 +149,12 @@ func TestParseStructuralTypeFromDescription(t *testing.T) {
 			name:    "droplet canonical line",
 			desc:    "StructuralType: droplet",
 			want:    StructuralTypeDroplet,
+			wantErr: nil,
+		},
+		{
+			name:    "cascade canonical line",
+			desc:    "StructuralType: cascade\n",
+			want:    StructuralTypeCascade,
 			wantErr: nil,
 		},
 		{

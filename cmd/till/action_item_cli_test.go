@@ -741,13 +741,19 @@ func TestRunActionItemList(t *testing.T) {
 }
 
 // TestRunActionItemCreate_StructuralTypeSmartDefault verifies the FF4
-// smart-default table: plan → segment, refinement → segment, all other 10
-// kinds → droplet, explicit valid override accepted, explicit invalid value
-// rejects with the valid list.
+// smart-default table (now extended for Drop 4d_5 Lane A D3 with the
+// hasParent axis):
+//
+//   - hasParent=false (any kind) → cascade (level-1 cascade root)
+//   - hasParent=true && (plan|refinement) → segment
+//   - hasParent=true && other 10 kinds → droplet
+//
+// Plus: explicit valid override accepted, explicit invalid value rejects with
+// the valid list.
 func TestRunActionItemCreate_StructuralTypeSmartDefault(t *testing.T) {
 	t.Parallel()
 
-	t.Run("structuralTypeSmartDefault covers all 12 kinds", func(t *testing.T) {
+	t.Run("structuralTypeSmartDefault covers all 12 kinds with hasParent=true", func(t *testing.T) {
 		t.Parallel()
 		cases := []struct {
 			kind string
@@ -770,9 +776,33 @@ func TestRunActionItemCreate_StructuralTypeSmartDefault(t *testing.T) {
 			tc := tc
 			t.Run(tc.kind, func(t *testing.T) {
 				t.Parallel()
-				got := structuralTypeSmartDefault(tc.kind)
+				got := structuralTypeSmartDefault(tc.kind, true)
 				if got != tc.want {
-					t.Fatalf("structuralTypeSmartDefault(%q) = %q, want %q", tc.kind, got, tc.want)
+					t.Fatalf("structuralTypeSmartDefault(%q, true) = %q, want %q", tc.kind, got, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("structuralTypeSmartDefault returns cascade with hasParent=false", func(t *testing.T) {
+		t.Parallel()
+		// Every kind at level-1 (hasParent=false) must classify as cascade
+		// per Drop 4d_5 Lane A HV-1 = Option A: cascade IS the level-1
+		// structural unit regardless of work-axis kind.
+		cases := []string{
+			"plan", "refinement", "build", "research",
+			"plan-qa-proof", "plan-qa-falsification",
+			"build-qa-proof", "build-qa-falsification",
+			"closeout", "commit", "discussion", "human-verify",
+			"", // empty kind still routes through the hasParent=false branch
+		}
+		for _, kind := range cases {
+			kind := kind
+			t.Run(kind, func(t *testing.T) {
+				t.Parallel()
+				got := structuralTypeSmartDefault(kind, false)
+				if got != domain.StructuralTypeCascade {
+					t.Fatalf("structuralTypeSmartDefault(%q, false) = %q, want %q", kind, got, domain.StructuralTypeCascade)
 				}
 			})
 		}
@@ -811,7 +841,7 @@ func TestRunActionItemCreate_StructuralTypeSmartDefault(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for invalid structural-type, got nil")
 		}
-		for _, valid := range []string{"drop", "segment", "confluence", "droplet"} {
+		for _, valid := range []string{"drop", "segment", "confluence", "droplet", "cascade"} {
 			if !strings.Contains(err.Error(), valid) {
 				t.Fatalf("error %q missing valid value %q", err, valid)
 			}

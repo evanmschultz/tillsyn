@@ -353,6 +353,45 @@ func TestDefaultTemplateChildRulesForDropPlan(t *testing.T) {
 	}
 }
 
+// TestDefaultTemplateChildRulesForCascadePlan verifies the cascade-narrowed
+// auto-create rules added by Drop 4d_5 Lane A D3 (HV-1 = Option A): when the
+// parent is a plan whose StructuralType is "cascade" (the level-1 cascade
+// root), ChildRulesFor returns the two universal-plan rules PLUS the two
+// cascade-specific QA-twin rules — same shape as TestDefaultTemplateChildRulesForDropPlan
+// but for the cascade structural narrowing.
+//
+// Round-2 plan-QA-falsif C3 caveat: D2 was de-scoped from `embed_test.go`;
+// this test asserts the TOML `[[child_rules]]` ARRAY entries with
+// `when_parent_structural_type = "cascade"` flow through ChildRulesFor's
+// narrowing predicate. A regression (e.g. a future TOML edit that drops the
+// CASCADE-narrowed entries or restructures them into a non-array shape)
+// breaks this test loudly rather than silently no-op-ing at runtime.
+func TestDefaultTemplateChildRulesForCascadePlan(t *testing.T) {
+	t.Parallel()
+
+	tpl := loadDefaultOrFatal(t)
+	resolutions := tpl.ChildRulesFor(domain.KindPlan, domain.StructuralTypeCascade)
+
+	// Two universal-plan rules + two cascade-specific QA-twin rules = four total.
+	if got, want := len(resolutions), 4; got != want {
+		t.Fatalf("ChildRulesFor(plan, cascade) returned %d resolutions; want %d (universal + cascade-narrowed)", got, want)
+	}
+
+	gotKinds := make(map[domain.Kind]int, len(resolutions))
+	for _, res := range resolutions {
+		gotKinds[res.Kind]++
+		if !res.BlockedByParent {
+			t.Fatalf("ChildRulesFor(plan, cascade) resolution kind %q BlockedByParent = false; want true (QA twins blocked by parent)", res.Kind)
+		}
+	}
+	if gotKinds[domain.KindPlanQAProof] != 2 {
+		t.Fatalf("ChildRulesFor(plan, cascade) plan-qa-proof count = %d; want 2 (universal + cascade-specific)", gotKinds[domain.KindPlanQAProof])
+	}
+	if gotKinds[domain.KindPlanQAFalsification] != 2 {
+		t.Fatalf("ChildRulesFor(plan, cascade) plan-qa-falsification count = %d; want 2 (universal + cascade-specific)", gotKinds[domain.KindPlanQAFalsification])
+	}
+}
+
 // TestDefaultTemplateAgentBindingsCoverAllKinds asserts every closed-12-kind
 // has a populated [agent_bindings.<kind>] section AND the binding passes
 // AgentBinding.Validate. Mirrors the spirit of the deleted
@@ -863,10 +902,12 @@ func TestDefaultTemplatePlanContextHasNoDescendants(t *testing.T) {
 //     to include till-fe.toml in W4.D2).
 //  2. Parses + validates through the full templates.Load() chain.
 //  3. Carries the closed 12-kind catalog (same vocabulary as till-go).
-//  4. Carries exactly six standard + drop-narrowed child_rules: the four
+//  4. Carries exactly eight standard + narrowed child_rules: the four
 //     standard rules (build->build-qa-{proof,falsification},
 //     plan->plan-qa-{proof,falsification}) plus the two drop-narrowed
-//     entries (DROP-PLAN-QA-PROOF, DROP-PLAN-QA-FALSIFICATION). Mirrors
+//     entries (DROP-PLAN-QA-PROOF, DROP-PLAN-QA-FALSIFICATION) plus the two
+//     cascade-narrowed entries (CASCADE-PLAN-QA-PROOF,
+//     CASCADE-PLAN-QA-FALSIFICATION) added by Drop 4d_5 Lane A D3. Mirrors
 //     till-go.toml's shape.
 //  5. Carries the same six STEWARD persistent-parent seeds as till-go.
 //  6. Has 12 agent_bindings — one per closed-enum kind.
@@ -898,9 +939,10 @@ func TestLoadDefaultTemplateFEResolves(t *testing.T) {
 		}
 	}
 
-	// Six child_rules: four standard + two drop-narrowed. Mirrors till-go.toml.
-	if got, want := len(tpl.ChildRules), 6; got != want {
-		t.Fatalf("len(ChildRules) = %d; want %d (four standard + two drop-narrowed rules, mirrors till-go.toml)", got, want)
+	// Eight child_rules: four standard + two drop-narrowed + two
+	// cascade-narrowed (added by Drop 4d_5 Lane A D3). Mirrors till-go.toml.
+	if got, want := len(tpl.ChildRules), 8; got != want {
+		t.Fatalf("len(ChildRules) = %d; want %d (four standard + two drop-narrowed + two cascade-narrowed rules, mirrors till-go.toml)", got, want)
 	}
 
 	// Six STEWARD seeds — same coordination scaffold as till-go.

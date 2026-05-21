@@ -16,22 +16,43 @@ import (
 	"github.com/google/uuid"
 )
 
-// validStructuralTypeValues is the canonical list of structural-type values
-// used in flag-validation error messages for `till action_item create
-// --structural-type`. The order matches the StructuralType enum declaration
-// order in structural_type.go so the human-facing error is stable.
-var validStructuralTypeValues = []string{"drop", "segment", "confluence", "droplet"}
+// validStructuralTypeValuesForError returns the canonical list of
+// structural-type values for use in CLI flag-validation error messages
+// for `till action_item create --structural-type`. The order matches the
+// StructuralType enum declaration order in `internal/domain/structural_type.go`
+// (drop, segment, confluence, droplet, cascade) so the human-facing error
+// is stable. Per Drop 4d_5 Lane A D3, the canonical enum lives in the domain
+// package; this CLI helper delegates to `domain.AllStructuralTypeValues()`
+// to avoid duplicating the closed-enum vocabulary in two places — a future
+// addition (e.g. a 6th structural type) only needs to land in the domain
+// definition.
+func validStructuralTypeValuesForError() []string {
+	values := domain.AllStructuralTypeValues()
+	out := make([]string, len(values))
+	for i, v := range values {
+		out[i] = string(v)
+	}
+	return out
+}
 
 // structuralTypeSmartDefault returns the FF4 smart-default StructuralType for
-// the given kind string. The table is:
+// the given (kind, hasParent) pair. The table is:
 //
-//   - plan → segment (a plan introduces a grouping level in the cascade tree)
-//   - refinement → segment (a refinement umbrella is also a grouping level)
-//   - all other 10 kinds → droplet (atomic leaf, the safe pre-MVP default)
+//   - hasParent == false (level-1 root) → cascade (any kind; level-1 nodes
+//     ARE the cascade unit per `WIKI.md § Cascade Vocabulary`)
+//   - hasParent == true && (plan|refinement) → segment (a plan or refinement
+//     introduces a grouping level in the cascade tree)
+//   - hasParent == true && other 10 kinds → droplet (atomic leaf — safe
+//     pre-MVP default for everything else)
 //
-// The empty kind returns droplet so callers can invoke the helper before
-// required-field validation fires without panicking.
-func structuralTypeSmartDefault(kind string) domain.StructuralType {
+// The empty kind with hasParent=true returns droplet so callers can invoke
+// the helper before required-field validation fires without panicking; the
+// hasParent=false branch wins regardless of kind because level-1 nodes are
+// always classified as cascade-structural per Drop 4d_5 Lane A HV-1 = Option A.
+func structuralTypeSmartDefault(kind string, hasParent bool) domain.StructuralType {
+	if !hasParent {
+		return domain.StructuralTypeCascade
+	}
 	switch strings.TrimSpace(strings.ToLower(kind)) {
 	case string(domain.KindPlan), string(domain.KindRefinement):
 		return domain.StructuralTypeSegment
@@ -79,12 +100,13 @@ func runActionItemCreate(ctx context.Context, svc *app.Service, opts actionItemC
 	// ErrInvalidStructuralType.
 	var structuralType domain.StructuralType
 	if rawST := strings.TrimSpace(opts.structuralType); rawST == "" {
-		structuralType = structuralTypeSmartDefault(opts.kind)
+		hasParent := strings.TrimSpace(opts.parentID) != ""
+		structuralType = structuralTypeSmartDefault(opts.kind, hasParent)
 	} else {
 		normalized := domain.NormalizeStructuralType(domain.StructuralType(rawST))
 		if !domain.IsValidStructuralType(normalized) {
 			return fmt.Errorf("action_item create: --structural-type %q is invalid (valid values: %s)",
-				rawST, strings.Join(validStructuralTypeValues, "|"))
+				rawST, strings.Join(validStructuralTypeValuesForError(), "|"))
 		}
 		structuralType = normalized
 	}

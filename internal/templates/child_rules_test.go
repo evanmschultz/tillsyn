@@ -289,6 +289,7 @@ func TestChildRulesFor_EmptyTemplateReturnsEmpty(t *testing.T) {
 			domain.StructuralTypeSegment,
 			domain.StructuralTypeConfluence,
 			domain.StructuralTypeDroplet,
+			domain.StructuralTypeCascade,
 		} {
 			got := empty.ChildRulesFor(parent, st)
 			if len(got) != 0 {

@@ -578,20 +578,27 @@ func TestSnapshotActionItemRoleJSONShape(t *testing.T) {
 // gets the same regression coverage as the role axis.
 func TestSnapshotActionItemStructuralTypeRoundTripPreservesAllValues(t *testing.T) {
 	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	// Lane A D1 (2026-05-21): cascade is the level-1 unit (parent_id == "")
+	// and drop is restricted to level-2+ (parent_id != ""). Cover both
+	// positional invariants by varying parentID per case alongside the
+	// existing closed-enum round-trip coverage.
 	cases := []struct {
 		name           string
+		parentID       string
 		structuralType domain.StructuralType
 	}{
-		{name: "drop", structuralType: domain.StructuralTypeDrop},
-		{name: "segment", structuralType: domain.StructuralTypeSegment},
-		{name: "confluence", structuralType: domain.StructuralTypeConfluence},
-		{name: "droplet", structuralType: domain.StructuralTypeDroplet},
+		{name: "cascade", parentID: "", structuralType: domain.StructuralTypeCascade},
+		{name: "drop", parentID: "p-parent", structuralType: domain.StructuralTypeDrop},
+		{name: "segment", parentID: "", structuralType: domain.StructuralTypeSegment},
+		{name: "confluence", parentID: "", structuralType: domain.StructuralTypeConfluence},
+		{name: "droplet", parentID: "", structuralType: domain.StructuralTypeDroplet},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			original, err := domain.NewActionItemForTest(domain.ActionItemInput{
 				ID:             "t-structural-type",
 				ProjectID:      "p1",
+				ParentID:       tc.parentID,
 				ColumnID:       "c1",
 				Position:       0,
 				Title:          "StructuralType round-trip",

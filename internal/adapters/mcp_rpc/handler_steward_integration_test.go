@@ -123,11 +123,14 @@ func newStewardIntegrationFixture(t *testing.T) stewardIntegrationFixture {
 	}
 
 	dropOrch := stewardIntegrationDropOrchActor()
+	// Lane A D1 (2026-05-21): level-1 plan node uses StructuralTypeCascade
+	// per the new positional invariant in NewActionItem — `drop` is now
+	// restricted to level-2+ and `cascade` is the level-1 unit.
 	drop, err := adapter.CreateActionItem(ctx, mcpcommon.CreateActionItemRequest{
 		ProjectID:      project.ID,
 		ColumnID:       columnIDs[domain.StateTodo],
 		Kind:           string(domain.KindPlan),
-		StructuralType: string(domain.StructuralTypeDrop),
+		StructuralType: string(domain.StructuralTypeCascade),
 		DropNumber:     3,
 		Title:          "DROP_3",
 		Description:    "Drop 3 — STEWARD-gated integration fixture.",

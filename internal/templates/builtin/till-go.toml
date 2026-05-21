@@ -274,6 +274,35 @@ create_child_kind = "plan-qa-falsification"
 title = "DROP-PLAN-QA-FALSIFICATION"
 blocked_by_parent = true
 
+# structural_type=cascade -> plan-qa-proof (cascade-level plan QA twin).
+#
+# Drop 4d_5 Lane A D3 (HV-1 = Option A): cascade IS the level-1 structural
+# unit (the whole tree of work directly under a project) and decomposes the
+# same way a drop does — so plan kinds whose StructuralType is "cascade"
+# auto-create the same QA twins as their drop-narrowed siblings above, just
+# with a CASCADE- prefix on the title so the audit trail records which
+# structural narrowing fired. Mirrors the existing drop-narrowed shape; the
+# only delta is when_parent_structural_type changes from "drop" to "cascade"
+# and the title prefix changes from DROP- to CASCADE-.
+#
+# Per round-2 plan-QA-falsif C1: ARRAY [[child_rules]] entries, NOT typed
+# sub-tables — typed sub-tables like [kinds.plan.child_rules.cascade] do not
+# exist in the schema and would silently no-op.
+[[child_rules]]
+when_parent_kind = "plan"
+when_parent_structural_type = "cascade"
+create_child_kind = "plan-qa-proof"
+title = "CASCADE-PLAN-QA-PROOF"
+blocked_by_parent = true
+
+# structural_type=cascade -> plan-qa-falsification (cascade-level plan QA twin).
+[[child_rules]]
+when_parent_kind = "plan"
+when_parent_structural_type = "cascade"
+create_child_kind = "plan-qa-falsification"
+title = "CASCADE-PLAN-QA-FALSIFICATION"
+blocked_by_parent = true
+
 # -----------------------------------------------------------------------------
 # [[steward_seeds]] — long-lived coordination anchors seeded at project creation.
 # -----------------------------------------------------------------------------

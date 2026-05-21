@@ -435,24 +435,43 @@ func TestNewActionItemRoleValidation(t *testing.T) {
 // TestNewActionItemStructuralTypeValidation covers the closed StructuralType
 // enum on the mandatory StructuralType field. Unlike Role's permissive empty,
 // StructuralType MUST be supplied — empty and whitespace-only inputs reject
-// with ErrInvalidStructuralType. Each of the four enum members round-trips,
+// with ErrInvalidStructuralType. Each of the five enum members round-trips,
 // and an unknown value rejects.
+//
+// The table also exercises the cascade-positional invariant added in Lane A
+// D1 (2026-05-21): structural_type=cascade is valid ONLY at level-1
+// (parent_id == "") and structural_type=drop is valid ONLY at level-2+
+// (parent_id != ""). Rows with the level-mismatch combination assert the
+// sentinel error directly (`ErrCascadeMustBeLevel1` / `ErrDropMustBeLevel2Plus`)
+// rather than the generic `ErrInvalidStructuralType`.
 func TestNewActionItemStructuralTypeValidation(t *testing.T) {
 	now := time.Now()
 
 	cases := []struct {
-		name    string
-		input   StructuralType
-		wantST  StructuralType
-		wantErr error
+		name     string
+		input    StructuralType
+		parentID string
+		wantST   StructuralType
+		wantErr  error
 	}{
-		{name: "drop", input: StructuralTypeDrop, wantST: StructuralTypeDrop, wantErr: nil},
-		{name: "segment", input: StructuralTypeSegment, wantST: StructuralTypeSegment, wantErr: nil},
-		{name: "confluence", input: StructuralTypeConfluence, wantST: StructuralTypeConfluence, wantErr: nil},
-		{name: "droplet", input: StructuralTypeDroplet, wantST: StructuralTypeDroplet, wantErr: nil},
-		{name: "empty rejects", input: "", wantST: "", wantErr: ErrInvalidStructuralType},
-		{name: "whitespace rejects", input: "   ", wantST: "", wantErr: ErrInvalidStructuralType},
-		{name: "unknown rejects", input: StructuralType("foobar"), wantST: "", wantErr: ErrInvalidStructuralType},
+		// Round-trip rows at level-2+ (parent_id non-empty) — drop, segment,
+		// confluence, droplet all pass.
+		{name: "drop at level-2+", input: StructuralTypeDrop, parentID: "p-parent", wantST: StructuralTypeDrop, wantErr: nil},
+		{name: "segment", input: StructuralTypeSegment, parentID: "p-parent", wantST: StructuralTypeSegment, wantErr: nil},
+		{name: "confluence", input: StructuralTypeConfluence, parentID: "p-parent", wantST: StructuralTypeConfluence, wantErr: nil},
+		{name: "droplet", input: StructuralTypeDroplet, parentID: "p-parent", wantST: StructuralTypeDroplet, wantErr: nil},
+		// Generic enum-membership failures (parent_id non-empty is incidental).
+		{name: "empty rejects", input: "", parentID: "p-parent", wantST: "", wantErr: ErrInvalidStructuralType},
+		{name: "whitespace rejects", input: "   ", parentID: "p-parent", wantST: "", wantErr: ErrInvalidStructuralType},
+		{name: "unknown rejects", input: StructuralType("foobar"), parentID: "p-parent", wantST: "", wantErr: ErrInvalidStructuralType},
+		// Cascade-positional invariant rows (Lane A D1):
+		//   - cascade at level-1 (parent_id == "") → success.
+		//   - cascade at level-2+ → ErrCascadeMustBeLevel1.
+		//   - drop at level-1 → ErrDropMustBeLevel2Plus.
+		//   - drop at level-2+ already covered above.
+		{name: "cascade at level-1", input: StructuralTypeCascade, parentID: "", wantST: StructuralTypeCascade, wantErr: nil},
+		{name: "cascade at level-2+ rejects", input: StructuralTypeCascade, parentID: "p-parent", wantST: "", wantErr: ErrCascadeMustBeLevel1},
+		{name: "drop at level-1 rejects", input: StructuralTypeDrop, parentID: "", wantST: "", wantErr: ErrDropMustBeLevel2Plus},
 	}
 
 	for _, tc := range cases {
@@ -460,6 +479,7 @@ func TestNewActionItemStructuralTypeValidation(t *testing.T) {
 			actionItem, err := NewActionItem(ActionItemInput{
 				ID:             "t-st",
 				ProjectID:      "p1",
+				ParentID:       tc.parentID,
 				ColumnID:       "c1",
 				Position:       0,
 				Title:          "x",

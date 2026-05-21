@@ -26,6 +26,16 @@ var (
 	ErrInvalidKindPayloadSchema = errors.New("invalid kind payload schema")
 	ErrInvalidRole              = errors.New("invalid role")
 	ErrInvalidStructuralType    = errors.New("invalid structural type")
+	// ErrCascadeMustBeLevel1 reports that NewActionItem was called with
+	// StructuralType=cascade AND ParentID != "". Per WIKI.md § Cascade
+	// Vocabulary (2026-05-21), cascade is the level-1 unit (whole tree of
+	// work under a project); it is invalid for any non-root action item.
+	ErrCascadeMustBeLevel1 = errors.New("cascade structural_type allowed only at level-1 (parent_id must be empty)")
+	// ErrDropMustBeLevel2Plus reports that NewActionItem was called with
+	// StructuralType=drop AND ParentID == "". Per WIKI.md § Cascade
+	// Vocabulary (2026-05-21), drop describes a level-2+ vertical
+	// decomposition step within a cascade; the level-1 unit uses cascade.
+	ErrDropMustBeLevel2Plus     = errors.New("drop structural_type allowed only at level-2+ (parent_id must be non-empty)")
 	ErrInvalidDropNumber        = errors.New("invalid drop number")
 	ErrInvalidPaths             = errors.New("invalid paths")
 	ErrInvalidPackages          = errors.New("invalid packages")
