@@ -80,7 +80,15 @@ export function useActionItems(): Resource<ActionItem[]> {
   const projectId = useStore(selectedProjectId);
   const [items] = createResource<ActionItem[], string>(
     () => (isServer ? undefined : projectId()),
-    async (id) => window.go.main.App.ListActionItems(id),
+    async (id) => {
+      // Plain-browser dev mode (mage uiDev → Astro on localhost:51428 outside
+      // the Wails shell) has no window.go bridge. Mirror ProjectList.tsx and
+      // return [] so consumers see an empty list instead of a TypeError.
+      if (typeof window === "undefined" || !window.go?.main?.App) {
+        return [];
+      }
+      return window.go.main.App.ListActionItems(id);
+    },
   );
   return items;
 }

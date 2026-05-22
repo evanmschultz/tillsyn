@@ -1,0 +1,49 @@
+---
+/**
+ * StatusFooter — aggregate status strip showing counts of in-flight cascades,
+ * open attention items, open handoffs, and recent comments. Lives as a sibling
+ * of `.app` in the body's outer flex column (D6 StatusFooter periphery).
+ *
+ * Today: stub with placeholder counts. Real IPC (App.ListActionItems, etc.)
+ * lands in a future drop.
+ *
+ * Lane B Round-2 C3 absorption: sibling of .app, not a child, because
+ * `.app { overflow: hidden }` defeats `position: sticky; bottom: 0` from inside.
+ * Outer-column flex layout gives sticky-bottom semantics for free.
+ *
+ * Lane B D1 falsif C2 absorption: at mobile (≤640px), margin-bottom: 74px
+ * sits the footer ABOVE the fixed-bottom BottomTabs (~74px tall) so no
+ * occlusion. (74px = --bottom-tabs-height 56px + --sheet-handle-height 18px.)
+ */
+
+interface Count {
+  label: string;
+  value: number;
+  icon: string;
+}
+
+const counts: Count[] = [
+  { label: "Cascades", value: 0, icon: "⟳" },
+  { label: "Attention", value: 0, icon: "!" },
+  { label: "Handoffs", value: 0, icon: "→" },
+  { label: "Comments", value: 0, icon: "💬" },
+];
+---
+
+<div class="status-footer-row">
+  {
+    counts.map((count) => (
+      <button
+        class="status-footer-item"
+        aria-label={`${count.label}: ${count.value}`}
+        title={`No items yet — IPC coming in a future drop`}
+      >
+        <span class="status-footer-icon" aria-hidden="true">
+          {count.icon}
+        </span>
+        <span class="status-footer-label">{count.label}</span>
+        <span class="status-footer-count">{count.value}</span>
+      </button>
+    ))
+  }
+</div>

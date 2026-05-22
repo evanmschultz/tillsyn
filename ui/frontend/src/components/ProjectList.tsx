@@ -19,6 +19,14 @@ async function fetchProjects(): Promise<Project[]> {
   // skips this fetcher entirely server-side. On client hydration the source
   // becomes true and Solid re-evaluates the resource, firing this fetcher
   // for the first time.
+  //
+  // Second guard for plain-browser dev mode (mage uiDev → Astro on
+  // localhost:51428 without the Wails WebKit shell): window exists but
+  // window.go is undefined. Returning [] keeps the UI on the "No projects
+  // yet" branch instead of rendering a confusing TypeError pill.
+  if (typeof window === "undefined" || !window.go?.main?.App) {
+    return [];
+  }
   return window.go.main.App.ListProjects();
 }
 
