@@ -37,11 +37,14 @@ For Go-side IPC the FE build consumes. **Non-Go = normal tools**.
 ## Playwright MCP — Verification Reruns (MANDATORY)
 
 Re-run the builder's Playwright walk:
-- `browser_navigate http://localhost:51428`
+- **Pre-flight**: confirm `mage uiDev` is running. `mage uiDev` → `wails dev` → Wails AssetServer at `localhost:34115` with `window.go.main.App.*` IPC bindings injected against the live Go backend. `localhost:51428` is the bare Astro standalone WITHOUT bindings — verifying there gives false PASSES on empty-state. If `mage uiDev` is not up, report BLOCKED.
+- `browser_navigate http://localhost:34115` (Wails dev AssetServer).
 - For each {375x667, 768x1024, 1280x800}: `browser_resize` + `browser_snapshot` + `browser_take_screenshot fullPage=true` to `.playwright-mcp/qa-proof-<build-uuid>-<viewport>.png`.
 - `browser_console_messages level=error` — MUST be 0.
+- **Visible-error verification (not just console)**: query for `[role="alert"], [data-tone="error"]` element count. SolidJS `createResource` catches throws silently — the UI can render an error pill while console.error stays clean. If the build claims an error-free UI and you find rendered error elements, FAIL.
 - `browser_evaluate` for any computed-style assertions the build claimed.
 - If builder claimed screenshots but they don't exist at the cited path = FAIL on fabrication.
+- If builder navigated to `localhost:51428` instead of `34115` for the verification walk, FAIL — the binding-less surface gives false-PASS empty-state coverage. See `docs/wails-e2e-playwright-best-practices-2026-05-22.md`.
 
 ## Tool Discipline
 

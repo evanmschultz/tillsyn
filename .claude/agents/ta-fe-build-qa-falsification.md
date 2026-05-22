@@ -41,8 +41,10 @@ Same as proof.
 ## Playwright MCP — Counterexample Construction
 
 Construct visual counterexamples:
-- Navigate + resize to suspected break-point.
+- **Pre-flight**: confirm `mage uiDev` is running. The canonical Playwright target is `http://localhost:34115` (Wails dev AssetServer, `window.go.main.App.*` bindings injected). `localhost:51428` is the bare Astro dev server WITHOUT bindings — a binding-less surface fakes "0 errors" via dead-branch rendering. If a build was verified at 51428, that ALONE is a critical finding. Full methodology at `docs/wails-e2e-playwright-best-practices-2026-05-22.md`.
+- `browser_navigate http://localhost:34115` then `browser_resize` to suspected break-point.
 - `browser_evaluate` to inspect computed-style + ARIA + focus order.
+- **Visible-error attack**: query `document.querySelectorAll('[role="alert"], [data-tone="error"]').length`. SolidJS `createResource` swallows thrown errors silently — the UI renders an error pill while `console.error` is clean. Builds passing on console-only verification can be hiding visible errors.
 - `browser_take_screenshot` to capture broken state to `.playwright-mcp/qa-falsif-<build-uuid>-<finding>.png`.
 
 ## Tool Discipline

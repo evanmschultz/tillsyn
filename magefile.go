@@ -267,10 +267,17 @@ func CiUI() error {
 
 // UIDev launches the Wails live-development loop from the `ui/` subtree.
 // The command is long-running: it starts the Astro dev server on
-// `http://localhost:4321`, compiles the Go host with the `wails` build tag,
-// opens a native WebView window, and watches both sides for changes until
-// the dev sends SIGINT. The `ui-dev` alias surfaces it on the hyphenated
+// `http://localhost:51428` (per `ui/wails.json` frontend:dev:serverUrl),
+// compiles the Go host with the `wails` build tag, runs the Wails
+// AssetServer on `http://localhost:34115` with `window.go.main.App.*` IPC
+// bindings injected against the live Go backend, opens a native WebView
+// window pointing at 34115, and watches both sides for changes until the
+// dev sends SIGINT. The `ui-dev` alias surfaces it on the hyphenated
 // command surface.
+//
+// Playwright / FE QA target: `http://localhost:34115` (NOT 51428 — the bare
+// Astro standalone has no bindings and silently produces empty-state
+// false-PASSES). See `docs/wails-e2e-playwright-best-practices-2026-05-22.md`.
 func UIDev() error {
 	wd, err := os.Getwd()
 	if err != nil {

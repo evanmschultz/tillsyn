@@ -30,13 +30,15 @@ For NON-ta-managed MDs (CLAUDE.md, WIKI.md), use `Edit` / `Write`.
 ## Playwright MCP — MANDATORY at 3 Breakpoints
 
 **For EVERY FE build droplet** before declaring done:
-- `browser_navigate http://localhost:51428` (Wails dev server).
+- **Pre-flight**: `mage uiDev` MUST be running. `mage uiDev` invokes `wails dev` which starts the Wails AssetServer at `http://localhost:34115` with the `window.go.main.App.*` IPC bindings injected against the live Go backend. `http://localhost:51428` is the bare Astro standalone dev server WITHOUT bindings — never navigate there for verification. Confirm `mage uiDev` is up before any browser_navigate; if not running, report BLOCKED and STOP.
+- `browser_navigate http://localhost:34115` (Wails dev AssetServer with live IPC bindings).
 - For each breakpoint {375x667 (mobile), 768x1024 (tablet), 1280x800 (desktop)}:
   - `browser_resize` to exact width × height.
   - `browser_snapshot` — accessibility tree.
   - `browser_take_screenshot fullPage=true` → `.playwright-mcp/<droplet-id>-<viewport>.png`.
   - `browser_console_messages level=error` — MUST be 0 errors.
   - `browser_evaluate` for any computed-style assertions in the droplet's acceptance.
+- **Rendering-engine fidelity caveat**: Playwright bundled Chromium ≠ macOS WKWebView in production. Component / layout / a11y / interaction coverage is honest; WKWebView-only pixel-diffs are not. Full methodology at `docs/wails-e2e-playwright-best-practices-2026-05-22.md`.
 - **NOT optional. NOT deferable to dev.** Per project hard rule. If `browser_*` MCP tools fail (e.g. dev server down), report BLOCKED and STOP. Don't fabricate.
 
 ## FE Quality Rules
