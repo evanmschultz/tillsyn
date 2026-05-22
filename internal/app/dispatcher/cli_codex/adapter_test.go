@@ -1018,3 +1018,171 @@ func TestParseStreamEvent_AcceptsValidNonObjectJSON(t *testing.T) {
 		})
 	}
 }
+
+// --- Tests 13-15: MCP server configuration injection (D2) ------------------
+
+// TestBuildCommand_ArgvWithMCPServerConfig asserts that when binding.MCPServers
+// contains a server, the argv includes a -c mcp_servers.<server-name>=...
+// inline-TOML flag with the correct structure: command, args array, and
+// tools with per-tool approval_mode="approve" entries.
+func TestBuildCommand_ArgvWithMCPServerConfig(t *testing.T) {
+	t.Parallel()
+
+	binding := minimalBinding()
+	binding.MCPServers = map[string]interface{}{
+		"tillsyn-dev": MCPServerConfig{
+			Command: "till",
+			Args:    []string{"mcp"},
+			Tools:   []string{"till.action_item", "till.comment", "till.attention_item"},
+		},
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	// Verify argv contains the -c flag and the mcp_servers.tillsyn-dev config.
+	var foundMCPFlag bool
+	for i, arg := range cmd.Args {
+		if arg == "-c" && i+1 < len(cmd.Args) {
+			cfgArg := cmd.Args[i+1]
+			if strings.HasPrefix(cfgArg, "mcp_servers.tillsyn-dev=") {
+				foundMCPFlag = true
+				// Spot-check the inline-TOML structure.
+				if !strings.Contains(cfgArg, "command=\"till\"") {
+					t.Errorf("MCP config missing or wrong command; got %q", cfgArg)
+				}
+				if !strings.Contains(cfgArg, "args=[\"mcp\"]") {
+					t.Errorf("MCP config missing or wrong args; got %q", cfgArg)
+				}
+				// Each tool name should be quoted and have per-tool approval_mode.
+				for _, toolName := range []string{"till.action_item", "till.comment", "till.attention_item"} {
+					quotedTool := "\"" + toolName + "\""
+					if !strings.Contains(cfgArg, quotedTool) {
+						t.Errorf("MCP config missing quoted tool name %q; got %q", quotedTool, cfgArg)
+					}
+					if !strings.Contains(cfgArg, quotedTool+`={approval_mode="approve"}`) {
+						t.Errorf("MCP config tool %q missing or wrong approval_mode; got %q", toolName, cfgArg)
+					}
+				}
+				break
+			}
+		}
+	}
+	if !foundMCPFlag {
+		t.Errorf("argv missing -c mcp_servers.tillsyn-dev=... flag; got %v", cmd.Args)
+	}
+}
+
+// TestBuildCommand_ArgvWithMultipleMCPServers asserts that multiple MCP servers
+// in binding.MCPServers each get their own -c flag entry in argv, in map
+// iteration order (unordered but deterministic per run).
+func TestBuildCommand_ArgvWithMultipleMCPServers(t *testing.T) {
+	t.Parallel()
+
+	binding := minimalBinding()
+	binding.MCPServers = map[string]interface{}{
+		"tillsyn-dev": MCPServerConfig{
+			Command: "till",
+			Args:    []string{"mcp"},
+			Tools:   []string{"till.action_item"},
+		},
+		"hylla": MCPServerConfig{
+			Command: "hylla-mcp",
+			Args:    []string{"--json"},
+			Tools:   []string{"hylla.search", "hylla.refs_find"},
+		},
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	// Count -c mcp_servers.* flags; should be at least 2 (one per server).
+	mcp_count := 0
+	for i, arg := range cmd.Args {
+		if arg == "-c" && i+1 < len(cmd.Args) {
+			cfgArg := cmd.Args[i+1]
+			if strings.HasPrefix(cfgArg, "mcp_servers.") {
+				mcp_count++
+			}
+		}
+	}
+	if mcp_count < 2 {
+		t.Errorf("argv contains %d -c mcp_servers.* flags; want >= 2 (one per server)", mcp_count)
+	}
+}
+
+// TestBuildCommand_ArgvMCPToolNamesQuoted asserts that tool names with dots
+// are correctly quoted in the inline-TOML. Per the canonical reference
+// (~/.claude/codex-mcp-dispatch-tool-conversion.md), unquoted dots break TOML
+// parsing.
+func TestBuildCommand_ArgvMCPToolNamesQuoted(t *testing.T) {
+	t.Parallel()
+
+	binding := minimalBinding()
+	binding.MCPServers = map[string]interface{}{
+		"hylla": MCPServerConfig{
+			Command: "hylla-mcp",
+			Args:    []string{},
+			Tools:   []string{"hylla.search.vector", "hylla.artifact.overview"},
+		},
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	// Find the mcp_servers.hylla -c flag and verify tool names are quoted.
+	for i, arg := range cmd.Args {
+		if arg == "-c" && i+1 < len(cmd.Args) {
+			cfgArg := cmd.Args[i+1]
+			if strings.HasPrefix(cfgArg, "mcp_servers.hylla=") {
+				// Check that dot-bearing names are quoted.
+				if !strings.Contains(cfgArg, "\"hylla.search.vector\"") {
+					t.Errorf("tool name hylla.search.vector not quoted in %q", cfgArg)
+				}
+				if !strings.Contains(cfgArg, "\"hylla.artifact.overview\"") {
+					t.Errorf("tool name hylla.artifact.overview not quoted in %q", cfgArg)
+				}
+				// Verify no unquoted dot-separated names (naive check for "hylla.search" without quotes).
+				if strings.Contains(cfgArg, "hylla.search={") {
+					t.Errorf("tool name hylla.search appears unquoted in %q (should be quoted)", cfgArg)
+				}
+				return
+			}
+		}
+	}
+	t.Errorf("argv missing -c mcp_servers.hylla=... flag")
+}
+
+// TestBuildCommand_ArgvNoMCPServersWhenNil asserts that when
+// binding.MCPServers is nil, no -c mcp_servers.* flags are emitted.
+func TestBuildCommand_ArgvNoMCPServersWhenNil(t *testing.T) {
+	t.Parallel()
+
+	binding := minimalBinding()
+	// binding.MCPServers defaults to nil (zero value)
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	// Verify no -c mcp_servers.* flags appear in argv.
+	for i, arg := range cmd.Args {
+		if arg == "-c" && i+1 < len(cmd.Args) {
+			cfgArg := cmd.Args[i+1]
+			if strings.HasPrefix(cfgArg, "mcp_servers.") {
+				t.Errorf("argv unexpectedly contains -c mcp_servers.* flag when MCPServers is nil: %q", cfgArg)
+			}
+		}
+	}
+}

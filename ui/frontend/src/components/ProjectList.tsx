@@ -7,6 +7,8 @@
 // the upstream library exists (see REVISION_BRIEF.md §3 Migration Targets).
 import { createResource, For, Show } from "solid-js";
 import { isServer } from "solid-js/web";
+import { useStore } from "@nanostores/solid";
+import { selectedProjectId, setSelectedProjectId } from "../stores/selection";
 
 type Project = { ID: string; Name: string };
 
@@ -39,13 +41,15 @@ export default function ProjectList() {
     fetchProjects,
   );
 
+  // Subscribe to the selectedProjectId store for reactive highlighting.
+  const selected = useStore(selectedProjectId);
+
   return (
-    <section class="project-list" aria-labelledby="project-list-title">
-      <header class="project-list-header">
-        <h2 id="project-list-title" class="project-list-title">
+    <nav class="project-sidebar" aria-label="Projects">
+      <header class="project-sidebar-header">
+        <h2 id="project-sidebar-title" class="project-sidebar-title">
           Projects
         </h2>
-        <span class="project-list-hint">drop_fe_3</span>
       </header>
 
       {/*
@@ -62,14 +66,14 @@ export default function ProjectList() {
       */}
       <Show
         when={projects.state === "ready" || projects.state === "errored"}
-        fallback={<p class="project-list-status">Loading…</p>}
+        fallback={<p class="project-sidebar-status">Loading…</p>}
       >
         <Show
           when={!projects.error}
           fallback={
             <p
               role="alert"
-              class="project-list-status"
+              class="project-sidebar-status"
               data-tone="error"
             >
               Error: {String(projects.error)}
@@ -79,17 +83,23 @@ export default function ProjectList() {
           <Show
             when={(projects() ?? []).length > 0}
             fallback={
-              <p class="project-list-status" data-tone="empty">
+              <p class="project-sidebar-status" data-tone="empty">
                 No projects yet
               </p>
             }
           >
-            <ul class="project-list-items">
+            <ul class="project-sidebar-items">
               <For each={projects()}>
                 {(project) => (
-                  <li class="project-list-item">
-                    <span class="project-list-item-id">{project.ID}</span>
-                    <span class="project-list-item-name">{project.Name}</span>
+                  <li>
+                    <button
+                      class={`project-sidebar-item ${selected() === project.ID ? "is-selected" : ""}`}
+                      aria-current={selected() === project.ID ? "page" : undefined}
+                      onClick={() => setSelectedProjectId(project.ID)}
+                      type="button"
+                    >
+                      <span class="project-sidebar-item-name">{project.Name}</span>
+                    </button>
                   </li>
                 )}
               </For>
@@ -97,6 +107,6 @@ export default function ProjectList() {
           </Show>
         </Show>
       </Show>
-    </section>
+    </nav>
   );
 }

@@ -1,10 +1,29 @@
 package cli_codex
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/charmbracelet/log"
 
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
 )
+
+// MCPServerConfig holds the per-MCP-server configuration injected via
+// -c mcp_servers.<server> inline-TOML. It is used by buildMCPServerConfig
+// to construct the inline-TOML value. Per Drop 4d D2, this type is populated
+// by D1 (AgentDefinition parser) via BindingResolved.MCPServers map.
+type MCPServerConfig struct {
+	// Command is the absolute or PATH-relative command name (e.g., "till").
+	Command string
+	// Args is the command-line arguments passed to the command
+	// (e.g., []string{"mcp"}).
+	Args []string
+	// Tools is the list of MCP tool names the server exposes
+	// (e.g., []string{"till.action_item", "till.comment"}).
+	// Each tool gets a per-tool approval_mode="approve" entry.
+	Tools []string
+}
 
 // assembleArgv returns the full argv slice (including argv[0] = "codex")
 // the dispatcher passes to exec.Command for one codex spawn. Per F.7.17
@@ -14,7 +33,8 @@ import (
 //
 //	codex exec --json --ephemeral --skip-git-repo-check -C <paths.Root> \
 //	  [-m <model>] \
-//	  [-c model_reasoning_effort=<effort>]
+//	  [-c model_reasoning_effort=<effort>] \
+//	  [-c mcp_servers.<server>=<inline-toml>]
 //
 // The positional [PROMPT] argument is intentionally omitted — the caller
 // (BuildCommand) feeds the system prompt via cmd.Stdin instead. codex reads
@@ -22,10 +42,20 @@ import (
 // "If not provided as an argument (or if `-` is used), instructions are read
 // from stdin"). This mirrors cli_claude's system-prompt-file pattern.
 //
-// Conditional flags (-m, -c model_reasoning_effort) emit ONLY when the
-// corresponding pointer-typed BindingResolved field is non-nil per F.7.17 L9.
+// Conditional flags (-m, -c model_reasoning_effort, -c mcp_servers.*) emit
+// ONLY when the corresponding BindingResolved field is non-nil per F.7.17 L9.
 // nil means "the lower-priority layer is authoritative"; codex's CLI defaults
 // apply when the flag is omitted entirely.
+//
+// MCP server injection (Drop 4d D2): per-spawn -c flags inject inline-TOML
+// configuration for each MCP server the agent needs. Per the canonical
+// reference ~/.claude/codex-mcp-dispatch-tool-conversion.md:
+//
+//   - Each server gets one -c flag with the key `mcp_servers.<server-name>`.
+//   - The value is an inline TOML table with `command`, `args`, and `tools`.
+//   - Tool names with dots MUST be quoted (e.g., "till.action_item").
+//   - Each tool entry uses `approval_mode="approve"` per-tool (not shared default).
+//   - Auth env is passed via binding.Env or process inheritance.
 //
 // Note: paths.Root is passed via -C so codex's working root is the bundle
 // directory. Adapters compute their own CLI-specific subdirs under Root per
@@ -34,7 +64,7 @@ import (
 func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePaths) []string {
 	// Cap initial slice at a reasonable upper bound so we avoid mid-build
 	// reallocs without over-reserving. Slack covers conditional flags.
-	argv := make([]string, 0, 16)
+	argv := make([]string, 0, 32)
 
 	// argv[0] is the binary name. exec.CommandContext resolves it via PATH from
 	// the spawn's cmd.Env (set by assembleEnv) at exec time.
@@ -65,6 +95,25 @@ func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePat
 		argv = append(argv, "-c", "model_reasoning_effort="+*binding.Effort)
 	}
 
+	// MCP server injection: for each MCP server the agent's definition declares,
+	// build an inline-TOML configuration via -c flag. Drop 4d D1 populates
+	// binding.MCPServers; D2.5 provides the tool-name conversion table.
+	// Per the conversion doc, each server gets:
+	//
+	//   -c mcp_servers.{server-name}={command=..., args=[...], tools={...}}
+	//
+	// The tools block uses per-tool approval_mode="approve" entries with
+	// quoted names for tools that have dots (e.g., "till.action_item").
+	if binding.MCPServers != nil {
+		for serverName, rawConfig := range binding.MCPServers {
+			// Type-assert to MCPServerConfig. Drop 4d D1 guarantees the type;
+			// panic on mismatch is acceptable (indicates D1 integration bug).
+			config := rawConfig.(MCPServerConfig)
+			inline := buildMCPServerConfig(serverName, config)
+			argv = append(argv, "-c", inline)
+		}
+	}
+
 	// MaxTurns and MaxBudgetUSD are not supported by the codex CLI adapter.
 	// The codex exec sub-command has no equivalent flags for these fields.
 	// Silently dropping them would violate parity-and-clarity doctrine
@@ -85,4 +134,45 @@ func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePat
 	}
 
 	return argv
+}
+
+// buildMCPServerConfig constructs a single -c mcp_servers.<server-name>=... inline-TOML value.
+// Per Drop 4d D2 and the canonical reference ~/.claude/codex-mcp-dispatch-tool-conversion.md,
+// the format is:
+//
+//	mcp_servers.<server-name>={command=<cmd>, args=[<args>], tools={<tool-entries>}}
+//
+// where each tool entry is `"<tool-name>"={approval_mode="approve"}`.
+// Tool names with dots MUST be quoted.
+func buildMCPServerConfig(serverName string, config MCPServerConfig) string {
+	// Build the args array: args=[<comma-sep quoted strings>]
+	var argsStr string
+	if len(config.Args) > 0 {
+		quoted := make([]string, len(config.Args))
+		for i, arg := range config.Args {
+			quoted[i] = fmt.Sprintf("%q", arg)
+		}
+		argsStr = "[" + strings.Join(quoted, ",") + "]"
+	} else {
+		argsStr = "[]"
+	}
+
+	// Build the tools block: tools={<tool-entries>}
+	// Each tool gets an entry: "<tool-name>"={approval_mode="approve"}
+	// Tool names with dots MUST be quoted unconditionally.
+	var toolsStr string
+	if len(config.Tools) > 0 {
+		toolEntries := make([]string, len(config.Tools))
+		for i, toolName := range config.Tools {
+			// Always quote tool names to handle dots safely.
+			toolEntries[i] = fmt.Sprintf("%q={approval_mode=\"approve\"}", toolName)
+		}
+		toolsStr = "{" + strings.Join(toolEntries, ",") + "}"
+	} else {
+		toolsStr = "{}"
+	}
+
+	// Assemble the full inline-TOML value:
+	// mcp_servers.<server-name>={command="...", args=[...], tools={...}}
+	return fmt.Sprintf("mcp_servers.%s={command=%q,args=%s,tools=%s}", serverName, config.Command, argsStr, toolsStr)
 }

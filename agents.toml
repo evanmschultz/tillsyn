@@ -93,3 +93,25 @@ model = "claude-haiku-4-5-20251001"
 max_budget_usd = 0.10
 max_turns = 5
 tools_allow = ["Read", "Bash"]
+
+# ---
+# D6 OLLAMA PROFILE (Drop 4d multi-backend support)
+# ---
+# To use ollama-backed claude spawns (claude -p with OpenAI-compat API):
+#
+#   1. Start ollama: `ollama serve` (listens on http://localhost:11434/v1)
+#   2. Pull a model: `ollama pull llama3:latest`
+#   3. Set shell env (option A — recommended for secrets):
+#      export ANTHROPIC_BASE_URL=http://localhost:11434/v1
+#      export ANTHROPIC_AUTH_TOKEN=ollama
+#   4. Dispatch with: till dispatch <kind> --binding go-builder-ollama
+#
+# Option A — Use shell env vars (recommended; no secrets in TOML):
+# [agents.build]
+# env_from_shell = { ANTHROPIC_BASE_URL = "ANTHROPIC_BASE_URL", ANTHROPIC_AUTH_TOKEN = "ANTHROPIC_AUTH_TOKEN" }
+
+# Option B — Use literal values in TOML (for localhost dev-only):
+# [agents.build]
+# [agents.build.env_set]
+# ANTHROPIC_BASE_URL = "http://localhost:11434/v1"
+# ANTHROPIC_AUTH_TOKEN = "ollama"

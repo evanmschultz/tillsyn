@@ -179,7 +179,7 @@ func TestEnvBaselineNamesAllInherited(t *testing.T) {
 		AgentName: "go-builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
 	}
-	env, err := assembleEnv(binding)
+	env, err := assembleEnv(binding, nil)
 	if err != nil {
 		t.Fatalf("assembleEnv: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestEnvBaselineUnsetNamesOmitted(t *testing.T) {
 		AgentName: "go-builder-agent",
 		CLIKind:   dispatcher.CLIKindClaude,
 	}
-	env, err := assembleEnv(binding)
+	env, err := assembleEnv(binding, nil)
 	if err != nil {
 		t.Fatalf("assembleEnv: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestEnvBindingNamesAppended(t *testing.T) {
 		CLIKind:   dispatcher.CLIKindClaude,
 		Env:       []string{"TILLSYN_TEST_BINDING_VAR", "TILLSYN_TEST_OTHER_VAR"},
 	}
-	env, err := assembleEnv(binding)
+	env, err := assembleEnv(binding, nil)
 	if err != nil {
 		t.Fatalf("assembleEnv: %v", err)
 	}

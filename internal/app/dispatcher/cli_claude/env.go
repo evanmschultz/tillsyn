@@ -100,16 +100,21 @@ var closedBaselineEnvNames = []string{
 //
 // The order is deterministic for testability: closed baseline names in
 // declaration order first, then binding.Env names sorted for stable
-// snapshotting. Duplicate baseline + binding entries collapse to one
-// emission (binding.Env values WIN if a name appears in both — the
-// binding's allow-list is per-binding-explicit, so the binding's Getenv
-// value is authoritative).
+// snapshotting, then envSetLiterals keys sorted. Duplicate baseline +
+// binding + literal entries collapse to one emission (binding.Env values WIN
+// if a name appears in both, and envSetLiterals WIN over os.Getenv result —
+// literal config values are explicit and take precedence).
+//
+// envSetLiterals (optional, may be nil) carries name-value pairs to inject
+// unconditionally as literal values. Unlike binding.Env (resolved via
+// os.Getenv), these carry their values inline and do not fail if the
+// orchestrator process lacks a shell variable — they are emitted directly.
 //
 // Returns ErrMissingRequiredEnv (wrapped with the offending name) when any
 // binding.Env name has no value in the orchestrator process. Does NOT
 // fail when a closed-baseline name is unset — those degrade gracefully
 // (omitted from cmd.Env).
-func assembleEnv(binding dispatcher.BindingResolved) ([]string, error) {
+func assembleEnv(binding dispatcher.BindingResolved, envSetLiterals map[string]string) ([]string, error) {
 	// Track which names came from the binding's allow-list so we can route
 	// missing values to ErrMissingRequiredEnv (closed-baseline absent values
 	// silently omit, per docs above).
@@ -121,7 +126,11 @@ func assembleEnv(binding dispatcher.BindingResolved) ([]string, error) {
 	// emitted tracks names already added to env so duplicates collapse to
 	// one entry. The string-key form (NAME=value) is what cmd.Env wants
 	// directly; the map's purpose is dedup-by-name only.
-	emitted := make(map[string]string, len(closedBaselineEnvNames)+len(binding.Env))
+	capacity := len(closedBaselineEnvNames) + len(binding.Env)
+	if envSetLiterals != nil {
+		capacity += len(envSetLiterals)
+	}
+	emitted := make(map[string]string, capacity)
 
 	// Resolve every binding.Env name first so the missing-required error
 	// surfaces before we do baseline work. Missing required env is the
@@ -141,7 +150,8 @@ func assembleEnv(binding dispatcher.BindingResolved) ([]string, error) {
 	// are emitted unconditionally per RESEARCH/ISOLATION_ENFORCEMENT_FIX.md
 	// § D.3. Precedence: binding.Env (above) wins over defense-in-depth, so
 	// the `alreadySet` skip mirrors the closed-baseline pattern. Net
-	// precedence chain: binding.Env > defense-in-depth > closed-baseline.
+	// precedence chain: binding.Env > envSetLiterals > defense-in-depth >
+	// closed-baseline.
 	for _, lit := range defenseInDepthEnvLiterals {
 		if _, alreadySet := emitted[lit.Name]; alreadySet {
 			continue
@@ -149,12 +159,28 @@ func assembleEnv(binding dispatcher.BindingResolved) ([]string, error) {
 		emitted[lit.Name] = lit.Value
 	}
 
+	// Inject envSetLiterals from config.Preset.EnvSet (D6 ollama support).
+	// These carry their values inline — no os.LookupEnv. They are emitted
+	// unconditionally when present. Precedence: binding.Env wins (explicit
+	// per-binding allow-list is most authoritative); envSetLiterals win
+	// over defense-in-depth + closed-baseline. Net precedence chain:
+	// binding.Env > envSetLiterals > defense-in-depth > closed-baseline.
+	if envSetLiterals != nil {
+		for name, val := range envSetLiterals {
+			if _, alreadySet := emitted[name]; alreadySet {
+				continue
+			}
+			emitted[name] = val
+		}
+	}
+
 	// Resolve closed baseline. Empty values (name unset) are skipped — we
 	// do not emit `NAME=` for absent baseline vars. Binding-supplied
-	// names + defense-in-depth literals take precedence: if either already
-	// populated the name, don't overwrite (covers the case where adopter
-	// declared PATH in binding.Env explicitly, or a defense-in-depth name
-	// collides with a baseline name — though today's two sets are disjoint).
+	// names + envSetLiterals + defense-in-depth literals take precedence:
+	// if any already populated the name, don't overwrite (covers the case
+	// where adopter declared PATH in binding.Env explicitly, or a
+	// defense-in-depth name collides with a baseline name — though today's
+	// baseline and defense-in-depth sets are disjoint).
 	for _, name := range closedBaselineEnvNames {
 		if _, alreadySet := emitted[name]; alreadySet {
 			continue
@@ -167,10 +193,10 @@ func assembleEnv(binding dispatcher.BindingResolved) ([]string, error) {
 	}
 
 	// Build the ordered slice: baseline names in their declared order,
-	// then defense-in-depth literals in declaration order, then any
-	// binding-only names (those NOT in either prior set) in sorted order.
-	// The sort is purely for test determinism — exec consumes the slice
-	// as an unordered set.
+	// then defense-in-depth literals in declaration order, then
+	// envSetLiterals in sorted order, then any binding-only names (those
+	// NOT in any prior set) in sorted order. The sort is purely for test
+	// determinism — exec consumes the slice as an unordered set.
 	out := make([]string, 0, len(emitted))
 	seen := make(map[string]struct{}, len(emitted))
 	for _, name := range closedBaselineEnvNames {
@@ -191,6 +217,20 @@ func assembleEnv(binding dispatcher.BindingResolved) ([]string, error) {
 		}
 		out = append(out, lit.Name+"="+val)
 		seen[lit.Name] = struct{}{}
+	}
+
+	// Emit envSetLiterals in sorted order for deterministic test output.
+	envSetKeys := make([]string, 0, len(envSetLiterals))
+	for name := range envSetLiterals {
+		if _, alreadyEmitted := seen[name]; alreadyEmitted {
+			continue
+		}
+		envSetKeys = append(envSetKeys, name)
+	}
+	sort.Strings(envSetKeys)
+	for _, name := range envSetKeys {
+		out = append(out, name+"="+emitted[name])
+		seen[name] = struct{}{}
 	}
 
 	bindingOnly := make([]string, 0, len(binding.Env))

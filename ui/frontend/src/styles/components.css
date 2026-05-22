@@ -4,42 +4,37 @@
  * in stil's design system should be raised upstream rather than added here.
  */
 
-/* ─── ProjectList ──────────────────────────────────────────────────────
- * Cardless list of projects under the active workspace. Header sets the
- * "Projects" pivot; rows render id + name with the id rendered in mono
- * + accent for scannability (mirrors stil .component-card-id).
+/* ─── ProjectSidebar ────────────────────────────────────────────────────
+ * Left-sidebar project list rendered in the app-sidebar slot (Lane B D2).
+ * Mirrors stil Sidebar.astro pattern with clickable buttons + store-backed
+ * selection state. Project IDs are internal-only (not displayed).
  */
 
-.project-list {
+.project-sidebar {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-chrome);
+  padding: 0 var(--space-3) var(--nav-padding-bottom);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-2);
 }
 
-.project-list-header {
+.project-sidebar-header {
+  height: var(--topbar-height);
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  flex-wrap: wrap;
+  align-items: center;
+  padding: 0 var(--space-3);
 }
 
-.project-list-title {
-  font-size: var(--text-xl);
+.project-sidebar-title {
+  font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
-  color: var(--text-primary);
   letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
 }
 
-.project-list-hint {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
-}
-
-.project-list-status {
+.project-sidebar-status {
   font-size: var(--text-sm);
   color: var(--text-secondary);
   padding: var(--space-3) var(--space-4);
@@ -47,75 +42,62 @@
   border-radius: var(--radius-3);
 }
 
-.project-list-status[data-tone="error"] {
+.project-sidebar-status[data-tone="error"] {
   color: var(--text-primary);
   box-shadow: inset 0 0 0 1px var(--carl);
 }
 
-.project-list-status[data-tone="empty"] {
+.project-sidebar-status[data-tone="empty"] {
   color: var(--text-tertiary);
   font-style: italic;
 }
 
-.project-list-items {
+.project-sidebar-items {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--nav-item-gap);
+  flex: 1;
 }
 
-.project-list-item {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-4);
-  align-items: baseline;
-  padding: var(--space-3) var(--space-4);
-  background: var(--bg-chrome);
-  border-radius: var(--radius-3);
+.project-sidebar-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: var(--nav-item-height);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-2);
+  color: var(--text-secondary);
+  text-align: left;
+  text-decoration: none;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  background: transparent;
+  border: none;
+  cursor: pointer;
   transition:
     background-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out);
+    color var(--duration-fast) var(--ease-out);
 }
 
-.project-list-item:hover {
+.project-sidebar-item:hover {
   background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
-.project-list-item-id {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: var(--tracking-wide);
-  /* --weight-regular (400) matches the imported JetBrains Mono weight; using
-     --weight-medium (500) here would force the browser to synthesize bold,
-     producing visually weaker output. */
-  font-weight: var(--weight-regular);
-}
-
-.project-list-item-name {
-  font-size: var(--text-sm);
+.project-sidebar-item.is-selected {
+  background: var(--bg-selected);
   color: var(--text-primary);
   font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-tight);
+}
+
+.project-sidebar-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.project-sidebar-item-name {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* ── ProjectList narrow reflow (drop_fe_4 D6) ───────── */
-
-@media (max-width: 640px) {
-  .project-list-item {
-    padding: var(--space-2) var(--space-3);
-  }
-}
-
-@media (max-width: 480px) {
-  .project-list-hint {
-    display: none;
-  }
-
-  .project-list-item {
-    grid-template-columns: 1fr;
-  }
 }

@@ -152,6 +152,13 @@ type BindingResolved struct {
 	// values for every name in this slice — os.Environ() is NOT inherited.
 	Env []string
 
+	// EnvSet (D6 ollama support) carries literal name-value pairs the adapter
+	// injects unconditionally into cmd.Env without os.Getenv resolution.
+	// Populated from config.Preset.EnvSet at dispatcher level; may be nil.
+	// Precedence: Env names (via os.Getenv) WIN over EnvSet literals when
+	// a name appears in both.
+	EnvSet map[string]string
+
 	// Model is the LLM model identifier (e.g. "opus", "sonnet", "haiku").
 	// Pointer-typed: nil means no override; the adapter falls back to its
 	// CLI's default model.
@@ -210,6 +217,20 @@ type BindingResolved struct {
 	// attempts. Pointer-typed for absent vs explicit zero ("retry
 	// immediately").
 	BlockedRetryCooldown *time.Duration
+
+	// MCPServers is a map of MCP server configurations keyed by server name
+	// (e.g., "tillsyn-dev"). Each value holds the command, args, and tool
+	// list the adapter uses to inject per-spawn `-c mcp_servers.<name>=...`
+	// configuration. The exact value type is adapter-specific (cli_codex uses
+	// cli_codex.MCPServerConfig); this field uses interface{} to avoid
+	// circular imports between dispatcher and cli_codex packages.
+	// Populated by Drop 4d D1 (AgentDefinition parser) from the agent's
+	// declared MCP needs; nil when no MCP servers are needed.
+	// Consumed by cli_codex adapter (cli_codex/argv.go) to inject per-tool
+	// approval_mode="approve" configuration per the canonical reference
+	// ~/.claude/codex-mcp-dispatch-tool-conversion.md (upstream codex issues
+	// #15437, #15753, #16501, #19430, #13476).
+	MCPServers map[string]interface{}
 }
 
 // BundlePaths is the claude-neutral handle the dispatcher hands to every
