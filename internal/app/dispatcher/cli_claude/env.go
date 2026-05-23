@@ -33,7 +33,7 @@ var ErrMissingRequiredEnv = errors.New("cli_claude: required env var unset in or
 // resolution and respects the same `alreadySet` skip pattern used at the
 // closed-baseline loop — so a binding that explicitly names one of these
 // four env vars takes precedence. Net precedence: binding.Env >
-// defense-in-depth literals > closed-baseline.
+// envSetLiterals > defense-in-depth literals > closed-baseline.
 //
 // The literals are walked in declaration order for deterministic test
 // snapshotting; the emitted slice carries them immediately after the
