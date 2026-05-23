@@ -36,6 +36,20 @@ import (
 // "inherit-from-template-default", not as a hard fail. The parser only
 // surfaces the value verbatim.
 
+// AgentDefinitionMCPServer is the per-server config parsed from the
+// `mcp_servers:` frontmatter mapping. Mirrors cli_codex.MCPServerConfig
+// shape; the seam package (A2) converts between them.
+type AgentDefinitionMCPServer struct {
+	// Command is the absolute or PATH-relative command name (e.g., "till").
+	Command string `yaml:"command"`
+	// Args is the command-line arguments passed to the command
+	// (e.g., []string{"mcp"}).
+	Args []string `yaml:"args"`
+	// Tools is the list of MCP tool names the server exposes
+	// (e.g., []string{"till.action_item", "till.comment"}).
+	Tools []string `yaml:"tools"`
+}
+
 // AgentDefinition is the in-memory representation of one `.claude/agents/ta-*.md`
 // file. Fields Name, Description, and Tools come straight from the YAML
 // frontmatter. SystemPrompt is the markdown body after the closing `---`.
@@ -59,6 +73,13 @@ type AgentDefinition struct {
 	// on commas and trimmed of surrounding whitespace. Empty list when the
 	// field is absent or whitespace-only.
 	Tools []string
+
+	// MCPServers maps server name to its per-server config (command + args +
+	// tools). Populated from the `mcp_servers:` frontmatter YAML mapping.
+	// Empty/nil when the field is absent. Drop 4d D2: consumed by
+	// ResolveBinding via the downstream A2 seam (NEW — not yet in tree at A1
+	// land).
+	MCPServers map[string]AgentDefinitionMCPServer
 
 	// SystemPrompt is the markdown body following the closing `---`
 	// delimiter. Leading newlines are preserved verbatim so downstream
@@ -101,10 +122,11 @@ var agentFilenameRe = regexp.MustCompile(`^ta-(go|fe)-(planning|builder|plan-qa-
 // ParseAgentDefinition decodes. Unknown keys (e.g. the `hooks:` block
 // consumed by hook_preflight.go) are silently ignored by yaml.v3.
 type agentFrontmatterFields struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	Model       string `yaml:"model"`
-	Tools       string `yaml:"tools"`
+	Name        string                              `yaml:"name"`
+	Description string                              `yaml:"description"`
+	Model       string                              `yaml:"model"`
+	Tools       string                              `yaml:"tools"`
+	MCPServers  map[string]AgentDefinitionMCPServer `yaml:"mcp_servers"`
 }
 
 // ParseAgentDefinition parses one `.claude/agents/ta-*.md` file body into
@@ -140,6 +162,7 @@ func ParseAgentDefinition(filename string, body []byte) (AgentDefinition, error)
 		Description:  strings.TrimSpace(parsed.Description),
 		Model:        strings.TrimSpace(parsed.Model),
 		Tools:        splitToolsField(parsed.Tools),
+		MCPServers:   parsed.MCPServers,
 		SystemPrompt: systemPrompt,
 		Role:         role,
 		Axis:         axis,

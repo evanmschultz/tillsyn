@@ -301,3 +301,79 @@ func TestLoadAgentDefinition_FileNotFound(t *testing.T) {
 		t.Errorf("error message should mention 'read agent file'; got %v", err)
 	}
 }
+
+// TestParseAgentDefinition_MCPServersFromFrontmatter verifies the `mcp_servers:`
+// frontmatter block parses into the MCPServers map and the per-server config
+// (command, args, tools) round-trips correctly.
+func TestParseAgentDefinition_MCPServersFromFrontmatter(t *testing.T) {
+	body := []byte(`---
+name: ta-go-builder
+description: Builder
+model: haiku
+tools: Read, Write
+mcp_servers:
+  tillsyn-dev:
+    command: till
+    args: [mcp]
+    tools: [till.action_item, till.comment]
+  hylla-search:
+    command: hylla
+    args: [mcp, search]
+    tools: [hylla_search_keyword, hylla_search_vector]
+---
+
+body
+`)
+	def, err := ParseAgentDefinition("ta-go-builder", body)
+	if err != nil {
+		t.Fatalf("ParseAgentDefinition: %v", err)
+	}
+
+	if len(def.MCPServers) != 2 {
+		t.Fatalf("MCPServers len = %d, want 2; got %v", len(def.MCPServers), def.MCPServers)
+	}
+
+	// Check tillsyn-dev server
+	tilldev, ok := def.MCPServers["tillsyn-dev"]
+	if !ok {
+		t.Fatal("missing tillsyn-dev server")
+	}
+	if tilldev.Command != "till" {
+		t.Errorf("tillsyn-dev.Command = %q, want %q", tilldev.Command, "till")
+	}
+	if len(tilldev.Args) != 1 || tilldev.Args[0] != "mcp" {
+		t.Errorf("tillsyn-dev.Args = %v, want %v", tilldev.Args, []string{"mcp"})
+	}
+	if len(tilldev.Tools) != 2 || tilldev.Tools[0] != "till.action_item" || tilldev.Tools[1] != "till.comment" {
+		t.Errorf("tillsyn-dev.Tools = %v, want %v", tilldev.Tools, []string{"till.action_item", "till.comment"})
+	}
+
+	// Check hylla-search server
+	hylla, ok := def.MCPServers["hylla-search"]
+	if !ok {
+		t.Fatal("missing hylla-search server")
+	}
+	if hylla.Command != "hylla" {
+		t.Errorf("hylla-search.Command = %q, want %q", hylla.Command, "hylla")
+	}
+	if len(hylla.Args) != 2 || hylla.Args[0] != "mcp" || hylla.Args[1] != "search" {
+		t.Errorf("hylla-search.Args = %v, want %v", hylla.Args, []string{"mcp", "search"})
+	}
+	if len(hylla.Tools) != 2 || hylla.Tools[0] != "hylla_search_keyword" || hylla.Tools[1] != "hylla_search_vector" {
+		t.Errorf("hylla-search.Tools = %v, want %v", hylla.Tools, []string{"hylla_search_keyword", "hylla_search_vector"})
+	}
+}
+
+// TestParseAgentDefinition_MCPServersAbsentYieldsEmpty verifies backward
+// compatibility: agents without the `mcp_servers:` key parse cleanly with
+// a nil or empty MCPServers map.
+func TestParseAgentDefinition_MCPServersAbsentYieldsEmpty(t *testing.T) {
+	body := []byte("---\nname: ta-go-builder\ndescription: x\ntools: Read\n---\n\nbody\n")
+	def, err := ParseAgentDefinition("ta-go-builder", body)
+	if err != nil {
+		t.Fatalf("ParseAgentDefinition: %v", err)
+	}
+	if len(def.MCPServers) != 0 {
+		t.Errorf("MCPServers = %v with len %d, want 0", def.MCPServers, len(def.MCPServers))
+	}
+}
