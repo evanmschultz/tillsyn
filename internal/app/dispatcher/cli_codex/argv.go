@@ -2,6 +2,7 @@ package cli_codex
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/log"
@@ -90,8 +91,29 @@ func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePat
 	//
 	// The tools block uses per-tool approval_mode="approve" entries with
 	// quoted names for tools that have dots (e.g., "till.action_item").
+	//
+	// Server names are iterated in sorted (alphabetical) order for deterministic argv.
+	// Server names containing dots are rejected (skipped with a warning) because
+	// dots parse ambiguously in TOML key-path syntax (mcp_servers.my.server is
+	// parsed as nested table my > server, not flat key my.server).
 	if binding.MCPServers != nil {
-		for serverName, config := range binding.MCPServers {
+		// Collect and sort server names for deterministic iteration.
+		serverNames := make([]string, 0, len(binding.MCPServers))
+		for serverName := range binding.MCPServers {
+			serverNames = append(serverNames, serverName)
+		}
+		sort.Strings(serverNames)
+
+		// Iterate in sorted order, rejecting dotted names.
+		for _, serverName := range serverNames {
+			// Reject server names containing dots (TOML parse ambiguity).
+			if strings.Contains(serverName, ".") {
+				log.Warn("cli_codex: MCP server name contains dot; skipping (TOML key-path ambiguity)",
+					"server_name", serverName,
+				)
+				continue
+			}
+			config := binding.MCPServers[serverName]
 			inline := buildMCPServerConfig(serverName, config)
 			argv = append(argv, "-c", inline)
 		}

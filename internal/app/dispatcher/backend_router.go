@@ -10,14 +10,23 @@ package dispatcher
 import (
 	"errors"
 	"fmt"
+	"os"
+	"sort"
 
 	"github.com/evanmschultz/tillsyn/internal/config"
+	"github.com/evanmschultz/tillsyn/internal/domain"
 )
 
 // ErrUnroutablePersona is returned when both the template and preset have
 // empty Client fields — no CLI kind is configured for this persona, making
 // it impossible to route to a backend.
 var ErrUnroutablePersona = errors.New("dispatcher: unroutable persona — no cli_kind configured")
+
+// ErrEnvFromShellMissingShellVar signals that an EnvFromShell entry names a
+// shell-side variable (the map value) that is unset in the orchestrator's
+// environment. Fail-loud per project hard-rule "parity and clarity, never
+// silent failures."
+var ErrEnvFromShellMissingShellVar = errors.New("dispatcher: EnvFromShell shell-side variable is unset")
 
 // ResolvedTemplate carries the resolved template bindings for a given kind.
 // Client holds the CLI kind (e.g. "claude", "codex") from the template layer.
@@ -117,4 +126,61 @@ func (r *BackendRouter) ResolveMCPServers(def *AgentDefinition) map[string]MCPSe
 		}
 	}
 	return out
+}
+
+// ResolveEnvSet returns the per-spawn EnvSet + EnvFromShell-resolved Env
+// entries for the given action item + (group, kind) pair. EnvSet is a
+// cloned copy of preset.EnvSet (defensive). EnvFromShell carries
+// "SPAWN_NAME=<value>" pairs after looking up the shell-side variable
+// (preset.EnvFromShell map value) via os.LookupEnv. Missing shell-side
+// variables return ErrEnvFromShellMissingShellVar wrapped with the offending
+// spawn name + shell name.
+//
+// Semantics: preset.EnvFromShell is a MAP[string]string where KEY = spawn-side
+// env var name, VALUE = orchestrator-side shell var name to read. Example:
+//
+//	OLLAMA_AUTH = "ANTHROPIC_AUTH_TOKEN"
+//
+// Means "set the spawn's OLLAMA_AUTH to the orchestrator's $ANTHROPIC_AUTH_TOKEN
+// value."
+//
+// Future overrides (CLI/MCP/TUI per-spawn EnvSet/EnvFromShell knobs) merge
+// via BindingOverrides at the resolver step UPSTREAM, not here. The router
+// is the config-broker seam.
+func (r *BackendRouter) ResolveEnvSet(item domain.ActionItem, group, kind string) (map[string]string, []string, error) {
+	preset, err := config.Resolve(*r.registry, group, kind)
+	if err != nil {
+		return nil, nil, fmt.Errorf("dispatcher: resolve preset for env: %w", err)
+	}
+
+	// Clone EnvSet defensively so caller mutations don't bleed back to the
+	// preset.
+	var envSet map[string]string
+	if len(preset.EnvSet) > 0 {
+		envSet = make(map[string]string, len(preset.EnvSet))
+		for k, v := range preset.EnvSet {
+			envSet[k] = v
+		}
+	}
+
+	// Resolve EnvFromShell per asymmetric mapping. Sort keys for deterministic
+	// ordering (test-stable; matches NIT-3-style discipline).
+	var envFromShell []string
+	if len(preset.EnvFromShell) > 0 {
+		spawnNames := make([]string, 0, len(preset.EnvFromShell))
+		for sn := range preset.EnvFromShell {
+			spawnNames = append(spawnNames, sn)
+		}
+		sort.Strings(spawnNames)
+		for _, spawnName := range spawnNames {
+			shellName := preset.EnvFromShell[spawnName]
+			val, ok := os.LookupEnv(shellName)
+			if !ok {
+				return nil, nil, fmt.Errorf("%w: spawn_name=%q shell_name=%q (agent persona expects $%s in orchestrator env)", ErrEnvFromShellMissingShellVar, spawnName, shellName, shellName)
+			}
+			envFromShell = append(envFromShell, spawnName+"="+val)
+		}
+	}
+
+	return envSet, envFromShell, nil
 }

@@ -1091,6 +1091,131 @@ func TestBuildCommand_ArgvWithMCPServerConfig(t *testing.T) {
 	}
 }
 
+// TestBuildCommand_ArgvMCPServersSorted asserts that MCP server configs are
+// emitted in alphabetical order by server name. This ensures deterministic argv
+// for test snapshots and predictable CLI behavior.
+func TestBuildCommand_ArgvMCPServersSorted(t *testing.T) {
+	t.Parallel()
+
+	binding := minimalBinding()
+	binding.MCPServers = map[string]dispatcher.MCPServerConfig{
+		"zebra": {
+			Command: "zebra-cmd",
+			Args:    []string{},
+			Tools:   []string{"zebra.tool"},
+		},
+		"alpha": {
+			Command: "alpha-cmd",
+			Args:    []string{},
+			Tools:   []string{"alpha.tool"},
+		},
+		"delta": {
+			Command: "delta-cmd",
+			Args:    []string{},
+			Tools:   []string{"delta.tool"},
+		},
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	// Extract server names from argv in the order they appear as -c flags.
+	var seenServers []string
+	for i, arg := range cmd.Args {
+		if arg == "-c" && i+1 < len(cmd.Args) {
+			cfgArg := cmd.Args[i+1]
+			if strings.HasPrefix(cfgArg, "mcp_servers.") {
+				// Extract server name between "mcp_servers." and "="
+				start := len("mcp_servers.")
+				end := strings.Index(cfgArg[start:], "=")
+				if end >= 0 {
+					serverName := cfgArg[start : start+end]
+					seenServers = append(seenServers, serverName)
+				}
+			}
+		}
+	}
+
+	// Verify servers appear in alphabetical order.
+	if len(seenServers) != 3 {
+		t.Fatalf("expected 3 servers in argv; got %d: %v", len(seenServers), seenServers)
+	}
+	wantOrder := []string{"alpha", "delta", "zebra"}
+	for i, got := range seenServers {
+		if got != wantOrder[i] {
+			t.Errorf("server[%d] = %q; want %q (servers must be sorted alphabetically)", i, got, wantOrder[i])
+		}
+	}
+}
+
+// TestBuildCommand_ArgvRejectsDotInServerName asserts that server names
+// containing dots are rejected (skipped with a warning logged) because dots
+// parse ambiguously in TOML key-path syntax (mcp_servers.my.server is parsed
+// as nested table my > server, not a flat key my.server).
+func TestBuildCommand_ArgvRejectsDotInServerName(t *testing.T) {
+	t.Parallel()
+
+	binding := minimalBinding()
+	binding.MCPServers = map[string]dispatcher.MCPServerConfig{
+		"valid-server": {
+			Command: "cmd1",
+			Args:    []string{},
+			Tools:   []string{"tool1"},
+		},
+		"invalid.server": {
+			Command: "cmd2",
+			Args:    []string{},
+			Tools:   []string{"tool2"},
+		},
+		"another-valid": {
+			Command: "cmd3",
+			Args:    []string{},
+			Tools:   []string{"tool3"},
+		},
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	// Extract server names from argv MCP server configs.
+	var emittedServers []string
+	for i, arg := range cmd.Args {
+		if arg == "-c" && i+1 < len(cmd.Args) {
+			cfgArg := cmd.Args[i+1]
+			if strings.HasPrefix(cfgArg, "mcp_servers.") {
+				// Extract server name.
+				start := len("mcp_servers.")
+				end := strings.Index(cfgArg[start:], "=")
+				if end >= 0 {
+					serverName := cfgArg[start : start+end]
+					emittedServers = append(emittedServers, serverName)
+				}
+			}
+		}
+	}
+
+	// Verify that the dotted server is NOT in the emitted servers.
+	for _, name := range emittedServers {
+		if name == "invalid.server" {
+			t.Errorf("dotted server name %q was emitted; must be rejected", name)
+		}
+	}
+
+	// Verify that both valid servers are present (in alphabetical order).
+	if len(emittedServers) != 2 {
+		t.Fatalf("expected 2 emitted servers (invalid.server rejected); got %d: %v", len(emittedServers), emittedServers)
+	}
+	if emittedServers[0] != "another-valid" || emittedServers[1] != "valid-server" {
+		t.Errorf("emitted servers = %v; want [another-valid valid-server] in sorted order", emittedServers)
+	}
+}
+
 // TestBuildCommand_ArgvWithMultipleMCPServers asserts that multiple MCP servers
 // in binding.MCPServers each get their own -c flag entry in argv, in map
 // iteration order (unordered but deterministic per run).

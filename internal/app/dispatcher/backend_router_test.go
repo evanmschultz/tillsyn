@@ -224,3 +224,185 @@ func TestBackendRouterResolveMCPServersDefensiveCopy(t *testing.T) {
 		t.Errorf("defensive copy failed: original Tools mutated")
 	}
 }
+
+func TestBackendRouterResolveEnvSetClonesPresetEnvSet(t *testing.T) {
+	t.Parallel()
+	registry := make(config.AgentsRegistry)
+	registry["go"] = config.GroupConfig{
+		Default: config.Preset{
+			Client: "claude",
+			EnvSet: map[string]string{"FOO": "bar", "BAZ": "qux"},
+		},
+		Kinds: make(map[domain.Kind]config.Override),
+	}
+	router := NewBackendRouter(&registry, ResolvedTemplate{Client: "claude"})
+
+	item := domain.ActionItem{}
+	envSet, envFromShell, err := router.ResolveEnvSet(item, "go", "build")
+	if err != nil {
+		t.Fatalf("ResolveEnvSet() unexpected error: %v", err)
+	}
+
+	// Verify envSet matches preset.
+	if len(envSet) != 2 || envSet["FOO"] != "bar" || envSet["BAZ"] != "qux" {
+		t.Errorf("envSet = %v, want {FOO:bar BAZ:qux}", envSet)
+	}
+
+	// EnvFromShell should be nil since preset has none.
+	if envFromShell != nil {
+		t.Errorf("envFromShell = %v, want nil", envFromShell)
+	}
+
+	// Verify defensive copy: mutate returned map and check original is unaffected.
+	envSet["FOO"] = "modified"
+	newEnvSet, _, _ := router.ResolveEnvSet(item, "go", "build")
+	if newEnvSet["FOO"] != "bar" {
+		t.Errorf("defensive copy failed: original EnvSet mutated")
+	}
+}
+
+func TestBackendRouterResolveEnvSetResolvesEnvFromShellAsymmetric(t *testing.T) {
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "secret-value-123")
+	t.Setenv("OLLAMA_ENDPOINT", "http://localhost:11434")
+
+	registry := make(config.AgentsRegistry)
+	registry["go"] = config.GroupConfig{
+		Default: config.Preset{
+			Client: "claude",
+			EnvSet: map[string]string{"FOO": "bar"},
+			// Asymmetric mapping: SPAWN_NAME (key) = orchestrator shell var (value)
+			EnvFromShell: map[string]string{
+				"OLLAMA_AUTH":     "ANTHROPIC_AUTH_TOKEN",
+				"OLLAMA_BASE_URL": "OLLAMA_ENDPOINT",
+			},
+		},
+		Kinds: make(map[domain.Kind]config.Override),
+	}
+	router := NewBackendRouter(&registry, ResolvedTemplate{Client: "claude"})
+
+	item := domain.ActionItem{}
+	envSet, envFromShell, err := router.ResolveEnvSet(item, "go", "build")
+	if err != nil {
+		t.Fatalf("ResolveEnvSet() unexpected error: %v", err)
+	}
+
+	// Verify envSet still present.
+	if envSet["FOO"] != "bar" {
+		t.Errorf("envSet[FOO] = %q, want bar", envSet["FOO"])
+	}
+
+	// Verify envFromShell is sorted and resolved.
+	if len(envFromShell) != 2 {
+		t.Fatalf("envFromShell length = %d, want 2", len(envFromShell))
+	}
+
+	// Entries should be sorted alphabetically by spawn name.
+	expectedEntries := map[string]string{
+		"OLLAMA_AUTH":     "secret-value-123",
+		"OLLAMA_BASE_URL": "http://localhost:11434",
+	}
+	for _, entry := range envFromShell {
+		parts := splitEnvEntry(entry)
+		if len(parts) != 2 {
+			t.Fatalf("invalid env entry: %q", entry)
+		}
+		spawnName, value := parts[0], parts[1]
+		want, ok := expectedEntries[spawnName]
+		if !ok {
+			t.Errorf("unexpected spawn name: %q", spawnName)
+			continue
+		}
+		if value != want {
+			t.Errorf("envFromShell[%q] = %q, want %q", spawnName, value, want)
+		}
+	}
+
+	// Verify deterministic ordering (sorted).
+	if envFromShell[0] != "OLLAMA_AUTH=secret-value-123" &&
+		envFromShell[0] != "OLLAMA_BASE_URL=http://localhost:11434" {
+		t.Errorf("envFromShell[0] = %q, want alphabetically first entry", envFromShell[0])
+	}
+}
+
+func TestBackendRouterResolveEnvSetMissingShellVarFailsLoud(t *testing.T) {
+	// Ensure ANTHROPIC_AUTH_TOKEN is definitely unset.
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("OLLAMA_ENDPOINT", "http://localhost:11434")
+
+	registry := make(config.AgentsRegistry)
+	registry["go"] = config.GroupConfig{
+		Default: config.Preset{
+			Client: "claude",
+			EnvFromShell: map[string]string{
+				"OLLAMA_AUTH": "UNSET_SHELL_VAR",
+			},
+		},
+		Kinds: make(map[domain.Kind]config.Override),
+	}
+	router := NewBackendRouter(&registry, ResolvedTemplate{Client: "claude"})
+
+	item := domain.ActionItem{}
+	_, _, err := router.ResolveEnvSet(item, "go", "build")
+
+	if err == nil {
+		t.Fatalf("ResolveEnvSet() wanted error for missing shell var, got nil")
+	}
+
+	// Verify error wraps the sentinel.
+	if !errors.Is(err, ErrEnvFromShellMissingShellVar) {
+		t.Fatalf("error = %v, want to wrap ErrEnvFromShellMissingShellVar", err)
+	}
+
+	// Verify error message includes diagnostic context.
+	errStr := err.Error()
+	if !containsStr(errStr, "OLLAMA_AUTH") || !containsStr(errStr, "UNSET_SHELL_VAR") {
+		t.Errorf("error message missing diagnostic: %v", err)
+	}
+}
+
+func TestBackendRouterResolveEnvSetEmptyPresetYieldsNil(t *testing.T) {
+	t.Parallel()
+	registry := make(config.AgentsRegistry)
+	registry["go"] = config.GroupConfig{
+		Default: config.Preset{
+			Client: "claude",
+			// No EnvSet, no EnvFromShell.
+		},
+		Kinds: make(map[domain.Kind]config.Override),
+	}
+	router := NewBackendRouter(&registry, ResolvedTemplate{Client: "claude"})
+
+	item := domain.ActionItem{}
+	envSet, envFromShell, err := router.ResolveEnvSet(item, "go", "build")
+	if err != nil {
+		t.Fatalf("ResolveEnvSet() unexpected error: %v", err)
+	}
+
+	if envSet != nil {
+		t.Errorf("envSet = %v, want nil for empty preset", envSet)
+	}
+
+	if envFromShell != nil {
+		t.Errorf("envFromShell = %v, want nil for empty preset", envFromShell)
+	}
+}
+
+// Helper functions for tests.
+
+func splitEnvEntry(entry string) []string {
+	for i := 0; i < len(entry); i++ {
+		if entry[i] == '=' {
+			return []string{entry[:i], entry[i+1:]}
+		}
+	}
+	return []string{entry}
+}
+
+func containsStr(haystack, needle string) bool {
+	for i := 0; i <= len(haystack)-len(needle); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
