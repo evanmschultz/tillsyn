@@ -98,12 +98,14 @@ var closedBaselineEnvNames = []string{
 // process — os.Environ() is NOT inherited. Tests assert orchestrator-only
 // env vars (e.g. AWS_ACCESS_KEY_ID, sentinel values) do NOT leak through.
 //
-// The order is deterministic for testability: closed baseline names in
-// declaration order first, then binding.Env names sorted for stable
-// snapshotting, then envSetLiterals keys sorted. Duplicate baseline +
-// binding + literal entries collapse to one emission (binding.Env values WIN
-// if a name appears in both, and envSetLiterals WIN over os.Getenv result —
-// literal config values are explicit and take precedence).
+// Precedence (full contract): binding.Env (via os.Getenv) > envSetLiterals >
+// defense-in-depth > closed POSIX baseline. On key collision, the earliest
+// source in this chain wins via the alreadySet skip-guard pattern.
+//
+// The output slice order is deterministic for testability: closed baseline
+// names in declaration order first, then defense-in-depth literals in
+// declaration order, then envSetLiterals keys sorted, then binding-only names
+// sorted.
 //
 // envSetLiterals (optional, may be nil) carries name-value pairs to inject
 // unconditionally as literal values. Unlike binding.Env (resolved via
@@ -145,20 +147,6 @@ func assembleEnv(binding dispatcher.BindingResolved, envSetLiterals map[string]s
 		emitted[name] = val
 	}
 
-	// Inject defense-in-depth literals (W3.D4). Unlike the closed-baseline
-	// loop below, these carry their values inline — no os.LookupEnv. They
-	// are emitted unconditionally per RESEARCH/ISOLATION_ENFORCEMENT_FIX.md
-	// § D.3. Precedence: binding.Env (above) wins over defense-in-depth, so
-	// the `alreadySet` skip mirrors the closed-baseline pattern. Net
-	// precedence chain: binding.Env > envSetLiterals > defense-in-depth >
-	// closed-baseline.
-	for _, lit := range defenseInDepthEnvLiterals {
-		if _, alreadySet := emitted[lit.Name]; alreadySet {
-			continue
-		}
-		emitted[lit.Name] = lit.Value
-	}
-
 	// Inject envSetLiterals from config.Preset.EnvSet (D6 ollama support).
 	// These carry their values inline — no os.LookupEnv. They are emitted
 	// unconditionally when present. Precedence: binding.Env wins (explicit
@@ -172,6 +160,20 @@ func assembleEnv(binding dispatcher.BindingResolved, envSetLiterals map[string]s
 			}
 			emitted[name] = val
 		}
+	}
+
+	// Inject defense-in-depth literals (W3.D4). Unlike the closed-baseline
+	// loop below, these carry their values inline — no os.LookupEnv. They
+	// are emitted unconditionally per RESEARCH/ISOLATION_ENFORCEMENT_FIX.md
+	// § D.3. Precedence: binding.Env (above) wins over defense-in-depth, and
+	// envSetLiterals (above) also win over defense-in-depth, so the
+	// `alreadySet` skip mirrors the closed-baseline pattern. Net precedence
+	// chain: binding.Env > envSetLiterals > defense-in-depth > closed-baseline.
+	for _, lit := range defenseInDepthEnvLiterals {
+		if _, alreadySet := emitted[lit.Name]; alreadySet {
+			continue
+		}
+		emitted[lit.Name] = lit.Value
 	}
 
 	// Resolve closed baseline. Empty values (name unset) are skipped — we

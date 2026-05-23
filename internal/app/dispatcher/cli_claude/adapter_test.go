@@ -784,6 +784,43 @@ func TestEnvDefenseInDepthOverridableByBindingEnv(t *testing.T) {
 	}
 }
 
+// TestEnvSetLiteralsOverrideDefenseInDepth asserts that envSetLiterals takes
+// precedence over defense-in-depth literals on key collision. Per the EnvSet
+// precedence chain (binding.Env > envSetLiterals > defense-in-depth >
+// closed-baseline), when envSetLiterals contains a key that also appears in
+// defenseInDepthEnvLiterals, the envSetLiterals value MUST be emitted.
+func TestEnvSetLiteralsOverrideDefenseInDepth(t *testing.T) {
+	t.Parallel()
+
+	binding := dispatcher.BindingResolved{
+		AgentName: "go-builder-agent",
+		CLIKind:   dispatcher.CLIKindClaude,
+		// Empty Env so no binding.Env override.
+		// EnvSet explicitly sets DISABLE_TELEMETRY=0, which collides with
+		// the defense-in-depth literal DISABLE_TELEMETRY=1. After the precedence
+		// fix, envSetLiterals MUST WIN.
+		EnvSet: map[string]string{
+			"DISABLE_TELEMETRY": "0",
+		},
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	// The envSetLiterals value MUST be present in cmd.Env.
+	if !slices.Contains(cmd.Env, "DISABLE_TELEMETRY=0") {
+		t.Errorf("envSetLiterals override missing: cmd.Env should carry DISABLE_TELEMETRY=0; env=%v", cmd.Env)
+	}
+
+	// The defense-in-depth literal value MUST NOT be present.
+	if slices.Contains(cmd.Env, "DISABLE_TELEMETRY=1") {
+		t.Errorf("defense-in-depth literal leaked when envSetLiterals override exists; envSetLiterals must WIN; env=%v", cmd.Env)
+	}
+}
+
 // --- helpers -------------------------------------------------------------
 
 // minimalBinding returns a binding suitable for argv tests that don't

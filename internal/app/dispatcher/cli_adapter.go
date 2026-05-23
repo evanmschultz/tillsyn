@@ -155,8 +155,13 @@ type BindingResolved struct {
 	// EnvSet (D6 ollama support) carries literal name-value pairs the adapter
 	// injects unconditionally into cmd.Env without os.Getenv resolution.
 	// Populated from config.Preset.EnvSet at dispatcher level; may be nil.
-	// Precedence: Env names (via os.Getenv) WIN over EnvSet literals when
-	// a name appears in both.
+	//
+	// Precedence (full contract): binding.Env (via os.Getenv) > EnvSet
+	// literals > adapter defense-in-depth > closed POSIX baseline. Adapters
+	// MUST honor this ordering — earlier-listed sources WIN on key collision.
+	// cli_claude/env.go's assembleEnv is the reference implementation;
+	// cli_codex/env.go (when added per Drop 4d) MUST mirror the same
+	// precedence chain.
 	EnvSet map[string]string
 
 	// Model is the LLM model identifier (e.g. "opus", "sonnet", "haiku").
