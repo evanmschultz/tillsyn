@@ -1044,8 +1044,8 @@ func TestBuildCommand_ArgvWithMCPServerConfig(t *testing.T) {
 	t.Parallel()
 
 	binding := minimalBinding()
-	binding.MCPServers = map[string]interface{}{
-		"tillsyn-dev": MCPServerConfig{
+	binding.MCPServers = map[string]dispatcher.MCPServerConfig{
+		"tillsyn-dev": {
 			Command: "till",
 			Args:    []string{"mcp"},
 			Tools:   []string{"till.action_item", "till.comment", "till.attention_item"},
@@ -1098,13 +1098,13 @@ func TestBuildCommand_ArgvWithMultipleMCPServers(t *testing.T) {
 	t.Parallel()
 
 	binding := minimalBinding()
-	binding.MCPServers = map[string]interface{}{
-		"tillsyn-dev": MCPServerConfig{
+	binding.MCPServers = map[string]dispatcher.MCPServerConfig{
+		"tillsyn-dev": {
 			Command: "till",
 			Args:    []string{"mcp"},
 			Tools:   []string{"till.action_item"},
 		},
-		"hylla": MCPServerConfig{
+		"hylla": {
 			Command: "hylla-mcp",
 			Args:    []string{"--json"},
 			Tools:   []string{"hylla.search", "hylla.refs_find"},
@@ -1140,8 +1140,8 @@ func TestBuildCommand_ArgvMCPToolNamesQuoted(t *testing.T) {
 	t.Parallel()
 
 	binding := minimalBinding()
-	binding.MCPServers = map[string]interface{}{
-		"hylla": MCPServerConfig{
+	binding.MCPServers = map[string]dispatcher.MCPServerConfig{
+		"hylla": {
 			Command: "hylla-mcp",
 			Args:    []string{},
 			Tools:   []string{"hylla.search.vector", "hylla.artifact.overview"},

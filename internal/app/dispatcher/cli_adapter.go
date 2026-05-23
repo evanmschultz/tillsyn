@@ -226,16 +226,15 @@ type BindingResolved struct {
 	// MCPServers is a map of MCP server configurations keyed by server name
 	// (e.g., "tillsyn-dev"). Each value holds the command, args, and tool
 	// list the adapter uses to inject per-spawn `-c mcp_servers.<name>=...`
-	// configuration. The exact value type is adapter-specific (cli_codex uses
-	// cli_codex.MCPServerConfig); this field uses interface{} to avoid
-	// circular imports between dispatcher and cli_codex packages.
-	// Populated by Drop 4d D1 (AgentDefinition parser) from the agent's
-	// declared MCP needs; nil when no MCP servers are needed.
-	// Consumed by cli_codex adapter (cli_codex/argv.go) to inject per-tool
-	// approval_mode="approve" configuration per the canonical reference
-	// ~/.claude/codex-mcp-dispatch-tool-conversion.md (upstream codex issues
-	// #15437, #15753, #16501, #19430, #13476).
-	MCPServers map[string]interface{}
+	// configuration. Promoted to dispatcher.MCPServerConfig per HV3 Option 2
+	// sign-off (2026-05-22) so the type is shared across CLI adapters.
+	// Populated by Drop 4d D1 (AgentDefinition parser) via the BackendRouter
+	// seam (A2) from the agent's declared MCP needs; nil when no MCP servers
+	// are needed. Consumed by cli_codex adapter (cli_codex/argv.go) to inject
+	// per-tool approval_mode="approve" configuration per the canonical
+	// reference ~/.claude/codex-mcp-dispatch-tool-conversion.md (upstream
+	// codex issues #15437, #15753, #16501, #19430, #13476).
+	MCPServers map[string]MCPServerConfig
 }
 
 // BundlePaths is the claude-neutral handle the dispatcher hands to every

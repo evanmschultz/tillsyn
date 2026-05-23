@@ -93,3 +93,28 @@ func (r *BackendRouter) ResolveBackend(personaName, group, kind string) (string,
 		return templateClient, nil
 	}
 }
+
+// ResolveMCPServers returns the per-spawn MCP server map for the given
+// agent definition. Today the sole source is AgentDefinition.MCPServers
+// (A1's carrier from .md frontmatter). Returns nil when def is nil or
+// carries no MCPServers — the consumer (BuildSpawnCommand bridge in A3)
+// treats nil as "no -c mcp_servers.*" flags in argv.
+//
+// Future overrides (CLI/MCP/TUI per-spawn knobs) merge via BindingOverrides
+// at the resolver step UPSTREAM of this router, NOT here. The router is
+// the config-broker seam: it answers "what config does this item want?"
+// without knowing about override layers above it.
+func (r *BackendRouter) ResolveMCPServers(def *AgentDefinition) map[string]MCPServerConfig {
+	if def == nil || len(def.MCPServers) == 0 {
+		return nil
+	}
+	out := make(map[string]MCPServerConfig, len(def.MCPServers))
+	for name, server := range def.MCPServers {
+		out[name] = MCPServerConfig{
+			Command: server.Command,
+			Args:    append([]string(nil), server.Args...), // defensive copy
+			Tools:   append([]string(nil), server.Tools...),
+		}
+	}
+	return out
+}

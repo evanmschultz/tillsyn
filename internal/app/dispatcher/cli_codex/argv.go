@@ -9,22 +9,6 @@ import (
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
 )
 
-// MCPServerConfig holds the per-MCP-server configuration injected via
-// -c mcp_servers.<server> inline-TOML. It is used by buildMCPServerConfig
-// to construct the inline-TOML value. Per Drop 4d D2, this type is populated
-// by D1 (AgentDefinition parser) via BindingResolved.MCPServers map.
-type MCPServerConfig struct {
-	// Command is the absolute or PATH-relative command name (e.g., "till").
-	Command string
-	// Args is the command-line arguments passed to the command
-	// (e.g., []string{"mcp"}).
-	Args []string
-	// Tools is the list of MCP tool names the server exposes
-	// (e.g., []string{"till.action_item", "till.comment"}).
-	// Each tool gets a per-tool approval_mode="approve" entry.
-	Tools []string
-}
-
 // assembleArgv returns the full argv slice (including argv[0] = "codex")
 // the dispatcher passes to exec.Command for one codex spawn. Per F.7.17
 // REV-1 the binary name is hardcoded — no Command override path.
@@ -107,10 +91,7 @@ func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePat
 	// The tools block uses per-tool approval_mode="approve" entries with
 	// quoted names for tools that have dots (e.g., "till.action_item").
 	if binding.MCPServers != nil {
-		for serverName, rawConfig := range binding.MCPServers {
-			// Type-assert to MCPServerConfig. Drop 4d D1 guarantees the type;
-			// panic on mismatch is acceptable (indicates D1 integration bug).
-			config := rawConfig.(MCPServerConfig)
+		for serverName, config := range binding.MCPServers {
 			inline := buildMCPServerConfig(serverName, config)
 			argv = append(argv, "-c", inline)
 		}
@@ -146,7 +127,7 @@ func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePat
 //
 // where each tool entry is `"<tool-name>"={approval_mode="approve"}`.
 // Tool names with dots MUST be quoted.
-func buildMCPServerConfig(serverName string, config MCPServerConfig) string {
+func buildMCPServerConfig(serverName string, config dispatcher.MCPServerConfig) string {
 	// Build the args array: args=[<comma-sep quoted strings>]
 	var argsStr string
 	if len(config.Args) > 0 {
