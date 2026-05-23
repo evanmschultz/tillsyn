@@ -1,8 +1,10 @@
 ---
 import MainLayout from "../layouts/MainLayout.astro";
 import ProjectList from "../components/ProjectList";
+import KanbanBoard from "../components/KanbanBoard";
 ---
 
 <MainLayout title="Tillsyn">
   <ProjectList slot="sidebar" client:idle />
+  <KanbanBoard client:idle />
 </MainLayout>
