@@ -34,6 +34,7 @@ var Aliases = map[string]interface{}{
 	"test-func":          TestFunc,
 	"fmt":                Format,
 	"format-path":        FormatPath,
+	"ui-a11y":            UIA11y,
 	"ui-build":           UIBuild,
 	"ui-dev":             UIDev,
 }
@@ -297,6 +298,52 @@ func UIBuild() error {
 		return fmt.Errorf("working directory: %w", err)
 	}
 	return runCommandInDir(filepath.Join(wd, "ui"), "wails", "build")
+}
+
+// UIA11y runs the Playwright + axe-core a11y suite under ui/frontend/a11y/
+// against the live Wails AssetServer started by Playwright's webServer block
+// (which invokes `mage uiDev` → `wails dev` listening on
+// http://127.0.0.1:34115/). Environment-split gate semantics:
+//
+//   - CI (CI=true): always runs. Missing pnpm, missing deps, or any axe
+//     serious/critical violation fails this gate. CI workflow installs the
+//     toolchain before this target fires.
+//   - Local: warn-skip when ui/frontend/a11y/node_modules is absent so a
+//     Go-only dev doesn't get blocked. Install with
+//     `cd ui/frontend/a11y && pnpm install && pnpm exec playwright install chromium`
+//     to opt in locally.
+//
+// Phase 1 of docs/wails-e2e-playwright-best-practices-2026-05-22.md §12 —
+// not yet wired into CI (deferred to Phase 4 — see CASCADE D9 Phase 4).
+//
+// Playwright target: http://localhost:34115 (Wails AssetServer with
+// window.go IPC bindings injected — NOT localhost:51428, which is the bare
+// Astro standalone). See `docs/wails-e2e-playwright-best-practices-2026-05-22.md`.
+// The `ui-a11y` alias surfaces it on the hyphenated command surface.
+func UIA11y() error {
+	inCI := os.Getenv("CI") == "true"
+	if !inCI {
+		if _, err := os.Stat("ui/frontend/a11y/node_modules"); err != nil {
+			fmt.Fprintln(os.Stderr,
+				"WARN: ui/frontend/a11y/node_modules absent; skipping UIA11y locally. "+
+					"CI enforces a11y on every PR (Phase 4 — pending). Install with "+
+					"`cd ui/frontend/a11y && pnpm install && pnpm exec playwright install chromium` "+
+					"to enable locally.")
+			return nil
+		}
+	}
+	pnpm, err := exec.LookPath("pnpm")
+	if err != nil {
+		return fmt.Errorf("UIA11y: pnpm not on PATH: %w", err)
+	}
+	cmd := exec.Command(pnpm, "test")
+	cmd.Dir = "ui/frontend/a11y"
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("UIA11y: pnpm test in ui/frontend/a11y/: %w", err)
+	}
+	return nil
 }
 
 // newMagePrinter returns the default laslig printer for Mage output.

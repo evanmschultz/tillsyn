@@ -1,0 +1,15 @@
+{
+  "name": "@tillsyn/a11y",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:report": "playwright test --reporter=html"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.1",
+    "@playwright/test": "1.49.0",
+    "axe-core": "4.10.2"
+  }
+}
