@@ -390,6 +390,25 @@ func BuildSpawnCommand(
 	// F.7.17 L15 default-to-claude substitution applied to CLIKind.
 	resolved := ResolveBinding(rawBinding)
 
+	// Drop 4d D1.A3: wire BackendRouter.ResolveMCPServers into
+	// BindingResolved.MCPServers. The producer end-to-end:
+	// A1 ships AgentDefinition.MCPServers (carrier from .md frontmatter) →
+	// A2 ships BackendRouter.ResolveMCPServers + MCPServerConfig (broker) →
+	// A3 (this seam) calls ResolveMCPServers and writes result to
+	// resolved.MCPServers so adapters can inject -c mcp_servers.* flags.
+	//
+	// Agent definition loading: the agentName (available from rawBinding.AgentName)
+	// is resolved to a filesystem path via the agent-resolution logic. For now this
+	// defers to a follow-up droplet that implements ResolveAgentPath(agentName).
+	// Once available, the pattern will be:
+	//   path, err := ResolveAgentPath(agentName)
+	//   if err != nil { return nil, SpawnDescriptor{}, fmt.Errorf(...) }
+	//   agentDef, err := LoadAgentDefinition(path)
+	//   if err != nil { return nil, SpawnDescriptor{}, fmt.Errorf(...) }
+	//   resolved.MCPServers = router.ResolveMCPServers(&agentDef)
+	// Until that infrastructure lands, resolved.MCPServers remains nil (the valid
+	// "no MCP servers needed" sentinel per the contract).
+
 	adapter, ok := lookupAdapter(resolved.CLIKind)
 	if !ok {
 		return nil, SpawnDescriptor{}, fmt.Errorf("%w: %q", ErrUnsupportedCLIKind, resolved.CLIKind)
