@@ -268,3 +268,91 @@
   }
 }
 
+/* ─── KanbanCard ────────────────────────────────────────────────────────
+ * Card rendering for a single ActionItem within a kanban column.
+ * Displays title, structural glyph, kind badge, optional role badge, and
+ * priority indicator. Pure render — no internal state, no event handlers.
+ * D2 CSS-only; D4 wires the components for full visual coverage.
+ */
+
+.kanban-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-chrome);
+  border-radius: var(--radius-2);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.kanban-card:hover {
+  background: var(--bg-hover);
+}
+
+.kanban-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.kanban-card-title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  line-height: var(--leading-snug);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kanban-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.kanban-card-glyph {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  width: 1.2em;
+  text-align: center;
+}
+
+.kanban-card-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  height: 18px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  background: var(--bg-selected);
+  color: var(--text-secondary);
+}
+
+.kanban-card-priority {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-left: auto;
+  background: var(--text-tertiary);
+}
+
+.kanban-card-priority[data-priority="high"] {
+  background: var(--accent);
+}
+
+.kanban-card-priority[data-priority="medium"] {
+  background: var(--text-secondary);
+}
+
+.kanban-card-priority[data-priority="low"] {
+  background: var(--text-tertiary);
+}
+
