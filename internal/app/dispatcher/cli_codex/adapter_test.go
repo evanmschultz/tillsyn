@@ -121,7 +121,7 @@ func TestBuildCommand_ArgvMinimal(t *testing.T) {
 	}
 
 	// Always-on flags must be present.
-	for _, want := range []string{"exec", "--json", "--ephemeral", "--skip-git-repo-check", "-C"} {
+	for _, want := range []string{"exec", "--json", "--ephemeral", "--sandbox", "workspace-write", "--skip-git-repo-check", "-C"} {
 		if !hasArg(cmd.Args, want) {
 			t.Errorf("argv missing always-on flag %q; got %v", want, cmd.Args)
 		}
@@ -136,6 +136,21 @@ func TestBuildCommand_ArgvMinimal(t *testing.T) {
 					}
 					return "<missing>"
 				}(), paths.Root)
+			}
+			break
+		}
+	}
+
+	// --sandbox must be followed by workspace-write.
+	for i, a := range cmd.Args {
+		if a == "--sandbox" {
+			if i+1 >= len(cmd.Args) || cmd.Args[i+1] != "workspace-write" {
+				t.Errorf("--sandbox value = %q; want %q", func() string {
+					if i+1 < len(cmd.Args) {
+						return cmd.Args[i+1]
+					}
+					return "<missing>"
+				}(), "workspace-write")
 			}
 			break
 		}

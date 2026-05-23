@@ -31,7 +31,8 @@ type MCPServerConfig struct {
 //
 // Argv shape (per OQ1 codex exec --help):
 //
-//	codex exec --json --ephemeral --skip-git-repo-check -C <paths.Root> \
+//	codex exec --json --ephemeral --sandbox workspace-write \
+//	  --skip-git-repo-check -C <paths.Root> \
 //	  [-m <model>] \
 //	  [-c model_reasoning_effort=<effort>] \
 //	  [-c mcp_servers.<server>=<inline-toml>]
@@ -78,6 +79,7 @@ func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePat
 	argv = append(argv,
 		"--json",
 		"--ephemeral",
+		"--sandbox", "workspace-write",
 		"--skip-git-repo-check",
 		"-C", paths.Root,
 	)
