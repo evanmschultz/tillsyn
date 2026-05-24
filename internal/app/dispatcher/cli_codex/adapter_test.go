@@ -304,7 +304,87 @@ func TestBuildCommand_EnvBindingAllowlistResolved(t *testing.T) {
 	}
 }
 
-// --- Test 9: missing required env fails loud ------------------------------
+// --- Test 9: EnvSet precedence over defense-in-depth -----
+
+// TestCodexAssembleEnvEnvSetPrecedence asserts that envSetLiterals override
+// defense-in-depth literals per the 4-level precedence chain:
+// binding.Env > envSetLiterals > defense-in-depth > closed baseline.
+// This mirrors cli_claude's identical contract (2B.3.B reference).
+func TestCodexAssembleEnvEnvSetPrecedence(t *testing.T) {
+	t.Parallel()
+
+	binding := minimalBinding()
+	// Empty binding.Env so envSetLiterals is the only source for our test var.
+	binding.Env = []string{}
+
+	envSetLiterals := map[string]string{
+		"TEST_ENVSET_KEY": "from-envset",
+	}
+
+	env, err := assembleEnv(binding, envSetLiterals)
+	if err != nil {
+		t.Fatalf("assembleEnv: %v", err)
+	}
+
+	envMap := envSliceToMap(env)
+	if got, want := envMap["TEST_ENVSET_KEY"], "from-envset"; got != want {
+		t.Errorf("TEST_ENVSET_KEY in env = %q; want %q", got, want)
+	}
+}
+
+// TestCodexAssembleEnvEnvSetOverridesDefenseInDepth asserts that when a name
+// appears in both envSetLiterals and defenseInDepthEnvLiterals, the envSet
+// value wins. This is the precedence contract: envSet > defense-in-depth.
+func TestCodexAssembleEnvEnvSetOverridesDefenseInDepth(t *testing.T) {
+	t.Parallel()
+
+	binding := minimalBinding()
+	binding.Env = []string{}
+
+	// DISABLE_TELEMETRY is in defenseInDepthEnvLiterals with value "1".
+	// We override it via envSetLiterals.
+	envSetLiterals := map[string]string{
+		"DISABLE_TELEMETRY": "0",
+	}
+
+	env, err := assembleEnv(binding, envSetLiterals)
+	if err != nil {
+		t.Fatalf("assembleEnv: %v", err)
+	}
+
+	envMap := envSliceToMap(env)
+	if got, want := envMap["DISABLE_TELEMETRY"], "0"; got != want {
+		t.Errorf("DISABLE_TELEMETRY = %q; want %q (envSet must override defense-in-depth)", got, want)
+	}
+}
+
+// TestCodexAssembleEnvBindingEnvOverridesEnvSet asserts that binding.Env takes
+// precedence over envSetLiterals. If both claim the same key, binding.Env wins.
+func TestCodexAssembleEnvBindingEnvOverridesEnvSet(t *testing.T) {
+	// NOT t.Parallel() — we mutate process env via t.Setenv.
+
+	const testKey = "TILLSYN_TEST_BINDING_VS_ENVSET"
+	t.Setenv(testKey, "from-binding")
+
+	binding := minimalBinding()
+	binding.Env = []string{testKey}
+
+	envSetLiterals := map[string]string{
+		testKey: "from-envset",
+	}
+
+	env, err := assembleEnv(binding, envSetLiterals)
+	if err != nil {
+		t.Fatalf("assembleEnv: %v", err)
+	}
+
+	envMap := envSliceToMap(env)
+	if got, want := envMap[testKey], "from-binding"; got != want {
+		t.Errorf("%s = %q; want %q (binding.Env must override envSetLiterals)", testKey, got, want)
+	}
+}
+
+// --- Test 10: missing required env fails loud (renumbered) ---
 
 // TestBuildCommand_MissingRequiredEnvFailsLoud asserts that a binding.Env
 // name with no value in the orchestrator process returns an error wrapping

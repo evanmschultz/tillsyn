@@ -88,7 +88,7 @@ func (a *codexAdapter) BuildCommand(
 	binding dispatcher.BindingResolved,
 	paths dispatcher.BundlePaths,
 ) (*exec.Cmd, error) {
-	env, err := assembleEnv(binding)
+	env, err := assembleEnv(binding, binding.EnvSet)
 	if err != nil {
 		return nil, fmt.Errorf("cli_codex: build command: %w", err)
 	}
