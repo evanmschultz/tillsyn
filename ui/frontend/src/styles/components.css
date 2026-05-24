@@ -195,11 +195,11 @@
 }
 
 /* ─── KanbanBoard ───────────────────────────────────────────────────────
- * 3-column task kanban with responsive collapse. Desktop (≥881px) shows
- * 3 columns; tablet (640-880px) shows 2 columns; mobile (≤640px) stacks
+ * 4-column task kanban with responsive collapse. Desktop (≥881px) shows
+ * 4 columns; tablet (640-880px) shows 2 columns; mobile (≤640px) stacks
  * to single column. Uses grid layout with mobile-first media queries.
- * Consumers (D4+) will render .kanban-column DOM for each state (todo,
- * in_progress, done). D1 is CSS-only; no visual until component lands.
+ * D4 wires LIFECYCLE_STATES (todo, in_progress, complete, failed) over
+ * this grid; D5 mounts in index.astro.
  */
 
 .kanban-board {
@@ -261,10 +261,10 @@
   }
 }
 
-/* Desktop (≥881px): 3-column layout */
+/* Desktop (≥881px): 4-column layout */
 @media (min-width: 881px) {
   .kanban-board {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 

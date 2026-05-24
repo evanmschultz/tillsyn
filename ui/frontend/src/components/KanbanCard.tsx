@@ -54,6 +54,7 @@ export default function KanbanCard(props: KanbanCardProps) {
         </Show>
         <span
           class="kanban-card-priority"
+          role="img"
           data-priority={props.item.Priority}
           aria-label={`Priority: ${props.item.Priority}`}
         />

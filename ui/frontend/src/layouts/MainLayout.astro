@@ -81,5 +81,16 @@ const { title = "Tillsyn" } = Astro.props;
     </footer>
 
     <BottomTabs />
+
+    <script is:inline>
+      // Initialize mobile drawer state: sidebar hidden by default at ≤640px so
+      // it doesn't cover the kanban on first load. Desktop+ leave attribute unset
+      // (sidebar shown by default per stil's `body:not([data-sidebar-hidden])`).
+      (function initSidebarMobile() {
+        if (window.matchMedia("(max-width: 640px)").matches) {
+          document.body.setAttribute("data-sidebar-hidden", "true");
+        }
+      })();
+    </script>
   </body>
 </html>

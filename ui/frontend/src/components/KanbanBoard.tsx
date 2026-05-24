@@ -69,10 +69,16 @@ export default function KanbanBoard() {
           {/* Render 4-column kanban grid (responsive via CSS media queries). */}
           <For each={LIFECYCLE_STATES}>
             {(state) => (
-              <article class="kanban-column" data-state={state}>
+              <article
+                class="kanban-column"
+                data-state={state}
+                aria-label={`${LIFECYCLE_LABELS[state]} (${byState(state).length} items)`}
+              >
                 <header class="kanban-column-header">
                   <span>{LIFECYCLE_LABELS[state]}</span>
-                  <span class="kanban-column-count">{byState(state).length}</span>
+                  <span class="kanban-column-count" aria-hidden="true">
+                    {byState(state).length}
+                  </span>
                 </header>
 
                 <ul class="kanban-column-body" role="list">
