@@ -147,7 +147,7 @@ func (r *BackendRouter) ResolveMCPServers(def *AgentDefinition) map[string]MCPSe
 // Future overrides (CLI/MCP/TUI per-spawn EnvSet/EnvFromShell knobs) merge
 // via BindingOverrides at the resolver step UPSTREAM, not here. The router
 // is the config-broker seam.
-func (r *BackendRouter) ResolveEnvSet(item domain.ActionItem, group, kind string) (map[string]string, []string, error) {
+func (r *BackendRouter) ResolveEnvSet(_ domain.ActionItem, group, kind string) (map[string]string, []string, error) {
 	preset, err := config.Resolve(*r.registry, group, kind)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dispatcher: resolve preset for env: %w", err)
