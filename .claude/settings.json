@@ -68,6 +68,19 @@
       "mcp__plugin_playwright_playwright__browser_fill_form"
     ]
   },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B /Users/evanschultz/Documents/Code/hylla/tillsyn/main/.claude/hooks/ta_action_gate.py"
+          }
+        ]
+      }
+    ]
+  },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": ["ta", "hylla", "tillsyn"],
   "enabledPlugins": {

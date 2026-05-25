@@ -427,12 +427,28 @@ ${TASK_PROMPT}"
   # SKILLS=NONE under this flag.)
   cmd+=( -c "skills.bundled.enabled=false" )
 
+  # ta MCP — structured .ta-schema MD editing (README/CONTRIBUTING/cascade dbs).
+  # tillsyn agents use BOTH ta (schema MDs) AND tillsyn (coordination), so ta
+  # stays injected. Absolute path mirrors .mcp.json (not PATH-dependent).
   local ta_tools_toml="" tool
   for tool in get update list_sections search schema create delete move init; do
     [[ -n "${ta_tools_toml}" ]] && ta_tools_toml+=","
     ta_tools_toml+="${tool}={approval_mode=\"approve\"}"
   done
-  cmd+=( -c "mcp_servers.ta={command=\"ta\",args=[\"--project\",\"${CWD}\"],tools={${ta_tools_toml}}}" )
+  cmd+=( -c "mcp_servers.ta={command=\"/Users/evanschultz/.local/bin/ta\",args=[\"--project\",\"${CWD}\"],tools={${ta_tools_toml}}}" )
+
+  # tillsyn MCP — the coordination substrate (SUBSTRATE DELTA vs hylla/ta, which
+  # use ta as their cascade record store). tillsyn agents read/update their
+  # action_item + post comments + claim auth here. Native tool names are
+  # underscore-form (till_action_item, …) — the names the till MCP server
+  # registers (the persona `mcp__tillsyn__till_*` maps to these). Injected for
+  # every codex role (all need at minimum get/update their own item + comment).
+  local till_tools_toml="" till_tool
+  for till_tool in till_action_item till_comment till_attention_item till_capture_state till_auth_request till_capability_lease till_get_instructions till_project till_kind till_template till_embeddings till_get_bootstrap_guide; do
+    [[ -n "${till_tools_toml}" ]] && till_tools_toml+=","
+    till_tools_toml+="${till_tool}={approval_mode=\"approve\"}"
+  done
+  cmd+=( -c "mcp_servers.tillsyn={command=\"/Users/evanschultz/.local/bin/till\",args=[\"mcp\"],tools={${till_tools_toml}}}" )
 
   # Hylla MCP injection (stdio). READ-ONLY tool set (excludes hylla.ingest /
   # hylla.config.refresh). Tool names are the canonical names the hylla MCP

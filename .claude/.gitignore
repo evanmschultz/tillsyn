@@ -1,0 +1,3 @@
+# Transient artifacts from the bin/sh sandbox testbed (not source).
+agent-runs/
+hooks/ta_gate_debug.log
