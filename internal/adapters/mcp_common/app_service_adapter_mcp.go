@@ -1020,14 +1020,7 @@ func (a *AppServiceAdapter) MoveActionItemState(ctx context.Context, in MoveActi
 	if err := assertOwnerStateGate(ctx, actionItem); err != nil {
 		return domain.ActionItem{}, err
 	}
-	targetColumnID, err := a.resolveActionItemColumnIDForState(ctx, actionItem.ProjectID, state)
-	if err != nil {
-		return domain.ActionItem{}, err
-	}
-	if strings.TrimSpace(actionItem.ColumnID) == targetColumnID && actionItem.LifecycleState == state {
-		return actionItem, nil
-	}
-	moved, err := a.service.MoveActionItem(ctx, actionItem.ID, targetColumnID, actionItem.Position)
+	moved, err := a.service.MoveActionItemState(ctx, actionItem.ID, state)
 	if err != nil {
 		return domain.ActionItem{}, mapAppError("move actionItem state", err)
 	}

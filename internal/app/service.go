@@ -1768,6 +1768,47 @@ func (s *Service) MoveActionItem(ctx context.Context, actionItemID, toColumnID s
 	return actionItem, nil
 }
 
+// MoveActionItemState moves one action item to the column that represents the
+// requested lifecycle state. The resolver iterates the project's columns,
+// matching the target state via normalizeStateID + lifecycleStateForColumnID.
+// Short-circuits if the item is already in the target state and column.
+// Delegates to MoveActionItem after resolution, which handles all mutation
+// guards, capability checks, and state-transition invariants.
+func (s *Service) MoveActionItemState(ctx context.Context, actionItemID string, state domain.LifecycleState) (domain.ActionItem, error) {
+	if s == nil || s.repo == nil {
+		return domain.ActionItem{}, fmt.Errorf("service is not configured")
+	}
+	actionItemID = strings.TrimSpace(actionItemID)
+	if actionItemID == "" {
+		return domain.ActionItem{}, domain.ErrInvalidID
+	}
+	actionItem, err := s.repo.GetActionItem(ctx, actionItemID)
+	if err != nil {
+		return domain.ActionItem{}, err
+	}
+	columns, err := s.repo.ListColumns(ctx, actionItem.ProjectID, true)
+	if err != nil {
+		return domain.ActionItem{}, err
+	}
+	// Resolve the target column ID from the requested state.
+	targetColumnID := ""
+	for _, column := range columns {
+		if lifecycleStateForColumnID(columns, column.ID) == state {
+			targetColumnID = strings.TrimSpace(column.ID)
+			break
+		}
+	}
+	if targetColumnID == "" {
+		return domain.ActionItem{}, fmt.Errorf("state %q has no mapped column in project %q: %w", state, actionItem.ProjectID, domain.ErrInvalidID)
+	}
+	// Short-circuit if already in target state and column.
+	if strings.TrimSpace(actionItem.ColumnID) == targetColumnID && actionItem.LifecycleState == state {
+		return actionItem, nil
+	}
+	// Delegate to MoveActionItem for mutation guards and state transitions.
+	return s.MoveActionItem(ctx, actionItem.ID, targetColumnID, actionItem.Position)
+}
+
 // SupersedeActionItem is the dev-only escape hatch (Drop 4c.5 droplet B.1)
 // that transitions one action item from `failed` to `complete` with
 // `metadata.outcome = "superseded"` and the supplied dev-intent reason
