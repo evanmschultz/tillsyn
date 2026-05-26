@@ -88,7 +88,27 @@ func (a *codexAdapter) BuildCommand(
 	binding dispatcher.BindingResolved,
 	paths dispatcher.BundlePaths,
 ) (*exec.Cmd, error) {
-	env, err := assembleEnv(binding, binding.EnvSet)
+	// Create hermetic CODEX_HOME to isolate the codex process from the
+	// orchestrator's global ~/.codex (skills, rules, plugins, memories, etc.).
+	// Only the 4 auth files are symlinked; everything else is absent.
+	// The hermetic directory is created under paths.Root so Bundle.Cleanup()
+	// automatically reaps it post-spawn.
+	hermeticHome, err := newHermeticCodexHome(paths.Root)
+	if err != nil {
+		return nil, fmt.Errorf("cli_codex: build command: hermetic codex home: %w", err)
+	}
+
+	// Inject CODEX_HOME into the spawn's environment as a literal (not
+	// os.LookupEnv). This overrides the per-binding Env list and takes
+	// precedence via the assembleEnv precedence chain: binding.Env >
+	// envSetLiterals > defense-in-depth > closed-baseline.
+	envWithHermetic := binding.EnvSet
+	if envWithHermetic == nil {
+		envWithHermetic = make(map[string]string)
+	}
+	envWithHermetic["CODEX_HOME"] = hermeticHome
+
+	env, err := assembleEnv(binding, envWithHermetic)
 	if err != nil {
 		return nil, fmt.Errorf("cli_codex: build command: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/evanmschultz/tillsyn/internal/app/dispatcher"
@@ -239,4 +240,64 @@ func assembleEnv(binding dispatcher.BindingResolved, envSetLiterals map[string]s
 	}
 
 	return out, nil
+}
+
+// newHermeticCodexHome creates a temporary directory under bundleRoot and
+// symlinks only the 4 codex auth files that exist under $HOME/.codex,
+// returning the path to the hermetic directory. Files that do not exist
+// are silently skipped — only files present under $HOME/.codex are symlinked.
+//
+// The hermetic home isolates the spawned codex process from the orchestrator's
+// global ~/.codex config, skills, rules, plugins, and memories. The 4 auth
+// files (auth.json, version.json, installation_id, models_cache.json) are
+// necessary for codex to run; everything else is excluded.
+//
+// The returned directory is created under bundleRoot so the dispatcher's
+// Bundle.Cleanup() mechanism (which calls os.RemoveAll on the bundle root)
+// automatically reaps the hermetic home without requiring new cleanup wiring.
+//
+// Returns an error if bundleRoot is empty, if mktemp fails, or if symlink
+// creation fails (e.g. source path exists but is not readable).
+func newHermeticCodexHome(bundleRoot string) (string, error) {
+	if bundleRoot == "" {
+		return "", fmt.Errorf("cli_codex: hermetic codex home: bundle root is empty")
+	}
+
+	// Create the hermetic directory under the bundle root so Bundle.Cleanup
+	// will reap it. MkdirTemp uses os.TempDir() by default; we override to
+	// place it under bundleRoot for guaranteed cleanup integration.
+	hermeticDir, err := os.MkdirTemp(bundleRoot, "codex-home-")
+	if err != nil {
+		return "", fmt.Errorf("cli_codex: hermetic codex home: mktemp: %w", err)
+	}
+
+	// List of auth files that must be symlinked if they exist.
+	authFiles := []string{"auth.json", "version.json", "installation_id", "models_cache.json"}
+	userCodexHome := filepath.Join(os.Getenv("HOME"), ".codex")
+
+	// Symlink each auth file if it exists. Skipping absent files is correct —
+	// the 4 files are not always all present, and codex handles missing ones
+	// gracefully. If a file exists but is unreadable, ln -s will fail and we
+	// propagate the error (correct per F.7.17 P5 fail-loud semantics).
+	for _, fname := range authFiles {
+		src := filepath.Join(userCodexHome, fname)
+		// Check if source exists using Lstat (not Stat, so we don't follow links).
+		if _, err := os.Lstat(src); err != nil {
+			// File does not exist or is unreadable; skip it.
+			if os.IsNotExist(err) {
+				continue
+			}
+			// If the error is NOT "not exist", it's a permission or other read error.
+			// Propagate it as a fail-loud error per F.7.17 P5.
+			return "", fmt.Errorf("cli_codex: hermetic codex home: check source %s: %w", src, err)
+		}
+
+		// Source exists; create symlink in the hermetic directory.
+		dst := filepath.Join(hermeticDir, fname)
+		if err := os.Symlink(src, dst); err != nil {
+			return "", fmt.Errorf("cli_codex: hermetic codex home: symlink %s -> %s: %w", src, dst, err)
+		}
+	}
+
+	return hermeticDir, nil
 }

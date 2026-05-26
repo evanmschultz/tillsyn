@@ -1406,3 +1406,239 @@ func TestBuildCommand_ArgvNoMCPServersWhenNil(t *testing.T) {
 		}
 	}
 }
+
+// --- Hermetic CODEX_HOME tests (B.4) -------------------------------------------
+
+// TestNewHermeticCodexHome_CreatesDirectoryUnderBundleRoot asserts that the
+// helper creates a temporary directory under the provided bundleRoot and
+// returns the path to the created hermetic home. The directory must exist
+// and be readable for symlink creation.
+func TestNewHermeticCodexHome_CreatesDirectoryUnderBundleRoot(t *testing.T) {
+	t.Parallel()
+
+	bundleRoot := t.TempDir()
+	hermeticDir, err := newHermeticCodexHome(bundleRoot)
+	if err != nil {
+		t.Fatalf("newHermeticCodexHome: %v", err)
+	}
+
+	// Verify the path is under bundleRoot.
+	if !strings.HasPrefix(hermeticDir, bundleRoot) {
+		t.Errorf("hermeticDir = %q; want path under bundleRoot %q", hermeticDir, bundleRoot)
+	}
+
+	// Verify the directory exists and is readable.
+	fi, err := os.Stat(hermeticDir)
+	if err != nil {
+		t.Errorf("os.Stat(hermeticDir) = %v; directory must exist", err)
+	}
+	if !fi.IsDir() {
+		t.Errorf("hermeticDir exists but is not a directory; want directory")
+	}
+}
+
+// TestNewHermeticCodexHome_SkipsAbsentAuthFiles asserts that the helper
+// silently skips auth files that do not exist under $HOME/.codex, without
+// failing. Per the spec, absent files are not an error.
+func TestNewHermeticCodexHome_SkipsAbsentAuthFiles(t *testing.T) {
+	// NOT t.Parallel() — we mutate process env via t.Setenv.
+
+	bundleRoot := t.TempDir()
+	homeDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	defer func() { os.Setenv("HOME", oldHome) }()
+	t.Setenv("HOME", homeDir)
+
+	// Ensure $HOME/.codex exists but contains no auth files.
+	codexHome := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatalf("mkdir $HOME/.codex: %v", err)
+	}
+
+	hermeticDir, err := newHermeticCodexHome(bundleRoot)
+	if err != nil {
+		t.Fatalf("newHermeticCodexHome: %v", err)
+	}
+
+	// Verify the hermetic directory was created and is empty (all 4 auth files
+	// absent, so no symlinks created).
+	entries, err := os.ReadDir(hermeticDir)
+	if err != nil {
+		t.Fatalf("ReadDir(hermeticDir): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("hermeticDir contains %d entries; want 0 (all auth files absent)", len(entries))
+	}
+}
+
+// TestNewHermeticCodexHome_SymlinksExistingAuthFiles asserts that the helper
+// creates symlinks for the 4 auth files that exist under $HOME/.codex.
+func TestNewHermeticCodexHome_SymlinksExistingAuthFiles(t *testing.T) {
+	// NOT t.Parallel() — we mutate process env via t.Setenv.
+
+	bundleRoot := t.TempDir()
+	homeDir := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	defer func() { os.Setenv("HOME", oldHome) }()
+	t.Setenv("HOME", homeDir)
+
+	// Create $HOME/.codex and populate with auth files.
+	codexHome := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatalf("mkdir $HOME/.codex: %v", err)
+	}
+
+	authFiles := map[string][]byte{
+		"auth.json":         []byte(`{"api_key": "test-key"}`),
+		"version.json":      []byte(`{"version": "0.133.0"}`),
+		"installation_id":   []byte(`test-installation-id`),
+		"models_cache.json": []byte(`{"models": []}`),
+	}
+
+	for fname, content := range authFiles {
+		if err := os.WriteFile(filepath.Join(codexHome, fname), content, 0o600); err != nil {
+			t.Fatalf("WriteFile %s: %v", fname, err)
+		}
+	}
+
+	hermeticDir, err := newHermeticCodexHome(bundleRoot)
+	if err != nil {
+		t.Fatalf("newHermeticCodexHome: %v", err)
+	}
+
+	// Verify each auth file is symlinked in the hermetic directory.
+	for fname := range authFiles {
+		symlinkPath := filepath.Join(hermeticDir, fname)
+		target, err := os.Readlink(symlinkPath)
+		if err != nil {
+			t.Errorf("os.Readlink(%s): %v; symlink must exist", fname, err)
+			continue
+		}
+
+		expectedTarget := filepath.Join(codexHome, fname)
+		if target != expectedTarget {
+			t.Errorf("symlink %s -> %q; want -> %q", fname, target, expectedTarget)
+		}
+	}
+}
+
+// TestNewHermeticCodexHome_FailsOnEmptyBundleRoot asserts that the helper
+// returns an error when bundleRoot is empty.
+func TestNewHermeticCodexHome_FailsOnEmptyBundleRoot(t *testing.T) {
+	t.Parallel()
+
+	_, err := newHermeticCodexHome("")
+	if err == nil {
+		t.Fatalf("newHermeticCodexHome with empty bundleRoot returned nil error; want error")
+	}
+	if !strings.Contains(err.Error(), "bundle root is empty") {
+		t.Errorf("error message %q; want to contain 'bundle root is empty'", err.Error())
+	}
+}
+
+// TestBuildCommand_InjectsCodexHomeIntoEnv asserts that BuildCommand creates
+// a hermetic CODEX_HOME and injects it into cmd.Env.
+func TestBuildCommand_InjectsCodexHomeIntoEnv(t *testing.T) {
+	// NOT t.Parallel() — we mutate process env via t.Setenv.
+
+	bundleRoot := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	defer func() { os.Setenv("HOME", oldHome) }()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	// Create $HOME/.codex with at least one auth file.
+	codexHome := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatalf("mkdir $HOME/.codex: %v", err)
+	}
+	authFile := filepath.Join(codexHome, "auth.json")
+	if err := os.WriteFile(authFile, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	paths := dispatcher.BundlePaths{
+		Root:             bundleRoot,
+		SystemPromptPath: filepath.Join(bundleRoot, "system-prompt.md"),
+	}
+	if err := os.WriteFile(paths.SystemPromptPath, []byte("test"), 0o600); err != nil {
+		t.Fatalf("WriteFile system-prompt: %v", err)
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), minimalBinding(), paths)
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	envMap := envSliceToMap(cmd.Env)
+	if _, hasCodexHome := envMap["CODEX_HOME"]; !hasCodexHome {
+		t.Fatalf("CODEX_HOME not found in cmd.Env: %v", cmd.Env)
+	}
+
+	hermeticHome := envMap["CODEX_HOME"]
+	// Verify it is under bundleRoot.
+	if !strings.HasPrefix(hermeticHome, bundleRoot) {
+		t.Errorf("CODEX_HOME = %q; want path under bundleRoot %q", hermeticHome, bundleRoot)
+	}
+
+	// Verify the directory exists.
+	if _, err := os.Stat(hermeticHome); err != nil {
+		t.Errorf("CODEX_HOME directory does not exist: %v", err)
+	}
+}
+
+// TestBuildCommand_CodexHomeCleanupViaBundle asserts that the hermetic
+// CODEX_HOME directory is cleaned up when Bundle.Cleanup() is called on
+// the bundle root. This validates the cleanup-integration requirement.
+func TestBuildCommand_CodexHomeCleanupViaBundle(t *testing.T) {
+	// NOT t.Parallel() — we mutate process env via t.Setenv.
+
+	bundleRoot := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	defer func() { os.Setenv("HOME", oldHome) }()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	// Create $HOME/.codex with auth file.
+	codexHome := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatalf("mkdir $HOME/.codex: %v", err)
+	}
+	authFile := filepath.Join(codexHome, "auth.json")
+	if err := os.WriteFile(authFile, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	paths := dispatcher.BundlePaths{
+		Root:             bundleRoot,
+		SystemPromptPath: filepath.Join(bundleRoot, "system-prompt.md"),
+	}
+	if err := os.WriteFile(paths.SystemPromptPath, []byte("test"), 0o600); err != nil {
+		t.Fatalf("WriteFile system-prompt: %v", err)
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), minimalBinding(), paths)
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	envMap := envSliceToMap(cmd.Env)
+	hermeticHome := envMap["CODEX_HOME"]
+
+	// Verify the hermetic home exists before cleanup.
+	if _, err := os.Stat(hermeticHome); err != nil {
+		t.Fatalf("hermeticHome does not exist before cleanup: %v", err)
+	}
+
+	// Simulate bundle cleanup by removing bundleRoot (which contains hermeticHome).
+	if err := os.RemoveAll(bundleRoot); err != nil {
+		t.Fatalf("RemoveAll bundleRoot: %v", err)
+	}
+
+	// Verify hermetic home was removed.
+	if _, err := os.Stat(hermeticHome); !os.IsNotExist(err) {
+		t.Errorf("hermeticHome still exists after bundleRoot cleanup; want non-existent")
+	}
+}
