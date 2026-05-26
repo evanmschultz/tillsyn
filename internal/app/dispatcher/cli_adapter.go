@@ -235,6 +235,13 @@ type BindingResolved struct {
 	// reference ~/.claude/codex-mcp-dispatch-tool-conversion.md (upstream
 	// codex issues #15437, #15753, #16501, #19430, #13476).
 	MCPServers map[string]MCPServerConfig
+
+	// WebSearch indicates whether the backend supports live web search for
+	// this spawn. Codex roles (plan, qa-falsification, etc.) may read this
+	// to emit the `-c web_search="live"` flag conditionally. Value-typed bool
+	// so its zero value (false) is the identity "no web search." Build-QA
+	// roles always have WebSearch=false; all other roles have WebSearch=true.
+	WebSearch bool
 }
 
 // BundlePaths is the claude-neutral handle the dispatcher hands to every

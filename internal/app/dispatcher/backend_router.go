@@ -183,6 +183,24 @@ func (r *BackendRouter) ResolveMCPServers(def *AgentDefinition) map[string]MCPSe
 	return out
 }
 
+// ResolveWebSearch returns the WebSearch flag value for the given agent
+// definition. The flag indicates whether the backend may emit live web-search
+// flags (e.g., codex's `-c web_search="live"`). Build-QA roles always return
+// false; all other roles return true. Returns false when def is nil.
+//
+// The function resolves the (Role, Axis, Language) triple from def, queries
+// the canonical role-MCP-set for that persona, and returns the WebSearch
+// boolean. The result is consumed by adapters at argv assembly time.
+func (r *BackendRouter) ResolveWebSearch(def *AgentDefinition) bool {
+	if def == nil {
+		return false
+	}
+
+	// Resolve the role-canonical MCP set from def's (role, axis, language).
+	mcp := resolveRoleMCPSet(def.Role, def.Axis, def.Language)
+	return mcp.WebSearch
+}
+
 // ResolveEnvSet returns the per-spawn EnvSet + EnvFromShell-resolved Env
 // entries for the given action item + (group, kind) pair. EnvSet is a
 // cloned copy of preset.EnvSet (defensive). EnvFromShell carries

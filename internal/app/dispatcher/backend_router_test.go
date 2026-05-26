@@ -290,6 +290,123 @@ func TestBackendRouterResolveMCPServersRoleMatrix(t *testing.T) {
 	}
 }
 
+func TestBackendRouterResolveWebSearchRoleMatrix(t *testing.T) {
+	// Table-driven test validating the role→WebSearch flag mapping.
+	// WebSearch is true for all non-build-QA roles, false for build-QA roles.
+	t.Parallel()
+
+	registry := make(config.AgentsRegistry)
+	registry["go"] = config.GroupConfig{
+		Default: config.Preset{Client: "claude"},
+		Kinds:   make(map[domain.Kind]config.Override),
+	}
+	router := NewBackendRouter(&registry, ResolvedTemplate{Client: "claude"})
+
+	tests := []struct {
+		name          string
+		role          string
+		axis          string
+		language      string
+		wantWebSearch bool
+	}{
+		{
+			// Builder (non-QA): returns true
+			name:          "go-builder",
+			role:          "builder",
+			axis:          "build",
+			language:      "go",
+			wantWebSearch: true,
+		},
+		{
+			// Builder FE: returns true
+			name:          "fe-builder",
+			role:          "builder",
+			axis:          "build",
+			language:      "fe",
+			wantWebSearch: true,
+		},
+		{
+			// Build-QA proof: carve-out, returns false
+			name:          "build-qa-proof-go",
+			role:          "qa-proof",
+			axis:          "build",
+			language:      "go",
+			wantWebSearch: false,
+		},
+		{
+			// Build-QA falsification: carve-out, returns false
+			name:          "build-qa-falsification-fe",
+			role:          "qa-falsification",
+			axis:          "build",
+			language:      "fe",
+			wantWebSearch: false,
+		},
+		{
+			// Planner (plan axis): returns true
+			name:          "go-planner",
+			role:          "planner",
+			axis:          "plan",
+			language:      "go",
+			wantWebSearch: true,
+		},
+		{
+			// Plan-QA proof FE: returns true (not build-QA)
+			name:          "fe-plan-qa-proof",
+			role:          "qa-proof",
+			axis:          "plan",
+			language:      "fe",
+			wantWebSearch: true,
+		},
+		{
+			// Plan-QA falsification: returns true (not build-QA)
+			name:          "go-plan-qa-falsification",
+			role:          "qa-falsification",
+			axis:          "plan",
+			language:      "go",
+			wantWebSearch: true,
+		},
+		{
+			// Closeout: returns true (not build-QA)
+			name:          "closeout",
+			role:          "closeout",
+			axis:          "none",
+			language:      "none",
+			wantWebSearch: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def := &AgentDefinition{
+				Name:     tt.name,
+				Role:     tt.role,
+				Axis:     tt.axis,
+				Language: tt.language,
+			}
+
+			got := router.ResolveWebSearch(def)
+			if got != tt.wantWebSearch {
+				t.Errorf("ResolveWebSearch() = %v, want %v", got, tt.wantWebSearch)
+			}
+		})
+	}
+}
+
+func TestBackendRouterResolveWebSearchNilDefReturnsFalse(t *testing.T) {
+	t.Parallel()
+	registry := make(config.AgentsRegistry)
+	registry["go"] = config.GroupConfig{
+		Default: config.Preset{Client: "claude"},
+		Kinds:   make(map[domain.Kind]config.Override),
+	}
+	router := NewBackendRouter(&registry, ResolvedTemplate{Client: "claude"})
+
+	got := router.ResolveWebSearch(nil)
+	if got != false {
+		t.Fatalf("ResolveWebSearch(nil) = %v, want false", got)
+	}
+}
+
 func TestBackendRouterResolveMCPServersNilDefYieldsNil(t *testing.T) {
 	t.Parallel()
 	registry := make(config.AgentsRegistry)
