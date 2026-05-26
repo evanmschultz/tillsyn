@@ -98,6 +98,17 @@ func (a *codexAdapter) BuildCommand(
 		return nil, fmt.Errorf("cli_codex: build command: hermetic codex home: %w", err)
 	}
 
+	// Write the execpolicy rules file (git floor + bash_deny patterns).
+	// This isolates the spawned codex process from the orchestrator's global
+	// rules; the hermetic CODEX_HOME loads only this file. The git-mutation
+	// floor (28 verbs) prevents the spawned agent from committing or pushing.
+	//
+	// TODO (B.7): wire GateSpec → codex projection to supply bash_deny patterns.
+	// For now, emit only the git-verb floor.
+	if err := writeExecpolicyRules(hermeticHome, nil); err != nil {
+		return nil, fmt.Errorf("cli_codex: build command: execpolicy rules: %w", err)
+	}
+
 	// Inject CODEX_HOME into the spawn's environment as a literal (not
 	// os.LookupEnv). This overrides the per-binding Env list and takes
 	// precedence via the assembleEnv precedence chain: binding.Env >
