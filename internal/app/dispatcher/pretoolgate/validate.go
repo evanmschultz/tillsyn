@@ -63,12 +63,12 @@ func ValidateRoleGate(rg RoleGate) error {
 // nonEditingRoles is the closed set of roles that do not edit code.
 // These roles must declare Edit:[] (present-empty), never a populated slice.
 var nonEditingRoles = map[string]struct{}{
-	"planning":              {},
-	"plan-qa-proof":         {},
-	"plan-qa-falsification": {},
-	"build-qa-proof":        {},
+	"planning":               {},
+	"plan-qa-proof":          {},
+	"plan-qa-falsification":  {},
+	"build-qa-proof":         {},
 	"build-qa-falsification": {},
-	"closeout":              {},
+	"closeout":               {},
 }
 
 // isNonEditingRole reports whether role is a member of the closed

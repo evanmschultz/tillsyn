@@ -7,9 +7,9 @@ import (
 
 func TestValidateRoleGate(t *testing.T) {
 	tests := []struct {
-		name       string
-		rg         RoleGate
-		wantErr    bool
+		name         string
+		rg           RoleGate
+		wantErr      bool
 		wantSentinel error
 	}{
 		// Valid cases
@@ -22,7 +22,7 @@ func TestValidateRoleGate(t *testing.T) {
 				OAuth:     true,
 				MCPGrants: []string{"context7", "gopls"},
 				Spec: GateSpec{
-					Edit:        []string{"//absolute/path/file.go"},
+					Edit:         []string{"//absolute/path/file.go"},
 					WritableDirs: nil,
 				},
 			},
