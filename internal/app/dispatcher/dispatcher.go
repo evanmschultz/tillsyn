@@ -1,10 +1,12 @@
 package dispatcher
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -619,11 +621,14 @@ func (d *dispatcher) RunOnce(ctx context.Context, actionItemID, projectIDOverrid
 		return DispatchOutcome{}, fmt.Errorf("dispatcher: promote action item %q: %w", item.ID, err)
 	}
 
-	// Stage 8: monitor.Track launches the subprocess. The monitor owns
-	// cmd.Start lifecycle from this point — callers MUST NOT block on
-	// Handle.Wait unless they want to. The CLI returns immediately; the
-	// monitor goroutine drives the crash-path transition to StateFailed
-	// asynchronously.
+	// Stage 8: tee cmd.Stdout/cmd.Stderr into capture buffers (E.4 trace
+	// capture), then TrackWithTrace launches the subprocess. The tee is set
+	// up BEFORE cmd.Start (which fires inside TrackWithTrace) so the buffers
+	// accumulate the live stream without swallowing it. After the process
+	// exits (observed via Handle.Wait in an async goroutine), PersistRunTrace
+	// writes <worktree>/.claude/agent-runs/<run>.{out,err,meta.json} and the
+	// runBase traceRef threaded into TrackWithTrace causes E.3's
+	// terminal-state transition to write it into action_item.metadata.
 	//
 	// 4a.23 QA-Falsification §2.1 fix: when monitor.Track fails AFTER
 	// Stage 7 already promoted the action item to in_progress, we MUST
@@ -633,7 +638,29 @@ func (d *dispatcher) RunOnce(ctx context.Context, actionItemID, projectIDOverrid
 	// requiring manual DB recovery. Treat a Track failure as a real
 	// failure event so the dev sees it and can re-dispatch via supersede
 	// later.
-	handle, err := d.monitor.Track(ctx, item.ID, cmd)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	if cmd.Stdout != nil {
+		cmd.Stdout = io.MultiWriter(cmd.Stdout, &stdoutBuf)
+	} else {
+		cmd.Stdout = &stdoutBuf
+	}
+	if cmd.Stderr != nil {
+		cmd.Stderr = io.MultiWriter(cmd.Stderr, &stderrBuf)
+	} else {
+		cmd.Stderr = &stderrBuf
+	}
+	idPrefix := item.ID
+	if len(idPrefix) > 8 {
+		idPrefix = idPrefix[:8]
+	}
+	runBase := fmt.Sprintf("%s-%s-%s",
+		d.now().UTC().Format("20060102-150405"),
+		descriptor.AgentName,
+		idPrefix,
+	)
+	worktreeRoot := strings.TrimSpace(project.RepoPrimaryWorktree)
+
+	handle, err := d.monitor.TrackWithTrace(ctx, item.ID, cmd, runBase)
 	if err != nil {
 		// Order: transition first (so cleanup fires on a terminal state),
 		// then cleanup (releases locks + scrubs monitor map). Cleanup
@@ -669,6 +696,37 @@ func (d *dispatcher) RunOnce(ctx context.Context, actionItemID, projectIDOverrid
 		}
 		return DispatchOutcome{}, fmt.Errorf("dispatcher: track spawn for %q: %w", item.ID, trackErr)
 	}
+
+	// Async trace persist: wait for the spawned process to exit, then
+	// call PersistRunTrace to write the buffered stdout/stderr + meta to
+	// disk. This goroutine is fire-and-forget — persist failures are
+	// logged but do NOT affect the dispatch result (the monitor's terminal-
+	// state transition already fired via TrackWithTrace's traceRef path).
+	spawnedAt := d.now()
+	rawBinding, hasBinding := catalog.LookupAgentBinding(item.Kind)
+	cliKind := string(CLIKindClaude) // default; overwrite when binding available
+	if hasBinding {
+		cliKind = string(ResolveBinding(rawBinding).CLIKind)
+	}
+	go func() {
+		to, _ := handle.Wait()
+		outcomeStr := "success"
+		if to.Crashed {
+			outcomeStr = "failure"
+		}
+		meta := RunTraceMeta{
+			Run:          runBase,
+			ActionItemID: item.ID,
+			AgentName:    descriptor.AgentName,
+			CLIKind:      cliKind,
+			Outcome:      outcomeStr,
+			StartedAt:    spawnedAt,
+			TerminatedAt: time.Now(),
+		}
+		if _, err := PersistRunTrace(worktreeRoot, meta, stdoutBuf.Bytes(), stderrBuf.Bytes()); err != nil {
+			log.Warn("dispatcher: persist run trace failed", "run", runBase, "err", err)
+		}
+	}()
 
 	outcome.Result = ResultSpawned
 	outcome.AgentName = descriptor.AgentName

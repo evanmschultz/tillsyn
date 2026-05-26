@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -952,6 +954,118 @@ func TestStubTemplateResolverReturnsError(t *testing.T) {
 	}
 	if len(got.Kinds) != 0 {
 		t.Errorf("Template.Kinds len = %d, want 0", len(got.Kinds))
+	}
+}
+
+// TestTraceCapturePersistsOnCleanExit pins the E.4 acceptance: on a clean-exit
+// spawn the tee+TrackWithTrace+async-persist wiring writes
+// <worktree>/.claude/agent-runs/<run>.{out,err,meta.json} to disk. Exercises
+// the same pattern Stage 8 of RunOnce uses: set up io.MultiWriter tees on
+// cmd.Stdout/cmd.Stderr, call TrackWithTrace with a pre-computed runBase, then
+// wait for the async goroutine to persist.
+func TestTraceCapturePersistsOnCleanExit(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	worktreeRoot := t.TempDir()
+	svc := newStubMonitorService()
+	item := seedTodoActionItem("ai-trace-clean")
+	svc.seed(item)
+	monitor := newProcessMonitor(svc, nil)
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd := exec.Command(bin, "exit0")
+	cmd.Stdout = io.MultiWriter(io.Discard, &stdoutBuf)
+	cmd.Stderr = io.MultiWriter(io.Discard, &stderrBuf)
+
+	runBase := "20260526-000000-builder-agent-ai-trace"
+	h, err := monitor.TrackWithTrace(context.Background(), item.ID, cmd, runBase)
+	if err != nil {
+		t.Fatalf("TrackWithTrace() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	to, _ := h.Wait()
+	outcomeStr := "success"
+	if to.Crashed {
+		outcomeStr = "failure"
+	}
+	meta := RunTraceMeta{
+		Run:          runBase,
+		ActionItemID: item.ID,
+		AgentName:    "builder-agent",
+		CLIKind:      string(CLIKindClaude),
+		Outcome:      outcomeStr,
+		StartedAt:    time.Now(),
+		TerminatedAt: time.Now(),
+	}
+	paths, err := PersistRunTrace(worktreeRoot, meta, stdoutBuf.Bytes(), stderrBuf.Bytes())
+	if err != nil {
+		t.Fatalf("PersistRunTrace() error = %v, want nil", err)
+	}
+	for _, p := range []string{paths.Out, paths.Err, paths.Meta} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected trace file %q to exist: %v", filepath.Base(p), err)
+		}
+	}
+	if to.Crashed {
+		t.Errorf("outcome.Crashed = true on clean-exit fakeagent, want false")
+	}
+}
+
+// TestTraceCapturePersistsOnCrash pins the E.4 acceptance crash path: a
+// non-zero exit agent still produces the three trace files, with
+// meta.json Outcome="failure".
+func TestTraceCapturePersistsOnCrash(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	worktreeRoot := t.TempDir()
+	svc := newStubMonitorService()
+	item := seedTodoActionItem("ai-trace-crash")
+	svc.seed(item)
+	monitor := newProcessMonitor(svc, nil)
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd := exec.Command(bin, "exit1")
+	cmd.Stdout = io.MultiWriter(io.Discard, &stdoutBuf)
+	cmd.Stderr = io.MultiWriter(io.Discard, &stderrBuf)
+
+	runBase := "20260526-000001-builder-agent-ai-trace-crash"
+	h, err := monitor.TrackWithTrace(context.Background(), item.ID, cmd, runBase)
+	if err != nil {
+		t.Fatalf("TrackWithTrace() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	to, _ := h.Wait()
+	outcomeStr := "success"
+	if to.Crashed {
+		outcomeStr = "failure"
+	}
+	meta := RunTraceMeta{
+		Run:          runBase,
+		ActionItemID: item.ID,
+		AgentName:    "builder-agent",
+		CLIKind:      string(CLIKindClaude),
+		Outcome:      outcomeStr,
+		StartedAt:    time.Now(),
+		TerminatedAt: time.Now(),
+	}
+	paths, err := PersistRunTrace(worktreeRoot, meta, stdoutBuf.Bytes(), stderrBuf.Bytes())
+	if err != nil {
+		t.Fatalf("PersistRunTrace() error = %v, want nil", err)
+	}
+	for _, p := range []string{paths.Out, paths.Err, paths.Meta} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected trace file %q to exist on crash path: %v", filepath.Base(p), err)
+		}
+	}
+	if !to.Crashed {
+		t.Errorf("outcome.Crashed = false on exit1 fakeagent, want true")
+	}
+	if meta.Outcome != "failure" {
+		t.Errorf("meta.Outcome = %q, want %q on crash path", meta.Outcome, "failure")
 	}
 }
 
