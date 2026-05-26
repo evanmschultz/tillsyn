@@ -10,9 +10,9 @@ import (
 
 // ResolveAllowlist determines the allowlist for a scoped agent by trying three
 // sources in precedence order:
-//   1. env var TILL_GATE_ALLOWLIST (JSON) — for subprocess dispatches
-//   2. parent transcript scan by agent_type — for built-in Agent-tool subagents
-//   3. neither → return nil (defer/ungated)
+//  1. env var TILL_GATE_ALLOWLIST (JSON) — for subprocess dispatches
+//  2. parent transcript scan by agent_type — for built-in Agent-tool subagents
+//  3. neither → return nil (defer/ungated)
 //
 // The function returns (*GateSpec, nil) on successful resolution. If no allowlist
 // is found or if the lookup fails gracefully (fail-open), it returns (nil, nil).

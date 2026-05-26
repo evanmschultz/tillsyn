@@ -11,12 +11,12 @@ import (
 // TestResolveFromEnv verifies that TILL_GATE_ALLOWLIST env var is parsed correctly.
 func TestResolveFromEnv(t *testing.T) {
 	tests := []struct {
-		name        string
-		envValue    string
-		expectSpec  bool
-		expectEdit  *[]string
-		expectDeny  *[]string
-		expectNil   bool
+		name       string
+		envValue   string
+		expectSpec bool
+		expectEdit *[]string
+		expectDeny *[]string
+		expectNil  bool
 	}{
 		{
 			name:       "env unset",
