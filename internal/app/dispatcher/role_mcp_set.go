@@ -64,11 +64,11 @@ func resolveRoleMCPSet(role, axis, language string) roleMCPSet {
 
 	// All non-build-QA roles: Tillsyn and Ta always true.
 	set := roleMCPSet{
-		Tillsyn:    true,
-		Ta:         true,
-		Hylla:      true,
-		Context7:   true,
-		WebSearch:  true,
+		Tillsyn:   true,
+		Ta:        true,
+		Hylla:     true,
+		Context7:  true,
+		WebSearch: true,
 	}
 
 	// Gopls for go-* roles; Playwright for fe-* roles.

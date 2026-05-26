@@ -20,13 +20,13 @@ import (
 //   - `git --git-dir=x commit` (inline flag assignment)
 func gitSubcommand(segTokens []string) (string, bool) {
 	globalOptsWithArg := map[string]struct{}{
-		"-C":              {},
-		"--git-dir":       {},
-		"--work-tree":     {},
-		"--namespace":     {},
-		"-c":              {},
-		"--exec-path":     {},
-		"--super-prefix":  {},
+		"-C":             {},
+		"--git-dir":      {},
+		"--work-tree":    {},
+		"--namespace":    {},
+		"-c":             {},
+		"--exec-path":    {},
+		"--super-prefix": {},
 	}
 
 	n := len(segTokens)

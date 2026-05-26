@@ -9,10 +9,10 @@ import (
 // the documented matrix rules and the special build-qa carve-out.
 func TestResolveRoleMCPSet_Matrix(t *testing.T) {
 	cases := []struct {
-		name       string
-		role       string
-		axis       string
-		language   string
+		name           string
+		role           string
+		axis           string
+		language       string
 		wantTillsyn    bool
 		wantTa         bool
 		wantHylla      bool
@@ -24,34 +24,34 @@ func TestResolveRoleMCPSet_Matrix(t *testing.T) {
 		// Build-QA roles: special carve-out (Axis=="build" && contains "qa").
 		// Only Tillsyn and Ta are true; all others false.
 		{
-			name:       "build-qa-proof-go",
-			role:       "qa-proof",
-			axis:       "build",
-			language:   "go",
+			name:        "build-qa-proof-go",
+			role:        "qa-proof",
+			axis:        "build",
+			language:    "go",
 			wantTillsyn: true, wantTa: true, wantHylla: false, wantContext7: false,
 			wantGopls: false, wantPlaywright: false, wantWebSearch: false,
 		},
 		{
-			name:       "build-qa-proof-fe",
-			role:       "qa-proof",
-			axis:       "build",
-			language:   "fe",
+			name:        "build-qa-proof-fe",
+			role:        "qa-proof",
+			axis:        "build",
+			language:    "fe",
 			wantTillsyn: true, wantTa: true, wantHylla: false, wantContext7: false,
 			wantGopls: false, wantPlaywright: false, wantWebSearch: false,
 		},
 		{
-			name:       "build-qa-falsification-go",
-			role:       "qa-falsification",
-			axis:       "build",
-			language:   "go",
+			name:        "build-qa-falsification-go",
+			role:        "qa-falsification",
+			axis:        "build",
+			language:    "go",
 			wantTillsyn: true, wantTa: true, wantHylla: false, wantContext7: false,
 			wantGopls: false, wantPlaywright: false, wantWebSearch: false,
 		},
 		{
-			name:       "build-qa-falsification-fe",
-			role:       "qa-falsification",
-			axis:       "build",
-			language:   "fe",
+			name:        "build-qa-falsification-fe",
+			role:        "qa-falsification",
+			axis:        "build",
+			language:    "fe",
 			wantTillsyn: true, wantTa: true, wantHylla: false, wantContext7: false,
 			wantGopls: false, wantPlaywright: false, wantWebSearch: false,
 		},
@@ -59,34 +59,34 @@ func TestResolveRoleMCPSet_Matrix(t *testing.T) {
 		// Plan-QA roles: Hylla, Context7, WebSearch all true.
 		// Gopls for go; Playwright for fe.
 		{
-			name:       "plan-qa-proof-go",
-			role:       "qa-proof",
-			axis:       "plan",
-			language:   "go",
+			name:        "plan-qa-proof-go",
+			role:        "qa-proof",
+			axis:        "plan",
+			language:    "go",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: true, wantPlaywright: false, wantWebSearch: true,
 		},
 		{
-			name:       "plan-qa-proof-fe",
-			role:       "qa-proof",
-			axis:       "plan",
-			language:   "fe",
+			name:        "plan-qa-proof-fe",
+			role:        "qa-proof",
+			axis:        "plan",
+			language:    "fe",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: false, wantPlaywright: true, wantWebSearch: true,
 		},
 		{
-			name:       "plan-qa-falsification-go",
-			role:       "qa-falsification",
-			axis:       "plan",
-			language:   "go",
+			name:        "plan-qa-falsification-go",
+			role:        "qa-falsification",
+			axis:        "plan",
+			language:    "go",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: true, wantPlaywright: false, wantWebSearch: true,
 		},
 		{
-			name:       "plan-qa-falsification-fe",
-			role:       "qa-falsification",
-			axis:       "plan",
-			language:   "fe",
+			name:        "plan-qa-falsification-fe",
+			role:        "qa-falsification",
+			axis:        "plan",
+			language:    "fe",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: false, wantPlaywright: true, wantWebSearch: true,
 		},
@@ -94,18 +94,18 @@ func TestResolveRoleMCPSet_Matrix(t *testing.T) {
 		// Builder roles: Hylla, Context7, WebSearch all true.
 		// Gopls for go; Playwright for fe.
 		{
-			name:       "builder-go",
-			role:       "builder",
-			axis:       "build",
-			language:   "go",
+			name:        "builder-go",
+			role:        "builder",
+			axis:        "build",
+			language:    "go",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: true, wantPlaywright: false, wantWebSearch: true,
 		},
 		{
-			name:       "builder-fe",
-			role:       "builder",
-			axis:       "build",
-			language:   "fe",
+			name:        "builder-fe",
+			role:        "builder",
+			axis:        "build",
+			language:    "fe",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: false, wantPlaywright: true, wantWebSearch: true,
 		},
@@ -113,18 +113,18 @@ func TestResolveRoleMCPSet_Matrix(t *testing.T) {
 		// Planner roles: Hylla, Context7, WebSearch all true.
 		// Gopls for go; Playwright for fe.
 		{
-			name:       "planner-go",
-			role:       "planner",
-			axis:       "plan",
-			language:   "go",
+			name:        "planner-go",
+			role:        "planner",
+			axis:        "plan",
+			language:    "go",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: true, wantPlaywright: false, wantWebSearch: true,
 		},
 		{
-			name:       "planner-fe",
-			role:       "planner",
-			axis:       "plan",
-			language:   "fe",
+			name:        "planner-fe",
+			role:        "planner",
+			axis:        "plan",
+			language:    "fe",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: false, wantPlaywright: true, wantWebSearch: true,
 		},
@@ -132,28 +132,28 @@ func TestResolveRoleMCPSet_Matrix(t *testing.T) {
 		// Closeout role: no axis/language specifics, standard matrix.
 		// axis="none", language="none" => Gopls and Playwright both false.
 		{
-			name:       "closeout",
-			role:       "closeout",
-			axis:       "none",
-			language:   "none",
+			name:        "closeout",
+			role:        "closeout",
+			axis:        "none",
+			language:    "none",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: false, wantPlaywright: false, wantWebSearch: true,
 		},
 
 		// Unknown/edge cases: default to most-restrictive (only Tillsyn and Ta).
 		{
-			name:       "unknown-role",
-			role:       "unknown-role",
-			axis:       "plan",
-			language:   "go",
+			name:        "unknown-role",
+			role:        "unknown-role",
+			axis:        "plan",
+			language:    "go",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: true, wantPlaywright: false, wantWebSearch: true,
 		},
 		{
-			name:       "invalid-language",
-			role:       "builder",
-			axis:       "build",
-			language:   "python",
+			name:        "invalid-language",
+			role:        "builder",
+			axis:        "build",
+			language:    "python",
 			wantTillsyn: true, wantTa: true, wantHylla: true, wantContext7: true,
 			wantGopls: false, wantPlaywright: false, wantWebSearch: true,
 		},
@@ -193,11 +193,11 @@ func TestResolveRoleMCPSet_Matrix(t *testing.T) {
 // qa-proof and qa-falsification.
 func TestResolveRoleMCPSet_BuildQADetection(t *testing.T) {
 	cases := []struct {
-		name          string
-		role          string
-		axis          string
-		language      string
-		shouldBeQA    bool
+		name       string
+		role       string
+		axis       string
+		language   string
+		shouldBeQA bool
 	}{
 		{"build-qa-proof", "qa-proof", "build", "go", true},
 		{"build-qa-falsification", "qa-falsification", "build", "go", true},
@@ -229,11 +229,11 @@ func TestResolveRoleMCPSet_BuildQADetection(t *testing.T) {
 // are mutually exclusive and language-dependent.
 func TestResolveRoleMCPSet_LanguageSpecific(t *testing.T) {
 	cases := []struct {
-		name          string
-		role          string
-		axis          string
-		language      string
-		wantGopls     bool
+		name           string
+		role           string
+		axis           string
+		language       string
+		wantGopls      bool
 		wantPlaywright bool
 	}{
 		{"go-builder", "builder", "build", "go", true, false},
