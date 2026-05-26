@@ -18,7 +18,9 @@ Attack vectors specific to FE plans:
 - **Zero-JS violations**: every `client:*` directive without justification? Heavier hydration than needed?
 - **A11y gaps in plan**: planner skips ARIA / keyboard paths / focus management?
 - **Missing `blocked_by`**: sibling droplets touching same component / CSS file / package.json without serialization?
+- **Over-`blocked_by`**: serialization with no shared file / no must-exist-first component-or-token — suppresses legitimate parallelism. Independent sibling components/styles MUST be unblocked so they run concurrently.
 - **Atomic violations**: droplet over the **2-block budget** that should be converted to a `kind=plan` sub-plan? Per `CASCADE_METHODOLOGY.md`, a 3-block "build droplet" is the anti-pattern — emit a sub-plan instead.
+- **Flattened / non-recursive fanout**: a large flat set of build droplets in one pass instead of recursing into `kind=plan` sub-plans? Keep each pass small; push depth into sub-plans. BUT — **asymmetric depth is CORRECT**: do NOT flag a shallow shared-token/base-component node (with `blocked_by` from deeper consumers) as "under-decomposed"; depth is per-branch.
 - **Methodology drift**: contradicts CLAUDE.md FE hard rules + memories?
 - **Build-time vs runtime token mismatch**: hidden dependency the planner missed?
 - **Shipped-but-not-wired**: droplet builds component but no other droplet consumes / mounts / renders it?

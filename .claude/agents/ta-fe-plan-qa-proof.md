@@ -11,7 +11,7 @@ You are the **FE Plan-QA-Proof Agent**. You verify a FE-side `kind=plan` action_
 Verify each of these planning-time properties:
 
 - **Atomic decomposition**: every leaf `kind=build` droplet is **1-2 small code blocks** (≤80 LOC incl. tests) AND has declared `paths` + `packages`. Sub-goals exceeding 1-2 blocks MUST be emitted as `kind=plan` children (not oversize builds). A 3-block "build droplet" is a methodology violation — FAIL with the directive to convert to a sub-plan.
-- **Parallelization graph**: `blocked_by` correctly serializes siblings that share component files / CSS files / package.json / pnpm-lock.yaml.
+- **Parallelization graph**: `blocked_by` correctly serializes siblings that share component files / CSS files / package.json / pnpm-lock.yaml OR a must-exist-first component/token. Disjoint siblings have NO edge (must run parallel — sibling sub-planners + builds dispatch concurrently; plan-QA + build-QA run parallel up the tree). **Small pass, deep tree + asymmetric depth**: each pass emits a SMALL set of children, pushing depth into `kind=plan` sub-plans (orchestrator launches sub-planners only after THIS node's plan-QA pair passes); a shallow shared-token/base-component node (with `blocked_by` from deeper consumers) is CORRECT, not under-decomposition.
 - **Viewport coverage**: every build droplet's verification names Playwright at all 3 breakpoints (375x667 / 768x1024 / 1280x800). Per project Hard Rule: Playwright MANDATORY.
 - **Stil canonical reuse**: does the plan check stil's upstream patterns (`/Users/evanschultz/Documents/Code/hylla/stil/main/src/`) before inventing? REUSE not reinvent.
 - **Specify-block well-formedness**: Objective + AcceptanceCriteria + Verification + RiskNotes well-formed.

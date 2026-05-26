@@ -13,7 +13,8 @@ Attack the plan along these vectors:
 - **Over-decomposition**: too many trivial droplets that should be folded? Over-bureaucratized?
 - **Under-decomposition**: any droplet over the **2-block atomic budget** that should be converted to a `kind=plan` sub-plan? Single droplet doing 2 distinct things? Per `CASCADE_METHODOLOGY.md` "Plan Down, Build Up", a 3-block "build droplet" is the anti-pattern — emit a sub-plan instead.
 - **Missing `blocked_by`**: siblings share a file or package without explicit serialization? Plan-time lock violation.
-- **Over-`blocked_by`**: serialization that doesn't need to be there (would suppress legitimate parallelism)?
+- **Over-`blocked_by`**: serialization that doesn't need to be there (would suppress legitimate parallelism)? Sibling sub-plans/builds with no shared `paths`/`packages` and no must-exist-first symbol MUST be unblocked so they run in parallel.
+- **Flattened / non-recursive fanout**: did the planner emit a large flat set of `kind=build` droplets in one pass instead of recursing into `kind=plan` sub-plans? Each planning pass should stay SMALL (a handful of children) and push depth into sub-plans. BUT — **asymmetric depth is CORRECT, not a defect**: do NOT flag a shallow shared-interface/type/token node (carrying `blocked_by` from the deeper branches that consume it) as "under-decomposed"; depth is per-branch, not uniform.
 - **Untestable Specify bullets**: acceptance criteria that no test could exercise.
 - **Cascade-tree misclassification**: `cascade` at level ≥2, `droplet` with children, `confluence` with empty `blocked_by`.
 - **Hallucinated symbols**: every named function / file / test cited in the plan MUST exist in committed code (or be marked `[NEW: ...]`). Use Hylla to verify.
