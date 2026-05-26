@@ -1617,6 +1617,141 @@ func TestMonitor_Run_NilSinkDoesNotPanic(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// TrackWithTrace / terminal-transition trace-ref tests (E.3)
+// =============================================================================
+
+// TestTrackWithTraceWritesSpawnBundlePathOnCleanExit asserts that when a
+// non-empty traceRef is supplied to TrackWithTrace and the process exits
+// cleanly (with gates wired + passing), the stub's captured metadata has
+// SpawnBundlePath equal to traceRef AND SpawnHistory contains one entry with
+// Outcome="success".
+func TestTrackWithTraceWritesSpawnBundlePathOnCleanExit(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := stubBuildItem("ai-trace-clean")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	resolver := &stubMonitorTemplateResolver{tpl: buildGateTemplate()}
+	mon.WireGates(stubbedGateRunner(gatePassFunc), resolver)
+
+	const wantTrace = "/tmp/tillsyn/spawns/test-run-abc"
+	cmd := exec.Command(bin, "exit0")
+	h, err := mon.TrackWithTrace(context.Background(), item.ID, cmd, wantTrace)
+	if err != nil {
+		t.Fatalf("TrackWithTrace() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	if _, err = h.Wait(); err != nil {
+		t.Fatalf("Wait() error = %v, want nil", err)
+	}
+
+	last := svc.lastUpdate.Load()
+	if last == nil {
+		t.Fatalf("UpdateActionItem metadata not recorded; last update = nil")
+	}
+	if last.SpawnBundlePath != wantTrace {
+		t.Errorf("SpawnBundlePath = %q, want %q", last.SpawnBundlePath, wantTrace)
+	}
+	if len(last.SpawnHistory) != 1 {
+		t.Fatalf("len(SpawnHistory) = %d, want 1", len(last.SpawnHistory))
+	}
+	if last.SpawnHistory[0].BundlePath != wantTrace {
+		t.Errorf("SpawnHistory[0].BundlePath = %q, want %q", last.SpawnHistory[0].BundlePath, wantTrace)
+	}
+	if last.SpawnHistory[0].Outcome != "success" {
+		t.Errorf("SpawnHistory[0].Outcome = %q, want success", last.SpawnHistory[0].Outcome)
+	}
+}
+
+// TestTrackWithTraceWritesSpawnBundlePathOnCrash asserts that when a
+// non-empty traceRef is supplied and the process crashes (exit 1), the
+// applyCrashTransition path writes SpawnBundlePath and appends one
+// SpawnHistory entry with Outcome="failure".
+func TestTrackWithTraceWritesSpawnBundlePathOnCrash(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := seedTodoActionItem("ai-trace-crash")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+
+	const wantTrace = "/tmp/tillsyn/spawns/test-run-xyz"
+	cmd := exec.Command(bin, "exit1")
+	h, err := mon.TrackWithTrace(context.Background(), item.ID, cmd, wantTrace)
+	if err != nil {
+		t.Fatalf("TrackWithTrace() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	if _, err = h.Wait(); err != nil {
+		t.Fatalf("Wait() error = %v, want nil (crash path handled cleanly)", err)
+	}
+
+	last := svc.lastUpdate.Load()
+	if last == nil {
+		t.Fatalf("UpdateActionItem metadata not recorded; last update = nil")
+	}
+	if last.SpawnBundlePath != wantTrace {
+		t.Errorf("SpawnBundlePath = %q, want %q", last.SpawnBundlePath, wantTrace)
+	}
+	if len(last.SpawnHistory) != 1 {
+		t.Fatalf("len(SpawnHistory) = %d, want 1", len(last.SpawnHistory))
+	}
+	if last.SpawnHistory[0].BundlePath != wantTrace {
+		t.Errorf("SpawnHistory[0].BundlePath = %q, want %q", last.SpawnHistory[0].BundlePath, wantTrace)
+	}
+	if last.SpawnHistory[0].Outcome != "failure" {
+		t.Errorf("SpawnHistory[0].Outcome = %q, want failure", last.SpawnHistory[0].Outcome)
+	}
+}
+
+// TestTrackEmptyTraceRefIsNoOp asserts the regression guard: when Track
+// (which passes traceRef="") is used, SpawnBundlePath and SpawnHistory are
+// NOT populated — the existing Outcome/BlockedReason behavior is unchanged.
+func TestTrackEmptyTraceRefIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	bin := buildFakeAgent(t)
+	svc := newStubMonitorService()
+	item := seedTodoActionItem("ai-no-trace")
+	svc.seed(item)
+
+	mon := newProcessMonitor(svc, nil)
+	cmd := exec.Command(bin, "exit1")
+
+	h, err := mon.Track(context.Background(), item.ID, cmd)
+	if err != nil {
+		t.Fatalf("Track() error = %v, want nil", err)
+	}
+	defer h.Close()
+
+	if _, err = h.Wait(); err != nil {
+		t.Fatalf("Wait() error = %v, want nil", err)
+	}
+
+	last := svc.lastUpdate.Load()
+	if last == nil {
+		t.Fatalf("UpdateActionItem metadata not recorded; last update = nil")
+	}
+	if last.SpawnBundlePath != "" {
+		t.Errorf("SpawnBundlePath = %q, want empty (no-trace path must not write)", last.SpawnBundlePath)
+	}
+	if len(last.SpawnHistory) != 0 {
+		t.Errorf("len(SpawnHistory) = %d, want 0 (no-trace path must not append)", len(last.SpawnHistory))
+	}
+	// Existing behavior must be unchanged.
+	if last.Outcome != "failure" {
+		t.Errorf("metadata.Outcome = %q, want failure (regression guard)", last.Outcome)
+	}
+}
+
 // blockingReader is a test double that returns the supplied buffered bytes
 // then blocks indefinitely on subsequent Read calls until unblock is called.
 // The cancellation test uses it so Monitor.Run is guaranteed to be in the

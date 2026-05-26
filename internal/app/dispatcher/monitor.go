@@ -140,6 +140,11 @@ type Handle struct {
 	actionItemID string
 	cmd          *exec.Cmd
 	startedAt    time.Time
+	// traceRef is the per-spawn bundle-path or run-base identifier threaded
+	// in by TrackWithTrace. Empty string means "no trace" (legacy / unwired
+	// call path) — all terminal-transition writes for SpawnBundlePath and
+	// SpawnHistory are no-ops when traceRef is empty.
+	traceRef string
 
 	// done is closed by the monitor goroutine after the cmd.Wait result has
 	// been cached into outcome+waitErr. Wait() blocks on this channel.
@@ -280,6 +285,17 @@ func (m *processMonitor) WireGates(gates *gateRunner, tr TemplateResolver) {
 // caller-side retry is the contract — the monitor never silently absorbs
 // the half-applied transition.
 func (m *processMonitor) Track(ctx context.Context, actionItemID string, cmd *exec.Cmd) (*Handle, error) {
+	return m.TrackWithTrace(ctx, actionItemID, cmd, "")
+}
+
+// TrackWithTrace is the trace-aware variant of Track. traceRef is the
+// per-spawn bundle-path or run-base identifier (e.g. from E.2's
+// RunTracePaths) that the monitor writes into metadata.SpawnBundlePath and
+// appends to metadata.SpawnHistory at every terminal-state transition —
+// regardless of whether the process exited cleanly, crashed, or was killed.
+// An empty traceRef disables the new writes so the legacy Track call path
+// (traceRef="") is byte-for-byte backward compatible.
+func (m *processMonitor) TrackWithTrace(ctx context.Context, actionItemID string, cmd *exec.Cmd, traceRef string) (*Handle, error) {
 	if m == nil || m.svc == nil {
 		return nil, fmt.Errorf("%w: process monitor service is nil", ErrInvalidDispatcherConfig)
 	}
@@ -300,6 +316,7 @@ func (m *processMonitor) Track(ctx context.Context, actionItemID string, cmd *ex
 		actionItemID: trimmed,
 		cmd:          cmd,
 		startedAt:    startedAt,
+		traceRef:     traceRef,
 		done:         make(chan struct{}),
 	}
 
@@ -367,7 +384,7 @@ func (m *processMonitor) runHandle(ctx context.Context, h *Handle) {
 		if m.gates == nil && m.templateResolver == nil {
 			return
 		}
-		if err := m.applyCleanExitTransition(ctx, h.actionItemID); err != nil {
+		if err := m.applyCleanExitTransition(ctx, h.actionItemID, h.traceRef); err != nil {
 			h.resultMu.Lock()
 			h.waitErr = err
 			h.resultMu.Unlock()
@@ -375,7 +392,7 @@ func (m *processMonitor) runHandle(ctx context.Context, h *Handle) {
 		return
 	}
 
-	if err := m.applyCrashTransition(ctx, h.actionItemID, outcome); err != nil {
+	if err := m.applyCrashTransition(ctx, h.actionItemID, outcome, h.traceRef); err != nil {
 		h.resultMu.Lock()
 		h.waitErr = err
 		h.resultMu.Unlock()
@@ -386,7 +403,7 @@ func (m *processMonitor) runHandle(ctx context.Context, h *Handle) {
 // item, short-circuit if it is already complete (state-conflict guard),
 // otherwise resolve the failed-column ID, move the action item to failed,
 // and update its metadata with outcome + reason.
-func (m *processMonitor) applyCrashTransition(ctx context.Context, actionItemID string, outcome TerminationOutcome) error {
+func (m *processMonitor) applyCrashTransition(ctx context.Context, actionItemID string, outcome TerminationOutcome, traceRef string) error {
 	current, err := m.svc.GetActionItem(ctx, actionItemID)
 	if err != nil {
 		return fmt.Errorf("monitor: refetch action item %q: %w", actionItemID, err)
@@ -423,6 +440,16 @@ func (m *processMonitor) applyCrashTransition(ctx context.Context, actionItemID 
 	updated := current.Metadata
 	updated.Outcome = "failure"
 	updated.BlockedReason = formatFailureReason(outcome)
+	if traceRef != "" {
+		updated.SpawnBundlePath = traceRef
+		updated.AppendSpawnHistory(domain.SpawnHistoryEntry{
+			SpawnID:      current.ID,
+			BundlePath:   traceRef,
+			StartedAt:    m.clock(),
+			TerminatedAt: m.clock(),
+			Outcome:      "failure",
+		})
+	}
 
 	if _, err := m.svc.UpdateActionItem(ctx, updateActionItemInput{
 		ActionItemID: current.ID,
@@ -445,7 +472,7 @@ func (m *processMonitor) applyCrashTransition(ctx context.Context, actionItemID 
 //  6. Runs the gate sequence. Any non-passed result transitions the item to
 //     failed with the gate output in BlockedReason.
 //  7. On all-passed, transitions the item to complete.
-func (m *processMonitor) applyCleanExitTransition(ctx context.Context, actionItemID string) error {
+func (m *processMonitor) applyCleanExitTransition(ctx context.Context, actionItemID string, traceRef string) error {
 	item, err := m.svc.GetActionItem(ctx, actionItemID)
 	if err != nil {
 		return fmt.Errorf("monitor: clean-exit refetch action item %q: %w", actionItemID, err)
@@ -455,7 +482,7 @@ func (m *processMonitor) applyCleanExitTransition(ctx context.Context, actionIte
 	// transition directly to complete — the caller wired gates but forgot
 	// the resolver (mis-wiring). Degrade safely.
 	if m.templateResolver == nil {
-		return m.transitionToComplete(ctx, item)
+		return m.transitionToComplete(ctx, item, traceRef)
 	}
 
 	tpl, err := m.templateResolver.GetProjectTemplate(ctx, item.ProjectID)
@@ -465,14 +492,14 @@ func (m *processMonitor) applyCleanExitTransition(ctx context.Context, actionIte
 	// A zero-valued template means the project has no template bound.
 	// Gate sequence is empty; transition directly to complete.
 	if tpl.SchemaVersion == "" || len(tpl.Kinds) == 0 {
-		return m.transitionToComplete(ctx, item)
+		return m.transitionToComplete(ctx, item, traceRef)
 	}
 
 	// When gates runner is absent, skip gate execution and transition
 	// directly to complete — the caller wired the resolver but forgot
 	// the runner (mis-wiring). Degrade safely.
 	if m.gates == nil {
-		return m.transitionToComplete(ctx, item)
+		return m.transitionToComplete(ctx, item, traceRef)
 	}
 
 	project, err := m.svc.GetProject(ctx, item.ProjectID)
@@ -518,15 +545,15 @@ func (m *processMonitor) applyCleanExitTransition(ctx context.Context, actionIte
 		if r.Output != "" {
 			reason += "\n" + r.Output
 		}
-		return m.transitionToFailed(ctx, item, reason)
+		return m.transitionToFailed(ctx, item, reason, traceRef)
 	}
-	return m.transitionToComplete(ctx, item)
+	return m.transitionToComplete(ctx, item, traceRef)
 }
 
 // transitionToComplete moves a clean-exiting action item to StateComplete
 // and sets metadata.Outcome="success". Mirrors applyCrashTransition's column-
 // resolution pattern but targets the complete column.
-func (m *processMonitor) transitionToComplete(ctx context.Context, item domain.ActionItem) error {
+func (m *processMonitor) transitionToComplete(ctx context.Context, item domain.ActionItem, traceRef string) error {
 	columns, err := m.svc.ListColumns(ctx, item.ProjectID, true)
 	if err != nil {
 		return fmt.Errorf("monitor: list columns for project %q: %w", item.ProjectID, err)
@@ -542,6 +569,16 @@ func (m *processMonitor) transitionToComplete(ctx context.Context, item domain.A
 
 	updated := item.Metadata
 	updated.Outcome = "success"
+	if traceRef != "" {
+		updated.SpawnBundlePath = traceRef
+		updated.AppendSpawnHistory(domain.SpawnHistoryEntry{
+			SpawnID:      item.ID,
+			BundlePath:   traceRef,
+			StartedAt:    m.clock(),
+			TerminatedAt: m.clock(),
+			Outcome:      "success",
+		})
+	}
 	if _, err := m.svc.UpdateActionItem(ctx, updateActionItemInput{
 		ActionItemID: item.ID,
 		Metadata:     &updated,
@@ -555,7 +592,7 @@ func (m *processMonitor) transitionToComplete(ctx context.Context, item domain.A
 // failure) and sets metadata.Outcome="failure" + BlockedReason. Mirrors
 // applyCrashTransition but is driven by gate output rather than process
 // crash context.
-func (m *processMonitor) transitionToFailed(ctx context.Context, item domain.ActionItem, reason string) error {
+func (m *processMonitor) transitionToFailed(ctx context.Context, item domain.ActionItem, reason string, traceRef string) error {
 	columns, err := m.svc.ListColumns(ctx, item.ProjectID, true)
 	if err != nil {
 		return fmt.Errorf("monitor: list columns for project %q: %w", item.ProjectID, err)
@@ -572,6 +609,16 @@ func (m *processMonitor) transitionToFailed(ctx context.Context, item domain.Act
 	updated := item.Metadata
 	updated.Outcome = "failure"
 	updated.BlockedReason = reason
+	if traceRef != "" {
+		updated.SpawnBundlePath = traceRef
+		updated.AppendSpawnHistory(domain.SpawnHistoryEntry{
+			SpawnID:      item.ID,
+			BundlePath:   traceRef,
+			StartedAt:    m.clock(),
+			TerminatedAt: m.clock(),
+			Outcome:      "failure",
+		})
+	}
 	if _, err := m.svc.UpdateActionItem(ctx, updateActionItemInput{
 		ActionItemID: item.ID,
 		Metadata:     &updated,
