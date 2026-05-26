@@ -75,10 +75,10 @@ func TestBashForbidden(t *testing.T) {
 
 func TestBashWriteVector(t *testing.T) {
 	tests := []struct {
-		name    string
-		command string
+		name     string
+		command  string
 		wantDesc string
-		ok      bool
+		ok       bool
 	}{
 		// Case 8: echo > file (output redirection).
 		{
