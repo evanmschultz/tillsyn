@@ -42,6 +42,7 @@ coverage.out
 # repo. Per-machine variants (.local.json + sessions/) stay ignored.
 .claude/*.local.json
 .claude/sessions/
+.claude/agent-runs/
 .codex/*.local.json
 .codex/sessions/
 .nvimlog
