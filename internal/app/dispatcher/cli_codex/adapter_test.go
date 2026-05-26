@@ -120,8 +120,8 @@ func TestBuildCommand_ArgvMinimal(t *testing.T) {
 		t.Fatalf("BuildCommand: %v", err)
 	}
 
-	// Always-on flags must be present.
-	for _, want := range []string{"exec", "--json", "--ephemeral", "--sandbox", "workspace-write", "--skip-git-repo-check", "-C"} {
+	// Always-on flags must be present. Per DEV RULING Q1, sandbox is "read-only" (all codex roles are read-only).
+	for _, want := range []string{"exec", "--json", "--ephemeral", "--ignore-user-config", "--sandbox", "read-only", "--skip-git-repo-check", "-C"} {
 		if !hasArg(cmd.Args, want) {
 			t.Errorf("argv missing always-on flag %q; got %v", want, cmd.Args)
 		}
@@ -141,16 +141,16 @@ func TestBuildCommand_ArgvMinimal(t *testing.T) {
 		}
 	}
 
-	// --sandbox must be followed by workspace-write.
+	// --sandbox must be followed by read-only (DEV RULING Q1: constant for all codex roles).
 	for i, a := range cmd.Args {
 		if a == "--sandbox" {
-			if i+1 >= len(cmd.Args) || cmd.Args[i+1] != "workspace-write" {
+			if i+1 >= len(cmd.Args) || cmd.Args[i+1] != "read-only" {
 				t.Errorf("--sandbox value = %q; want %q", func() string {
 					if i+1 < len(cmd.Args) {
 						return cmd.Args[i+1]
 					}
 					return "<missing>"
-				}(), "workspace-write")
+				}(), "read-only")
 			}
 			break
 		}
@@ -160,6 +160,70 @@ func TestBuildCommand_ArgvMinimal(t *testing.T) {
 	for _, absent := range []string{"-m", "model_reasoning_effort"} {
 		if hasArg(cmd.Args, absent) {
 			t.Errorf("argv unexpectedly contains %q on minimal binding: %v", absent, cmd.Args)
+		}
+	}
+
+	// Hermetic knobs must be present (Q1 proven values). approval_policy=never
+	// is required for sandbox to be inert; project_doc_max_bytes=0 suppresses
+	// AGENTS.md loading; skills.bundled.enabled=false disables bundled skills.
+	hermKnobs := map[string]bool{
+		"approval_policy=never":        false,
+		"project_doc_max_bytes=0":      false,
+		"skills.bundled.enabled=false": false,
+	}
+	for i, arg := range cmd.Args {
+		if arg == "-c" && i+1 < len(cmd.Args) {
+			cfgArg := cmd.Args[i+1]
+			for knob := range hermKnobs {
+				if cfgArg == knob {
+					hermKnobs[knob] = true
+				}
+			}
+		}
+	}
+	for knob, found := range hermKnobs {
+		if !found {
+			t.Errorf("hermetic knob %q missing from argv; got %v", knob, cmd.Args)
+		}
+	}
+}
+
+// --- Test 3.5: Hermetic knobs present on minimal binding --------------------
+
+// TestBuildCommand_ArgvHermeticKnobsMinimal asserts that the Q1 proven
+// hermetic knob block is emitted unconditionally on all minimal bindings.
+// The knobs are: approval_policy=never, project_doc_max_bytes=0,
+// skills.bundled.enabled=false.
+func TestBuildCommand_ArgvHermeticKnobsMinimal(t *testing.T) {
+	t.Parallel()
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), minimalBinding(), minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	// Check that all three hermetic knobs are present.
+	wantKnobs := []string{
+		"approval_policy=never",
+		"project_doc_max_bytes=0",
+		"skills.bundled.enabled=false",
+	}
+	foundKnobs := make(map[string]bool)
+	for i, arg := range cmd.Args {
+		if arg == "-c" && i+1 < len(cmd.Args) {
+			cfgArg := cmd.Args[i+1]
+			for _, knob := range wantKnobs {
+				if cfgArg == knob {
+					foundKnobs[knob] = true
+				}
+			}
+		}
+	}
+
+	for _, knob := range wantKnobs {
+		if !foundKnobs[knob] {
+			t.Errorf("hermetic knob %q missing from argv", knob)
 		}
 	}
 }
@@ -216,13 +280,72 @@ func TestBuildCommand_ArgvWithEffort(t *testing.T) {
 			if i+1 >= len(cmd.Args) {
 				t.Fatalf("-c present but no following value in argv %v", cmd.Args)
 			}
-			if got := cmd.Args[i+1]; got != wantValue {
-				t.Errorf("-c value = %q; want %q", got, wantValue)
+			if got := cmd.Args[i+1]; got == wantValue {
+				return
 			}
-			return
 		}
 	}
-	t.Errorf("-c flag missing from argv when Effort = \"high\"; got %v", cmd.Args)
+	t.Errorf("-c model_reasoning_effort=high flag missing from argv when Effort = \"high\"; got %v", cmd.Args)
+}
+
+// --- Test 5.5: web_search conditional on WebSearch field -------------------
+
+// TestBuildCommand_ArgvWebSearchConditional asserts that web_search=live
+// is emitted ONLY when binding.WebSearch is true. Plan, qa-falsification,
+// and research roles have WebSearch=true; build-qa roles have WebSearch=false.
+func TestBuildCommand_ArgvWebSearchConditional(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		webSearch   bool
+		wantPresent bool
+	}{
+		{
+			name:        "WebSearch=true (plan/qa-falsification/research)",
+			webSearch:   true,
+			wantPresent: true,
+		},
+		{
+			name:        "WebSearch=false (build-qa roles)",
+			webSearch:   false,
+			wantPresent: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			binding := minimalBinding()
+			binding.WebSearch = tc.webSearch
+
+			a := New()
+			cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+			if err != nil {
+				t.Fatalf("BuildCommand: %v", err)
+			}
+
+			var found bool
+			for i, arg := range cmd.Args {
+				if arg == "-c" && i+1 < len(cmd.Args) {
+					if cmd.Args[i+1] == "web_search=live" {
+						found = true
+						break
+					}
+				}
+			}
+
+			if found != tc.wantPresent {
+				if tc.wantPresent {
+					t.Errorf("web_search=live missing from argv; WebSearch=%v", tc.webSearch)
+				} else {
+					t.Errorf("web_search=live unexpectedly present in argv; WebSearch=%v", tc.webSearch)
+				}
+			}
+		})
+	}
 }
 
 // --- Test 6: env isolation (sentinel must not leak) -----------------------
@@ -1403,6 +1526,71 @@ func TestBuildCommand_ArgvNoMCPServersWhenNil(t *testing.T) {
 			if strings.HasPrefix(cfgArg, "mcp_servers.") {
 				t.Errorf("argv unexpectedly contains -c mcp_servers.* flag when MCPServers is nil: %q", cfgArg)
 			}
+		}
+	}
+}
+
+// --- REPAIR #1: MCP startup_timeout_sec=15 on every injected server -----------
+
+// TestBuildCommand_ArgvMCPServerStartupTimeout asserts that every injected
+// MCP server configuration includes startup_timeout_sec=15. Per REPAIR #1
+// (2026-05-26), this field mitigates codex MCP-init flakiness (codex issues
+// #19556/#21318).
+func TestBuildCommand_ArgvMCPServerStartupTimeout(t *testing.T) {
+	t.Parallel()
+
+	binding := minimalBinding()
+	binding.MCPServers = map[string]dispatcher.MCPServerConfig{
+		"gopls": {
+			Command: "gopls",
+			Args:    []string{"mcp"},
+			Tools:   []string{"gopls.definition", "gopls.references"},
+		},
+		"tillsyn": {
+			Command: "till",
+			Args:    []string{"mcp"},
+			Tools:   []string{"till.action_item"},
+		},
+		"ta": {
+			Command: "ta",
+			Args:    []string{},
+			Tools:   []string{"ta.get", "ta.create"},
+		},
+	}
+
+	a := New()
+	cmd, err := a.BuildCommand(context.Background(), binding, minimalPaths(t))
+	if err != nil {
+		t.Fatalf("BuildCommand: %v", err)
+	}
+
+	// Verify each MCP server config contains startup_timeout_sec=15.
+	serversCounted := make(map[string]bool)
+	for i, arg := range cmd.Args {
+		if arg == "-c" && i+1 < len(cmd.Args) {
+			cfgArg := cmd.Args[i+1]
+			if strings.HasPrefix(cfgArg, "mcp_servers.") {
+				// Extract server name and verify timeout field is present.
+				start := len("mcp_servers.")
+				end := strings.Index(cfgArg[start:], "=")
+				if end >= 0 {
+					serverName := cfgArg[start : start+end]
+					serversCounted[serverName] = true
+
+					// Check that startup_timeout_sec=15 is in the config.
+					if !strings.Contains(cfgArg, "startup_timeout_sec=15") {
+						t.Errorf("MCP server %q config missing startup_timeout_sec=15; got %q", serverName, cfgArg)
+					}
+				}
+			}
+		}
+	}
+
+	// Verify all three servers were found and checked.
+	wantServers := []string{"gopls", "ta", "tillsyn"}
+	for _, name := range wantServers {
+		if !serversCounted[name] {
+			t.Errorf("MCP server %q not found in argv", name)
 		}
 	}
 }

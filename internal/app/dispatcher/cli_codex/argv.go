@@ -60,13 +60,26 @@ func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePat
 	argv = append(argv, "exec")
 
 	// Always-on flags in a stable order (important for test snapshotting and
-	// log readability).
+	// log readability). Per DEV RULING Q1 (2026-05-26) ALL codex roles run
+	// read-only (plan, qa-falsification, research); there is no editing builder
+	// on the codex channel. Sandbox is a constant "read-only"; read-only also
+	// serves as a git floor (no fs write → git add/commit/reset fail).
 	argv = append(argv,
 		"--json",
 		"--ephemeral",
-		"--sandbox", "workspace-write",
+		"--ignore-user-config",
+		"--sandbox", "read-only",
 		"--skip-git-repo-check",
 		"-C", paths.Root,
+	)
+
+	// Hermetic knob block: suppress user config, deny approval (sandbox is inert
+	// without it), suppress project doc loading, disable bundled skills.
+	// Per Q1 proven values (testbed ec3f04fe RESOLVED).
+	argv = append(argv,
+		"-c", "approval_policy=never",
+		"-c", "project_doc_max_bytes=0",
+		"-c", "skills.bundled.enabled=false",
 	)
 
 	// Conditional pointer-typed flags. Emit-only-on-non-nil is the F.7.17 L9
@@ -80,6 +93,13 @@ func assembleArgv(binding dispatcher.BindingResolved, paths dispatcher.BundlePat
 		//   -c model_reasoning_effort=<value>
 		// (per OQ1: -c, --config <key=value>  Override a config value)
 		argv = append(argv, "-c", "model_reasoning_effort="+*binding.Effort)
+	}
+
+	// Web search: conditional per role. Plan, qa-falsification, and research
+	// roles have WebSearch=true; build-qa roles have WebSearch=false.
+	// B.6 resolver populates this field per the role-conditional routing table.
+	if binding.WebSearch {
+		argv = append(argv, "-c", "web_search=live")
 	}
 
 	// MCP server injection: for each MCP server the agent's definition declares,
@@ -177,7 +197,9 @@ func buildMCPServerConfig(serverName string, config dispatcher.MCPServerConfig) 
 		toolsStr = "{}"
 	}
 
-	// Assemble the full inline-TOML value:
-	// mcp_servers.<server-name>={command="...", args=[...], tools={...}}
-	return fmt.Sprintf("mcp_servers.%s={command=%q,args=%s,tools=%s}", serverName, config.Command, argsStr, toolsStr)
+	// Assemble the full inline-TOML value with startup_timeout_sec. Per REPAIR #1
+	// (2026-05-26), every injected MCP server MUST carry startup_timeout_sec=15
+	// to mitigate codex MCP-init flakiness (codex issues #19556/#21318).
+	// mcp_servers.<server-name>={command="...", args=[...], tools={...}, startup_timeout_sec=15}
+	return fmt.Sprintf("mcp_servers.%s={command=%q,args=%s,tools=%s,startup_timeout_sec=15}", serverName, config.Command, argsStr, toolsStr)
 }
