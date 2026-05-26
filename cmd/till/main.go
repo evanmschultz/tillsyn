@@ -1953,7 +1953,8 @@ or explicit path overrides through flags and environment.
 
 	initCmd := newInitCommand(stdout, &rootOpts)
 	installCmd := newInstallCommand(stdout, &rootOpts)
-	rootCmd.AddCommand(mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, initCmd, installCmd)
+	gateCmd := newGateCommand()
+	rootCmd.AddCommand(mcpCmd, authCmd, projectCmd, actionItemCmd, dispatcherCmd, embeddingsCmd, captureStateCmd, kindCmd, leaseCmd, handoffCmd, exportCmd, importCmd, pathsCmd, gateCmd, initCmd, installCmd)
 	applyCommandHelp(rootCmd)
 	return fang.Execute(
 		ctx,
