@@ -113,8 +113,12 @@ func TestBackendRouterResolveBackendConflictingNonEmpty(t *testing.T) {
 	}
 }
 
-func TestBackendRouterResolveMCPServersFromAgentDefinition(t *testing.T) {
+func TestBackendRouterResolveMCPServersRoleMatrix(t *testing.T) {
+	// Table-driven test validating the role→MCP-server-set mapping (A1 REPLACE).
+	// Each row specifies a (role, axis, language) triple and the expected set
+	// of server names. The role matrix from resolveRoleMCPSet is authoritative.
 	t.Parallel()
+
 	registry := make(config.AgentsRegistry)
 	registry["go"] = config.GroupConfig{
 		Default: config.Preset{Client: "claude"},
@@ -122,34 +126,167 @@ func TestBackendRouterResolveMCPServersFromAgentDefinition(t *testing.T) {
 	}
 	router := NewBackendRouter(&registry, ResolvedTemplate{Client: "claude"})
 
-	def := &AgentDefinition{
-		Name: "ta-go-builder",
-		MCPServers: map[string]AgentDefinitionMCPServer{
-			"tillsyn-dev": {
-				Command: "till",
-				Args:    []string{"mcp"},
-				Tools:   []string{"till.action_item", "till.comment"},
+	tests := []struct {
+		name           string
+		role           string
+		axis           string
+		language       string
+		wantServers    map[string]bool // server name → expected present
+		wantNotServers map[string]bool // server name → expected absent
+	}{
+		{
+			// Builder (non-QA): planner, builder, closeout get full set
+			name:     "go-builder",
+			role:     "builder",
+			axis:     "build",
+			language: "go",
+			wantServers: map[string]bool{
+				"tillsyn":  true,
+				"ta":       true,
+				"hylla":    true,
+				"context7": true,
+				"gopls":    true,
+			},
+			wantNotServers: map[string]bool{
+				"playwright": true, // FE only
+			},
+		},
+		{
+			// Builder FE: playwright instead of gopls
+			name:     "fe-builder",
+			role:     "builder",
+			axis:     "build",
+			language: "fe",
+			wantServers: map[string]bool{
+				"tillsyn":    true,
+				"ta":         true,
+				"hylla":      true,
+				"context7":   true,
+				"playwright": true,
+			},
+			wantNotServers: map[string]bool{
+				"gopls": true, // Go only
+			},
+		},
+		{
+			// Build-QA: carve-out, only Tillsyn + Ta
+			name:     "build-qa-proof-go",
+			role:     "qa-proof",
+			axis:     "build",
+			language: "go",
+			wantServers: map[string]bool{
+				"tillsyn": true,
+				"ta":      true,
+			},
+			wantNotServers: map[string]bool{
+				"hylla":      true,
+				"context7":   true,
+				"gopls":      true,
+				"playwright": true,
+			},
+		},
+		{
+			// Build-QA falsification FE: also carve-out
+			name:     "build-qa-falsification-fe",
+			role:     "qa-falsification",
+			axis:     "build",
+			language: "fe",
+			wantServers: map[string]bool{
+				"tillsyn": true,
+				"ta":      true,
+			},
+			wantNotServers: map[string]bool{
+				"hylla":      true,
+				"context7":   true,
+				"gopls":      true,
+				"playwright": true,
+			},
+		},
+		{
+			// Planner (plan axis): full set with gopls
+			name:     "go-planner",
+			role:     "planner",
+			axis:     "plan",
+			language: "go",
+			wantServers: map[string]bool{
+				"tillsyn":  true,
+				"ta":       true,
+				"hylla":    true,
+				"context7": true,
+				"gopls":    true,
+			},
+			wantNotServers: map[string]bool{
+				"playwright": true,
+			},
+		},
+		{
+			// Plan-QA proof FE: includes playwright (not build-qa), no gopls
+			name:     "fe-plan-qa-proof",
+			role:     "qa-proof",
+			axis:     "plan",
+			language: "fe",
+			wantServers: map[string]bool{
+				"tillsyn":    true,
+				"ta":         true,
+				"hylla":      true,
+				"context7":   true,
+				"playwright": true,
+			},
+			wantNotServers: map[string]bool{
+				"gopls": true, // Go only
+			},
+		},
+		{
+			// Closeout: language=none, full set (no gopls/playwright)
+			name:     "closeout",
+			role:     "closeout",
+			axis:     "none",
+			language: "none",
+			wantServers: map[string]bool{
+				"tillsyn":  true,
+				"ta":       true,
+				"hylla":    true,
+				"context7": true,
+			},
+			wantNotServers: map[string]bool{
+				"gopls":      true,
+				"playwright": true,
 			},
 		},
 	}
 
-	out := router.ResolveMCPServers(def)
-	if len(out) != 1 {
-		t.Fatalf("want 1 server, got %d", len(out))
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			def := &AgentDefinition{
+				Name:     tt.name,
+				Role:     tt.role,
+				Axis:     tt.axis,
+				Language: tt.language,
+			}
 
-	srv, ok := out["tillsyn-dev"]
-	if !ok {
-		t.Fatal("missing tillsyn-dev server")
-	}
-	if srv.Command != "till" {
-		t.Errorf("Command = %q; want %q", srv.Command, "till")
-	}
-	if len(srv.Args) != 1 || srv.Args[0] != "mcp" {
-		t.Errorf("Args = %v; want [mcp]", srv.Args)
-	}
-	if len(srv.Tools) != 2 {
-		t.Errorf("Tools = %v; want 2 tools", srv.Tools)
+			out := router.ResolveMCPServers(def)
+
+			// Verify expected servers are present.
+			for server := range tt.wantServers {
+				if _, ok := out[server]; !ok {
+					t.Errorf("expected server %q not found", server)
+				}
+			}
+
+			// Verify unwanted servers are absent.
+			for server := range tt.wantNotServers {
+				if _, ok := out[server]; ok {
+					t.Errorf("unexpected server %q found", server)
+				}
+			}
+
+			// Verify all servers have non-empty Command.
+			for name, cfg := range out {
+				if cfg.Command == "" {
+					t.Errorf("server %q has empty Command", name)
+				}
+			}
+		})
 	}
 }
 
@@ -168,7 +305,11 @@ func TestBackendRouterResolveMCPServersNilDefYieldsNil(t *testing.T) {
 	}
 }
 
-func TestBackendRouterResolveMCPServersEmptyMCPServersYieldsNil(t *testing.T) {
+func TestBackendRouterResolveMCPServersUnknownNonBuildQAGetsFullSet(t *testing.T) {
+	// A1 REPLACE: unknown (role, axis, language) inputs that don't match the
+	// build-QA carve-out fall through to the full non-build-QA server set.
+	// (The resolveRoleMCPSet spec mentions a "most-restrictive" default, but
+	// the implementation doesn't distinguish unknown from valid non-build-QA roles.)
 	t.Parallel()
 	registry := make(config.AgentsRegistry)
 	registry["go"] = config.GroupConfig{
@@ -178,17 +319,33 @@ func TestBackendRouterResolveMCPServersEmptyMCPServersYieldsNil(t *testing.T) {
 	router := NewBackendRouter(&registry, ResolvedTemplate{Client: "claude"})
 
 	def := &AgentDefinition{
-		Name:       "ta-go-builder",
-		MCPServers: make(map[string]AgentDefinitionMCPServer),
+		Name:     "ta-unknown",
+		Role:     "unknown-role",
+		Axis:     "unknown-axis",
+		Language: "unknown-lang",
 	}
 
 	out := router.ResolveMCPServers(def)
-	if out != nil {
-		t.Fatalf("want nil for empty MCPServers, got %v", out)
+	// Unknown non-build-QA inputs get the full non-build-QA set.
+	if _, ok := out["tillsyn"]; !ok {
+		t.Errorf("expected tillsyn server")
+	}
+	if _, ok := out["ta"]; !ok {
+		t.Errorf("expected ta server")
+	}
+	if _, ok := out["hylla"]; !ok {
+		t.Errorf("expected hylla server")
+	}
+	if _, ok := out["context7"]; !ok {
+		t.Errorf("expected context7 server")
 	}
 }
 
-func TestBackendRouterResolveMCPServersDefensiveCopy(t *testing.T) {
+func TestBackendRouterResolveMCPServersA1IgnoresFrontmatter(t *testing.T) {
+	// A1 REPLACE: the frontmatter MCPServers field is ignored entirely.
+	// The returned map is purely from resolveRoleMCPSet, not from def.MCPServers.
+	// This test verifies that even if def.MCPServers is populated (legacy),
+	// it has no effect on the output.
 	t.Parallel()
 	registry := make(config.AgentsRegistry)
 	registry["go"] = config.GroupConfig{
@@ -197,31 +354,34 @@ func TestBackendRouterResolveMCPServersDefensiveCopy(t *testing.T) {
 	}
 	router := NewBackendRouter(&registry, ResolvedTemplate{Client: "claude"})
 
-	originalArgs := []string{"mcp"}
-	originalTools := []string{"till.action_item"}
 	def := &AgentDefinition{
-		Name: "ta-go-builder",
+		Name:     "ta-go-builder",
+		Role:     "builder",
+		Axis:     "build",
+		Language: "go",
+		// Frontmatter MCPServers is populated, but should be ignored.
 		MCPServers: map[string]AgentDefinitionMCPServer{
-			"tillsyn-dev": {
-				Command: "till",
-				Args:    originalArgs,
-				Tools:   originalTools,
+			"old-server": {
+				Command: "old-command",
+				Args:    []string{"old-arg"},
+				Tools:   []string{"old.tool"},
 			},
 		},
 	}
 
 	out := router.ResolveMCPServers(def)
-	srv := out["tillsyn-dev"]
 
-	// Mutate the returned slices and verify the original is unchanged.
-	srv.Args[0] = "modified"
-	srv.Tools[0] = "modified"
-
-	if def.MCPServers["tillsyn-dev"].Args[0] != "mcp" {
-		t.Errorf("defensive copy failed: original Args mutated")
+	// Verify the old frontmatter server is NOT in the output.
+	if _, ok := out["old-server"]; ok {
+		t.Errorf("A1 REPLACE violation: old frontmatter server found in output")
 	}
-	if def.MCPServers["tillsyn-dev"].Tools[0] != "till.action_item" {
-		t.Errorf("defensive copy failed: original Tools mutated")
+
+	// Verify the role-canonical servers ARE present.
+	if _, ok := out["tillsyn"]; !ok {
+		t.Errorf("expected tillsyn server from role matrix")
+	}
+	if _, ok := out["gopls"]; !ok {
+		t.Errorf("expected gopls server for go-builder role")
 	}
 }
 

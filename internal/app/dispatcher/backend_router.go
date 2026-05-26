@@ -104,27 +104,82 @@ func (r *BackendRouter) ResolveBackend(personaName, group, kind string) (string,
 }
 
 // ResolveMCPServers returns the per-spawn MCP server map for the given
-// agent definition. Today the sole source is AgentDefinition.MCPServers
-// (A1's carrier from .md frontmatter). Returns nil when def is nil or
-// carries no MCPServers — the consumer (BuildSpawnCommand bridge in A3)
-// treats nil as "no -c mcp_servers.*" flags in argv.
+// agent definition. A1 REPLACE: the role matrix (resolveRoleMCPSet) is
+// AUTHORITATIVE; def.MCPServers frontmatter is NOT consulted.
+//
+// The function resolves the (Role, Axis, Language) triple from def,
+// queries the canonical MCP-server set for that persona, and maps each
+// enabled boolean to a concrete MCPServerConfig (command + args + tools).
+// WebSearch is NOT an MCP server entry (backend flag only).
+//
+// Returns nil when def is nil.
 //
 // Future overrides (CLI/MCP/TUI per-spawn knobs) merge via BindingOverrides
 // at the resolver step UPSTREAM of this router, NOT here. The router is
 // the config-broker seam: it answers "what config does this item want?"
 // without knowing about override layers above it.
 func (r *BackendRouter) ResolveMCPServers(def *AgentDefinition) map[string]MCPServerConfig {
-	if def == nil || len(def.MCPServers) == 0 {
+	if def == nil {
 		return nil
 	}
-	out := make(map[string]MCPServerConfig, len(def.MCPServers))
-	for name, server := range def.MCPServers {
-		out[name] = MCPServerConfig{
-			Command: server.Command,
-			Args:    append([]string(nil), server.Args...), // defensive copy
-			Tools:   append([]string(nil), server.Tools...),
+
+	// Resolve the role-canonical MCP set from def's (role, axis, language).
+	mcp := resolveRoleMCPSet(def.Role, def.Axis, def.Language)
+
+	// Map enabled booleans to MCPServerConfig entries.
+	out := make(map[string]MCPServerConfig)
+
+	if mcp.Tillsyn {
+		out["tillsyn"] = MCPServerConfig{
+			Command: "till",
+			Args:    []string{"mcp"},
+			Tools:   []string{"till.action_item", "till.comment", "till.attention_item", "till.handoff", "till.auth_request", "till.capability_lease", "till.capture_state", "till.get_instructions"},
 		}
 	}
+
+	if mcp.Ta {
+		out["ta"] = MCPServerConfig{
+			Command: "ta",
+			Args:    []string{"--project", "/Users/evanschultz/Documents/Code/hylla/tillsyn/main"},
+			Tools:   []string{"ta.schema", "ta.list_sections", "ta.get", "ta.create", "ta.update", "ta.delete", "ta.search"},
+		}
+	}
+
+	if mcp.Hylla {
+		out["hylla"] = MCPServerConfig{
+			Command: "/Users/evanschultz/go/bin/hylla",
+			Args:    []string{"mcp"},
+			Tools:   []string{"hylla.search", "hylla.node_full", "hylla.search_keyword", "hylla.refs_find", "hylla.graph_nav"},
+		}
+	}
+
+	if mcp.Context7 {
+		out["context7"] = MCPServerConfig{
+			Command: "context7",
+			Args:    []string{},
+			Tools:   []string{"context7.resolve_library_id", "context7.query_docs"},
+		}
+	}
+
+	if mcp.Gopls {
+		out["gopls"] = MCPServerConfig{
+			Command: "gopls",
+			Args:    []string{"mcp"},
+			Tools:   []string{"gopls.hover", "gopls.definition", "gopls.references", "gopls.diagnostics"},
+		}
+	}
+
+	if mcp.Playwright {
+		out["playwright"] = MCPServerConfig{
+			Command: "playwright-mcp",
+			Args:    []string{"--headless", "--isolated"},
+			Tools:   []string{"playwright.browser_navigate", "playwright.browser_screenshot", "playwright.browser_snapshot"},
+		}
+	}
+
+	// WebSearch is NOT an MCP server — it's a backend flag (e.g., `-c web_search="live"`).
+	// mcp.WebSearch is not consulted here.
+
 	return out
 }
 
