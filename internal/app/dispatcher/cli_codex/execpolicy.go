@@ -14,10 +14,10 @@ import (
 // Format: one prefix_rule per line, pattern array quoted, decision="forbidden".
 //
 // Git verbs (28, per dev ruling 2026-05-26):
-// - Oracle's 24: commit, push, add, reset, rebase, merge, checkout, branch, tag,
-//   stash, restore, cherry-pick, am, clean, switch, rm, mv, update-ref, gc,
-//   prune, worktree, submodule, init, clone
-// - Extended 4: fetch, pull, remote, apply
+//   - Oracle's 24: commit, push, add, reset, rebase, merge, checkout, branch, tag,
+//     stash, restore, cherry-pick, am, clean, switch, rm, mv, update-ref, gc,
+//     prune, worktree, submodule, init, clone
+//   - Extended 4: fetch, pull, remote, apply
 //
 // Non-git patterns: whitespace-tokenized, skip entries prefixed with "git".
 func renderExecpolicyRules(bashDeny []string) string {

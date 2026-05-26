@@ -77,10 +77,10 @@ func MarshalDecision(d Decision) ([]byte, error) {
 //  1. Resolve allowlist via A.2. If nil (ungated / orchestrator) → Defer.
 //  2. Branch on ToolName:
 //     - EDIT_TOOLS: deny if target file is not in spec.Edit (deny-all when
-//       spec.Edit is nil-or-empty, preserving the "absent key = deny-all" rule).
+//     spec.Edit is nil-or-empty, preserving the "absent key = deny-all" rule).
 //     - Bash: gitMutation floor FIRST (A.4, orch-independent 28-verb set),
-//       then bashForbidden (A.5, orch-supplied bash_deny), then bashWriteVector
-//       (A.5) if spec.Edit != nil (edit-scoped agent shell bypass check).
+//     then bashForbidden (A.5, orch-supplied bash_deny), then bashWriteVector
+//     (A.5) if spec.Edit != nil (edit-scoped agent shell bypass check).
 //     - All other tools: allow (Read/Grep/Glob/mcp_* etc.).
 //
 // Decide is fail-open: it never panics on malformed input. Type assertions on
