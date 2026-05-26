@@ -722,3 +722,20 @@ func normalizeSpawnHistory(in []SpawnHistoryEntry) []SpawnHistoryEntry {
 	}
 	return out
 }
+
+// AppendSpawnHistory appends a single dispatcher-spawn lifecycle entry to
+// the metadata's audit trail in memory. The entry's string + time fields are
+// canonicalized (trimmed / UTC-ified) before append so callers do not need to
+// pre-normalize. Order is preserved across appends — the slice reads
+// chronologically. The audit trail is never deduped; see SpawnHistory's
+// doc-comment (workitem.go:211-222) for the audit-only role and the
+// round-history-deferred decision (Drop 4c F.7.18 REV-9) that motivates
+// the no-dedupe rule.
+func (m *ActionItemMetadata) AppendSpawnHistory(entry SpawnHistoryEntry) {
+	entry.SpawnID = strings.TrimSpace(entry.SpawnID)
+	entry.BundlePath = strings.TrimSpace(entry.BundlePath)
+	entry.Outcome = strings.TrimSpace(entry.Outcome)
+	entry.StartedAt = entry.StartedAt.UTC()
+	entry.TerminatedAt = entry.TerminatedAt.UTC()
+	m.SpawnHistory = append(m.SpawnHistory, entry)
+}
