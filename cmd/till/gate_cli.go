@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/evanmschultz/tillsyn/internal/app/dispatcher/pretoolgate"
 )
 
 // gateRunCommandOptions carries flags consumed by `till gate`.
@@ -12,38 +14,44 @@ import (
 type gateRunCommandOptions struct{}
 
 // runGate is the gate CLI's RunE body, implementing the PreToolUse event
-// handler skeleton. It reads a JSON-encoded PreToolUse event from stdin,
+// handler. It reads a JSON-encoded PreToolUse event from stdin,
 // evaluates the gate decision via the pretoolgate package, and exits 0
 // regardless of outcome (fail-open — a gate bug must never block a tool call).
 //
 // The function is responsible for:
 //   - Reading stdin (standard io.Reader via cobra).
-//   - Parsing the event JSON or deferring on parse error.
-//   - Evaluating the gate decision (deferred to FND.1 package, filled by A).
-//   - Writing the decision to stdout as JSON (when logic is ready).
+//   - Parsing the event JSON into a pretoolgate.Event or deferring on parse error.
+//   - Evaluating the gate decision via pretoolgate.Decide(event).
+//   - Writing the decision to stdout as JSON (when deferred is false).
 //   - Returning nil (always — fail-open semantics).
 func runGate(ctx *cobra.Command, _ []string) error {
-	// Skeleton: read stdin, parse JSON, defer on error, exit 0.
-	// The actual gate logic (14 cases from ta_action_gate.py) is deferred
-	// to a later droplet that fills the decision logic on top of this
-	// skeleton.
-
 	stdin := ctx.InOrStdin()
 	if stdin == nil {
 		stdin = strings.NewReader("")
 	}
 
-	event := struct{}{}
+	var event pretoolgate.Event
 	if err := json.NewDecoder(stdin).Decode(&event); err != nil {
 		// Parse error: defer to parent (dev keeps normal control).
 		// exit 0, no output.
 		return nil
 	}
 
-	// The gate decision logic will be populated by a later droplet (A).
-	// For now, this skeleton just defers: exit 0, no output.
-	// When A fills the decision logic, it will use the parsed event
-	// and the pretoolgate package to evaluate and write the decision.
+	// Evaluate the gate decision against the resolved allowlist.
+	decision := pretoolgate.Decide(event)
+
+	// For a deferred decision (ungated orchestrator), write nothing and exit 0.
+	// Otherwise, marshal the allow/deny decision JSON and write to stdout.
+	if !decision.Defer {
+		output, err := pretoolgate.MarshalDecision(decision)
+		if err != nil {
+			// Marshal error: fail-open, defer to parent.
+			return nil
+		}
+		if len(output) > 0 {
+			ctx.OutOrStdout().Write(output)
+		}
+	}
 
 	// Always exit 0 (fail-open).
 	return nil
