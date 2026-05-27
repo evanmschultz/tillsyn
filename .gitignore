@@ -35,6 +35,10 @@ coverage.out
 # Playwright MCP scratch — screenshots + console logs from orch-side visual
 # verification. Useful artifacts for one session; not committed.
 .playwright-mcp/
+
+# Hylla MCP local state (artifact graphs, ingest run outputs, logs) — local
+# to each dev's machine, not committed.
+.hylla/
 *~
 
 # Agent / tool state — track project-level configuration (.claude/agents/*.md +
