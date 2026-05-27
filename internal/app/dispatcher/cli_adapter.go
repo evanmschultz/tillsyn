@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os/exec"
 	"time"
+
+	"github.com/evanmschultz/tillsyn/internal/app/dispatcher/pretoolgate"
 )
 
 // cli_adapter.go ships the cross-CLI canonical type vocabulary for the Drop 4c
@@ -242,6 +244,19 @@ type BindingResolved struct {
 	// so its zero value (false) is the identity "no web search." Build-QA
 	// roles always have WebSearch=false; all other roles have WebSearch=true.
 	WebSearch bool
+
+	// GateSpec is the per-agent sandbox gate contract consumed by the CLI
+	// adapter to enforce PreToolUse sandboxing. Pointer-typed: nil means the
+	// spawn is ungated (codex `-C` falls back to paths.Root, execpolicy =
+	// git-floor-only); non-nil means the per-agent gate the codex channel
+	// translates to sandbox constraints. Populated at the resolve seam by
+	// a follow-up droplet blocked on ResolveAgentPath + constructRoleGate
+	// (the Role+Axis -> CLIKind/Channel/OAuth/BashDeny routing-derivation
+	// table); today the field remains nil for every binding. Codex roles
+	// have WritableDirs=nil and Edit=nil (read-only confines the agent to
+	// the project root with no writable directories granted). See
+	// AGENT_SANDBOX_SPEC § 3.
+	GateSpec *pretoolgate.GateSpec
 }
 
 // BundlePaths is the claude-neutral handle the dispatcher hands to every

@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/evanmschultz/tillsyn/internal/app/dispatcher/pretoolgate"
 	"github.com/evanmschultz/tillsyn/internal/config"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
@@ -256,4 +257,32 @@ func (r *BackendRouter) ResolveEnvSet(_ domain.ActionItem, group, kind string) (
 	}
 
 	return envSet, envFromShell, nil
+}
+
+// roleGateToGateSpec projects a RoleGate onto a GateSpec, enforcing
+// read-only for codex roles. This is the pure projector function tested
+// directly; the resolve-seam wiring (follow-up droplet, blocked on
+// ResolveAgentPath + constructRoleGate) calls it with the agent-definition-
+// derived RoleGate and assigns the result to BindingResolved.GateSpec.
+//
+// For codex roles, the returned GateSpec has WritableDirs=nil and Edit=nil
+// (read-only). Other roles return nil (ungated).
+func roleGateToGateSpec(rg *pretoolgate.RoleGate) *pretoolgate.GateSpec {
+	if rg == nil {
+		return nil
+	}
+
+	// Codex roles are read-only: zero out WritableDirs and Edit.
+	// Note: RoleGate.CLIKind is a string, so compare to string value "codex".
+	if rg.CLIKind == string(CLIKindCodex) {
+		return &pretoolgate.GateSpec{
+			WritableDirs: nil,
+			Edit:         nil,
+			BashDeny:     cloneStringSlice(rg.Spec.BashDeny),
+			Network:      rg.Spec.Network,
+		}
+	}
+
+	// Non-codex roles are ungated (nil).
+	return nil
 }

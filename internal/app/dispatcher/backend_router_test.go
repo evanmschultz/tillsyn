@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/evanmschultz/tillsyn/internal/app/dispatcher/pretoolgate"
 	"github.com/evanmschultz/tillsyn/internal/config"
 	"github.com/evanmschultz/tillsyn/internal/domain"
 )
@@ -284,6 +285,81 @@ func TestBackendRouterResolveMCPServersRoleMatrix(t *testing.T) {
 			for name, cfg := range out {
 				if cfg.Command == "" {
 					t.Errorf("server %q has empty Command", name)
+				}
+			}
+		})
+	}
+}
+
+func TestRoleGateToGateSpecNil(t *testing.T) {
+	// Sanity check: nil RoleGate returns nil GateSpec.
+	result := roleGateToGateSpec(nil)
+	if result != nil {
+		t.Fatalf("roleGateToGateSpec(nil) = %v; want nil", result)
+	}
+}
+
+func TestRoleGateToGateSpec(t *testing.T) {
+	// Table-driven test for the roleGateToGateSpec projector.
+	// Verifies that RoleGate → GateSpec projection enforces read-only for codex roles.
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		cliKind           string
+		bashDeny          []string
+		expectWritable    bool
+		expectEdit        bool
+		expectBashDenySet bool
+	}{
+		{
+			name:              "codex role is read-only",
+			cliKind:           "codex",
+			bashDeny:          []string{"git commit", "go get"},
+			expectWritable:    false, // WritableDirs should be nil
+			expectEdit:        false, // Edit should be nil
+			expectBashDenySet: true,  // BashDeny is still populated
+		},
+		{
+			name:              "claude role is ungated (nil)",
+			cliKind:           "claude",
+			bashDeny:          []string{"mage install"},
+			expectWritable:    false, // nil GateSpec means no writable dirs
+			expectEdit:        false, // nil GateSpec means no edit gates
+			expectBashDenySet: false, // non-codex returns nil GateSpec
+		},
+		{
+			name:              "no bash deny patterns",
+			cliKind:           "codex",
+			bashDeny:          nil,
+			expectWritable:    false,
+			expectEdit:        false,
+			expectBashDenySet: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rg := &pretoolgate.RoleGate{
+				CLIKind: tt.cliKind,
+				Spec: pretoolgate.GateSpec{
+					BashDeny: tt.bashDeny,
+				},
+			}
+
+			got := roleGateToGateSpec(rg)
+
+			// For codex roles, result must be non-nil with WritableDirs and Edit both nil.
+			if tt.cliKind == "codex" {
+				if got == nil {
+					t.Errorf("codex role must return non-nil GateSpec, got nil")
+				} else if got.WritableDirs != nil || got.Edit != nil {
+					t.Errorf("codex role must have nil WritableDirs and Edit; got WritableDirs=%v, Edit=%v", got.WritableDirs, got.Edit)
+				}
+			} else {
+				// Non-codex roles are ungated (nil).
+				if got != nil {
+					t.Errorf("non-codex role must return nil GateSpec, got %v", got)
 				}
 			}
 		})
