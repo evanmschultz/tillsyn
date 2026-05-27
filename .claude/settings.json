@@ -65,7 +65,24 @@
       "mcp__plugin_playwright_playwright__browser_type",
       "mcp__plugin_playwright_playwright__browser_hover",
       "mcp__plugin_playwright_playwright__browser_tabs",
-      "mcp__plugin_playwright_playwright__browser_fill_form"
+      "mcp__plugin_playwright_playwright__browser_fill_form",
+      "Bash(go:*)",
+      "Bash(mage:*)"
+    ],
+    "deny": [
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go run:*)",
+      "Bash(go install:*)",
+      "Bash(go fmt:*)",
+      "Bash(go tool:*)",
+      "Bash(go generate:*)",
+      "Bash(go get:*)",
+      "Bash(go work:*)",
+      "Bash(gofmt:*)",
+      "Bash(gofumpt:*)",
+      "Bash(gopls:*)"
     ]
   },
   "hooks": {
@@ -75,7 +92,51 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -B /Users/evanschultz/Documents/Code/hylla/tillsyn/main/.claude/hooks/ta_action_gate.py"
+            "command": "python3 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/ta_action_gate.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__tillsyn__till_auth_request|mcp__tillsyn__till_capability_lease",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/evanschultz/.claude/hooks/save_tillsyn_auth.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/evanschultz/.claude/hooks/restore_tillsyn_auth.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/evanschultz/.claude/hooks/save_tillsyn_auth.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/evanschultz/.claude/hooks/save_tillsyn_auth.sh"
           }
         ]
       }
