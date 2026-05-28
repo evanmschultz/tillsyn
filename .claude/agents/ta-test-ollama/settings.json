@@ -1,0 +1,52 @@
+{
+  "_comment": "Per-persona settings for ta-test-ollama — minimal smoke-test persona for bin/agent-dispatch.sh dispatch_ollama path. Read-only role. Used to verify the no-bare + per-persona-settings + hook architecture end-to-end.",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "mcp__ta__*",
+      "mcp__plugin_context7_context7__*",
+      "Bash(pwd)",
+      "Bash(echo:*)",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(which:*)",
+      "Bash(file:*)",
+      "Bash(go doc:*)",
+      "Bash(go version)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)"
+    ],
+    "deny": [
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(git reset:*)",
+      "Bash(git rebase:*)",
+      "Bash(git merge:*)",
+      "Bash(git checkout:*)",
+      "Bash(git tag:*)",
+      "Bash(go test:*)",
+      "Bash(go build:*)",
+      "Bash(go vet:*)",
+      "Bash(go run:*)",
+      "Bash(go install:*)",
+      "Bash(go fmt:*)",
+      "Bash(go mod:*)",
+      "Bash(gofmt:*)",
+      "Bash(gofumpt:*)",
+      "Bash(rm -rf:*)",
+      "Bash(awk:*)",
+      "Bash(sed:*)",
+      "Bash(tee:*)",
+      "Bash(python -c:*)",
+      "Bash(python3 -c:*)"
+    ]
+  }
+}

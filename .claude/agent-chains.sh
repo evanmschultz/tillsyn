@@ -61,6 +61,11 @@ emit_chain_for_role() {
     ta-go-plan-qa-falsification|ta-fe-plan-qa-falsification)     chain_plan_qa_falsification ;;
     ta-go-build-qa-falsification|ta-fe-build-qa-falsification)   chain_build_qa_falsification ;;
     ta-closeout)                                                 chain_closeout ;;
+    # Test-only role for ollama+claude-p path smoke testing
+    # (AGENT_SANDBOX_SPEC.md §10 G7 + cross-project handoff Batch B 2026-05-27).
+    # NOT a production role — exercises dispatch_ollama with gpt-oss:20b so we
+    # can validate the G7 clean-context recipe end-to-end.
+    ta-test-ollama)                                              chain_test_ollama ;;
     *)  echo "" ;;
   esac
 }
@@ -140,12 +145,26 @@ EOF
 }
 
 # --- Closeout -------------------------------------------------------------
-# Single tier: Agent-tool HAIKU (tillsyn override; hylla used opus). Closeout
-# is mechanical aggregation + commit-message draft + re-run mage ci — haiku
-# tier, same class as commit. Routes via agent-tool dispatch; the row is the
+# Single tier: Agent-tool opus. Final coordinator before commit; quality
+# floor IS opus. Routes via agent-tool dispatch; the row is the
 # orchestrator's model hint.
 chain_closeout() {
   cat <<'EOF'
-claude-native|haiku||||
+claude-native|opus||||
+EOF
+}
+
+# --- Test-only: ollama gpt-oss:20b -----------------------------------------
+# Test-only role for smoke-testing dispatch_ollama with the G7 clean-context
+# recipe (AGENT_SANDBOX_SPEC.md §10 lines 167-170). Routes through bin/sh
+# `dispatch_ollama` which sets ANTHROPIC_BASE_URL=http://localhost:11434 +
+# the 3 CLAUDE_CODE_DISABLE_* env vars + the 4 G7 flags on `claude -p --bare`.
+# Slots=2 with 30s wait_max — Ollama-local concurrency limit prevents VRAM
+# pressure during multi-dispatch smoke runs. NOT a production role; the
+# orchestrator never auto-routes to this. Invoke manually via:
+#   bin/agent-dispatch.sh --role ta-test-ollama --prompt "<task>"
+chain_test_ollama() {
+  cat <<'EOF'
+ollama-local|gpt-oss:20b||30|2
 EOF
 }

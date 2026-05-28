@@ -4,7 +4,15 @@
 # Go build outputs
 /till
 /till.exe
-bin/
+bin/*
+# Re-include the interim bin/sh dispatcher (byte-identical from ta sibling per
+# AGENT_SANDBOX_SPEC.md; tracked here until tillsyn's Go adapter
+# (internal/app/dispatcher/cli_codex + cli_claude) dogfoods multi-provider
+# dispatch — D-AGENT-GATE phase). Pattern: `bin/*` excludes contents (lets
+# the re-include rule below match), not `bin/` (which would block re-includes
+# per gitignore docs).
+!bin/agent-dispatch.sh
+!bin/agent-audit-toon.py
 # /dist/ scoped to repo root — goreleaser output target. Path-scoped (vs bare
 # `dist/`) so it does not also match ui/frontend/dist/ at depth, which has its
 # own contents-exclude + .gitkeep re-include rule below.
@@ -35,6 +43,10 @@ coverage.out
 # Playwright MCP scratch — screenshots + console logs from orch-side visual
 # verification. Useful artifacts for one session; not committed.
 .playwright-mcp/
+
+# Agent-audit runtime log — hook writes here when post_tooluse_agent_audit.py
+# encounters an unexpected payload; not committed.
+.claude/hooks/agent_audit_errors.log
 
 # Hylla MCP local state (artifact graphs, ingest run outputs, logs) — local
 # to each dev's machine, not committed.

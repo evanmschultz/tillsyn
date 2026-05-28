@@ -106,6 +106,15 @@
             "command": "/Users/evanschultz/.claude/hooks/save_tillsyn_auth.sh"
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_tooluse_agent_audit.py\""
+          }
+        ]
       }
     ],
     "SessionStart": [

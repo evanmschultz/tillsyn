@@ -114,11 +114,22 @@ func TestParseAgentDefinition_AllOnDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Glob(%s): %v", pattern, err)
 	}
-	if len(matches) < 13 {
-		t.Fatalf("found %d ta-*.md files at %s, want ≥13 (one per persona)", len(matches), pattern)
+
+	// ta-test-ollama is a manual smoke-test persona for bin/agent-dispatch.sh
+	// dispatch_ollama exercising (HYLLA_BIN §2). Orchestrator never routes
+	// there automatically; the dispatcher Go code never calls LoadAgentDefinition
+	// for it. Exclude from the production-set sweep.
+	var productionMatches []string
+	for _, p := range matches {
+		if strings.TrimSuffix(filepath.Base(p), ".md") != "ta-test-ollama" {
+			productionMatches = append(productionMatches, p)
+		}
+	}
+	if len(productionMatches) < 13 {
+		t.Fatalf("found %d production ta-*.md files at %s, want ≥13 (one per persona)", len(productionMatches), pattern)
 	}
 
-	for _, path := range matches {
+	for _, path := range productionMatches {
 		path := path
 		base := strings.TrimSuffix(filepath.Base(path), ".md")
 		t.Run(base, func(t *testing.T) {
