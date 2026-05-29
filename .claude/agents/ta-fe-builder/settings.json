@@ -16,7 +16,7 @@
       "Bash(git commit:*)", "Bash(git push:*)", "Bash(git add:*)", "Bash(git reset:*)", "Bash(git rebase:*)", "Bash(git merge:*)", "Bash(git checkout:*)", "Bash(git tag:*)", "Bash(git stash:*)", "Bash(git restore:*)", "Bash(git cherry-pick:*)", "Bash(git fetch:*)", "Bash(git pull:*)", "Bash(git clean:*)", "Bash(git apply:*)", "Bash(git worktree:*)", "Bash(git submodule:*)", "Bash(git init:*)", "Bash(git clone:*)",
       "Bash(go test:*)", "Bash(go build:*)", "Bash(go vet:*)", "Bash(go run:*)", "Bash(go install:*)", "Bash(go fmt:*)", "Bash(go mod:*)", "Bash(go tool:*)", "Bash(go generate:*)", "Bash(go get:*)", "Bash(go work:*)",
       "Bash(gofmt:*)", "Bash(gofumpt:*)", "Bash(gopls:*)",
-      "Bash(mage ci)", "Bash(mage test-pkg:*)", "Bash(mage build:*)",
+      "Bash(mage ci)", "Bash(mage test-pkg:*)", "Bash(mage build:*)", "Bash(mage test)", "Bash(mage race)", "Bash(mage vet)", "Bash(mage tidy)",
       "Bash(rm -rf:*)", "Bash(awk:*)", "Bash(sed:*)", "Bash(tee:*)", "Bash(python -c:*)", "Bash(python3 -c:*)"
     ]
   }

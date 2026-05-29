@@ -19,7 +19,7 @@
       "mcp__ta__create", "mcp__ta__delete", "mcp__ta__move",
       "Bash(git commit:*)", "Bash(git push:*)", "Bash(git add:*)", "Bash(git reset:*)", "Bash(git rebase:*)", "Bash(git merge:*)", "Bash(git checkout:*)", "Bash(git tag:*)", "Bash(git stash:*)", "Bash(git restore:*)", "Bash(git cherry-pick:*)", "Bash(git fetch:*)", "Bash(git pull:*)", "Bash(git clean:*)", "Bash(git apply:*)",
       "Bash(go test:*)", "Bash(go build:*)", "Bash(go vet:*)", "Bash(go run:*)", "Bash(go install:*)",
-      "Bash(mage ci)", "Bash(mage build:*)",
+      "Bash(mage ci)", "Bash(mage build:*)", "Bash(mage test)", "Bash(mage race)", "Bash(mage vet)", "Bash(mage tidy)", "Bash(mage test-pkg:*)", "Bash(mage format:*)", "Bash(mage format-file:*)",
       "Bash(rm -rf:*)", "Bash(awk:*)", "Bash(sed:*)", "Bash(tee:*)", "Bash(python -c:*)", "Bash(python3 -c:*)"
     ]
   }

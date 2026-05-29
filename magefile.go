@@ -32,8 +32,11 @@ var Aliases = map[string]interface{}{
 	"test-integration":   TestIntegration,
 	"test-pkg":           TestPkg,
 	"test-func":          TestFunc,
+	"race-pkg":           RacePkg,
+	"vet-pkg":            VetPkg,
 	"fmt":                Format,
-	"format-path":        FormatPath,
+	"format-check":       FormatCheck,
+	"format-file":        FormatFile,
 	"ui-a11y":            UIA11y,
 	"ui-build":           UIBuild,
 	"ui-dev":             UIDev,
@@ -115,6 +118,83 @@ func TestGoldenUpdate() error {
 // Equivalent go command: go test -tags integration ./internal/templates/...
 func TestIntegration() error {
 	return runGoTest("-tags", "integration", "./internal/templates/...")
+}
+
+// Test runs the full test suite over every package without race detection or
+// coverage. Closeout/orchestrator surface — fastest all-package gate. Use
+// TestPkg for one package, TestFunc for one function, Race for race detection.
+func Test() error {
+	return runGoTest("./...")
+}
+
+// Race runs the full test suite over every package with the race detector
+// enabled. Closeout/orchestrator surface. Use RacePkg for one package.
+func Race() error {
+	return runGoTest("-race", "./...")
+}
+
+// RacePkg runs tests with the race detector for one package path, directory,
+// or pattern. Build-QA surface — verifies a builder's just-shipped package is
+// race-clean. Mirrors TestPkg's directory-arg normalization.
+func RacePkg(pkg string) error {
+	pkg = strings.TrimSpace(pkg)
+	if pkg == "" {
+		return errors.New("package path is required")
+	}
+	info, err := os.Stat(pkg)
+	if err == nil && info.IsDir() {
+		dirArg := normalizedGoDirArg(pkg)
+		matches, globErr := filepath.Glob(filepath.Join(pkg, "*.go"))
+		if globErr != nil {
+			return fmt.Errorf("glob package dir %q: %w", pkg, globErr)
+		}
+		if len(matches) > 0 {
+			return runGoTest("-race", "-count=1", dirArg)
+		}
+		return runGoTest("-race", "-count=1", dirArg+"/...")
+	}
+	return runGoTest("-race", "-count=1", pkg)
+}
+
+// Vet runs `go vet` over every package. Closeout/orchestrator surface. Use
+// VetPkg for one package. Adding Vet to CI catches issues that today's
+// `go test ./...` does not surface.
+func Vet() error {
+	return runCommand("go", "vet", localBuildVCSFlag, "./...")
+}
+
+// VetPkg runs `go vet` over one package path, directory, or pattern.
+// Builder + build-QA surface. Mirrors TestPkg's directory normalization.
+func VetPkg(pkg string) error {
+	pkg = strings.TrimSpace(pkg)
+	if pkg == "" {
+		return errors.New("package path is required")
+	}
+	target := pkg
+	info, err := os.Stat(pkg)
+	if err == nil && info.IsDir() {
+		dirArg := normalizedGoDirArg(pkg)
+		matches, globErr := filepath.Glob(filepath.Join(pkg, "*.go"))
+		if globErr != nil {
+			return fmt.Errorf("glob package dir %q: %w", pkg, globErr)
+		}
+		if len(matches) > 0 {
+			target = dirArg
+		} else {
+			target = dirArg + "/..."
+		}
+	}
+	return runCommand("go", "vet", localBuildVCSFlag, target)
+}
+
+// Tidy runs `go mod tidy` and fails if go.mod or go.sum drift afterward.
+// Orchestrator-only — surfaces unrecorded module changes before they slip
+// through CI as silent dependency creep.
+func Tidy() error {
+	if err := runCommand("go", "mod", "tidy"); err != nil {
+		return err
+	}
+	return runCommand("git", "diff", "--exit-code", "--", "go.mod", "go.sum")
 }
 
 // Build compiles the local till binary at `./till` with build-stamp ldflags
@@ -212,7 +292,10 @@ func Install() error {
 	return runCommand("go", args...)
 }
 
-// CI runs the canonical full gate.
+// CI runs the canonical full gate. Stages, in order: Sources (verify tracked
+// entrypoints), Formatting (gofumpt -l), Vet (go vet ./...), Coverage (the
+// combined race+cover pass, see coverage()), Tidy (go mod tidy + git-diff
+// gate), Build (binary with ldflags), Integration (build-tag suite).
 func CI() error {
 	printer := newMagePrinter()
 	for _, stage := range []struct {
@@ -221,7 +304,9 @@ func CI() error {
 	}{
 		{title: "Sources", run: verifySources},
 		{title: "Formatting", run: formatCheck},
+		{title: "Vet", run: Vet},
 		{title: "Coverage", run: coverage},
+		{title: "Tidy", run: Tidy},
 		{title: "Build", run: Build},
 		{title: "Integration", run: TestIntegration},
 	} {
@@ -378,7 +463,7 @@ func verifySources() error {
 	return err
 }
 
-// Format rewrites every tracked Go file with `go tool gofumpt -w`. Use FormatPath for a single file or directory.
+// Format rewrites every tracked Go file with `go tool gofumpt -w`. Use FormatFile for a single file or directory.
 func Format() error {
 	files, err := trackedGoFiles()
 	if err != nil {
@@ -390,8 +475,9 @@ func Format() error {
 	return runGofumptWrite(files)
 }
 
-// FormatPath rewrites one file or directory with `go tool gofumpt -w`. Use Format for the whole tracked tree.
-func FormatPath(path string) error {
+// FormatFile rewrites one file or directory with `go tool gofumpt -w`. Use Format for the whole tracked tree.
+// Builder + build-QA surface — formats only the file(s) just edited.
+func FormatFile(path string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return errors.New("path is required")
@@ -400,6 +486,13 @@ func FormatPath(path string) error {
 		return fmt.Errorf("gofumpt path %q: %w", path, err)
 	}
 	return runGofumptWrite([]string{path})
+}
+
+// FormatCheck reports tracked Go files that still need gofumpt formatting and fails
+// non-zero when any file requires reformatting. Public wrapper around the private
+// formatCheck used by the CI gate so the same check is dispatchable on its own.
+func FormatCheck() error {
+	return formatCheck()
 }
 
 // formatCheck reports tracked Go files that still need gofumpt formatting.
@@ -446,14 +539,16 @@ func gofumptArgs(mode string, paths []string) []string {
 	return args
 }
 
-// coverage runs the full suite with coverage enabled and enforces the per-package floor.
+// coverage runs the full suite with coverage AND race detection enabled and enforces
+// the per-package coverage floor. Combining -race + -cover into one pass keeps CI
+// fast while gating on both race-cleanliness and coverage in a single test run.
 func coverage() error {
-	raw, summary, err := runGoTestCapture("-cover", "./...")
+	raw, summary, err := runGoTestCapture("-race", "-cover", "./...")
 	if err != nil {
 		return err
 	}
 	if summary.HasFailures() {
-		return errors.New("go test -cover ./...: test summary reported failures")
+		return errors.New("go test -race -cover ./...: test summary reported failures")
 	}
 
 	printer := newMagePrinter()

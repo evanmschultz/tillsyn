@@ -342,7 +342,24 @@ Before any `build` action item is `complete`:
 3. `mage install` is allowed for the orchestrator when dev needs the `till` binary refreshed locally. Build verification still uses `mage ci`; `mage install` is install not verification.
 4. All template-generated QA subtasks completed.
 
-Key targets: `mage run`, `mage build`, `mage test-pkg <pkg>`, `mage test-func <pkg> <func>`, `mage test-golden`, `mage test-golden-update`, `mage format`, `mage ci`, `mage uiDev`, `mage uiBuild`, `mage ciUI`. Run `mage ci` before push. Coverage below 70% is a hard failure.
+Key targets follow the canonical 12-target shape (P6 — 2026-05-28):
+
+```
+TestFunc(pkg, fn)  builder + build-QA       go test -run "^<Func>$" -count=1 -race <pkg>
+TestPkg(pkg)       plan-QA read-only        go test -count=1 <pkg>
+Test               closeout/orch            go test ./...
+RacePkg(pkg)       build-QA                 go test -race -count=1 <pkg>
+Race               closeout/orch            go test -race ./...
+FormatFile(file)   builder + build-QA       gofumpt -w <file>
+Format             closeout/orch            gofumpt -w .
+FormatCheck        ci                       gofumpt -l . && fail if non-empty
+VetPkg(pkg)        builder + build-QA       go vet <pkg>
+Vet                closeout/orch            go vet ./...
+Tidy               orch-only                go mod tidy + git-diff --exit-code
+CI                 closeout/orch            Sources + FormatCheck + Vet + (Race+Coverage combined) + Tidy + Build + Integration
+```
+
+Tillsyn-specific additions (not part of the canonical 12): `mage build`, `mage run`, `mage dev`, `mage install`, `mage testGolden`, `mage testGoldenUpdate`, `mage testIntegration`, `mage uiDev`, `mage uiBuild`, `mage ciUI`, `mage uiA11y`. Hyphenated aliases preserved: `check`, `ci-ui`, `test-pkg`, `test-func`, `race-pkg`, `vet-pkg`, `format-check`, `format-file`, `fmt`, `ui-dev`, `ui-build`, `ui-a11y`, `test-golden`, `test-golden-update`, `test-integration`. Run `mage ci` before push. Coverage below 70% is a hard failure.
 
 ## Go Development Rules
 

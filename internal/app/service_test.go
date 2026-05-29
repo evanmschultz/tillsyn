@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ func ptrTo[T any](v T) *T {
 
 // fakeRepo represents fake repo data used by this package.
 type fakeRepo struct {
+	mu                    sync.Mutex
 	projects              map[string]domain.Project
 	columns               map[string]domain.Column
 	tasks                 map[string]domain.ActionItem
@@ -462,6 +464,8 @@ func containsEmbeddingStatus(values []EmbeddingLifecycleStatus, target Embedding
 
 // CreateProject creates project.
 func (f *fakeRepo) CreateProject(ctx context.Context, p domain.Project) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.createProjectActor, _ = MutationActorFromContext(ctx)
 	f.projects[p.ID] = p
 	return nil
@@ -469,6 +473,8 @@ func (f *fakeRepo) CreateProject(ctx context.Context, p domain.Project) error {
 
 // UpdateProject updates state for the requested operation.
 func (f *fakeRepo) UpdateProject(ctx context.Context, p domain.Project) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.updateProjectActor, _ = MutationActorFromContext(ctx)
 	f.projects[p.ID] = p
 	return nil
@@ -476,6 +482,8 @@ func (f *fakeRepo) UpdateProject(ctx context.Context, p domain.Project) error {
 
 // DeleteProject deletes one project.
 func (f *fakeRepo) DeleteProject(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.projects[id]; !ok {
 		return ErrNotFound
 	}
@@ -497,6 +505,8 @@ func (f *fakeRepo) DeleteProject(_ context.Context, id string) error {
 
 // GetProject returns project.
 func (f *fakeRepo) GetProject(_ context.Context, id string) (domain.Project, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	p, ok := f.projects[id]
 	if !ok {
 		return domain.Project{}, ErrNotFound
@@ -506,6 +516,8 @@ func (f *fakeRepo) GetProject(_ context.Context, id string) (domain.Project, err
 
 // GetProjectBySlug returns the project whose slug equals the supplied value.
 func (f *fakeRepo) GetProjectBySlug(_ context.Context, slug string) (domain.Project, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, p := range f.projects {
 		if p.Slug == slug {
 			return p, nil
@@ -516,6 +528,8 @@ func (f *fakeRepo) GetProjectBySlug(_ context.Context, slug string) (domain.Proj
 
 // ListProjects lists projects.
 func (f *fakeRepo) ListProjects(_ context.Context, includeArchived bool) ([]domain.Project, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]domain.Project, 0, len(f.projects))
 	for _, p := range f.projects {
 		if !includeArchived && p.ArchivedAt != nil {
@@ -528,23 +542,31 @@ func (f *fakeRepo) ListProjects(_ context.Context, includeArchived bool) ([]doma
 
 // SetProjectAllowedKinds updates one project's kind allowlist.
 func (f *fakeRepo) SetProjectAllowedKinds(_ context.Context, projectID string, kindIDs []domain.KindID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.projectAllowedKinds[projectID] = append([]domain.KindID(nil), kindIDs...)
 	return nil
 }
 
 // ListProjectAllowedKinds lists one project's kind allowlist.
 func (f *fakeRepo) ListProjectAllowedKinds(_ context.Context, projectID string) ([]domain.KindID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return append([]domain.KindID(nil), f.projectAllowedKinds[projectID]...), nil
 }
 
 // CreateKindDefinition creates one kind definition.
 func (f *fakeRepo) CreateKindDefinition(_ context.Context, kind domain.KindDefinition) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.kindDefs[kind.ID] = kind
 	return nil
 }
 
 // UpdateKindDefinition updates one kind definition.
 func (f *fakeRepo) UpdateKindDefinition(_ context.Context, kind domain.KindDefinition) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.kindDefs[kind.ID]; !ok {
 		return ErrNotFound
 	}
@@ -554,6 +576,8 @@ func (f *fakeRepo) UpdateKindDefinition(_ context.Context, kind domain.KindDefin
 
 // GetKindDefinition returns one kind definition by ID.
 func (f *fakeRepo) GetKindDefinition(_ context.Context, kindID domain.KindID) (domain.KindDefinition, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	kind, ok := f.kindDefs[kindID]
 	if !ok {
 		return domain.KindDefinition{}, ErrNotFound
@@ -563,6 +587,8 @@ func (f *fakeRepo) GetKindDefinition(_ context.Context, kindID domain.KindID) (d
 
 // ListKindDefinitions lists kind definitions.
 func (f *fakeRepo) ListKindDefinitions(_ context.Context, includeArchived bool) ([]domain.KindDefinition, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]domain.KindDefinition, 0, len(f.kindDefs))
 	for _, kind := range f.kindDefs {
 		if !includeArchived && kind.ArchivedAt != nil {
@@ -575,18 +601,24 @@ func (f *fakeRepo) ListKindDefinitions(_ context.Context, includeArchived bool) 
 
 // CreateColumn creates column.
 func (f *fakeRepo) CreateColumn(_ context.Context, c domain.Column) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.columns[c.ID] = c
 	return nil
 }
 
 // UpdateColumn updates state for the requested operation.
 func (f *fakeRepo) UpdateColumn(_ context.Context, c domain.Column) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.columns[c.ID] = c
 	return nil
 }
 
 // ListColumns lists columns.
 func (f *fakeRepo) ListColumns(_ context.Context, projectID string, includeArchived bool) ([]domain.Column, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]domain.Column, 0, len(f.columns))
 	for _, c := range f.columns {
 		if c.ProjectID != projectID {
@@ -602,6 +634,8 @@ func (f *fakeRepo) ListColumns(_ context.Context, projectID string, includeArchi
 
 // CreateActionItem creates actionItem.
 func (f *fakeRepo) CreateActionItem(ctx context.Context, t domain.ActionItem) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.createActionItemActor, _ = MutationActorFromContext(ctx)
 	f.tasks[t.ID] = t
 	return nil
@@ -609,6 +643,8 @@ func (f *fakeRepo) CreateActionItem(ctx context.Context, t domain.ActionItem) er
 
 // UpdateActionItem updates state for the requested operation.
 func (f *fakeRepo) UpdateActionItem(ctx context.Context, t domain.ActionItem) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.updateActionItemActor, _ = MutationActorFromContext(ctx)
 	if _, ok := f.tasks[t.ID]; !ok {
 		return ErrNotFound
@@ -619,6 +655,8 @@ func (f *fakeRepo) UpdateActionItem(ctx context.Context, t domain.ActionItem) er
 
 // GetActionItem returns actionItem.
 func (f *fakeRepo) GetActionItem(_ context.Context, id string) (domain.ActionItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	t, ok := f.tasks[id]
 	if !ok {
 		return domain.ActionItem{}, ErrNotFound
@@ -628,6 +666,8 @@ func (f *fakeRepo) GetActionItem(_ context.Context, id string) (domain.ActionIte
 
 // ListActionItems lists tasks.
 func (f *fakeRepo) ListActionItems(_ context.Context, projectID string, includeArchived bool) ([]domain.ActionItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]domain.ActionItem, 0, len(f.tasks))
 	for _, t := range f.tasks {
 		if t.ProjectID != projectID {
@@ -646,6 +686,8 @@ func (f *fakeRepo) ListActionItems(_ context.Context, projectID string, includeA
 // ID ASC. The empty parentID returns level-1 children (no parent). Mirrors
 // the SQLite-side adapter contract used by the dotted-address resolver.
 func (f *fakeRepo) ListActionItemsByParent(_ context.Context, projectID, parentID string) ([]domain.ActionItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]domain.ActionItem, 0, len(f.tasks))
 	for _, t := range f.tasks {
 		if t.ProjectID != projectID {
@@ -671,6 +713,8 @@ func (f *fakeRepo) ListActionItemsByParent(_ context.Context, projectID, parentI
 // when no row matches. Iteration is deterministic by id ASC so callers can
 // assert exact behavior.
 func (f *fakeRepo) FindActionItemByOwnerAndTitle(_ context.Context, projectID, owner, title string) (domain.ActionItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	matches := make([]domain.ActionItem, 0)
 	for _, t := range f.tasks {
 		if t.ProjectID != projectID {
@@ -699,6 +743,8 @@ func (f *fakeRepo) FindActionItemByOwnerAndTitle(_ context.Context, projectID, o
 // the auto-generator (droplet 3.20). Includes archived rows; callers filter
 // at the call site.
 func (f *fakeRepo) ListActionItemsByDropNumber(_ context.Context, projectID string, dropNumber int) ([]domain.ActionItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]domain.ActionItem, 0, len(f.tasks))
 	for _, t := range f.tasks {
 		if t.ProjectID != projectID {
@@ -720,6 +766,8 @@ func (f *fakeRepo) ListActionItemsByDropNumber(_ context.Context, projectID stri
 
 // DeleteActionItem deletes actionItem.
 func (f *fakeRepo) DeleteActionItem(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	actionItem, ok := f.tasks[id]
 	if !ok {
 		return ErrNotFound
@@ -732,6 +780,8 @@ func (f *fakeRepo) DeleteActionItem(_ context.Context, id string) error {
 
 // CreateComment creates comment.
 func (f *fakeRepo) CreateComment(ctx context.Context, comment domain.Comment) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.createCommentActor, _ = MutationActorFromContext(ctx)
 	key := comment.ProjectID + "|" + string(comment.TargetType) + "|" + comment.TargetID
 	f.comments[key] = append(f.comments[key], comment)
@@ -740,12 +790,16 @@ func (f *fakeRepo) CreateComment(ctx context.Context, comment domain.Comment) er
 
 // ListCommentsByTarget lists comments for a target.
 func (f *fakeRepo) ListCommentsByTarget(_ context.Context, target domain.CommentTarget) ([]domain.Comment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	key := target.ProjectID + "|" + string(target.TargetType) + "|" + target.TargetID
 	return append([]domain.Comment(nil), f.comments[key]...), nil
 }
 
 // ListCommentTargets lists distinct comment targets for one project.
 func (f *fakeRepo) ListCommentTargets(_ context.Context, projectID string) ([]domain.CommentTarget, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	projectID = strings.TrimSpace(projectID)
 	out := make([]domain.CommentTarget, 0, len(f.comments))
 	for key, comments := range f.comments {
@@ -777,18 +831,24 @@ func (f *fakeRepo) ListCommentTargets(_ context.Context, projectID string) ([]do
 
 // CreateAttentionItem creates one attention item row.
 func (f *fakeRepo) CreateAttentionItem(_ context.Context, item domain.AttentionItem) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.attentionItems[item.ID] = item
 	return nil
 }
 
 // UpsertAttentionItem creates or replaces one attention item row.
 func (f *fakeRepo) UpsertAttentionItem(_ context.Context, item domain.AttentionItem) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.attentionItems[item.ID] = item
 	return nil
 }
 
 // GetAttentionItem returns one attention item row by id.
 func (f *fakeRepo) GetAttentionItem(_ context.Context, attentionID string) (domain.AttentionItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	item, ok := f.attentionItems[attentionID]
 	if !ok {
 		return domain.AttentionItem{}, ErrNotFound
@@ -798,6 +858,8 @@ func (f *fakeRepo) GetAttentionItem(_ context.Context, attentionID string) (doma
 
 // ListAttentionItems lists scoped attention items in deterministic order.
 func (f *fakeRepo) ListAttentionItems(_ context.Context, filter domain.AttentionListFilter) ([]domain.AttentionItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	filter, err := domain.NormalizeAttentionListFilter(filter)
 	if err != nil {
 		return nil, err
@@ -866,6 +928,8 @@ func (f *fakeRepo) ListAttentionItems(_ context.Context, filter domain.Attention
 
 // ResolveAttentionItem resolves one attention item row and returns the updated value.
 func (f *fakeRepo) ResolveAttentionItem(_ context.Context, attentionID string, resolvedBy string, resolvedByType domain.ActorType, resolvedAt time.Time) (domain.AttentionItem, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	item, ok := f.attentionItems[attentionID]
 	if !ok {
 		return domain.AttentionItem{}, ErrNotFound
@@ -879,12 +943,16 @@ func (f *fakeRepo) ResolveAttentionItem(_ context.Context, attentionID string, r
 
 // CreateAuthRequest stores one auth request row.
 func (f *fakeRepo) CreateAuthRequest(_ context.Context, request domain.AuthRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.authRequests[request.ID] = request
 	return nil
 }
 
 // GetAuthRequest returns one auth request by id.
 func (f *fakeRepo) GetAuthRequest(_ context.Context, requestID string) (domain.AuthRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	request, ok := f.authRequests[requestID]
 	if !ok {
 		return domain.AuthRequest{}, ErrNotFound
@@ -894,6 +962,8 @@ func (f *fakeRepo) GetAuthRequest(_ context.Context, requestID string) (domain.A
 
 // ListAuthRequests lists auth requests with deterministic filtering.
 func (f *fakeRepo) ListAuthRequests(_ context.Context, filter domain.AuthRequestListFilter) ([]domain.AuthRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	filter, err := domain.NormalizeAuthRequestListFilter(filter)
 	if err != nil {
 		return nil, err
@@ -922,6 +992,8 @@ func (f *fakeRepo) ListAuthRequests(_ context.Context, filter domain.AuthRequest
 
 // UpdateAuthRequest stores one auth request update.
 func (f *fakeRepo) UpdateAuthRequest(_ context.Context, request domain.AuthRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.authRequests[request.ID]; !ok {
 		return ErrNotFound
 	}
@@ -931,12 +1003,16 @@ func (f *fakeRepo) UpdateAuthRequest(_ context.Context, request domain.AuthReque
 
 // CreateHandoff stores one durable handoff row.
 func (f *fakeRepo) CreateHandoff(_ context.Context, handoff domain.Handoff) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.handoffs[handoff.ID] = handoff
 	return nil
 }
 
 // GetHandoff returns one durable handoff row by id.
 func (f *fakeRepo) GetHandoff(_ context.Context, handoffID string) (domain.Handoff, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	handoff, ok := f.handoffs[handoffID]
 	if !ok {
 		return domain.Handoff{}, ErrNotFound
@@ -946,6 +1022,8 @@ func (f *fakeRepo) GetHandoff(_ context.Context, handoffID string) (domain.Hando
 
 // ListHandoffs lists durable handoffs with deterministic filtering and ordering.
 func (f *fakeRepo) ListHandoffs(_ context.Context, filter domain.HandoffListFilter) ([]domain.Handoff, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	filter, err := domain.NormalizeHandoffListFilter(filter)
 	if err != nil {
 		return nil, err
@@ -996,6 +1074,8 @@ func (f *fakeRepo) ListHandoffs(_ context.Context, filter domain.HandoffListFilt
 
 // UpdateHandoff stores one durable handoff update.
 func (f *fakeRepo) UpdateHandoff(_ context.Context, handoff domain.Handoff) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.handoffs[handoff.ID]; !ok {
 		return ErrNotFound
 	}
@@ -1005,6 +1085,8 @@ func (f *fakeRepo) UpdateHandoff(_ context.Context, handoff domain.Handoff) erro
 
 // ListProjectChangeEvents lists change events.
 func (f *fakeRepo) ListProjectChangeEvents(_ context.Context, projectID string, limit int) ([]domain.ChangeEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	events := append([]domain.ChangeEvent(nil), f.changeEvents[projectID]...)
 	if limit <= 0 || limit >= len(events) {
 		return events, nil
@@ -1014,12 +1096,16 @@ func (f *fakeRepo) ListProjectChangeEvents(_ context.Context, projectID string, 
 
 // CreateCapabilityLease creates one capability lease row.
 func (f *fakeRepo) CreateCapabilityLease(_ context.Context, lease domain.CapabilityLease) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.capabilityLeases[lease.InstanceID] = lease
 	return nil
 }
 
 // UpdateCapabilityLease updates one capability lease row.
 func (f *fakeRepo) UpdateCapabilityLease(_ context.Context, lease domain.CapabilityLease) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.capabilityLeases[lease.InstanceID]; !ok {
 		return ErrNotFound
 	}
@@ -1029,6 +1115,8 @@ func (f *fakeRepo) UpdateCapabilityLease(_ context.Context, lease domain.Capabil
 
 // GetCapabilityLease returns one capability lease row.
 func (f *fakeRepo) GetCapabilityLease(_ context.Context, instanceID string) (domain.CapabilityLease, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	lease, ok := f.capabilityLeases[instanceID]
 	if !ok {
 		return domain.CapabilityLease{}, ErrNotFound
@@ -1038,6 +1126,8 @@ func (f *fakeRepo) GetCapabilityLease(_ context.Context, instanceID string) (dom
 
 // ListCapabilityLeasesByScope lists scope-matching capability leases.
 func (f *fakeRepo) ListCapabilityLeasesByScope(_ context.Context, projectID string, scopeType domain.CapabilityScopeType, scopeID string) ([]domain.CapabilityLease, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make([]domain.CapabilityLease, 0)
 	for _, lease := range f.capabilityLeases {
 		if lease.ProjectID != projectID {
@@ -1056,6 +1146,8 @@ func (f *fakeRepo) ListCapabilityLeasesByScope(_ context.Context, projectID stri
 
 // RevokeCapabilityLeasesByScope revokes all scope-matching leases.
 func (f *fakeRepo) RevokeCapabilityLeasesByScope(_ context.Context, projectID string, scopeType domain.CapabilityScopeType, scopeID string, revokedAt time.Time, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for instanceID, lease := range f.capabilityLeases {
 		if lease.ProjectID != projectID {
 			continue
