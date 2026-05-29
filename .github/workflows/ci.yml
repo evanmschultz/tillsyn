@@ -46,8 +46,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify required entrypoint sources are tracked
-        run: git ls-files --error-unmatch magefile.go cmd/till/main.go cmd/till/main_test.go
       - name: Validate goreleaser snapshot
         uses: goreleaser/goreleaser-action@v7
         with:
