@@ -1,0 +1,343 @@
+format_version = 3
+
+[CLAUDE]
+[CLAUDE.section]
+[CLAUDE.section.action-item-lifecycle]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.auth-and-leases]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.build-qa-commit-discipline]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.build-verification]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.cascade-architecture]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.coordination-model]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.dev-mcp-server]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.evidence-and-code-understanding]
+created = 2026-05-31T02:55:13.593105Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.git-management-pre-cascade]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.go-development-rules]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.hard-rules-inviolable]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.orchestrator-subagent-roles]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.paths-and-packages]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.project-structure]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.recovery-after-session-restart]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.section-0-response-shape]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.skill-and-slash-command-routing]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.ta-mcp-structured-md-editing]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.tech-stack]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CLAUDE.section.tillsyn-project]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'agents_md'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CONTRIBUTING]
+[CONTRIBUTING.section]
+[CONTRIBUTING.section.branch-protection-recommendation]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'contributing'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CONTRIBUTING.section.cascade-structural-type-one-shot-migration-2026-05-21]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'contributing'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CONTRIBUTING.section.dev-mcp-server-setup]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'contributing'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CONTRIBUTING.section.github-actions-model]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'contributing'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CONTRIBUTING.section.local-git-hooks]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'contributing'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CONTRIBUTING.section.local-workflow]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'contributing'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CONTRIBUTING.section.notes]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'contributing'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[CONTRIBUTING.section.windows-note-line-endings]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'contributing'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README]
+[README.section]
+[README.section.active-status-2026-04-12]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.active-status-2026-05-15]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.ci]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.cli-commands]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.config]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.developer-workflow]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.fang-context]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.features]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.integration-framing-for-mcp-clients]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.key-controls]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.response-shape-section-0-semi-formal-reasoning]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.run]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.startup-behavior]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[README.section.thread-mode]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'readme'
+type = 'section'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-closeout]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-fe-build-qa-falsification]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-fe-build-qa-proof]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-fe-builder]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-fe-plan-qa-falsification]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-fe-plan-qa-proof]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-fe-planning]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-go-build-qa-falsification]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-go-build-qa-proof]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-go-builder]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-go-plan-qa-falsification]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-go-plan-qa-proof]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-go-planning]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
+
+[ta-test-ollama]
+created = 2026-05-31T02:46:39.424032Z
+db_name = 'claude_agents'
+type = 'agent'
+updated = 2026-05-31T02:55:13.593105Z
